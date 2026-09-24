@@ -59,6 +59,13 @@ test("VisualAssetClient and streaming routes honor parser ordering and hide dige
             operations: [...VISUAL_ASSET_UPLOAD_OPERATIONS, ...VISUAL_ASSET_ACCESS_OPERATIONS],
         });
         assert.equal(closure.ok, true);
+        const accessSet = await client.validateAccessSet({
+            useHashes: [published.useHash],
+            operations: [...VISUAL_ASSET_ACCESS_OPERATIONS],
+        });
+        assert.equal(accessSet.ok, true);
+        assert.equal(accessSet.useCount, 1);
+        assert.deepEqual(accessSet.operations, [...VISUAL_ASSET_ACCESS_OPERATIONS]);
 
         const digestResponse = await fetch(`${origin}/api/storage/visual-assets/sha256/${asset.sha256}`);
         assert.equal(digestResponse.status, 404);

@@ -81,6 +81,10 @@ export class VisualAssetClient {
         return this.json("POST", "/closures/validate", body, { signal });
     }
 
+    async validateAccessSet(body, signal) {
+        return this.json("POST", "/access-sets/validate", body, { signal });
+    }
+
     async json(method, pathname, body, { signal } = {}) {
         const response = await this.fetch(`${this.baseUrl}${pathname}`, {
             method,

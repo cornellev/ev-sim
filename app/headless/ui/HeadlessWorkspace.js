@@ -10,18 +10,27 @@ import {
     SpinnerGap,
     Stop,
     TerminalWindow,
+    VideoCamera,
 } from "@phosphor-icons/react";
 
+import { captureViewportClipCamera } from "../../3d/camera/ClipCameraSnapshot.js";
 import { listExperimentSuites } from "../../experiments/ExperimentClient.js";
 import { subscribeStorageEvents } from "../../client/storageEvents.js";
+import { getRunManifest, listRunManifests } from "../../simulation/RunManifestClient.js";
+import { getRunSessionController } from "../../simulation/RunSessionController.js";
 import {
+    cancelClip,
     cancelHeadlessRun,
+    clipVideoUrl,
     enqueueHeadlessRun,
+    getClip,
     getHeadlessCapabilities,
     getHeadlessRun,
     headlessArtifactUrl,
     listHeadlessRuns,
+    preflightClip,
     preflightHeadlessRun,
+    startClip,
 } from "../HeadlessClient.js";
 import {
     AsyncState,
@@ -134,6 +143,22 @@ export default function HeadlessWorkspace({
     const [cancelOpen, setCancelOpen] = useState(false);
     const [inspectorOpen, setInspectorOpen] = useState(false);
     const [announcement, setAnnouncement] = useState("");
+    const [clip, setClip] = useState(null);
+    const [clipOpen, setClipOpen] = useState(false);
+    const [clipPreflight, setClipPreflight] = useState(null);
+    const [clipPreflightError, setClipPreflightError] = useState(null);
+    const [clipProfile, setClipProfile] = useState("environment");
+    const [clipRenderer, setClipRenderer] = useState("pbr");
+    const [clipManifests, setClipManifests] = useState([]);
+    const [clipManifestId, setClipManifestId] = useState("");
+    const [clipManifest, setClipManifest] = useState(null);
+    const [clipCameraMode, setClipCameraMode] = useState("manifest");
+    const [clipCameraId, setClipCameraId] = useState("");
+    const [clipAttachment, setClipAttachment] = useState("map");
+    const [clipParentId, setClipParentId] = useState("");
+    const [clipViewport, setClipViewport] = useState(null);
+    const [clipActionTape, setClipActionTape] = useState(null);
+    const [clipTapeName, setClipTapeName] = useState("");
     const refreshTimer = useRef(null);
     const selectedIdRef = useRef(null);
 
@@ -189,6 +214,7 @@ export default function HeadlessWorkspace({
 
     useEffect(() => {
         refreshCatalog().catch(() => {});
+        getClip().then((payload) => setClip(payload?.job ?? null)).catch(() => {});
     }, [refreshCatalog]);
 
     useEffect(() => {
@@ -242,6 +268,94 @@ export default function HeadlessWorkspace({
         });
     }, [refreshCatalog, refreshDetail]);
 
+    const clipCameras = useMemo(
+        () => (clipManifest?.sensorRig?.sensors || []).filter((sensor) => sensor.type === "camera"),
+        [clipManifest],
+    );
+    const clipAuthority = clipManifest?.controls?.authority === "reference" ? "reference" : "candidate";
+    const clipRequest = useMemo(() => {
+        if (clipProfile === "corridor" || !clipManifest) return null;
+        const camera = clipCameraMode === "viewport"
+            ? clipViewport
+            : (clipCameraId ? { kind: "manifest", cameraId: clipCameraId } : null);
+        if (!camera) return null;
+        if (clipAuthority === "candidate" && !clipActionTape) return null;
+        return {
+            profile: clipProfile === "cosmos-nano" ? "cosmos-nano" : "environment",
+            manifestId: clipManifest.id,
+            expectedManifestRevision: clipManifest.revision,
+            camera,
+            renderer: clipRenderer,
+            ...(clipProfile === "environment" ? { durationNs: 4_000_000_000, width: 1280, height: 720 } : {}),
+            actionTape: clipAuthority === "candidate" ? clipActionTape : null,
+        };
+    }, [clipActionTape, clipAuthority, clipCameraId, clipCameraMode, clipManifest, clipProfile, clipRenderer, clipViewport]);
+
+    useEffect(() => {
+        if (!clipOpen) return undefined;
+        let cancelled = false;
+        listRunManifests().then((entries) => {
+            if (cancelled) return;
+            setClipManifests(Array.isArray(entries) ? entries : []);
+            setClipManifestId((current) => current || entries?.[0]?.id || "");
+        }).catch((loadError) => {
+            if (!cancelled) setClipPreflightError(loadError.message);
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [clipOpen]);
+
+    useEffect(() => {
+        if (!clipOpen || !clipManifestId || clipProfile === "corridor") {
+            setClipManifest(null);
+            return undefined;
+        }
+        let cancelled = false;
+        getRunManifest(clipManifestId).then((manifest) => {
+            if (cancelled) return;
+            setClipManifest(manifest);
+            const cameras = (manifest?.sensorRig?.sensors || []).filter((sensor) => sensor.type === "camera");
+            setClipCameraId((current) => cameras.some((camera) => camera.id === current) ? current : (cameras[0]?.id || ""));
+        }).catch((loadError) => {
+            if (!cancelled) setClipPreflightError(loadError.message);
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [clipManifestId, clipOpen, clipProfile]);
+
+    useEffect(() => {
+        if (!clipOpen) return undefined;
+        let cancelled = false;
+        setClipPreflight(null);
+        setClipPreflightError(null);
+        const timer = window.setTimeout(() => {
+            const pending = clipProfile === "corridor"
+                ? preflightClip()
+                : (clipRequest ? preflightClip(clipRequest) : Promise.resolve(null));
+            pending.then((summary) => {
+                if (!cancelled) setClipPreflight(summary);
+            }).catch((preflightFailure) => {
+                if (!cancelled) setClipPreflightError(preflightFailure.message);
+            });
+        }, clipProfile === "corridor" ? 0 : 250);
+        return () => {
+            cancelled = true;
+            window.clearTimeout(timer);
+        };
+    }, [clipOpen, clipProfile, clipRequest]);
+
+    useEffect(() => {
+        if (!clip || !["preflight", "running", "exporting"].includes(clip.phase)) return undefined;
+        const timer = window.setInterval(() => {
+            getClip()
+                .then((payload) => setClip(payload?.job ?? null))
+                .catch(() => {});
+        }, 3000);
+        return () => window.clearInterval(timer);
+    }, [clip]);
+
     useEffect(() => {
         const active = catalog.runs.find((entry) => entry.status === "running");
         if (!active) return undefined;
@@ -292,6 +406,72 @@ export default function HeadlessWorkspace({
             await refreshDetail(payload.resultId);
         } catch (submitError) {
             setPreflightError(submitError.message);
+        } finally {
+            setSubmitting(false);
+        }
+    }
+
+    function captureClipViewport() {
+        try {
+            const snapshot = captureViewportClipCamera({
+                attachment: clipAttachment,
+                parentId: clipAttachment === "vehicle" ? clipParentId : null,
+            });
+            if (clipManifest?.environment?.id && snapshot.environmentId !== clipManifest.environment.id) {
+                throw new Error(`The editor environment is ${snapshot.environmentId}; the selected manifest uses ${clipManifest.environment.id}.`);
+            }
+            setClipViewport(snapshot);
+            setClipPreflightError(null);
+        } catch (captureError) {
+            setClipViewport(null);
+            setClipPreflightError(captureError.message);
+        }
+    }
+
+    function loadClipTape(file) {
+        if (!file) {
+            setClipActionTape(null);
+            setClipTapeName("");
+            return;
+        }
+        const reader = new FileReader();
+        reader.onload = () => {
+            try {
+                setClipActionTape(JSON.parse(String(reader.result || "")));
+                setClipTapeName(file.name);
+                setClipPreflightError(null);
+            } catch (parseError) {
+                setClipActionTape(null);
+                setClipTapeName("");
+                setClipPreflightError(parseError.message);
+            }
+        };
+        reader.readAsText(file);
+    }
+
+    async function submitClip() {
+        setSubmitting(true);
+        setClipPreflightError(null);
+        try {
+            const payload = await startClip(clipProfile === "corridor" ? {} : clipRequest);
+            setClip(payload.job);
+            setClipOpen(false);
+            setAnnouncement(`Started camera clip ${payload.job.id}.`);
+        } catch (submitError) {
+            setClipPreflightError(submitError.message);
+        } finally {
+            setSubmitting(false);
+        }
+    }
+
+    async function confirmClipCancel() {
+        setSubmitting(true);
+        try {
+            const payload = await cancelClip();
+            setClip(payload.job);
+            setAnnouncement("Cancelled camera clip.");
+        } catch (cancelError) {
+            setError(cancelError.message);
         } finally {
             setSubmitting(false);
         }
@@ -506,6 +686,10 @@ export default function HeadlessWorkspace({
                             Host
                         </Button>
                     )}
+                    <Button size="compact" onClick={() => setClipOpen(true)}>
+                        <VideoCamera {...ICON} aria-hidden="true" />
+                        Camera clip
+                    </Button>
                     <Button size="compact" variant="primary" onClick={() => openLaunch()}>
                         <Play {...ICON} aria-hidden="true" />
                         Launch suite
@@ -516,7 +700,51 @@ export default function HeadlessWorkspace({
         >
             <div aria-live="polite" className={styles.liveRegion}>{announcement}</div>
             <div className={styles.shell} data-inspector={selected ? true : undefined}>
-                <div className={styles.detail}>{main}</div>
+                <div className={styles.detail}>
+                {clip && (
+                    <section className={styles.clipPanel} aria-label="Camera clip">
+                        <div className={styles.clipHeader}>
+                            <div>
+                                <span className={styles.sectionKicker}>Camera clip</span>
+                                <strong>{clip.id}</strong>
+                            </div>
+                            <span className={styles.statusBadge} data-tone={clip.phase === "ready" ? "success" : clip.phase === "failed" || clip.phase === "cancelled" ? "danger" : "running"}>{clip.phase}</span>
+                        </div>
+                        {clip.error && <p data-tone="danger">{clip.error}</p>}
+                        {clip.resolution && (
+                            <p>
+                                {clip.resolution.environmentId} · {clip.resolution.cameraSource} {clip.resolution.cameraId}
+                                · {clip.resolution.renderer} · {clip.resolution.frameCount} frames
+                            </p>
+                        )}
+                        {clip.summary && (
+                            <p>
+                                {clip.summary.frameCount} frames · {clip.summary.frameRate}
+                                {Array.isArray(clip.summary.depthRange) ? ` · depth ${clip.summary.depthRange.map((value) => Number(value).toFixed(2)).join("–")} m` : ""}
+                            </p>
+                        )}
+                        {clip.clipDirectory && <p className={styles.clipPath}>{clip.clipDirectory}</p>}
+                        <div className={styles.overviewActions}>
+                            {["preflight", "running", "exporting"].includes(clip.phase) && (
+                                <Button size="compact" variant="danger" disabled={submitting} onClick={confirmClipCancel}>
+                                    <Stop {...ICON} aria-hidden="true" />
+                                    Cancel clip
+                                </Button>
+                            )}
+                            {clip.phase === "ready" && ["rgb.mp4", "depth.mp4"].map((name) => (
+                                <Button key={name} asChild size="compact">
+                                    <a href={clipVideoUrl(name)} download={name}>
+                                        <DownloadSimple {...ICON} aria-hidden="true" />
+                                        {name}
+                                    </a>
+                                </Button>
+                            ))}
+                        </div>
+                        {clip.phase === "ready" && <p>Metric depth stays on the server as depth.f32 and is not downloaded.</p>}
+                    </section>
+                )}
+                {main}
+            </div>
                 {inspectorOpen && selected && (
                     <button type="button" className={styles.inspectorScrim} aria-label="Close host inspector" onClick={() => setInspectorOpen(false)} />
                 )}
@@ -595,6 +823,142 @@ export default function HeadlessWorkspace({
                 <p style={{ margin: 0, padding: "8px", color: "var(--slate-muted)", fontSize: 12 }}>
                     Pending jobs are removed without launching a worker. The current in-flight case is not replayed.
                 </p>
+            </DialogSurface>
+            <DialogSurface
+                open={clipOpen}
+                onOpenChange={setClipOpen}
+                title="Camera clip"
+                description="Renders one saved camera, or the current editor view, to paired RGB and depth."
+                footer={(
+                    <>
+                        <Button size="compact" onClick={() => setClipOpen(false)}>Close</Button>
+                        <Button
+                            size="compact"
+                            variant="primary"
+                            disabled={submitting || !clipPreflight?.ok || Boolean(clipPreflightError) || (clipProfile !== "corridor" && !clipRequest)}
+                            onClick={submitClip}
+                        >
+                            {submitting ? <SpinnerGap {...ICON} aria-hidden="true" /> : <VideoCamera {...ICON} aria-hidden="true" />}
+                            Start clip
+                        </Button>
+                    </>
+                )}
+            >
+                <div className={styles.launchForm}>
+                    <Field label="Profile">
+                        <NativeSelect value={clipProfile} onChange={(event) => {
+                            const next = event.target.value;
+                            setClipProfile(next);
+                            setClipRenderer(next === "environment" ? "pbr" : "analytic");
+                            setClipViewport(null);
+                        }}>
+                            <option value="environment">Saved environment</option>
+                            <option value="cosmos-nano">Cosmos nano</option>
+                            <option value="corridor">Analytic corridor</option>
+                        </NativeSelect>
+                    </Field>
+                    {clipProfile === "corridor" ? (
+                        <p className={styles.launchLimits}>
+                            cosmos-nano-clip stays on the analytic corridor at 1280×720, 121 frames, and 30 fps. The open scene is not used.
+                        </p>
+                    ) : (
+                        <>
+                            <p className={styles.launchLimits}>
+                                {clipProfile === "cosmos-nano"
+                                    ? "Cosmos locks 1280×720, 121 frames, and 30 fps. Timing and products cannot be edited."
+                                    : "Defaults are 4 seconds at 1280×720, using the camera’s authored rate and pbr-mesh@1."}
+                            </p>
+                            <Field label="Run manifest">
+                                <NativeSelect value={clipManifestId} onChange={(event) => {
+                                    setClipManifestId(event.target.value);
+                                    setClipViewport(null);
+                                    setClipActionTape(null);
+                                    setClipTapeName("");
+                                }}>
+                                    {clipManifests.map((entry) => (
+                                        <option key={entry.id} value={entry.id}>{entry.name || entry.id}</option>
+                                    ))}
+                                </NativeSelect>
+                            </Field>
+                            <Field label="Renderer">
+                                <NativeSelect value={clipRenderer} onChange={(event) => setClipRenderer(event.target.value)}>
+                                    <option value="analytic">Analytic</option>
+                                    <option value="pbr">PBR</option>
+                                </NativeSelect>
+                            </Field>
+                            <Field label="Camera">
+                                <NativeSelect value={clipCameraMode} onChange={(event) => {
+                                    setClipCameraMode(event.target.value);
+                                    setClipViewport(null);
+                                }}>
+                                    <option value="manifest">Manifest camera</option>
+                                    <option value="viewport">Current viewport</option>
+                                </NativeSelect>
+                            </Field>
+                            {clipCameraMode === "manifest" ? (
+                                <Field label="Manifest camera">
+                                    <NativeSelect value={clipCameraId} onChange={(event) => setClipCameraId(event.target.value)}>
+                                        {clipCameras.map((camera) => (
+                                            <option key={camera.id} value={camera.id}>{camera.id}</option>
+                                        ))}
+                                    </NativeSelect>
+                                </Field>
+                            ) : (
+                                <>
+                                    <Field label="Viewport attachment">
+                                        <NativeSelect value={clipAttachment} onChange={(event) => {
+                                            setClipAttachment(event.target.value);
+                                            setClipViewport(null);
+                                        }}>
+                                            <option value="map">Fixed world</option>
+                                            <option value="vehicle">Follow vehicle</option>
+                                        </NativeSelect>
+                                    </Field>
+                                    {clipAttachment === "vehicle" && (
+                                        <Field label="Vehicle">
+                                            <NativeSelect value={clipParentId} onChange={(event) => setClipParentId(event.target.value)}>
+                                                <option value="">Select a vehicle</option>
+                                                {(getRunSessionController()?.data?.vehicles?.()?.vehicles || []).map((vehicle) => {
+                                                    const id = vehicle.telemetryId || vehicle.id;
+                                                    return <option key={id} value={id}>{id}</option>;
+                                                })}
+                                                {(clipManifest?.initialState?.vehicles || []).map((vehicle) => (
+                                                    <option key={vehicle.id} value={vehicle.id}>{vehicle.id}</option>
+                                                ))}
+                                            </NativeSelect>
+                                        </Field>
+                                    )}
+                                    <Button size="compact" type="button" onClick={captureClipViewport}>Capture viewport</Button>
+                                    {clipViewport && <p>Captured {clipViewport.attachment} camera in {clipViewport.environmentId}.</p>}
+                                </>
+                            )}
+                            {clipAuthority === "candidate" && (
+                                <Field label="Action tape" hint={clipTapeName || "JSON policy action tape"}>
+                                    <TextInput
+                                        type="file"
+                                        accept="application/json,.json"
+                                        onChange={(event) => loadClipTape(event.target.files?.[0])}
+                                    />
+                                </Field>
+                            )}
+                            {clipPreflight?.resolution && (
+                                <p>
+                                    {clipPreflight.resolution.environmentId} · {clipPreflight.resolution.cameraSource}
+                                    {" "}{clipPreflight.resolution.cameraId} · {clipPreflight.resolution.renderer}
+                                    {" "}· {clipPreflight.resolution.frameCount} frames
+                                </p>
+                            )}
+                        </>
+                    )}
+                    {clipPreflight?.ok && <StatusMessage tone="success" title="Ready">The clip can start.</StatusMessage>}
+                    {clipPreflight && !clipPreflight.ok && (
+                        <StatusMessage tone="danger" title="Cannot start">{clipPreflight.issues.join(" ")}</StatusMessage>
+                    )}
+                    {clipProfile !== "corridor" && clipAuthority === "candidate" && !clipActionTape && (
+                        <StatusMessage tone="danger" title="Action tape required">Candidate runs need a JSON action tape.</StatusMessage>
+                    )}
+                    {clipPreflightError && <StatusMessage tone="danger" title="Preflight failed">{clipPreflightError}</StatusMessage>}
+                </div>
             </DialogSurface>
         </WorkspaceFrame>
     );

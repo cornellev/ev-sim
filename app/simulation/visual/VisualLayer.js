@@ -620,9 +620,20 @@ function normalizeMaterial(value, path) {
     };
 }
 
+function normalizeBounds(value, path) {
+    const source = plainObject(value, path);
+    assertKeys(source, ["min", "max"], path);
+    const min = vector(source.min, 3, `${path}.min`);
+    const max = vector(source.max, 3, `${path}.max`);
+    for (let index = 0; index < 3; index += 1) {
+        if (min[index] > max[index]) fail(path, "min must not exceed max");
+    }
+    return { min, max };
+}
+
 function normalizeInstance(value, path) {
     const source = plainObject(value, path);
-    assertKeys(source, ["id", "assetUri", "lodLevels", "matrix", "chunkIds", "materialIds"], path);
+    assertKeys(source, ["id", "assetUri", "lodLevels", "matrix", "chunkIds", "materialIds", "bounds"], path);
     const assetUri = digestUri(source.assetUri, `${path}.assetUri`);
     let lodLevels;
     if (source.lodLevels === undefined) {
@@ -636,6 +647,7 @@ function normalizeInstance(value, path) {
         if (new Set(lodLevels).size !== lodLevels.length) fail(`${path}.lodLevels`, "contains duplicate entries");
     }
     if (lodLevels[0] !== assetUri) fail(`${path}.lodLevels.0`, "must match the primary assetUri");
+    const bounds = source.bounds === undefined ? null : normalizeBounds(source.bounds, `${path}.bounds`);
     return {
         id: string(source.id, `${path}.id`, { identifier: true }),
         assetUri,
@@ -643,6 +655,7 @@ function normalizeInstance(value, path) {
         matrix: matrix(source.matrix, `${path}.matrix`),
         chunkIds: uniqueSorted(source.chunkIds ?? [], `${path}.chunkIds`),
         materialIds: uniqueSorted(source.materialIds ?? [], `${path}.materialIds`),
+        ...(bounds ? { bounds } : {}),
     };
 }
 

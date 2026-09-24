@@ -52,25 +52,25 @@ function clamp(value, min, max) {
 /**
  * Peak absolute path curvature |dθ/ds| over [fromDistance, fromDistance + horizon].
  */
-export function previewPathCurvature(points, fromDistance, horizonMeters) {
-    const arc = buildArcLengthPolyline(points, FOLLOW_DISTANCE_METRIC);
-    if (arc.polyline.length < 2 || arc.totalLength <= EPSILON) return 0;
+export function previewPathCurvature(points, fromDistance, horizonMeters, arc = null) {
+    const resolved = arc ?? buildArcLengthPolyline(points, FOLLOW_DISTANCE_METRIC);
+    if (resolved.polyline.length < 2 || resolved.totalLength <= EPSILON) return 0;
     const start = Math.max(0, finiteNumber(fromDistance, 0));
-    const end = Math.min(arc.totalLength, start + Math.max(EPSILON, finiteNumber(horizonMeters, CURVATURE_PREVIEW_MIN_M)));
+    const end = Math.min(resolved.totalLength, start + Math.max(EPSILON, finiteNumber(horizonMeters, CURVATURE_PREVIEW_MIN_M)));
     if (end <= start + EPSILON) return 0;
 
     let peak = 0;
-    for (let index = 0; index < arc.polyline.length - 1; index += 1) {
-        const segStart = arc.cumulativeDistances[index];
-        const segEnd = arc.cumulativeDistances[index + 1];
+    for (let index = 0; index < resolved.polyline.length - 1; index += 1) {
+        const segStart = resolved.cumulativeDistances[index];
+        const segEnd = resolved.cumulativeDistances[index + 1];
         if (segEnd < start - EPSILON || segStart > end + EPSILON) continue;
-        const a = arc.polyline[index];
-        const b = arc.polyline[index + 1];
+        const a = resolved.polyline[index];
+        const b = resolved.polyline[index + 1];
         const ds = Math.hypot(b.x - a.x, b.z - a.z);
         if (ds <= EPSILON) continue;
         let nextHeading;
-        if (index + 2 < arc.polyline.length) {
-            const c = arc.polyline[index + 2];
+        if (index + 2 < resolved.polyline.length) {
+            const c = resolved.polyline[index + 2];
             nextHeading = Math.atan2(c.x - b.x, c.z - b.z);
         } else {
             nextHeading = Math.atan2(b.x - a.x, b.z - a.z);
@@ -122,6 +122,7 @@ export function routeFollowerCommand({
         minDistanceAlong: forwardMin,
         maxDistanceAlong: forwardMax,
         distanceMetric: FOLLOW_DISTANCE_METRIC,
+        arc,
     });
     const along = finiteNumber(projection?.distanceAlong, 0);
     const remainingAlong = arc.totalLength - along;
@@ -137,7 +138,7 @@ export function routeFollowerCommand({
         cruise,
     ));
     const lookaheadM = clamp(LOOKAHEAD_GAIN * Math.max(speedHint, Math.abs(cruise)), LOOKAHEAD_MIN_M, LOOKAHEAD_MAX_M);
-    const target = pointAtDistance(arc.polyline, along + lookaheadM) ?? end;
+    const target = pointAtDistance(arc.polyline, along + lookaheadM, arc) ?? end;
 
     const dx = finiteNumber(target.x) - pose.x;
     const dz = finiteNumber(target.z) - pose.z;
@@ -149,7 +150,7 @@ export function routeFollowerCommand({
     const steeringRad = clamp(rawSteer, -limits.maxSteeringAngle, limits.maxSteeringAngle);
 
     const horizon = Math.max(lookaheadM, CURVATURE_PREVIEW_MIN_M);
-    const kappa = previewPathCurvature(arc.polyline, along, horizon);
+    const kappa = previewPathCurvature(arc.polyline, along, horizon, arc);
     let speedMps = cruise;
     if (Math.abs(cruise) > EPSILON && kappa > EPSILON) {
         const limited = CURVATURE_SPEED_GAIN / kappa;

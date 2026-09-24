@@ -1,5 +1,6 @@
 /** Compile pinned v2 asset appearance into ordinary visual-layer v1 records. */
 
+import { transformAabb } from "../simulation/visual/GlbBounds.js";
 import {
     VISUAL_ASSET_PROFILE,
     VISUAL_LAYER_KIND,
@@ -19,7 +20,8 @@ function instanceMatrix(asset) {
     ];
 }
 
-function rootUseHashes(input) {
+/** Model root plus every published appearance texture, including replacements the source GLTF does not reference. */
+export function assetVisualLayerRootUseHashes(input) {
     return [
         input.revision.modelUseHash,
         ...input.revision.appearance.flatMap((material) => material.textures.map((texture) => texture.useHash)),
@@ -55,7 +57,7 @@ export function compileAssetVisualLayer({ world, inputs = [], closureUses = [] }
     const bindings = [];
     const truthIds = new Set((world?.description?.assetProxies ?? []).map((entry) => String(entry.sourceId)));
     for (const input of [...inputs].sort((left, right) => String(left.record.id).localeCompare(String(right.record.id)))) {
-        const roots = rootUseHashes(input);
+        const roots = assetVisualLayerRootUseHashes(input);
         const reached = reachableUses(roots, usesByHash);
         for (const [useHash, use] of reached) allUses.set(useHash, use);
         const asset = readAssetBinding(input.record);
@@ -68,11 +70,14 @@ export function compileAssetVisualLayer({ world, inputs = [], closureUses = [] }
         const id = `asset:${input.record.id}`;
         const chunkId = `asset-chunk:${input.record.id}`;
         const dependencyUris = [...new Set([...reached.values()].map((use) => `sha256:${use.asset.sha256}`))].sort();
+        const matrix = instanceMatrix(asset);
+        const bounds = input.meshBounds ? transformAabb(matrix, input.meshBounds) : null;
         instances.push({
             id,
             assetUri: `sha256:${modelUse.asset.sha256}`,
             lodLevels: [`sha256:${modelUse.asset.sha256}`],
-            matrix: instanceMatrix(asset),
+            matrix,
+            ...(bounds ? { bounds } : {}),
             chunkIds: [chunkId],
             materialIds: input.revision.appearance.map((material) => material.id).sort(),
         });
@@ -95,7 +100,7 @@ export function compileAssetVisualLayer({ world, inputs = [], closureUses = [] }
     return {
         description,
         assetUses: [...allUses].map(([useHash, use]) => ({ sha256: use.asset.sha256, useHash })).sort((left, right) => left.sha256.localeCompare(right.sha256)),
-        rootUseHashes: [...new Set(inputs.flatMap(rootUseHashes))].sort(),
+        rootUseHashes: [...new Set(inputs.flatMap(assetVisualLayerRootUseHashes))].sort(),
     };
 }
 

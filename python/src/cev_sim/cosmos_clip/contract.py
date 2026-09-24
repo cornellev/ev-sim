@@ -1,5 +1,7 @@
 """Shared constants for a Cosmos 3 Nano transfer clip."""
 
+from cev_sim.clip.contract import ClipError as ClipError
+
 CLIP_KIND = "cev-sim.cosmos-clip"
 CLIP_VERSION = 1
 FRAME_COUNT = 121
@@ -62,10 +64,6 @@ DEPTH_VISUALIZATION = {
     "pixelFormat": "yuv420p",
     "crf": 0,
 }
-
-
-class ClipError(Exception):
-    """A clip export or check rejection."""
 
 
 def clip_directory_name(episode_hash: str, camera_id: str, window_index: int) -> str:

@@ -59,6 +59,14 @@ export function projectPointToSegment(point, start, end) {
     };
 }
 
+let arcLengthBuildCount = 0;
+
+export function takeArcLengthBuildCount() {
+    const count = arcLengthBuildCount;
+    arcLengthBuildCount = 0;
+    return count;
+}
+
 export function dedupePolyline(points, epsilon = 1e-7) {
     const result = [];
     for (const value of points ?? []) {
@@ -73,6 +81,7 @@ export function dedupePolyline(points, epsilon = 1e-7) {
 }
 
 export function buildArcLengthPolyline(points, distanceMetric = "3d") {
+    arcLengthBuildCount += 1;
     const polyline = dedupePolyline(points);
     const cumulativeDistances = [];
     let totalLength = 0;
@@ -127,7 +136,7 @@ export function sampleArcLengthPolyline(points, percent, distanceMetric = "3d") 
 
 export function projectPointToPolyline(value, points, options = {}) {
     const point = pointFrom(value);
-    const arc = buildArcLengthPolyline(points, options.distanceMetric ?? "3d");
+    const arc = options.arc ?? buildArcLengthPolyline(points, options.distanceMetric ?? "3d");
     if (!point || arc.polyline.length === 0) return null;
     if (arc.polyline.length === 1) {
         return {

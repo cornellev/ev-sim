@@ -10,13 +10,18 @@ from pathlib import Path
 
 import numpy as np
 
-from cev_sim.config import GPU_SENSOR_CAPABILITY, GPU_SENSOR_CONFIG_HASH, GPU_SENSOR_VERSION
+from cev_sim.config import (
+    GPU_SENSOR_CAPABILITY,
+    GPU_SENSOR_CONFIG_HASH,
+    GPU_SENSOR_VERSION,
+    ROUTED_GPU_SENSOR_CONFIG_HASH,
+    ROUTED_GPU_SENSOR_VERSION,
+)
 
 from .contract import (
     ANALYTIC_RENDERER,
     CAPTURE_INTERVAL_NS,
     CLIP_KIND,
-    CLIP_VERSION,
     DEPTH_F32_BYTES,
     DEPTH_FRAME_VALUES,
     FILENAMES,
@@ -89,7 +94,8 @@ def check_clip(
     camera = _load_json(directory / "camera_info.json", errors)
     if errors or not isinstance(clip, dict) or not isinstance(camera, dict):
         raise ClipError("; ".join(errors))
-    if clip.get("kind") != CLIP_KIND or clip.get("version") != CLIP_VERSION:
+    clip_version = clip.get("version")
+    if clip.get("kind") != CLIP_KIND or clip_version not in (1, 2):
         _reject(errors, "clip.json kind or version is not cev-sim.cosmos-clip v1.")
     expected_name = clip_directory_name(
         str(clip.get("episodeHash") or ""),
@@ -103,12 +109,21 @@ def check_clip(
         _reject(errors, "clip.json geometry is not 1280x720 for 121 frames.")
     renderer = clip.get("renderer")
     resolved_renderer = clip.get("resolvedRenderer")
-    if renderer != ANALYTIC_RENDERER or resolved_renderer != ANALYTIC_RENDERER:
-        _reject(errors, "Renderer identity is not the resolved canonical-analytic v1 branch.")
     backend = clip.get("backend") or {}
-    if backend.get("capabilityId") != GPU_SENSOR_CAPABILITY or str(backend.get("version")) != GPU_SENSOR_VERSION:
+    pbr_renderer = {"id": "pbr-mesh", "version": 1}
+    if clip_version == 2 and renderer == pbr_renderer and resolved_renderer == pbr_renderer:
+        if (
+            backend.get("capabilityId") != GPU_SENSOR_CAPABILITY
+            or str(backend.get("version")) != ROUTED_GPU_SENSOR_VERSION
+        ):
+            _reject(errors, "GPU backend is not chromium-webgl2-rendered-sensors v2.")
+        if backend.get("configHash") != ROUTED_GPU_SENSOR_CONFIG_HASH:
+            _reject(errors, "GPU backend config hash does not match the routed resolver.")
+    elif renderer != ANALYTIC_RENDERER or resolved_renderer != ANALYTIC_RENDERER:
+        _reject(errors, "Renderer identity is not the resolved canonical-analytic v1 branch.")
+    elif backend.get("capabilityId") != GPU_SENSOR_CAPABILITY or str(backend.get("version")) != GPU_SENSOR_VERSION:
         _reject(errors, "GPU backend is not chromium-webgl2-rendered-sensors v1.")
-    if backend.get("configHash") != GPU_SENSOR_CONFIG_HASH:
+    elif backend.get("configHash") != GPU_SENSOR_CONFIG_HASH:
         _reject(errors, "GPU backend config hash does not match the resolver.")
     noise = clip.get("noise") or {}
     if noise.get("model") != "none" or any(float(noise.get(key) or 0) != 0 for key in (

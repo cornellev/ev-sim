@@ -117,6 +117,7 @@ export function buildCalibrationBundle(manifest, options = {}) {
                 schema: structuredClone(sensor.schema || {}),
                 health: structuredClone(sensor.health || {}),
                 noise: structuredClone(sensor.noise || {}),
+                ...(sensor.poseReference === "map" ? { poseReference: "map" } : {}),
                 ...(sensor.render ? { render: structuredClone(sensor.render) } : {}),
                 schedule,
             };
@@ -125,9 +126,10 @@ export function buildCalibrationBundle(manifest, options = {}) {
     const staticTransforms = [];
     for (const sensor of sensors) {
         if (sensor.enabled === false) continue;
+        const parentFrameId = sensor.poseReference === "map" ? mapFrameId : rootFrameId;
         staticTransforms.push(...staticTransformsForSensor(
             { ...sensor, pose: sensors.find((entry) => entry.id === sensor.id)?.pose },
-            rootFrameId,
+            parentFrameId,
         ));
     }
     staticTransforms.sort((left, right) => {

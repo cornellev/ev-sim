@@ -199,6 +199,52 @@ export function buildTFMessage(transforms = []) {
 }
 
 /** Compose REP-103 poses: parent * child (child rotation as euler or quaternion). */
+/** Inverse of a REP-103 pose. Rotation may be an XYZ Euler or a quaternion. */
+export function invertRep103Pose(pose = {}) {
+    const rotation = pose.rotation?.w !== undefined
+        ? pose.rotation
+        : eulerToQuaternion(pose.rotation || {});
+    const inverse = quaternionInverse(rotation);
+    const translated = rotateVectorByQuaternion(pose.position || { x: 0, y: 0, z: 0 }, inverse);
+    return {
+        position: { x: -translated.x, y: -translated.y, z: -translated.z },
+        rotation: inverse,
+    };
+}
+
+/** Express a world REP-103 pose in the parent's local frame. */
+export function rep103PoseRelativeTo(parent, world) {
+    return composeRep103Poses(invertRep103Pose(parent), world);
+}
+
+/**
+ * Remove the Three.js optical look (yaw −90° about +Y) and convert the remaining
+ * mount into a REP-103 camera-link pose.
+ */
+export function threeCameraPoseToRep103Mount(cameraPose = {}) {
+    const cameraRotation = cameraPose.rotation?.w !== undefined
+        ? cameraPose.rotation
+        : eulerToQuaternion(cameraPose.rotation || {});
+    const mountRotation = quaternionMultiply(
+        cameraRotation,
+        quaternionInverse(threeCameraLookAlongMountForwardRotation()),
+    );
+    return threePoseToRep103({
+        position: cameraPose.position,
+        rotation: quaternionToEuler(mountRotation),
+    });
+}
+
+/** Apply the Three.js optical look after converting a REP-103 mount into Three space. */
+export function rep103MountToThreeCameraPose(mountPose = {}) {
+    const threeMount = rep103PoseToThree(mountPose);
+    const mountRotation = eulerToQuaternion(threeMount.rotation);
+    return {
+        position: threeMount.position,
+        rotation: quaternionMultiply(mountRotation, threeCameraLookAlongMountForwardRotation()),
+    };
+}
+
 export function composeRep103Poses(parent, child) {
     const pQ = parent.rotation?.w !== undefined
         ? parent.rotation

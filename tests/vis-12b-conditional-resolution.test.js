@@ -4,6 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { compileAssetDefinition } from "../app/editor-assets/AssetCompiler.js";
+import { createEmptyAssetDefinition } from "../app/editor-assets/AssetDefinition.js";
+import { assetMetricDefinitionFromRevision } from "../app/editor-assets/AssetMetricSnapshot.js";
 import { createDefaultScenario } from "../app/scenarios/ScenarioDocument.js";
 import { verifyRoute } from "../app/scenarios/route/Route.js";
 import { createDefaultRunManifest, computeResolvedRunHash } from "../app/simulation/RunManifest.js";
@@ -597,6 +600,24 @@ test("VIS-12b integrity rejects rehashed inner tampering, profile drift, and dup
         colorPipeline: { exposure: -0 },
     });
     assert.equal(Object.is(negativeZero.colorPipeline.exposure, -0), false);
+    assert.equal(Object.hasOwn(normalizePbrRenderRecipe({}), "sky"), false);
+    const withSky = normalizePbrRenderRecipe({
+        sky: {
+            mode: "takram",
+            takram: { timeOfDay: 14.4, date: "2026-06-28" },
+            image: {
+                url: "assets/skybox/sky.exr",
+                exposure: 1,
+                localPreviewUrl: "blob:preview",
+                localPreviewName: "preview.png",
+            },
+        },
+    });
+    assert.equal(withSky.sky.mode, "takram");
+    assert.equal(withSky.sky.takram.timeOfDay, 14.4);
+    assert.equal(withSky.sky.takram.date, "2026-06-28");
+    assert.equal(Object.hasOwn(withSky.sky.image, "localPreviewUrl"), false);
+    assert.deepEqual(normalizePbrRenderRecipe(withSky).sky, withSky.sky);
     assert.throws(() => normalizePbrRenderRecipe({ kind: "cev-sim.pbr-render-recipe", version: 2 }), /version 1/);
     assert.throws(() => normalizePbrRenderRecipe({ actors: [{ actorId: "e\u0301go" }] }), /NFC/);
 });
@@ -706,4 +727,148 @@ test("VIS-12b JSON import rejects missing local dependencies without installing 
     const imported = await target.importRunBundle(bundle);
     assert.equal(imported.renderRecipe.kind, "cev-sim.pbr-render-recipe");
     assert.deepEqual(await fs.readdir(target.visualAssets.casDir), casEntriesBefore);
+});
+
+test("VIS-12b closes a replacement appearance texture that the source GLTF does not reference", async (t) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "cev-vis12b-appearance-"));
+    t.after(() => fs.rm(directory, { recursive: true, force: true }));
+    const registryPath = await writeRegistry(directory, [ownedGrant()]);
+    const service = new StorageService(directory, {
+        visualAssets: { registryPath },
+        assetStudioEnabled: true,
+    });
+    await service.visualAssets.initialize();
+    const source = await publishAsset(service.visualAssets, makeNamedMaterialGlb("factory-red"), {
+        mediaType: "model/gltf-binary",
+        role: "mesh",
+    });
+    const texture = await publishAsset(service.visualAssets, makePng({ red: 12, green: 34, blue: 56 }), {
+        mediaType: "image/png",
+        role: "texture",
+    });
+    const geometry = { 0: { vertices: [[-1, 0, -1], [1, 0, -1], [0, 2, 0]], triangles: [[0, 1, 2]] } };
+    const definition = createEmptyAssetDefinition({ modelUseHash: source.useHash, name: "Body" });
+    definition.materials.push({
+        id: "paint",
+        mode: "metallic-roughness",
+        alphaMode: "OPAQUE",
+        alphaCutoff: 0.5,
+        doubleSided: false,
+        parameters: {
+            baseColorFactor: [1, 1, 1, 1],
+            metallicFactor: 0,
+            roughnessFactor: 0.8,
+            emissiveFactor: [0, 0, 0],
+            emissiveStrength: 1,
+            normalScale: 1,
+            occlusionStrength: 1,
+            clearcoatFactor: 0,
+            clearcoatRoughnessFactor: 0,
+            sheenColorFactor: [0, 0, 0],
+            sheenRoughnessFactor: 0,
+            specularFactor: 1,
+            specularColorFactor: [1, 1, 1],
+        },
+        textures: [{
+            slot: "baseColor",
+            useHash: texture.useHash,
+            assetUri: `sha256:${texture.use.asset.sha256}`,
+            texCoord: 0,
+            transform: { offset: [0, 0], rotation: 0, scale: [1, 1] },
+        }],
+        extensions: [],
+    });
+    definition.parts[0].materialBindings.default = "paint";
+    const compiled = compileAssetDefinition(definition, { sourceGeometries: { source: geometry } });
+    const child = await service.editorAssets.publishRevision({
+        assetId: "painted-child",
+        name: "Painted child",
+        publicationId: "appearance-texture",
+        expectedAssetRevision: 0,
+        modelUseHash: source.useHash,
+        definition,
+        metric: compiled.metric,
+        metricHash: compiled.metricHash,
+        appearance: compiled.materials,
+    }, 0);
+    const assemblyDefinition = createEmptyAssetDefinition();
+    assemblyDefinition.parts.push({
+        id: "child-ref",
+        parentId: null,
+        order: 0,
+        name: "Pinned child",
+        transform: { position: [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] },
+        content: { kind: "asset-reference", assetId: "painted-child", revision: child.revision.revision },
+        appearanceVisible: true,
+        materialBindings: {},
+    });
+    const assemblyCompiled = compileAssetDefinition(assemblyDefinition, {
+        resolvedChildren: { [`painted-child@${child.revision.revision}`]: child.revision },
+    });
+    const assembly = await service.editorAssets.publishRevision({
+        assetId: "painted-assembly",
+        name: "Painted assembly",
+        publicationId: "appearance-assembly",
+        expectedAssetRevision: 0,
+        modelUseHash: child.revision.modelUseHash,
+        definition: assemblyDefinition,
+        metric: assemblyCompiled.metric,
+        metricHash: assemblyCompiled.metricHash,
+        appearance: assemblyCompiled.materials,
+    }, 1);
+    const definitionTextures = assembly.revision.definition.materials.flatMap((material) => material.textures.map((entry) => entry.useHash));
+    assert.equal(definitionTextures.includes(texture.useHash), false);
+    assert.equal(assembly.revision.appearance.some((material) => material.textures.some((entry) => entry.useHash === texture.useHash)), true);
+    const compiledUse = await service.visualAssets.getUse(assembly.revision.modelUseHash);
+    assert.equal(Object.values(compiledUse.dependencies || {}).includes(texture.useHash), false);
+
+    const created = await service.createEnvironment({ id: "appearance-yard", name: "Appearance yard" });
+    const metric = assetMetricDefinitionFromRevision("painted-assembly", assembly.revision);
+    await service.putEnvironment("appearance-yard", {
+        manifest: {
+            ...created,
+            document: {
+                ...created.document,
+                objects: [...(created.document.objects || []), {
+                    id: "painted-instance",
+                    typeId: "asset-instance",
+                    typeVersion: 2,
+                    name: "Painted",
+                    parentId: null,
+                    order: 1,
+                    components: {
+                        tags: [],
+                        locked: false,
+                        editorHidden: false,
+                        asset: {
+                            assetId: "painted-assembly",
+                            revision: assembly.revision.revision,
+                            position: { x: 0, y: 0, z: 0 },
+                            rotationY: 0,
+                            scale: { x: 1, y: 1, z: 1 },
+                            overrides: {},
+                        },
+                    },
+                }],
+                assetMetrics: { version: 1, definitions: [metric] },
+            },
+        },
+        expectedRevision: created.revision,
+        supportedAssetMetricVersions: [1],
+        supportedEditorSourceVersions: [1],
+    });
+    const manifest = createDefaultRunManifest({ id: "appearance-pbr" });
+    manifest.environment = { id: "appearance-yard", expectedHash: null };
+    manifest.sensorRig.sensors.find((sensor) => sensor.type === "camera").render = pbrSelection();
+    await service.createRunManifest(manifest);
+    const resolved = await service.resolveRunManifest("appearance-pbr");
+    assert.equal(resolved.renderScene.description.provider.id, "pbr-mesh");
+    assert.equal(resolved.renderScene.description.provider.version, 1);
+    assert.equal(resolved.evidence.visualAssets.uses.some((entry) => entry.useHash === texture.useHash), true);
+    const exported = await service.exportRunPackage({ manifestId: "appearance-pbr" });
+    const chunks = [];
+    for await (const chunk of exported.stream) chunks.push(Buffer.from(chunk));
+    const completion = await exported.completion;
+    assert.ok(Buffer.concat(chunks).length > 0);
+    assert.equal(completion.assetCount > 0, true);
 });

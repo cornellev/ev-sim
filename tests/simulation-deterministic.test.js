@@ -501,3 +501,27 @@ test("realtime advanceSimulation respects step budget and leaves accumulator deb
     assert.equal(engine.steps, 1);
     assert.ok(engine.accumulatorNs >= engine.stepNs * 8);
 });
+
+test("async frame captures GPU sensors on the first substep only", async () => {
+    const { engine } = harness({ nowMs: () => 0, realtimeStepBudgetMs: 1000 });
+    engine.deterministic = true;
+    engine.realtime = true;
+    engine.speed = 1;
+    engine.stepNs = 20_000_000;
+    engine.fixedDt = 0.02;
+    engine.maxSubSteps = 4;
+    engine.accumulatorNs = 0;
+    engine.gpuCaptureEnabled = true;
+    engine.autonomyOverlay.updateFromRuntime = () => {};
+    let captures = 0;
+    engine.kernel.advanceStepAsync = async () => {
+        engine.steps += 1;
+        if (engine.gpuCaptureEnabled) captures += 1;
+        return true;
+    };
+    await engine._advanceSimulationAsync(0.05);
+    assert.equal(engine.steps, 2);
+    assert.equal(captures, 1);
+    assert.equal(engine.gpuCaptureEnabled, false);
+    engine.dispose();
+});

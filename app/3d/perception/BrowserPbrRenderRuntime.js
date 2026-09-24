@@ -8,6 +8,7 @@ import {
 } from "../../simulation/render/PbrRenderScene.js";
 import {
     VISUAL_CAPTURE_PASS_FAMILIES,
+    canonicalizeAnalyticBindings,
     createOwnedCaptureScene,
     createVisualCaptureInput,
     createVisualCapturePassSet,
@@ -17,9 +18,13 @@ import {
     sanitizeMeasuredAppearanceObject,
 } from "../environment/visual/VisualLayerMaterializer.js";
 import { VisualAssetClient } from "../environment/visual/VisualAssetClient.js";
+import { installImageSky, installTakramSky, releaseTakramSky } from "./PbrAppearanceSky.js";
+import { addPbrRoadMarkings } from "./PbrRoadMarkings.js";
 import { rep103PoseToThree } from "../../autonomy/CoordinateFrames.js";
 
 const PROVIDER = Object.freeze({ id: "pbr-mesh", version: 1 });
+const ROAD_SURFACE_COLOR = 0x2d3034;
+const ROAD_SURFACE_ELEVATION = 0.015;
 
 function infrastructureError(error, fallbackCode = "PBR_RENDER_RUNTIME_FAILED") {
     const result = error instanceof Error ? error : new Error(String(error || "PBR render runtime failed."));
@@ -101,6 +106,16 @@ function vehicleMatrix(vehicle) {
     );
 }
 
+function matrixElementsMatch(matrix, next) {
+    const left = matrix?.elements;
+    const right = next?.elements;
+    if (!left || !right || left.length !== right.length) return false;
+    for (let index = 0; index < left.length; index += 1) {
+        if (left[index] !== right[index]) return false;
+    }
+    return true;
+}
+
 function actorId(vehicle, index) {
     return String(vehicle?.telemetryId || vehicle?.id || `vehicle-${index + 1}`);
 }
@@ -163,11 +178,14 @@ function initialCameraPositions(sensorRig, vehicles) {
     return (sensorRig?.sensors ?? [])
         .filter((sensor) => sensor.enabled !== false && sensor.type === "camera")
         .map((sensor) => {
+            const local = rep103PoseToThree(sensor.pose).position;
+            if (sensor.poseReference === "map") {
+                return { x: local.x, y: local.y, z: local.z };
+            }
             const vehicle = byId.get(sensor.parentId);
             if (!vehicle) {
                 throw new Error(`Camera "${sensor.id}" references missing vehicle "${sensor.parentId}".`);
             }
-            const local = rep103PoseToThree(sensor.pose).position;
             const world = new THREE.Vector3(local.x, local.y, local.z)
                 .applyMatrix4(vehicleMatrix(vehicle));
             return { x: world.x, y: world.y, z: world.z };
@@ -180,11 +198,13 @@ export class BrowserPbrRenderRuntime {
         renderer,
         assetClient = new VisualAssetClient(),
         materializerFactory = (options) => new VisualLayerMaterializer(options),
+        installTakramSky: installTakramSkyOverride = null,
         vehicles = () => [],
     } = {}) {
         this.renderer = renderer;
         this.assetClient = assetClient;
         this.materializerFactory = materializerFactory;
+        this.installTakramSky = installTakramSkyOverride;
         this.vehicleSource = vehicles;
         this.generation = 0;
         this.controller = null;
@@ -195,14 +215,18 @@ export class BrowserPbrRenderRuntime {
         this.analyticSceneHandle = null;
         this.analyticRenderables = new Map();
         this.analyticBindings = [];
+        this._semanticIds = null;
         this.actorGroups = new Map();
         this.assetLeases = [];
         this.ownedActorMaterials = [];
         this.environmentTextureLease = null;
         this.environmentTexture = null;
+        this.skyInstallation = null;
         this.rootUseHashes = [];
         this.renderPolicy = null;
         this.listeners = new Set();
+        this._rightsCache = new Map();
+        this._rightsInflight = new Map();
         this.status = this._snapshot("idle");
     }
 
@@ -223,9 +247,7 @@ export class BrowserPbrRenderRuntime {
             captureMode: "calibrated-projection@1",
             captureSceneHandle: this.appearanceSceneHandle,
             analyticSceneHandle: this.analyticSceneHandle,
-            authorizeSourceUse: ({ useHash, operations }) => (
-                this.assetClient.validateClosure({ useHash, operations })
-            ),
+            authorizeSourceUse: (request) => this.authorizeSourceUse(request),
             renderPolicy: this.renderPolicy,
         };
     }
@@ -252,6 +274,7 @@ export class BrowserPbrRenderRuntime {
             this.analyticScene = new THREE.Scene();
             this._configureRecipe(description.recipe);
             this._buildAnalyticScene(description.analyticTruth.description, description.actors);
+            addPbrRoadMarkings(this.appearanceScene, resolved.world?.description?.roads);
 
             const uses = new Map(resolved.evidence.visualAssets.uses.map((entry) => [
                 entry.useHash,
@@ -284,10 +307,13 @@ export class BrowserPbrRenderRuntime {
 
             await this._buildActorAppearances(description.actors, resolved.evidence.visualAssets.roots);
             await this._loadEnvironmentMap(description.recipe, resolved.evidence.visualAssets.roots);
+            await this._installSky(description.recipe.sky);
             this._throwIfStale(generation);
             this.rootUseHashes = [...new Set(
                 resolved.evidence.visualAssets.roots.map((entry) => entry.useHash),
             )].sort();
+            await this._warmCaptureRights(this.controller?.signal);
+            this._throwIfStale(generation);
             this.appearanceScene.updateMatrixWorld(true);
             this.analyticScene.updateMatrixWorld(true);
             this.appearanceSceneHandle = createOwnedCaptureScene({
@@ -387,7 +413,7 @@ export class BrowserPbrRenderRuntime {
                 rgb: captured.visual?.products?.beauty ?? null,
                 depth: depth ?? null,
                 semantic: analytic?.semanticId
-                    ? Uint16Array.from(analytic.semanticId)
+                    ? this._semanticIdsFrom(analytic.semanticId)
                     : null,
                 instance: analytic?.instanceId ?? null,
             };
@@ -428,6 +454,7 @@ export class BrowserPbrRenderRuntime {
         const actorById = new Map(actorDescriptions.map((entry) => [entry.actorId, entry]));
         for (const primitive of analyticTruth.staticPrimitives) {
             this._addAnalyticPrimitive(primitive, this.analyticScene);
+            this._addRoadAppearance(primitive);
         }
         for (const actor of analyticTruth.actors) {
             const analyticGroup = new THREE.Group();
@@ -451,6 +478,7 @@ export class BrowserPbrRenderRuntime {
                 primitives: actor.primitives,
             });
         }
+        this.analyticBindings = canonicalizeAnalyticBindings(this.analyticBindings);
     }
 
     _addAnalyticPrimitive(primitive, parent) {
@@ -462,6 +490,40 @@ export class BrowserPbrRenderRuntime {
             semanticId: primitive.semanticId,
             instanceId: primitive.instanceId,
         });
+    }
+
+    _addRoadAppearance(primitive) {
+        if (!Array.isArray(primitive.tags) || !primitive.tags.includes("road")) return;
+        const mesh = primitiveMesh(primitive, { appearance: true });
+        mesh.material.color.setHex(ROAD_SURFACE_COLOR);
+        mesh.material.roughness = 0.9;
+        mesh.material.metalness = 0;
+        // Corrected capture rejects polygon offset. The editor lifts road
+        // surfaces by this elevation so they win a coplanar depth test.
+        mesh.position.y += ROAD_SURFACE_ELEVATION;
+        mesh.renderOrder = 1;
+        mesh.userData.cevSimRoadAppearance = true;
+        this.appearanceScene.add(mesh);
+    }
+
+    async _installSky(sky) {
+        if (!sky) return;
+        if (sky.mode === "image") {
+            const texture = await installImageSky({ scene: this.appearanceScene, sky });
+            if (this.environmentTexture && this.environmentTexture !== texture) {
+                this.environmentTexture.dispose?.();
+            }
+            this.environmentTexture = texture;
+            return;
+        }
+        if (sky.mode !== "takram") return;
+        const install = this.installTakramSky ?? installTakramSky;
+        const installed = await install({
+            scene: this.appearanceScene,
+            renderer: this.renderer,
+            sky,
+        });
+        this.skyInstallation = installed ?? null;
     }
 
     async _buildActorAppearances(actors, roots) {
@@ -514,17 +576,33 @@ export class BrowserPbrRenderRuntime {
         this.environmentTexture = texture;
     }
 
+    _semanticIdsFrom(ids) {
+        if (!this._semanticIds || this._semanticIds.length !== ids.length) {
+            this._semanticIds = new Uint16Array(ids.length);
+        }
+        for (let index = 0; index < ids.length; index += 1) this._semanticIds[index] = ids[index];
+        return this._semanticIds;
+    }
+
     _updateActors(vehicles) {
         const byId = new Map(vehicles.map((vehicle, index) => [actorId(vehicle, index), vehicle]));
         for (const [id, groups] of this.actorGroups) {
             const vehicle = byId.get(id);
             if (!vehicle) throw new Error(`Resolved PBR actor "${id}" is not present in the simulation.`);
             const matrix = vehicleMatrix(vehicle);
-            groups.analytic.matrix.copy(matrix);
-            groups.appearance.matrix.copy(matrix);
+            const analyticMoved = !matrixElementsMatch(groups.analytic.matrix, matrix);
+            const appearanceMoved = !matrixElementsMatch(groups.appearance.matrix, matrix);
+            if (analyticMoved) {
+                groups.analytic.matrix.copy(matrix);
+                groups.analytic.matrixWorldNeedsUpdate = true;
+                groups.analytic.updateMatrixWorld(true);
+            }
+            if (appearanceMoved) {
+                groups.appearance.matrix.copy(matrix);
+                groups.appearance.matrixWorldNeedsUpdate = true;
+                groups.appearance.updateMatrixWorld(true);
+            }
         }
-        this.appearanceScene?.updateMatrixWorld?.(true);
-        this.analyticScene?.updateMatrixWorld?.(true);
     }
 
     _vehicles() {
@@ -569,6 +647,9 @@ export class BrowserPbrRenderRuntime {
     }
 
     _releaseResources() {
+        releaseTakramSky(this.skyInstallation);
+        this.skyInstallation = null;
+        if (this.appearanceScene?.userData) delete this.appearanceScene.userData.cevSimBeautyComposer;
         this.environmentTexture?.dispose?.();
         this.environmentTexture = null;
         this.environmentTextureLease?.release?.();
@@ -587,8 +668,50 @@ export class BrowserPbrRenderRuntime {
         this.analyticSceneHandle = null;
         this.analyticRenderables = new Map();
         this.analyticBindings = [];
+        this._semanticIds = null;
         this.actorGroups = new Map();
         this.rootUseHashes = [];
         this.renderPolicy = null;
+        this._rightsCache?.clear();
+        this._rightsInflight?.clear();
+    }
+
+    _rightsKey(useHash, operations) {
+        return `${useHash}\0${[...operations].sort().join(",")}`;
+    }
+
+    async authorizeSourceUse({ useHash, operations = [] } = {}) {
+        const key = this._rightsKey(useHash, operations);
+        if (this._rightsCache.has(key)) return this._rightsCache.get(key);
+        const existing = this._rightsInflight.get(key);
+        if (existing) return existing;
+        const pending = (async () => {
+            const decision = await this.assetClient.validateClosure({ useHash, operations });
+            this._rightsCache.set(key, decision);
+            return decision;
+        })();
+        this._rightsInflight.set(key, pending);
+        try {
+            return await pending;
+        } finally {
+            this._rightsInflight.delete(key);
+        }
+    }
+
+    async _warmCaptureRights(signal) {
+        const useHashes = this.rootUseHashes;
+        if (useHashes.length === 0) return;
+        const operations = [...PBR_MEASURED_ASSET_OPERATIONS];
+        if (typeof this.assetClient.validateAccessSet === "function") {
+            const decision = await this.assetClient.validateAccessSet({ useHashes, operations }, signal);
+            for (const useHash of useHashes) {
+                this._rightsCache.set(this._rightsKey(useHash, operations), Object.freeze({
+                    ...decision,
+                    useHash,
+                }));
+            }
+            return;
+        }
+        await Promise.all(useHashes.map((useHash) => this.authorizeSourceUse({ useHash, operations })));
     }
 }

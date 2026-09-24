@@ -65,8 +65,19 @@ const DISTORTION_DENOMINATOR_EPSILON = 1e-12;
 const DISTORTION_RESIDUAL_TOLERANCE = 1e-10;
 const DISTORTION_MAX_ITERATIONS = 20;
 const CALIBRATION_VALIDATION_CACHE = new WeakMap();
+const CANONICAL_CAPTURE_INPUTS = new WeakSet();
+const CANONICAL_PASS_SETS = new WeakSet();
+const CANONICAL_ANALYTIC_BINDINGS = new WeakSet();
+const OWNED_SCENE_PREVIEW_OK = new WeakMap();
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
-const textEncoder = new TextEncoder();
+let analyticBindingNormalizeCount = 0;
+
+/** Test seam. Returns and clears the number of analytic binding lists normalized from scratch. */
+export function takeAnalyticBindingNormalizeCount() {
+    const count = analyticBindingNormalizeCount;
+    analyticBindingNormalizeCount = 0;
+    return count;
+}
 
 function contractError(code, message) {
     const error = new Error(message);
@@ -192,6 +203,31 @@ function assertMatrix(value, name) {
     return freezeArray(Array.from(value, (entry, index) => finiteNumber(entry, `${name}[${index}]`)));
 }
 
+function undistortedCoefficients(model, coefficients) {
+    // Run manifests store an undistorted camera as five zeros. That vector is
+    // the same polynomial as an empty coefficient list.
+    if (model === "none" && coefficients.every((value) => Number(value) === 0)) {
+        return { model: "none", coefficients: [] };
+    }
+    return { model, coefficients };
+}
+
+function authoredDistortion(model, coefficients) {
+    if (model === "none") return undistortedCoefficients(model, coefficients);
+    // Sensor manifests name Brown–Conrady "plumb_bob". An empty list is the
+    // same camera as distortion model none.
+    if (model === "plumb_bob" && coefficients.length === 0) {
+        return { model: "none", coefficients: [] };
+    }
+    if (model === "plumb_bob" || model === "brown-conrady") {
+        return {
+            model: coefficients.length === 8 ? "rational-brown-conrady" : "brown-conrady",
+            coefficients,
+        };
+    }
+    return { model, coefficients };
+}
+
 function distortionFromSource(source = {}) {
     if (Array.isArray(source) || ArrayBuffer.isView(source)) {
         const coefficients = [...source];
@@ -205,23 +241,15 @@ function distortionFromSource(source = {}) {
         };
     }
     if (source?.model !== undefined || source?.coefficients !== undefined) {
-        return {
-            model: String(source.model ?? "none"),
-            coefficients: [...(source.coefficients || [])],
-        };
+        return authoredDistortion(
+            String(source.model ?? "none"),
+            [...(source.coefficients || [])],
+        );
     }
-    const coefficients = [...(source?.distortion || [])];
-    const authoredModel = String(source?.distortionModel || "none");
-    if (authoredModel === "none" && coefficients.length === 0) {
-        return { model: "none", coefficients };
-    }
-    if (authoredModel === "plumb_bob" || authoredModel === "brown-conrady") {
-        return {
-            model: coefficients.length === 8 ? "rational-brown-conrady" : "brown-conrady",
-            coefficients,
-        };
-    }
-    return { model: authoredModel, coefficients };
+    return authoredDistortion(
+        String(source?.distortionModel || "none"),
+        [...(source?.distortion || [])],
+    );
 }
 
 export function validateDistortion(distortion = {}) {
@@ -681,6 +709,7 @@ export function assertOwnedCaptureScene(handle, { role = null } = {}) {
             `Capture requires the ${role} scene role, received ${handle.role}.`,
         );
     }
+    if (OWNED_SCENE_PREVIEW_OK.get(handle) === handle.generation) return handle;
     let previewObject = false;
     const checkObject = (object) => {
         if (object?.userData?.cevSimVisualPreviewOnly === true
@@ -694,6 +723,7 @@ export function assertOwnedCaptureScene(handle, { role = null } = {}) {
     if (previewObject) {
         throw contractError("VISUAL_CAPTURE_SCENE_PREVIEW_REJECTED", "Display/preview scenes cannot be captured.");
     }
+    OWNED_SCENE_PREVIEW_OK.set(handle, handle.generation);
     return handle;
 }
 
@@ -708,7 +738,7 @@ export function createVisualCaptureInput({ calibration, pose, sceneHandle, captu
         rotation: pose?.quaternion ?? pose?.rotation,
     });
     const projectionMatrix = projectionMatrixFromCalibration(checkedCalibration);
-    return Object.freeze({
+    const input = Object.freeze({
         kind: VISUAL_CAPTURE_INPUT_KIND,
         version: VISUAL_CAPTURE_INPUT_VERSION,
         captureTimeNs: timestamp,
@@ -723,6 +753,8 @@ export function createVisualCaptureInput({ calibration, pose, sceneHandle, captu
         }),
         outputRows: "top-left",
     });
+    CANONICAL_CAPTURE_INPUTS.add(input);
+    return input;
 }
 
 export function assertVisualCaptureInput(input) {
@@ -732,6 +764,7 @@ export function assertVisualCaptureInput(input) {
             `Expected ${VISUAL_CAPTURE_INPUT_KIND}@${VISUAL_CAPTURE_INPUT_VERSION}.`,
         );
     }
+    if (CANONICAL_CAPTURE_INPUTS.has(input)) return input;
     assertExactKeys(input, [
         "kind", "version", "captureTimeNs", "calibration", "pose", "projectionMatrix",
         "viewProjectionMatrix", "scene", "outputRows",
@@ -789,13 +822,29 @@ export function assertVisualCaptureInput(input) {
 }
 
 function compareUtf8(left, right) {
-    const a = textEncoder.encode(left);
-    const b = textEncoder.encode(right);
-    const length = Math.min(a.length, b.length);
+    if (left === right) return 0;
+    const length = Math.min(left.length, right.length);
     for (let index = 0; index < length; index += 1) {
-        if (a[index] !== b[index]) return a[index] - b[index];
+        const a = left.charCodeAt(index);
+        const b = right.charCodeAt(index);
+        if (a === b) continue;
+        if (a >= 0xD800 || b >= 0xD800) return compareCodePoints(left, right);
+        return a - b;
     }
-    return a.length - b.length;
+    return left.length - right.length;
+}
+
+function compareCodePoints(left, right) {
+    let leftIndex = 0;
+    let rightIndex = 0;
+    while (leftIndex < left.length && rightIndex < right.length) {
+        const a = left.codePointAt(leftIndex);
+        const b = right.codePointAt(rightIndex);
+        if (a !== b) return a - b;
+        leftIndex += a > 0xFFFF ? 2 : 1;
+        rightIndex += b > 0xFFFF ? 2 : 1;
+    }
+    return (left.length - leftIndex) - (right.length - rightIndex);
 }
 
 function canonicalString(value, name, { optional = false } = {}) {
@@ -895,10 +944,16 @@ function normalizeVisualBindings(bindings) {
     });
 }
 
+export function canonicalizeAnalyticBindings(bindings) {
+    return normalizeAnalyticBindings(bindings);
+}
+
 function normalizeAnalyticBindings(bindings) {
+    if (CANONICAL_ANALYTIC_BINDINGS.has(bindings)) return bindings;
     if (!Array.isArray(bindings)) {
         throw contractError("VISUAL_CAPTURE_BINDING_INVALID", "bindings must be an array.");
     }
+    analyticBindingNormalizeCount += 1;
     const normalized = bindings.map((binding, index) => {
         assertAllowedKeys(binding, ["renderableId", "semanticId", "instanceId"], `bindings[${index}]`);
         return Object.freeze({
@@ -910,7 +965,9 @@ function normalizeAnalyticBindings(bindings) {
     if (normalized.some((binding, index) => index > 0 && binding.renderableId === normalized[index - 1].renderableId)) {
         throw contractError("VISUAL_CAPTURE_BINDING_INVALID", "bindings contain duplicate renderableId values.");
     }
-    return Object.freeze(normalized);
+    const frozen = Object.freeze(normalized);
+    CANONICAL_ANALYTIC_BINDINGS.add(frozen);
+    return frozen;
 }
 
 function normalizeCaptureProducts(family, products) {
@@ -986,7 +1043,7 @@ export function createVisualCapturePassSet({
     const normalizedBindings = family === VISUAL_CAPTURE_PASS_FAMILIES.visual
         ? normalizeVisualBindings(bindings)
         : Object.freeze({ bindings: normalizeAnalyticBindings(bindings), catalogs: null });
-    return Object.freeze({
+    const passSet = Object.freeze({
         kind: VISUAL_CAPTURE_PASS_SET_KIND,
         version: VISUAL_CAPTURE_PASS_SET_VERSION,
         family,
@@ -996,6 +1053,8 @@ export function createVisualCapturePassSet({
         catalogs: normalizedBindings.catalogs,
         sourceUseHashes: normalizedUses,
     });
+    CANONICAL_PASS_SETS.add(passSet);
+    return passSet;
 }
 
 export function assertVisualCapturePassSet(passSet) {
@@ -1005,6 +1064,7 @@ export function assertVisualCapturePassSet(passSet) {
             `Expected ${VISUAL_CAPTURE_PASS_SET_KIND}@${VISUAL_CAPTURE_PASS_SET_VERSION}.`,
         );
     }
+    if (CANONICAL_PASS_SETS.has(passSet)) return passSet;
     assertExactKeys(passSet, [
         "kind", "version", "family", "captureInput", "products", "bindings", "catalogs", "sourceUseHashes",
     ], "passSet");
@@ -1050,11 +1110,13 @@ export function assertAlignedCapturePassSets(visualPassSet, analyticPassSet) {
     }
     const left = visual.captureInput;
     const right = analytic.captureInput;
+    const sameCalibration = left.calibration === right.calibration
+        || JSON.stringify(left.calibration) === JSON.stringify(right.calibration);
     if (left.captureTimeNs !== right.captureTimeNs
         || left.outputRows !== right.outputRows
         || !equalArray(left.pose.matrixWorld, right.pose.matrixWorld)
         || !equalArray(left.projectionMatrix, right.projectionMatrix)
-        || JSON.stringify(left.calibration) !== JSON.stringify(right.calibration)) {
+        || !sameCalibration) {
         throw contractError(
             "VISUAL_CAPTURE_PASS_ALIGNMENT_INVALID",
             "Visual and analytic pass inputs must share calibration, pose, and capture time.",
@@ -1275,6 +1337,39 @@ function sampleLinear(data, width, height, channels, x, y, channel) {
     return (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty;
 }
 
+const WARP_TABLE_CACHE = new WeakMap();
+
+export function calibrationWarpTable(calibration) {
+    const checked = assertVisualCameraCalibration(calibration);
+    const cached = WARP_TABLE_CACHE.get(checked);
+    if (cached) return cached;
+    const { width, height } = checked.image;
+    const count = width * height;
+    const sourceX = new Float64Array(count);
+    const sourceY = new Float64Array(count);
+    const valid = new Uint8Array(count);
+    const { fx, fy, cx, cy } = checked.intrinsics;
+    for (let y = 0; y < height; y += 1) {
+        for (let x = 0; x < width; x += 1) {
+            const index = y * width + x;
+            const source = undistortWithCheckedDistortion(
+                { x: (x - cx) / fx, y: (y - cy) / fy },
+                checked.distortion,
+            );
+            const mappedX = source.x * fx + cx;
+            const mappedY = source.y * fy + cy;
+            sourceX[index] = mappedX;
+            sourceY[index] = mappedY;
+            if (mappedX >= 0 && mappedX <= width - 1 && mappedY >= 0 && mappedY <= height - 1) {
+                valid[index] = 1;
+            }
+        }
+    }
+    const table = Object.freeze({ sourceX, sourceY, valid, width, height });
+    WARP_TABLE_CACHE.set(checked, table);
+    return table;
+}
+
 export function warpCalibratedImage({
     data,
     calibration,
@@ -1299,27 +1394,20 @@ export function warpCalibratedImage({
     destination.fill(0);
     const mask = validity && validity.length >= width * height ? validity : new Uint8Array(width * height);
     mask.fill(0);
-    const { fx, fy, cx, cy } = checked.intrinsics;
+    const table = calibrationWarpTable(checked);
     const integerOutput = isIntegerTypedArray(destination);
-    for (let y = 0; y < height; y += 1) {
-        for (let x = 0; x < width; x += 1) {
-            const source = undistortWithCheckedDistortion(
-                { x: (x - cx) / fx, y: (y - cy) / fy },
-                checked.distortion,
-            );
-            const sourceX = source.x * fx + cx;
-            const sourceY = source.y * fy + cy;
-            if (sourceX < 0 || sourceX > width - 1 || sourceY < 0 || sourceY > height - 1) continue;
-            const pixelIndex = y * width + x;
-            mask[pixelIndex] = 1;
-            for (let channel = 0; channel < channels; channel += 1) {
-                const value = interpolation === "linear"
-                    ? sampleLinear(data, width, height, channels, sourceX, sourceY, channel)
-                    : sampleNearest(data, width, channels, sourceX, sourceY, channel);
-                destination[pixelIndex * channels + channel] = interpolation === "linear" && integerOutput
-                    ? Math.round(value)
-                    : value;
-            }
+    for (let pixelIndex = 0; pixelIndex < width * height; pixelIndex += 1) {
+        if (table.valid[pixelIndex] !== 1) continue;
+        const mappedX = table.sourceX[pixelIndex];
+        const mappedY = table.sourceY[pixelIndex];
+        mask[pixelIndex] = 1;
+        for (let channel = 0; channel < channels; channel += 1) {
+            const value = interpolation === "linear"
+                ? sampleLinear(data, width, height, channels, mappedX, mappedY, channel)
+                : sampleNearest(data, width, channels, mappedX, mappedY, channel);
+            destination[pixelIndex * channels + channel] = interpolation === "linear" && integerOutput
+                ? Math.round(value)
+                : value;
         }
     }
     return Object.freeze({ data: destination, validity: mask });

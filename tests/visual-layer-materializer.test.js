@@ -57,6 +57,7 @@ function layerDocuments({
     lodBytes = null,
     materialMode = "metallic-roughness",
     extensions = ["KHR_materials_clearcoat"],
+    materials = null,
 } = {}) {
     const meshDigest = sha256Hex(meshBytes);
     const assets = [
@@ -78,7 +79,7 @@ function layerDocuments({
         sourceWorldHash: WORLD_HASH,
         assetProfile: { id: "static-gltf-surface", version: 1 },
         assets,
-        materials: [{
+        materials: materials ?? [{
             id: "brick",
             mode: materialMode,
             parameters: { baseColorFactor: [0.2, 0.4, 0.6, 1], clearcoatFactor: 0.25 },
@@ -100,7 +101,7 @@ function layerDocuments({
             lodLevels: lodDigest ? [`sha256:${meshDigest}`, `sha256:${lodDigest}`] : [`sha256:${meshDigest}`],
             matrix: [...MATRIX],
             chunkIds: ["chunk-0"],
-            materialIds: ["brick"],
+            materialIds: (materials ?? [{ id: "brick" }]).map((material) => material.id),
         }],
         bindings: [{ id: "binding-0", instanceId: "building-0", truthEntityId: "building-0" }],
         appearanceDependencies: [],
@@ -192,6 +193,17 @@ function fakeTexture() {
         needsUpdate: false,
         dispose() { this.disposed = true; },
     };
+}
+
+function taggedTexture(sourceId) {
+    const texture = fakeTexture();
+    texture.sourceId = sourceId;
+    texture.clone = () => {
+        const copy = fakeTexture();
+        copy.sourceId = sourceId;
+        return copy;
+    };
+    return texture;
 }
 
 function parseNamedScene(materialName = "brick") {
@@ -350,6 +362,67 @@ test("materializer applies descriptor materials, exact matrices, unlit output, a
     assert.equal(materializer.visualBindings().get("building-0").truthEntityId, "building-0");
     assert.deepEqual(decoded.map((entry) => entry.mediaType), ["image/png"]);
     materializer.dispose();
+    materializer.dispose();
+});
+
+test("materializer gives each material its own baseColor texture", async () => {
+    const first = textureRecord(makePng(), "image/png");
+    const second = textureRecord(makeJpeg(), "image/jpeg");
+    const firstDigest = sha256ExactBytes(first.bytes);
+    const secondDigest = sha256ExactBytes(second.bytes);
+    const decoded = [];
+    const documents = layerDocuments({
+        meshBytes: makeNamedMaterialGlb("brick"),
+        textures: [first, second],
+        materials: ["brick", "stone"].map((id, index) => {
+            const texture = index === 0 ? first : second;
+            return {
+                id,
+                mode: "unlit-captured-radiance",
+                parameters: { baseColorFactor: [1, 1, 1, 1] },
+                textures: [{
+                    slot: "baseColor",
+                    assetUri: `sha256:${texture.asset.sha256}`,
+                }],
+                extensions: ["KHR_materials_unlit"],
+            };
+        }),
+    });
+    const { materializer, previewRoot } = createMaterializer(documents, {
+        decodeTexture: async (bytes) => {
+            const digest = sha256ExactBytes(bytes);
+            decoded.push(digest);
+            return taggedTexture(digest);
+        },
+        parseGltf: async () => {
+            const scene = new THREE.Group();
+            for (const name of ["brick", "stone"]) {
+                scene.add(new THREE.Mesh(
+                    new THREE.BoxGeometry(0.2, 0.2, 0.2),
+                    new THREE.MeshStandardMaterial({ name }),
+                ));
+            }
+            return {
+                scene,
+                json: {
+                    materials: [{ name: "brick" }, { name: "stone" }],
+                    meshes: [{ primitives: [{ material: 0 }, { material: 1 }] }],
+                },
+            };
+        },
+    });
+    const status = await materializer.replace(referenceFor(documents), worldResource());
+    assert.equal(status.status, VISUAL_PREVIEW_STATUS.ready);
+    assert.deepEqual([...decoded].sort(), [firstDigest, secondDigest].sort());
+    const meshes = [];
+    previewRoot.traverse((object) => {
+        if (object.isMesh) meshes.push(object);
+    });
+    assert.equal(meshes.length, 2);
+    const maps = new Map(meshes.map((mesh) => [mesh.material.name, mesh.material.map]));
+    assert.equal(maps.get("brick").sourceId, firstDigest);
+    assert.equal(maps.get("stone").sourceId, secondDigest);
+    assert.notEqual(maps.get("brick"), maps.get("stone"));
     materializer.dispose();
 });
 

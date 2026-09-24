@@ -53,8 +53,41 @@ export function withPixelPackBufferUnbound(renderer, readback) {
 }
 
 /**
+ * Yield so the browser can flush GL commands and signal fences.
+ * `clientWaitSync` cannot block: browsers set `MAX_CLIENT_WAIT_TIMEOUT_WEBGL`
+ * to 0, and a longer timeout raises INVALID_OPERATION.
+ */
+export function yieldForGpuReadback() {
+    return new Promise((resolve) => {
+        setTimeout(resolve, 0);
+    });
+}
+
+/**
+ * Poll `slot` until its fence signals or `timeoutMs` elapses.
+ * Every `clientWaitSync` uses timeout 0. The loop yields between polls.
+ * @param {PixelPackSlot} slot
+ * @param {ArrayBufferView} dest
+ * @param {{ timeoutMs?: number, signal?: AbortSignal | null }} [options]
+ * @returns {Promise<boolean>}
+ */
+export async function waitForPixelPack(slot, dest, { timeoutMs = 2000, signal = null } = {}) {
+    const deadline = Date.now() + Math.max(0, timeoutMs);
+    while (true) {
+        signal?.throwIfAborted?.();
+        if (slot.gl?.isContextLost?.()) return false;
+        if (slot.poll(dest)) return true;
+        if (!slot.pending) return false;
+        if (Date.now() >= deadline) return false;
+        await yieldForGpuReadback();
+    }
+}
+
+/**
  * One GPU pixel-pack buffer + fence. `begin` is non-blocking; `poll` copies
  * to CPU only after the GPU signals the fence (timeout 0 — never stalls).
+ * Dropping an unread fence replaces the buffer so the next write cannot
+ * discard Chrome's readback shadow.
  */
 export class PixelPackSlot {
     /**
@@ -65,11 +98,13 @@ export class PixelPackSlot {
         this.gl = gl;
         this.byteLength = Math.max(1, byteLength);
         this.pbo = gl.createBuffer();
-        const previous = gl.getParameter(gl.PIXEL_PACK_BUFFER_BINDING);
+        const alignment = gl.getParameter(gl.PACK_ALIGNMENT);
+        this.packAlignment = Number.isFinite(alignment) ? alignment : 4;
         gl.bindBuffer(gl.PIXEL_PACK_BUFFER, this.pbo);
         gl.bufferData(gl.PIXEL_PACK_BUFFER, this.byteLength, gl.STREAM_READ);
-        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, previous);
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
         this.sync = null;
+        this.dropped = false;
         this.pollAttempts = 0;
         this.begunAtMs = 0;
         this.maxPollAttempts = 240;
@@ -81,6 +116,7 @@ export class PixelPackSlot {
     }
 
     isStale() {
+        if (this.dropped) return true;
         if (!this.sync) return false;
         if (this.pollAttempts >= this.maxPollAttempts) return true;
         if (this.begunAtMs > 0 && Date.now() - this.begunAtMs > this.maxAgeMs) return true;
@@ -89,28 +125,39 @@ export class PixelPackSlot {
 
     reset() {
         this._deleteSync();
+        this.dropped = false;
         this.pollAttempts = 0;
         this.begunAtMs = 0;
+        this._replaceBuffer();
     }
 
     /**
      * Issue `readPixels` into the PBO. The color framebuffer must already be bound
      * (Three.js `setRenderTarget`).
      */
-    begin(x, y, width, height, format, type) {
+    begin(x, y, width, height, format, type, attachmentIndex = 0) {
+        if (this.pending || !this.pbo) return false;
         const gl = this.gl;
-        this._deleteSync();
         this.pollAttempts = 0;
+        this.dropped = false;
         this.begunAtMs = Date.now();
-        const previous = gl.getParameter(gl.PIXEL_PACK_BUFFER_BINDING);
-        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, this.pbo);
-        const previousAlignment = gl.getParameter(gl.PACK_ALIGNMENT);
-        gl.pixelStorei(gl.PACK_ALIGNMENT, 1);
-        gl.readPixels(x, y, width, height, format, type, 0);
-        gl.pixelStorei(gl.PACK_ALIGNMENT, previousAlignment);
-        this.sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
-        gl.flush();
-        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, previous);
+        try {
+            gl.bindBuffer(gl.PIXEL_PACK_BUFFER, this.pbo);
+            gl.pixelStorei(gl.PACK_ALIGNMENT, 1);
+            if (attachmentIndex > 0 && typeof gl.readBuffer === "function") {
+                gl.readBuffer((gl.COLOR_ATTACHMENT0 ?? 0x8CE0) + attachmentIndex);
+            }
+            gl.readPixels(x, y, width, height, format, type, 0);
+            gl.pixelStorei(gl.PACK_ALIGNMENT, this.packAlignment);
+            this.sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+            gl.flush();
+        } finally {
+            gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+            if (attachmentIndex > 0 && typeof gl.readBuffer === "function") {
+                gl.readBuffer(gl.COLOR_ATTACHMENT0 ?? 0x8CE0);
+            }
+        }
+        return Boolean(this.sync);
     }
 
     /**
@@ -122,30 +169,52 @@ export class PixelPackSlot {
         const gl = this.gl;
         this.pollAttempts += 1;
         const status = gl.clientWaitSync(this.sync, 0, 0);
-        if (status === gl.TIMEOUT_EXPIRED) {
-            if (this.isStale()) {
-                this.reset();
+        const signaled = status === (gl.ALREADY_SIGNALED ?? 0x911C)
+            || status === (gl.CONDITION_SATISFIED ?? 0x9119);
+        if (!signaled) {
+            if (status === gl.WAIT_FAILED) {
+                this.dropped = true;
+                this._deleteSync();
+                this.pollAttempts = 0;
+                this.begunAtMs = 0;
             }
             return false;
         }
-        this._deleteSync();
-        this.pollAttempts = 0;
-        this.begunAtMs = 0;
-        if (status === gl.WAIT_FAILED) return false;
-        const previous = gl.getParameter(gl.PIXEL_PACK_BUFFER_BINDING);
-        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, this.pbo);
-        gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, dest);
-        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, previous);
+        this._copy(dest);
         return true;
     }
 
+    _copy(dest) {
+        const gl = this.gl;
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, this.pbo);
+        gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, dest);
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+        this._deleteSync();
+        this.dropped = false;
+        this.pollAttempts = 0;
+        this.begunAtMs = 0;
+    }
+
     dispose() {
-        this.reset();
+        this._deleteSync();
+        this.pollAttempts = 0;
+        this.begunAtMs = 0;
+        if (this.pbo && this.gl) this.gl.deleteBuffer(this.pbo);
+        this.pbo = null;
+        this.gl = null;
+    }
+
+    _replaceBuffer() {
+        const gl = this.gl;
+        if (!gl) return;
         if (this.pbo) {
-            this.gl.deleteBuffer(this.pbo);
+            gl.deleteBuffer(this.pbo);
             this.pbo = null;
         }
-        this.gl = null;
+        this.pbo = gl.createBuffer();
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, this.pbo);
+        gl.bufferData(gl.PIXEL_PACK_BUFFER, this.byteLength, gl.STREAM_READ);
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
     }
 
     _deleteSync() {
@@ -164,19 +233,15 @@ export async function readRenderTargetPixelsWithFence(renderer, target, buffer, 
     if (!gl) throw new Error("Asynchronous PBR readback requires WebGL2 PBO/fence support.");
     const slot = new PixelPackSlot(gl, buffer.byteLength);
     const type = buffer instanceof Float32Array ? gl.FLOAT : gl.UNSIGNED_BYTE;
-    const started = Date.now();
     try {
         signal?.throwIfAborted?.();
         slot.begin(0, 0, target.width, target.height, gl.RGBA, type);
-        while (true) {
-            signal?.throwIfAborted?.();
+        const ready = await waitForPixelPack(slot, buffer, { timeoutMs, signal });
+        if (!ready) {
             if (gl.isContextLost?.()) throw new Error("WebGL2 context was lost during asynchronous readback.");
-            if (slot.poll(buffer)) return buffer;
-            if (Date.now() - started >= timeoutMs || !slot.pending) {
-                throw new Error(`Asynchronous PBR readback exceeded ${timeoutMs} ms.`);
-            }
-            await new Promise((resolve) => setTimeout(resolve, 0));
+            throw new Error(`Asynchronous PBR readback exceeded ${timeoutMs} ms.`);
         }
+        return buffer;
     } finally {
         slot.dispose();
     }

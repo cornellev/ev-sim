@@ -44,13 +44,35 @@ export function instanceTranslation(instance) {
     return translationOfMatrix(instance?.matrix);
 }
 
+function axisDistance(value, min, max) {
+    if (value < min) return min - value;
+    if (value > max) return value - max;
+    return 0;
+}
+
+export function boundsDistanceMeters(origin, bounds) {
+    const point = toPosition(origin);
+    return Math.hypot(
+        axisDistance(point.x, bounds.min[0], bounds.max[0]),
+        axisDistance(point.y, bounds.min[1], bounds.max[1]),
+        axisDistance(point.z, bounds.min[2], bounds.max[2]),
+    );
+}
+
+/** Nearer of the instance pivot and its world-space triangle bounds. */
+export function instanceDistanceMeters(origin, instance) {
+    const pivot = visualDistanceMeters(origin, instanceTranslation(instance));
+    if (!instance?.bounds) return pivot;
+    return Math.min(pivot, boundsDistanceMeters(origin, instance.bounds));
+}
+
 function chunkDistance(chunk, instancesById, origins) {
     let nearest = Number.POSITIVE_INFINITY;
     for (const instanceId of chunk.instanceIds ?? []) {
         const instance = instancesById.get(instanceId);
         if (!instance) continue;
         for (const origin of origins) {
-            nearest = Math.min(nearest, visualDistanceMeters(origin, instanceTranslation(instance)));
+            nearest = Math.min(nearest, instanceDistanceMeters(origin, instance));
         }
     }
     return Number.isFinite(nearest) ? nearest : Number.POSITIVE_INFINITY;
@@ -145,9 +167,7 @@ export class VisualChunkResidencyController {
         const selectedLods = {};
         const selectedLodUris = new Set();
         for (const instance of descriptor?.instances ?? []) {
-            const distance = Math.min(...origins.map((origin) => (
-                visualDistanceMeters(origin, instanceTranslation(instance))
-            )));
+            const distance = Math.min(...origins.map((origin) => instanceDistanceMeters(origin, instance)));
             const uri = selectVisualLodUri(instance, distance, this.policy);
             selectedLods[instance.id] = {
                 uri,

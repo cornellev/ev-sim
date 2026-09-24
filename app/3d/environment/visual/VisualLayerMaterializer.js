@@ -529,13 +529,14 @@ export class VisualLayerMaterializer {
         const leases = [parsed];
         try {
             assertGltfMaterialBijection(parsed.value.json, instance.materialIds);
-            const textures = await this._texturesForInstance(instance, leases, generation, signal);
             const instanceMaterials = new Map();
             const materialsById = new Map(this._documents.descriptor.materials.map((material) => [material.id, material]));
             for (const materialId of instance.materialIds) {
+                const material = materialsById.get(materialId);
+                const textures = await this._texturesForMaterial(material, leases, generation, signal);
                 instanceMaterials.set(
                     materialId,
-                    createDescriptorMaterial(THREE, materialsById.get(materialId), textures),
+                    createDescriptorMaterial(THREE, material, textures),
                 );
             }
             const root = parsed.value.scene.clone(true);
@@ -851,18 +852,13 @@ export class VisualLayerMaterializer {
         return resources;
     }
 
-    async _texturesForInstance(instance, leases, generation, signal) {
+    async _texturesForMaterial(material, leases, generation, signal) {
         const textures = new Map();
-        const materialsById = new Map(this._documents.descriptor.materials.map((material) => [material.id, material]));
-        for (const materialId of instance.materialIds) {
-            const material = materialsById.get(materialId);
-            for (const texture of material.textures) {
-                if (textures.has(texture.slot)) continue;
-                const digest = sha256FromUri(texture.assetUri);
-                const handle = await this._decodeTexture(digest, texture.slot, generation, signal);
-                leases.push(handle);
-                textures.set(texture.slot, handle.value);
-            }
+        for (const texture of material.textures) {
+            const digest = sha256FromUri(texture.assetUri);
+            const handle = await this._decodeTexture(digest, texture.slot, generation, signal);
+            leases.push(handle);
+            textures.set(texture.slot, handle.value);
         }
         return textures;
     }

@@ -15,7 +15,7 @@ import {
 import { HeadlessRunnerError } from "./HeadlessRunnerErrors.js";
 import { HeadlessSupervisor } from "./HeadlessSupervisor.js";
 import { errorFromStatus } from "./SupervisorValidation.js";
-import { canonicalRunBundleStringify, verifyRunBundle, verifyRunBundleIntegrity } from "./RunBundle.js";
+import { canonicalRunBundleStringify, verifyRunBundle, verifyRunBundleBytes, verifyRunBundleIntegrity } from "./RunBundle.js";
 import { stageRunPackage } from "./VisualAssetAdmission.js";
 
 const ARTIFACT_PROFILES = Object.freeze({
@@ -65,6 +65,7 @@ export class SupervisorRunner {
 
     async run(bundle, {
         config,
+        supervisor: borrowedSupervisor = null,
         episodeSpec = {},
         actions = [],
         artifactPolicy = null,
@@ -75,12 +76,12 @@ export class SupervisorRunner {
         expect = null,
         actionTapeHash = null,
     } = {}) {
-        if (!config) throw new HeadlessRunnerError("USAGE", "Supervisor-backed execution requires --config.");
+        if (!borrowedSupervisor && !config) throw new HeadlessRunnerError("USAGE", "Supervisor-backed execution requires --config.");
         if (!outputUri) throw new HeadlessRunnerError("USAGE", "Supervisor-backed execution requires --output.");
         const verified = packagePath ? verifyRunBundleIntegrity(bundle) : verifyRunBundle(bundle);
         const episode = normalizeEpisodeSpec(verified.resolved, episodeSpec);
-        const supervisorRoot = await fs.mkdtemp(path.join(os.tmpdir(), "cev-supervisor-runner-"));
-        let supervisor = null;
+        const supervisorRoot = borrowedSupervisor ? null : await fs.mkdtemp(path.join(os.tmpdir(), "cev-supervisor-runner-"));
+        let supervisor = borrowedSupervisor;
         let batchId = null;
         let admission = null;
         let iterator = null;
@@ -89,11 +90,13 @@ export class SupervisorRunner {
             if (onEvent) await onEvent(event);
         };
         try {
-            supervisor = this.supervisorFactory({
-                config: inlineSupervisorConfig(config),
-                socket: path.join(supervisorRoot, "supervisor.sock"),
-                inlineObservations: true,
-            });
+            if (!supervisor) {
+                supervisor = this.supervisorFactory({
+                    config: inlineSupervisorConfig(config),
+                    socket: path.join(supervisorRoot, "supervisor.sock"),
+                    inlineObservations: true,
+                });
+            }
             if (packagePath) {
                 const capabilities = await supervisor.getCapabilities({ clientProtocol: HEADLESS_PROTOCOL });
                 assertResponse(capabilities);
@@ -233,10 +236,12 @@ export class SupervisorRunner {
                 try {
                     if (admission) await supervisor?.releaseAssetAdmission({ handle: admission.handle });
                 } finally {
-                    try {
-                        await supervisor?.close();
-                    } finally {
-                        await fs.rm(supervisorRoot, { recursive: true, force: true });
+                    if (!borrowedSupervisor) {
+                        try {
+                            await supervisor?.close();
+                        } finally {
+                            if (supervisorRoot) await fs.rm(supervisorRoot, { recursive: true, force: true });
+                        }
                     }
                 }
             }
@@ -252,5 +257,37 @@ export class SupervisorRunner {
             expect: validated.expect || null,
             actionTapeHash: simulationSha256(validated),
         });
+    }
+
+    async runManaged(bundle, {
+        supervisor,
+        outputUri = null,
+        signal = null,
+        artifactPolicy = { profile: "evaluation" },
+        assetAdmission = null,
+        bundleBytes = null,
+        bundleBytesHash = null,
+    } = {}) {
+        if (!supervisor) throw new HeadlessRunnerError("USAGE", "Managed clip execution requires a supervisor.");
+        if (!outputUri) throw new HeadlessRunnerError("USAGE", "Managed clip execution requires --output.");
+        const verified = bundleBytes ? verifyRunBundleBytes(Buffer.from(bundleBytes), {
+            ...(bundleBytesHash ? { expectedBundleBytesHash: bundleBytesHash } : {}),
+        }) : verifyRunBundle(bundle);
+        const finalized = await supervisor.runManagedExperiment({
+            bundle: verified.bundle,
+            bundleBytes,
+            bundleBytesHash,
+            assetAdmission,
+            artifactPolicy,
+            outputUri,
+        }, { signal });
+        return {
+            kind: "cev-sim.headless.result",
+            version: 1,
+            executionMode: "managed",
+            result: finalized?.runResult ?? null,
+            artifacts: finalized?.artifacts || [],
+            outputDirectory: finalized?.outputDirectory ?? null,
+        };
     }
 }

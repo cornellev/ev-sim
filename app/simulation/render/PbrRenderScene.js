@@ -20,6 +20,7 @@ import {
     createLidarGeometryResource,
 } from "../lidar/LidarGeometry.js";
 import { compareUtf8 } from "../world/WorldDescription.js";
+import { skyConfigToManifest } from "../../3d/skybox/EnvironmentSkyConfig.js";
 
 export const PBR_RENDER_RECIPE_KIND = "cev-sim.pbr-render-recipe";
 export const PBR_RENDER_RECIPE_VERSION = 1;
@@ -202,7 +203,7 @@ export function normalizePbrRenderRecipe(value = {}) {
     const source = object(value, "renderRecipe");
     keys(source, [
         "kind", "version", "background", "lighting", "shadows", "colorPipeline",
-        "rasterization", "lodPolicy", "decoders", "actors",
+        "rasterization", "lodPolicy", "decoders", "actors", "sky",
     ], "renderRecipe");
     const background = object(source.background ?? {}, "renderRecipe.background");
     keys(background, ["colorRgba", "environmentMap"], "renderRecipe.background");
@@ -264,6 +265,7 @@ export function normalizePbrRenderRecipe(value = {}) {
         },
         actors: sortedUnique(source.actors ?? [], "renderRecipe.actors", normalizeActorOverride, (entry) => entry.actorId),
     };
+    if (source.sky != null) result.sky = skyConfigToManifest(source.sky);
     if (result.kind !== PBR_RENDER_RECIPE_KIND || result.version !== PBR_RENDER_RECIPE_VERSION) {
         fail("renderRecipe", `expected ${PBR_RENDER_RECIPE_KIND} version ${PBR_RENDER_RECIPE_VERSION}`);
     }
@@ -433,6 +435,7 @@ export function createPbrRenderSceneResource({
     visualLayerResource,
     renderRecipe,
     assetClosure,
+    sky = null,
 } = {}) {
     if (!worldResource?.description || !worldResource?.hash) fail("world", "resolved world resource is required");
     assertVisualLayer(visualLayerResource?.description);
@@ -442,7 +445,9 @@ export function createPbrRenderSceneResource({
     if (visualLayerResource.description.sourceWorldHash !== worldResource.hash) {
         fail("visualLayer.sourceWorldHash", "does not match the resolved world");
     }
-    const recipe = normalizePbrRenderRecipe(renderRecipe ?? {});
+    const authored = renderRecipe == null ? {} : { ...renderRecipe };
+    if (authored.sky == null && sky != null) authored.sky = sky;
+    const recipe = normalizePbrRenderRecipe(authored);
     const closure = normalizePbrAssetClosure(assetClosure);
     const analyticTruth = createLidarGeometryResource(worldResource, vehicleDependencies);
     const description = {

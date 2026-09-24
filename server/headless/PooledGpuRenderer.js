@@ -19,12 +19,51 @@ const SOFTWARE_RENDERERS = /swiftshader|llvmpipe|software rasterizer/i;
 const RUNTIME_ENTRY = path.join(REPOSITORY_ROOT, "app/3d/perception/HeadlessPbrPageRuntime.js");
 const THREE_ROOT = path.join(REPOSITORY_ROOT, "node_modules/three");
 const NOBLE_HASHES_ROOT = path.join(REPOSITORY_ROOT, "node_modules/@noble/hashes");
+const ATMOSPHERE_ROOT = path.join(REPOSITORY_ROOT, "node_modules/@takram/three-atmosphere");
+const CLOUDS_ROOT = path.join(REPOSITORY_ROOT, "node_modules/@takram/three-clouds");
+const GEOSPATIAL_ROOT = path.join(REPOSITORY_ROOT, "node_modules/@takram/three-geospatial");
+const POSTPROCESSING_ROOT = path.join(REPOSITORY_ROOT, "node_modules/postprocessing");
+const RUNTIME_PACKAGE_ENTRIES = Object.freeze({
+    "@takram/three-atmosphere": path.join(ATMOSPHERE_ROOT, "build/index.js"),
+    "@takram/three-atmosphere/shaders/bruneton": path.join(ATMOSPHERE_ROOT, "build/shaders/bruneton.js"),
+    "@takram/three-clouds": path.join(CLOUDS_ROOT, "build/index.js"),
+    "@takram/three-geospatial": path.join(GEOSPATIAL_ROOT, "build/index.js"),
+    "@takram/three-geospatial/shaders": path.join(GEOSPATIAL_ROOT, "build/shaders.js"),
+    postprocessing: path.join(POSTPROCESSING_ROOT, "build/index.js"),
+});
 
 const MIME = Object.freeze({
     ".html": "text/html; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",
     ".wasm": "application/wasm",
+    ".png": "image/png",
+    ".bin": "application/octet-stream",
 });
+const CLOUD_ASSET_PREFIX = "/runtime/node_modules/@takram/three-clouds/assets/";
+const CLOUD_ASSET_TYPES = Object.freeze({
+    "local_weather.png": MIME[".png"],
+    "shape.bin": MIME[".bin"],
+    "shape_detail.bin": MIME[".bin"],
+    "turbulence.png": MIME[".png"],
+});
+
+/** Packaged Takram cloud bytes. The private page cannot fetch the library's GitHub URLs. */
+export function packagedCloudAsset(pathname) {
+    let decoded = pathname;
+    try {
+        decoded = decodeURIComponent(pathname);
+    } catch {
+        return null;
+    }
+    if (!decoded.startsWith(CLOUD_ASSET_PREFIX)) return null;
+    const name = decoded.slice(CLOUD_ASSET_PREFIX.length);
+    const contentType = CLOUD_ASSET_TYPES[name];
+    if (!contentType) return null;
+    return {
+        file: path.join(CLOUDS_ROOT, "assets", name),
+        contentType,
+    };
+}
 
 function runtimeHtml() {
     return `<!doctype html><meta charset="utf-8"><script type="importmap">${JSON.stringify({
@@ -33,6 +72,12 @@ function runtimeHtml() {
             "three/addons/": "/runtime/node_modules/three/examples/jsm/",
             "three/examples/jsm/": "/runtime/node_modules/three/examples/jsm/",
             "@noble/hashes/": "/runtime/node_modules/@noble/hashes/",
+            "@takram/three-atmosphere": "/runtime/node_modules/@takram/three-atmosphere/build/index.js",
+            "@takram/three-atmosphere/shaders/bruneton": "/runtime/node_modules/@takram/three-atmosphere/build/shaders/bruneton.js",
+            "@takram/three-clouds": "/runtime/node_modules/@takram/three-clouds/build/index.js",
+            "@takram/three-geospatial": "/runtime/node_modules/@takram/three-geospatial/build/index.js",
+            "@takram/three-geospatial/shaders": "/runtime/node_modules/@takram/three-geospatial/build/shaders.js",
+            postprocessing: "/runtime/node_modules/postprocessing/build/index.js",
         },
     })}</script><script type="module" src="/runtime/app/3d/perception/HeadlessPbrPageRuntime.js"></script>`;
 }
@@ -43,6 +88,10 @@ function safeRuntimePath(pathname, allowedFiles) {
         ["/runtime/app/", path.join(REPOSITORY_ROOT, "app")],
         ["/runtime/node_modules/three/", THREE_ROOT],
         ["/runtime/node_modules/@noble/hashes/", NOBLE_HASHES_ROOT],
+        ["/runtime/node_modules/@takram/three-atmosphere/", ATMOSPHERE_ROOT],
+        ["/runtime/node_modules/@takram/three-clouds/", CLOUDS_ROOT],
+        ["/runtime/node_modules/@takram/three-geospatial/", GEOSPATIAL_ROOT],
+        ["/runtime/node_modules/postprocessing/", POSTPROCESSING_ROOT],
         ["/vendor/basis/", BASIS_ROOT],
     ];
     for (const [prefix, root] of candidates) {
@@ -69,12 +118,13 @@ function resolveRuntimeImport(specifier, importer) {
     if (specifier.startsWith("@noble/hashes/")) {
         return path.join(NOBLE_HASHES_ROOT, specifier.slice("@noble/hashes/".length));
     }
+    if (Object.hasOwn(RUNTIME_PACKAGE_ENTRIES, specifier)) return RUNTIME_PACKAGE_ENTRIES[specifier];
     if (specifier.startsWith(".")) return path.resolve(path.dirname(importer), specifier);
     throw new Error(`Headless PBR runtime import "${specifier}" is not allowlisted.`);
 }
 
 function isRuntimeModule(file) {
-    return [path.join(REPOSITORY_ROOT, "app"), THREE_ROOT, NOBLE_HASHES_ROOT]
+    return [path.join(REPOSITORY_ROOT, "app"), THREE_ROOT, NOBLE_HASHES_ROOT, ATMOSPHERE_ROOT, CLOUDS_ROOT, GEOSPATIAL_ROOT, POSTPROCESSING_ROOT]
         .some((root) => file.startsWith(`${root}${path.sep}`));
 }
 
@@ -330,6 +380,19 @@ export class ChromiumWebGlRendererAdapter {
                 await route.fulfill({ status: 200, contentType: MIME[".html"], body: runtimeHtml() });
                 return;
             }
+            const cloudAsset = packagedCloudAsset(pathname);
+            if (cloudAsset) {
+                try {
+                    await route.fulfill({
+                        status: 200,
+                        contentType: cloudAsset.contentType,
+                        body: await fs.readFile(cloudAsset.file),
+                    });
+                } catch {
+                    await route.fulfill({ status: 404, contentType: "text/plain", body: "Not found" });
+                }
+                return;
+            }
             const file = safeRuntimePath(pathname, allowedFiles);
             if (!file) {
                 await route.fulfill({ status: 404, contentType: "text/plain", body: "Not found" });
@@ -541,7 +604,7 @@ export class ChromiumWebGlRendererAdapter {
                     for (const primitive of resolvedScene.staticPrimitives || []) append(primitive);
                     const vehicles = new Map((job.vehicles || []).map((vehicle) => [vehicle.id, vehicle]));
                     for (const actor of resolvedScene.actors || []) {
-                        if (actor.actorId === job.sensor.parentId) continue;
+                        if (job.sensor?.poseReference !== "map" && actor.actorId === job.sensor?.parentId) continue;
                         const vehicle = vehicles.get(actor.actorId);
                         if (!vehicle) continue;
                         const transform = {
@@ -698,7 +761,11 @@ export class ChromiumWebGlRendererAdapter {
                         if (triangles.length === 0) return null;
                         if (calibrated && job.products?.depth !== true) return null;
                         if (!job.sensor) throw new Error(`GPU camera ${job.id} is missing its sensor.`);
-                        const parent = (job.vehicles || []).find((vehicle) => vehicle.id === job.sensor.parentId);
+                        if (job.analyticPose) return job.analyticPose;
+                        const mapCamera = job.sensor.poseReference === "map";
+                        const parent = mapCamera
+                            ? { position: { x: 0, y: 0, z: 0 }, rotation: {} }
+                            : (job.vehicles || []).find((vehicle) => vehicle.id === job.sensor.parentId);
                         if (!parent) throw new Error(`GPU sensor parent ${job.sensor.parentId} is missing.`);
                         const vehicleQ = quaternion(parent.rotation);
                         const sensorPose = job.sensor.pose || {};
@@ -1169,13 +1236,7 @@ export class PooledGpuRenderer {
             for (const camera of (sensorRig?.sensors || []).filter(
                 (sensor) => sensor.enabled !== false && sensor.type === "camera",
             )) {
-                const distortion = camera.calibration?.distortion || [];
-                createVisualCameraCalibration({
-                    ...camera.calibration,
-                    distortionModel: camera.calibration?.distortionModel === "plumb_bob"
-                        ? (distortion.length ? "brown-conrady" : "none")
-                        : camera.calibration?.distortionModel,
-                });
+                createVisualCameraCalibration(camera.calibration);
             }
             await this.releasePbr(environmentKey);
             const uses = resolved.evidence?.visualAssets?.uses || [];

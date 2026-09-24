@@ -50,6 +50,7 @@ export function resolvedPbrRun({
     staticSizeBytes = 0,
     environmentMapSha256 = null,
     environmentMapSizeBytes = 0,
+    sky = null,
 } = {}) {
     const world = createWorldResource(environment());
     const actorAsset = normalizeVisualAssetReference({
@@ -135,6 +136,7 @@ export function resolvedPbrRun({
         visualLayerResource: visualLayer,
         renderRecipe: recipe,
         assetClosure,
+        sky,
     });
     const evidence = normalizePbrRunEvidence({
         visualAssets: {

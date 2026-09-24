@@ -351,6 +351,7 @@ export class ManagedHeadlessSession {
                 status: passed ? "passed" : "failed",
                 completed: true,
                 passed,
+                interrupted: false,
                 resolvedHash: this.verified.resolvedHash,
                 simulationSemanticHash: finalization.simulationSemanticHash,
                 episodeHash: finalization.episodeHash,

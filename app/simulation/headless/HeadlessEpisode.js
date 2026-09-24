@@ -349,7 +349,8 @@ export class HeadlessEpisode {
         const vehicleIds = new Set((resolvedRun.manifest.initialState?.vehicles || []).map((vehicle) => vehicle.id));
         for (const sensor of enabledSensors) {
             if (!sensor.id || sensorIds.has(sensor.id)) throw new HeadlessEpisodeError("BUNDLE_INVALID", "Enabled state sensor IDs must be unique and non-empty.");
-            if (!vehicleIds.has(sensor.parentId)) throw new HeadlessEpisodeError("BUNDLE_INVALID", `Sensor ${sensor.id} references unknown parent vehicle ${sensor.parentId}.`);
+            const mapCamera = sensor.type === "camera" && sensor.poseReference === "map";
+            if (!mapCamera && !vehicleIds.has(sensor.parentId)) throw new HeadlessEpisodeError("BUNDLE_INVALID", `Sensor ${sensor.id} references unknown parent vehicle ${sensor.parentId}.`);
             sensorIds.add(sensor.id);
         }
         const route = resolveEgoRoute(resolvedRun);

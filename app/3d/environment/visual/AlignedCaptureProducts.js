@@ -9,7 +9,13 @@ import {
     VISUAL_CAPTURE_PASS_FAMILIES,
     warpCalibratedImage,
 } from "./VisualCapturePipeline.js";
-import { withPixelPackBufferUnbound } from "../../util/glReadback.js";
+import {
+    getWebGL2Context,
+    PixelPackSlot,
+    waitForPixelPack,
+    withPixelPackBufferUnbound,
+    yieldForGpuReadback,
+} from "../../util/glReadback.js";
 
 const MODE = Object.freeze({
     axialDepth: 1,
@@ -21,7 +27,16 @@ const MODE = Object.freeze({
     validity: 7,
     semanticId: 8,
     instanceId: 9,
+    axialDepthValidity: 10,
+    idAttachments: 11,
 });
+
+const ANALYTIC_COMBINED_PRODUCTS = new Set([
+    "axial-depth",
+    "semantic-id",
+    "instance-id",
+    "validity",
+]);
 
 const VISUAL_RIGHTS = Object.freeze(["display", "machine-interpretation"]);
 const BAKE_RIGHTS = Object.freeze(["display", "machine-interpretation", "derivatives"]);
@@ -66,6 +81,41 @@ function effectiveVisible(object) {
         current = current.parent;
     }
     return true;
+}
+
+function isCaptureSky(object) {
+    let current = object;
+    while (current && !current.isScene) {
+        if (current.userData?.cevSimSky === true) return true;
+        current = current.parent;
+    }
+    return false;
+}
+
+function createSkyValidityMaterial() {
+    return new THREE.ShaderMaterial({
+        glslVersion: THREE.GLSL3,
+        vertexShader: `
+            void main() {
+                gl_Position = vec4(position.xy, 0.0, 1.0);
+            }
+        `,
+        fragmentShader: `
+            precision highp float;
+            uniform int captureMode;
+            out vec4 captureOutput;
+            void main() {
+                if (captureMode == ${MODE.validity}) captureOutput = vec4(1.0, 0.0, 0.0, 1.0);
+                else captureOutput = vec4(0.0);
+            }
+        `,
+        uniforms: {
+            captureMode: { value: MODE.validity },
+        },
+        depthTest: false,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+    });
 }
 
 function belongsToScene(object, scene) {
@@ -215,6 +265,7 @@ const fragmentShader = `
         vec3 geometricNormal = normalize(cross(dFdx(vWorldPosition), dFdy(vWorldPosition)));
         if (!gl_FrontFacing) geometricNormal = -geometricNormal;
         if (captureMode == ${MODE.axialDepth}) captureOutput = vec4(vAxialDepth, 0.0, 0.0, 1.0);
+        else if (captureMode == ${MODE.axialDepthValidity}) captureOutput = vec4(vAxialDepth, 1.0, 0.0, 1.0);
         else if (captureMode == ${MODE.geometricNormal}) captureOutput = vec4(geometricNormal, 1.0);
         else if (captureMode == ${MODE.objectId}) captureOutput = packUint32(objectId);
         else if (captureMode == ${MODE.materialId}) captureOutput = packUint32(materialId);
@@ -223,6 +274,57 @@ const fragmentShader = `
         else if (captureMode == ${MODE.semanticId}) captureOutput = packUint32(semanticId);
         else if (captureMode == ${MODE.instanceId}) captureOutput = packUint32(instanceId);
         else captureOutput = vec4(1.0, 0.0, 0.0, 1.0);
+    }
+`;
+
+const fragmentShaderIdAttachments = `
+    precision highp float;
+    precision highp int;
+    in vec2 vCaptureUv;
+    in vec3 vWorldPosition;
+    in float vAxialDepth;
+    uniform int captureMode;
+    uniform uint objectId;
+    uniform uint materialId;
+    uniform uint semanticId;
+    uniform uint instanceId;
+    uniform float bindingConfidence;
+    uniform float alphaFactor;
+    uniform float alphaCutoff;
+    #ifdef USE_MAP
+        uniform sampler2D map;
+        uniform mat3 mapTransform;
+    #endif
+    #ifdef USE_ALPHAMAP
+        uniform sampler2D alphaMap;
+        uniform mat3 alphaMapTransform;
+    #endif
+    layout(location = 0) out vec4 semanticOutput;
+    layout(location = 1) out vec4 instanceOutput;
+
+    vec4 packUint32(uint value) {
+        uvec4 bytes = uvec4(
+            value & 255u,
+            (value >> 8u) & 255u,
+            (value >> 16u) & 255u,
+            (value >> 24u) & 255u
+        );
+        return vec4(bytes) / 255.0;
+    }
+
+    void main() {
+        float alpha = alphaFactor;
+        #ifdef USE_MAP
+            vec2 transformedMapUv = (mapTransform * vec3(vCaptureUv, 1.0)).xy;
+            alpha *= texture(map, transformedMapUv).a;
+        #endif
+        #ifdef USE_ALPHAMAP
+            vec2 transformedAlphaUv = (alphaMapTransform * vec3(vCaptureUv, 1.0)).xy;
+            alpha *= texture(alphaMap, transformedAlphaUv).g;
+        #endif
+        if (alphaCutoff > 0.0 && alpha < alphaCutoff) discard;
+        semanticOutput = packUint32(semanticId);
+        instanceOutput = packUint32(instanceId);
     }
 `;
 
@@ -313,6 +415,7 @@ function prepareProxyScene(sceneHandle, passSet, renderables) {
     const proxy = new THREE.Scene();
     const materials = [];
     const entries = [];
+    let coverBackground = checkedHandle.scene.background?.isTexture === true;
     try {
         checkedHandle.scene.traverse((object) => {
             if (!effectiveVisible(object)) return;
@@ -323,6 +426,10 @@ function prepareProxyScene(sceneHandle, passSet, renderables) {
                 );
             }
             if (!object.isMesh) return;
+            if (isCaptureSky(object)) {
+                coverBackground = true;
+                return;
+            }
             const sources = arrayMaterials(object);
             const record = bindingByObject.get(object) ?? null;
             if (record?.materialIds?.length > 0 && record.materialIds.length !== sources.length) {
@@ -354,6 +461,20 @@ function prepareProxyScene(sceneHandle, passSet, renderables) {
             proxy.add(mesh);
             entries.push({ source: object, proxy: mesh });
         });
+        if (coverBackground) {
+            // SkyMaterial cannot feed the capture proxy. This mask is drawn
+            // first so measured sky and equirectangular background pixels stay
+            // valid, then real surfaces overwrite the pixels they cover.
+            const material = createSkyValidityMaterial();
+            materials.push(material);
+            const skyMask = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+            skyMask.name = "cev-sim.sky-validity";
+            skyMask.frustumCulled = false;
+            skyMask.renderOrder = -1;
+            skyMask.matrixAutoUpdate = false;
+            skyMask.userData.cevSimOwnedProxyGeometry = true;
+            proxy.add(skyMask);
+        }
         proxy.updateMatrixWorld(true);
         return {
             scene: proxy,
@@ -371,8 +492,7 @@ function prepareProxyScene(sceneHandle, passSet, renderables) {
     }
 }
 
-function decodeUint32(rgba) {
-    const output = new Uint32Array(rgba.length / 4);
+function decodeUint32Into(rgba, output) {
     for (let index = 0; index < output.length; index += 1) {
         const offset = index * 4;
         output[index] = (
@@ -385,9 +505,9 @@ function decodeUint32(rgba) {
     return output;
 }
 
-function extractChannels(rgba, channels) {
-    const output = new Float32Array((rgba.length / 4) * channels);
-    for (let index = 0; index < rgba.length / 4; index += 1) {
+function extractChannelsInto(rgba, channels, output) {
+    const pixels = rgba.length / 4;
+    for (let index = 0; index < pixels; index += 1) {
         for (let channel = 0; channel < channels; channel += 1) {
             output[index * channels + channel] = rgba[index * 4 + channel];
         }
@@ -395,20 +515,50 @@ function extractChannels(rgba, channels) {
     return output;
 }
 
+function extractChannelInto(rgba, channel, output) {
+    const pixels = rgba.length / 4;
+    for (let index = 0; index < pixels; index += 1) {
+        output[index] = rgba[index * 4 + channel];
+    }
+    return output;
+}
+
 function zeroInvalid(data, channels, validity) {
     for (let index = 0; index < validity.length; index += 1) {
         if (validity[index] === 1) continue;
-        data.fill(0, index * channels, index * channels + channels);
+        const offset = index * channels;
+        for (let channel = 0; channel < channels; channel += 1) data[offset + channel] = 0;
     }
     return data;
 }
 
-function warpNearest(data, calibration, channels) {
-    return warpCalibratedImage({ data, calibration, channels, interpolation: "nearest" });
+function warpNearest(data, calibration, channels, output, validity) {
+    return warpCalibratedImage({
+        data,
+        calibration,
+        channels,
+        interpolation: "nearest",
+        output,
+        validity,
+    });
+}
+
+function matrixElementsEqual(left, right) {
+    if (!left || !right || left.length !== right.length) return false;
+    for (let index = 0; index < left.length; index += 1) {
+        if (left[index] !== right[index]) return false;
+    }
+    return true;
 }
 
 function disposePrepared(prepared) {
-    for (const material of prepared?.materials ?? []) material.dispose();
+    prepared?.scene.traverse?.((object) => {
+        if (object.userData?.cevSimOwnedProxyGeometry) object.geometry?.dispose?.();
+    });
+    for (const material of prepared?.materials ?? []) {
+        material.userData?.cevSimIdAttachment?.dispose?.();
+        material.dispose();
+    }
     prepared?.scene.clear();
 }
 
@@ -423,18 +573,36 @@ function syncPrepared(prepared, sceneHandle, passSet, renderables) {
     }
     const visibleMeshes = [];
     sceneHandle.scene.traverse((object) => {
-        if (object.isMesh && effectiveVisible(object)) visibleMeshes.push(object);
+        if (object.isMesh && effectiveVisible(object) && !isCaptureSky(object)) visibleMeshes.push(object);
     });
     if (visibleMeshes.length !== prepared.entries.length
         || visibleMeshes.some((object, index) => object !== prepared.entries[index].source)) return false;
     for (const entry of prepared.entries) {
-        entry.proxy.matrix.copy(entry.source.matrixWorld);
-        entry.proxy.matrixWorld.copy(entry.source.matrixWorld);
+        if (!matrixElementsEqual(entry.proxy.matrix.elements, entry.source.matrixWorld.elements)) {
+            entry.proxy.matrix.copy(entry.source.matrixWorld);
+            entry.proxy.matrixWorld.copy(entry.source.matrixWorld);
+        }
         entry.proxy.layers.mask = entry.source.layers.mask;
         entry.proxy.renderOrder = entry.source.renderOrder;
     }
-    prepared.scene.updateMatrixWorld(true);
     return true;
+}
+
+function presentBeautyComposer(composer, camera, width, height) {
+    composer.setMainCamera?.(camera);
+    const input = composer.inputBuffer;
+    const output = composer.outputBuffer;
+    const sized = input?.width === width && input?.height === height
+        && output?.width === width && output?.height === height;
+    if (!sized
+        && typeof input?.setSize === "function"
+        && typeof output?.setSize === "function") {
+        input.setSize(width, height);
+        output.setSize(width, height);
+        composer.depthRenderTarget?.setSize?.(width, height);
+        for (const pass of composer.passes ?? []) pass.setSize?.(width, height);
+    }
+    composer.render(0);
 }
 
 function snapshotRenderer(renderer) {
@@ -498,28 +666,11 @@ function restoreCamera(camera, state) {
 
 function snapshotSceneState(scene) {
     if (!scene) return null;
-    const objects = [];
-    scene.traverse((object) => {
-        objects.push({
-            object,
-            visible: object.visible,
-            matrixAutoUpdate: object.matrixAutoUpdate,
-            matrix: object.matrix?.clone?.() ?? null,
-            matrixWorld: object.matrixWorld?.clone?.() ?? null,
-            modelViewMatrix: object.modelViewMatrix?.clone?.() ?? null,
-            normalMatrix: object.normalMatrix?.clone?.() ?? null,
-            material: object.material,
-            castShadow: object.castShadow,
-            receiveShadow: object.receiveShadow,
-            renderOrder: object.renderOrder,
-        });
-    });
     return {
         scene,
         background: scene.background,
         environment: scene.environment,
         overrideMaterial: scene.overrideMaterial,
-        objects,
     };
 }
 
@@ -528,18 +679,6 @@ function restoreSceneState(state) {
     state.scene.background = state.background;
     state.scene.environment = state.environment;
     state.scene.overrideMaterial = state.overrideMaterial;
-    for (const entry of state.objects) {
-        entry.object.visible = entry.visible;
-        entry.object.matrixAutoUpdate = entry.matrixAutoUpdate;
-        if (entry.matrix && entry.object.matrix) entry.object.matrix.copy(entry.matrix);
-        if (entry.matrixWorld && entry.object.matrixWorld) entry.object.matrixWorld.copy(entry.matrixWorld);
-        if (entry.modelViewMatrix && entry.object.modelViewMatrix) entry.object.modelViewMatrix.copy(entry.modelViewMatrix);
-        if (entry.normalMatrix && entry.object.normalMatrix) entry.object.normalMatrix.copy(entry.normalMatrix);
-        if (entry.material !== undefined) entry.object.material = entry.material;
-        entry.object.castShadow = entry.castShadow;
-        entry.object.receiveShadow = entry.receiveShadow;
-        entry.object.renderOrder = entry.renderOrder;
-    }
 }
 
 export class AlignedCaptureProducts {
@@ -571,6 +710,11 @@ export class AlignedCaptureProducts {
         }
         this.targets = new Map();
         this.preparedFamilies = new Map();
+        this._packSlots = [];
+        this._freePackSlots = new Map();
+        this._bufferPools = new Map();
+        this.bufferAllocations = 0;
+        this._packGl = null;
         this.disposed = false;
     }
 
@@ -595,16 +739,17 @@ export class AlignedCaptureProducts {
                 "Source-backed corrected capture requires a trusted rights validator.",
             );
         }
+        abortIfRequested(signal);
         const operations = passSet.captureInput.scene.role === "bake-snapshot" ? BAKE_RIGHTS : VISUAL_RIGHTS;
-        for (const useHash of passSet.sourceUseHashes) {
+        await Promise.all(passSet.sourceUseHashes.map(async (useHash) => {
             abortIfRequested(signal);
             await this.authorizeSourceUse({ useHash, operations: [...operations] });
             abortIfRequested(signal);
-        }
+        }));
     }
 
-    _target(kind, width, height) {
-        const key = `${kind}:${width}x${height}`;
+    _target(kind, width, height, count = 1) {
+        const key = `${kind}:${width}x${height}:${count}`;
         let target = this.targets.get(key);
         if (target) return target;
         target = this.createRenderTarget(width, height, {
@@ -612,6 +757,7 @@ export class AlignedCaptureProducts {
             type: kind === "float" ? THREE.FloatType : THREE.UnsignedByteType,
             depthBuffer: true,
             stencilBuffer: false,
+            count,
         });
         target.texture.colorSpace = kind === "beauty" ? THREE.SRGBColorSpace : THREE.NoColorSpace;
         target.userData = { ...(target.userData ?? {}), captureTargetKind: kind };
@@ -619,9 +765,29 @@ export class AlignedCaptureProducts {
         return target;
     }
 
-    async _render(scene, target, ArrayType, signal, { mode = null, materials = [] } = {}) {
-        abortIfRequested(signal);
-        assertContextAvailable(this.renderer, { requireFloat: target.texture.type === THREE.FloatType });
+    _acquireBuffer(ArrayType, length) {
+        const key = `${ArrayType.name}:${length}`;
+        const pooled = this._bufferPools.get(key);
+        const buffer = pooled?.pop();
+        if (buffer) return buffer;
+        this.bufferAllocations += 1;
+        return new ArrayType(length);
+    }
+
+    _releaseBuffer(buffer) {
+        if (!buffer) return;
+        const key = `${buffer.constructor.name}:${buffer.length}`;
+        const pooled = this._bufferPools.get(key) ?? [];
+        pooled.push(buffer);
+        this._bufferPools.set(key, pooled);
+    }
+
+    _pipelinesReads() {
+        return !this.readback && Boolean(getWebGL2Context(this.renderer));
+    }
+
+    _draw(scene, target, { mode = null, materials = [] } = {}) {
+        assertContextAvailable(this.renderer, { requireFloat: target.texture?.type === THREE.FloatType });
         for (const material of materials) material.uniforms.captureMode.value = mode;
         this.renderer.setRenderTarget(target);
         const background = mode === null ? this.renderPolicy?.backgroundColorRgba : null;
@@ -631,105 +797,351 @@ export class AlignedCaptureProducts {
         );
         this.renderer.clear?.(true, true, true);
         this.renderer.render(scene, this.camera);
+    }
+
+    _idAttachmentMaterial(source) {
+        if (!source?.isShaderMaterial) return source;
+        if (source.userData?.cevSimIdAttachment) return source.userData.cevSimIdAttachment;
+        const material = source.clone();
+        material.fragmentShader = fragmentShaderIdAttachments;
+        material.uniforms.captureMode.value = MODE.idAttachments;
+        if (!source.userData) source.userData = {};
+        source.userData.cevSimIdAttachment = material;
+        return material;
+    }
+
+    _drawIdAttachments(scene, target) {
+        const restores = [];
+        scene.traverse((object) => {
+            if (!object.isMesh || !object.material) return;
+            restores.push([object, object.material]);
+            object.material = Array.isArray(object.material)
+                ? object.material.map((material) => this._idAttachmentMaterial(material))
+                : this._idAttachmentMaterial(object.material);
+        });
+        try {
+            this._draw(scene, target, { mode: null, materials: [] });
+        } finally {
+            for (const [object, material] of restores) object.material = material;
+        }
+    }
+
+    _normalizeRead(buffer, width, height) {
+        const flipped = this._acquireBuffer(buffer.constructor, buffer.length);
+        const normalized = normalizeImageRows(buffer, width, height, 4, {
+            inputRows: "bottom-left",
+            output: flipped,
+        });
+        if (normalized !== buffer) this._releaseBuffer(buffer);
+        return normalized;
+    }
+
+    async _readRenderTarget(target, ArrayType, signal, attachmentIndex = 0) {
         abortIfRequested(signal);
-        assertContextAvailable(this.renderer, { requireFloat: target.texture.type === THREE.FloatType });
-        const buffer = new ArrayType(target.width * target.height * 4);
-        if (this.readback) await this.readback(this.renderer, target, buffer, { signal });
-        else {
-            withPixelPackBufferUnbound(this.renderer, () => {
-                this.renderer.readRenderTargetPixels(
-                    target,
-                    0,
-                    0,
-                    target.width,
-                    target.height,
-                    buffer,
-                );
-            });
+        assertContextAvailable(this.renderer, { requireFloat: target.texture?.type === THREE.FloatType });
+        const buffer = this._acquireBuffer(ArrayType, target.width * target.height * 4);
+        try {
+            if (this.readback) {
+                await this.readback(this.renderer, target, buffer, { signal, textureIndex: attachmentIndex });
+            } else if (getWebGL2Context(this.renderer)) {
+                const slot = this._beginPackedRead(target, buffer, attachmentIndex);
+                await this._finishPackedRead(slot, buffer, signal);
+            } else {
+                withPixelPackBufferUnbound(this.renderer, () => {
+                    this.renderer.readRenderTargetPixels(
+                        target,
+                        0,
+                        0,
+                        target.width,
+                        target.height,
+                        buffer,
+                        undefined,
+                        attachmentIndex,
+                    );
+                });
+            }
+        } catch (error) {
+            this._releaseBuffer(buffer);
+            throw error;
         }
         abortIfRequested(signal);
-        return normalizeImageRows(buffer, target.width, target.height, 4, { inputRows: "bottom-left" });
+        return this._normalizeRead(buffer, target.width, target.height);
+    }
+
+    _binaryValidity(raw, calibration, width, height) {
+        const warpData = this._acquireBuffer(Float32Array, width * height);
+        const warpMask = this._acquireBuffer(Uint8Array, width * height);
+        const warped = warpNearest(raw, calibration, 1, warpData, warpMask);
+        const validity = new Uint8Array(width * height);
+        for (let index = 0; index < validity.length; index += 1) {
+            validity[index] = warped.validity[index] === 1 && warped.data[index] >= 0.5 ? 1 : 0;
+        }
+        this._releaseBuffer(raw);
+        this._releaseBuffer(warpData);
+        this._releaseBuffer(warpMask);
+        return validity;
+    }
+
+    _warpProduct(raw, calibration, channels, validity) {
+        const product = new raw.constructor(raw.length);
+        const mask = this._acquireBuffer(Uint8Array, raw.length / channels);
+        const warped = warpNearest(raw, calibration, channels, product, mask);
+        this._releaseBuffer(mask);
+        this._releaseBuffer(raw);
+        return zeroInvalid(warped.data, channels, validity);
     }
 
     async _captureFamily(passSet, sceneHandle, prepared, signal) {
         const { width, height } = passSet.captureInput.calibration.image;
+        const calibration = passSet.captureInput.calibration;
         const requested = new Set(passSet.products);
-        const floatTarget = () => this._target("float", width, height);
-        const idTarget = this._target("id", width, height);
-        const renderFloat = async (mode, channels) => extractChannels(await this._render(
-            prepared.scene,
-            floatTarget(),
-            Float32Array,
-            signal,
-            { mode, materials: prepared.materials },
-        ), channels);
-        const renderId = async (mode) => decodeUint32(await this._render(
-            prepared.scene,
-            idTarget,
-            Uint8Array,
-            signal,
-            { mode, materials: prepared.materials },
-        ));
-        const rawValidity = extractChannels(await this._render(
-            prepared.scene,
-            idTarget,
-            Uint8Array,
-            signal,
-            { mode: MODE.validity, materials: prepared.materials },
-        ), 1);
-        const validityWarp = warpNearest(rawValidity, passSet.captureInput.calibration, 1);
-        const validity = new Uint8Array(width * height);
-        for (let index = 0; index < validity.length; index += 1) {
-            validity[index] = validityWarp.validity[index] === 1 && validityWarp.data[index] >= 0.5 ? 1 : 0;
-        }
-        const products = { validity };
-        if (passSet.family === VISUAL_CAPTURE_PASS_FAMILIES.visual && requested.has("beauty")) {
-            const beautyTarget = this._target("beauty", width, height);
-            const rawBeauty = await this._render(
-                sceneHandle.scene,
-                beautyTarget,
-                Uint8Array,
-                signal,
-            );
-            products.beauty = zeroInvalid(warpCalibratedImage({
-                data: rawBeauty,
-                calibration: passSet.captureInput.calibration,
-                channels: 4,
-                interpolation: "linear",
-            }).data, 4, validity);
-        }
-        const numeric = [
-            ["axial-depth", "axialDepth", MODE.axialDepth, 1],
-            ["geometric-normal", "geometricNormal", MODE.geometricNormal, 3],
-            ["world-position", "worldPosition", MODE.worldPosition, 3],
-            ["confidence", "confidence", MODE.confidence, 1],
-        ];
-        for (const [requestName, resultName, mode, channels] of numeric) {
-            if (!requested.has(requestName)) continue;
-            const warped = warpNearest(
-                await renderFloat(mode, channels),
-                passSet.captureInput.calibration,
-                channels,
-            ).data;
-            products[resultName] = zeroInvalid(warped, channels, validity);
-        }
-        const ids = passSet.family === VISUAL_CAPTURE_PASS_FAMILIES.visual
-            ? [
-                ["object-id", "objectId", MODE.objectId],
-                ["material-id", "materialId", MODE.materialId],
-            ]
-            : [
-                ["semantic-id", "semanticId", MODE.semanticId],
-                ["instance-id", "instanceId", MODE.instanceId],
+        const pipeline = this._pipelinesReads();
+        const pending = [];
+        const products = {};
+        let validity = null;
+        const pixels = width * height;
+
+        const pump = () => {
+            let waiting = false;
+            for (const job of pending) {
+                if (job.settled) continue;
+                if (!job.filled) {
+                    if (job.slot?.gl?.isContextLost?.()) {
+                        throw new Error("WebGL2 context was lost during asynchronous readback.");
+                    }
+                    if (!job.slot?.pending) {
+                        this._abandonPackSlot(job.slot);
+                        throw new Error("Asynchronous PBR readback lost its fence before readback.");
+                    }
+                    if (!this._tryFinishPackedRead(job.slot, job.buffer)) {
+                        if (job.slot?.gl?.isContextLost?.()) {
+                            throw new Error("WebGL2 context was lost during asynchronous readback.");
+                        }
+                        if (!job.slot?.pending) {
+                            this._abandonPackSlot(job.slot);
+                            throw new Error("Asynchronous PBR readback lost its fence before readback.");
+                        }
+                        waiting = true;
+                        continue;
+                    }
+                    job.filled = true;
+                    job.rgba = this._normalizeRead(job.buffer, job.target.width, job.target.height);
+                }
+                if (job.needsValidity && !validity) continue;
+                job.settle(job.rgba);
+                this._releaseBuffer(job.rgba);
+                job.settled = true;
+            }
+            return waiting;
+        };
+
+        const issue = async (job) => {
+            abortIfRequested(signal);
+            job.draw();
+            if (!pipeline) {
+                const rgba = await this._readRenderTarget(
+                    job.target,
+                    job.ArrayType,
+                    signal,
+                    job.attachmentIndex ?? 0,
+                );
+                job.settle(rgba);
+                this._releaseBuffer(rgba);
+                return;
+            }
+            const buffer = this._acquireBuffer(job.ArrayType, job.target.width * job.target.height * 4);
+            const slot = this._beginPackedRead(job.target, buffer, job.attachmentIndex ?? 0);
+            pending.push({ ...job, buffer, slot, filled: false, settled: false, rgba: null });
+            pump();
+        };
+
+        const queueValidity = () => issue({
+            needsValidity: false,
+            ArrayType: Uint8Array,
+            target: this._target("id", width, height),
+            draw: () => this._draw(prepared.scene, this._target("id", width, height), {
+                mode: MODE.validity,
+                materials: prepared.materials,
+            }),
+            settle: (rgba) => {
+                const raw = this._acquireBuffer(Float32Array, pixels);
+                extractChannelInto(rgba, 0, raw);
+                validity = this._binaryValidity(raw, calibration, width, height);
+                products.validity = validity;
+            },
+        });
+
+        const queueBeauty = () => {
+            const composer = sceneHandle.scene?.userData?.cevSimBeautyComposer ?? null;
+            const target = composer?.outputBuffer ?? this._target("beauty", width, height);
+            return issue({
+                needsValidity: true,
+                ArrayType: Uint8Array,
+                target,
+                draw: () => {
+                    const background = this.renderPolicy?.backgroundColorRgba;
+                    this.renderer.setClearColor?.(
+                        background ? new THREE.Color(background[0], background[1], background[2]) : 0x000000,
+                        background ? background[3] : 0,
+                    );
+                    if (composer) presentBeautyComposer(composer, this.camera, width, height);
+                    else this._draw(sceneHandle.scene, target, { mode: null, materials: [] });
+                },
+                settle: (rgba) => {
+                    const product = new Uint8Array(rgba.length);
+                    const mask = this._acquireBuffer(Uint8Array, pixels);
+                    const warped = warpCalibratedImage({
+                        data: rgba,
+                        calibration,
+                        channels: 4,
+                        interpolation: "linear",
+                        output: product,
+                        validity: mask,
+                    });
+                    this._releaseBuffer(mask);
+                    products.beauty = zeroInvalid(warped.data, 4, validity);
+                },
+            });
+        };
+
+        const queueFloat = (mode, resultName, channels) => issue({
+            needsValidity: true,
+            ArrayType: Float32Array,
+            target: this._target("float", width, height),
+            draw: () => this._draw(prepared.scene, this._target("float", width, height), {
+                mode,
+                materials: prepared.materials,
+            }),
+            settle: (rgba) => {
+                const raw = this._acquireBuffer(Float32Array, pixels * channels);
+                extractChannelsInto(rgba, channels, raw);
+                products[resultName] = this._warpProduct(raw, calibration, channels, validity);
+            },
+        });
+
+        const queueId = (mode, resultName) => issue({
+            needsValidity: true,
+            ArrayType: Uint8Array,
+            target: this._target("id", width, height),
+            draw: () => this._draw(prepared.scene, this._target("id", width, height), {
+                mode,
+                materials: prepared.materials,
+            }),
+            settle: (rgba) => {
+                const raw = this._acquireBuffer(Uint32Array, pixels);
+                decodeUint32Into(rgba, raw);
+                products[resultName] = this._warpProduct(raw, calibration, 1, validity);
+            },
+        });
+
+        const combineAnalytic = !this.readback
+            && passSet.family === VISUAL_CAPTURE_PASS_FAMILIES.analytic
+            && [...requested].every((name) => ANALYTIC_COMBINED_PRODUCTS.has(name));
+
+        if (combineAnalytic) {
+            const floatTarget = this._target("float", width, height);
+            await issue({
+                needsValidity: false,
+                ArrayType: Float32Array,
+                target: floatTarget,
+                draw: () => this._draw(prepared.scene, floatTarget, {
+                    mode: MODE.axialDepthValidity,
+                    materials: prepared.materials,
+                }),
+                settle: (rgba) => {
+                    const rawValidity = this._acquireBuffer(Float32Array, pixels);
+                    extractChannelInto(rgba, 1, rawValidity);
+                    validity = this._binaryValidity(rawValidity, calibration, width, height);
+                    products.validity = validity;
+                    if (!requested.has("axial-depth")) return;
+                    const rawDepth = this._acquireBuffer(Float32Array, pixels);
+                    extractChannelInto(rgba, 0, rawDepth);
+                    products.axialDepth = this._warpProduct(rawDepth, calibration, 1, validity);
+                },
+            });
+            const wantSemantic = requested.has("semantic-id");
+            const wantInstance = requested.has("instance-id");
+            if (wantSemantic && wantInstance) {
+                const idTarget = this._target("id", width, height, 2);
+                this._drawIdAttachments(prepared.scene, idTarget);
+                const settleId = (channelName) => (rgba) => {
+                    const raw = this._acquireBuffer(Uint32Array, pixels);
+                    decodeUint32Into(rgba, raw);
+                    products[channelName] = this._warpProduct(raw, calibration, 1, validity);
+                };
+                if (!pipeline) {
+                    const semantic = await this._readRenderTarget(idTarget, Uint8Array, signal, 0);
+                    const instance = await this._readRenderTarget(idTarget, Uint8Array, signal, 1);
+                    if (!validity) throw new Error("Analytic validity was not produced.");
+                    settleId("semanticId")(semantic);
+                    settleId("instanceId")(instance);
+                    this._releaseBuffer(semantic);
+                    this._releaseBuffer(instance);
+                } else {
+                    for (const [attachmentIndex, resultName] of [[0, "semanticId"], [1, "instanceId"]]) {
+                        const buffer = this._acquireBuffer(Uint8Array, idTarget.width * idTarget.height * 4);
+                        const slot = this._beginPackedRead(idTarget, buffer, attachmentIndex);
+                        pending.push({
+                            needsValidity: true,
+                            target: idTarget,
+                            buffer,
+                            slot,
+                            filled: false,
+                            settled: false,
+                            rgba: null,
+                            settle: settleId(resultName),
+                        });
+                    }
+                    pump();
+                }
+            } else if (wantSemantic) {
+                await queueId(MODE.semanticId, "semanticId");
+            } else if (wantInstance) {
+                await queueId(MODE.instanceId, "instanceId");
+            }
+        } else {
+            await queueValidity();
+            if (passSet.family === VISUAL_CAPTURE_PASS_FAMILIES.visual && requested.has("beauty")) {
+                await queueBeauty();
+            }
+            const numeric = [
+                ["axial-depth", "axialDepth", MODE.axialDepth, 1],
+                ["geometric-normal", "geometricNormal", MODE.geometricNormal, 3],
+                ["world-position", "worldPosition", MODE.worldPosition, 3],
+                ["confidence", "confidence", MODE.confidence, 1],
             ];
-        for (const [requestName, resultName, mode] of ids) {
-            if (!requested.has(requestName)) continue;
-            const warped = warpNearest(
-                await renderId(mode),
-                passSet.captureInput.calibration,
-                1,
-            ).data;
-            products[resultName] = zeroInvalid(warped, 1, validity);
+            for (const [requestName, resultName, mode, channels] of numeric) {
+                if (requested.has(requestName)) await queueFloat(mode, resultName, channels);
+            }
+            const ids = passSet.family === VISUAL_CAPTURE_PASS_FAMILIES.visual
+                ? [
+                    ["object-id", "objectId", MODE.objectId],
+                    ["material-id", "materialId", MODE.materialId],
+                ]
+                : [
+                    ["semantic-id", "semanticId", MODE.semanticId],
+                    ["instance-id", "instanceId", MODE.instanceId],
+                ];
+            for (const [requestName, resultName, mode] of ids) {
+                if (requested.has(requestName)) await queueId(mode, resultName);
+            }
+        }
+
+        if (pipeline) {
+            const deadline = Date.now() + 2000;
+            while (pump()) {
+                abortIfRequested(signal);
+                if (Date.now() >= deadline) {
+                    for (const job of pending) {
+                        if (!job.filled) this._abandonPackSlot(job.slot);
+                    }
+                    throw new Error("Asynchronous PBR readback exceeded 2000 ms.");
+                }
+                await yieldForGpuReadback();
+            }
+        }
+        if (!products.validity) {
+            throw captureError("VISUAL_CAPTURE_PRODUCT_INVALID", "Aligned capture did not produce validity.");
         }
         return Object.freeze({
             family: passSet.family,
@@ -835,9 +1247,82 @@ export class AlignedCaptureProducts {
         }
     }
 
+    _acquirePackSlot(byteLength) {
+        const gl = getWebGL2Context(this.renderer);
+        if (this._packGl !== gl) {
+            this._disposePackSlots();
+            this._packGl = gl;
+        }
+        const free = this._freePackSlots.get(byteLength);
+        const slot = free?.pop() ?? new PixelPackSlot(gl, byteLength);
+        if (!this._packSlots.includes(slot)) this._packSlots.push(slot);
+        return slot;
+    }
+
+    _releasePackSlot(slot) {
+        if (!slot || slot.pending) return;
+        const free = this._freePackSlots.get(slot.byteLength) ?? [];
+        free.push(slot);
+        this._freePackSlots.set(slot.byteLength, free);
+    }
+
+    _abandonPackSlot(slot) {
+        if (!slot) return;
+        slot.dispose();
+        this._packSlots = this._packSlots.filter((candidate) => candidate !== slot);
+        const free = this._freePackSlots.get(slot.byteLength);
+        if (free) this._freePackSlots.set(slot.byteLength, free.filter((candidate) => candidate !== slot));
+    }
+
+    _beginPackedRead(target, buffer, attachmentIndex = 0) {
+        const gl = getWebGL2Context(this.renderer);
+        const slot = this._acquirePackSlot(buffer.byteLength);
+        const type = buffer instanceof Float32Array ? gl.FLOAT : gl.UNSIGNED_BYTE;
+        if (slot.begin(0, 0, target.width, target.height, gl.RGBA, type, attachmentIndex) === false) {
+            this._abandonPackSlot(slot);
+            throw new Error("Asynchronous PBR readback buffer is still awaiting readback.");
+        }
+        return slot;
+    }
+
+    _tryFinishPackedRead(slot, buffer) {
+        if (!slot.poll(buffer)) return false;
+        this._releasePackSlot(slot);
+        return true;
+    }
+
+    async _finishPackedRead(slot, buffer, signal) {
+        abortIfRequested(signal);
+        const gl = slot.gl;
+        if (gl?.isContextLost?.()) {
+            this._abandonPackSlot(slot);
+            throw new Error("WebGL2 context was lost during asynchronous readback.");
+        }
+        const remainingMs = Math.max(0, 2000 - (Date.now() - slot.begunAtMs));
+        const ready = await waitForPixelPack(slot, buffer, { timeoutMs: remainingMs, signal });
+        if (!ready) {
+            const lost = slot.gl?.isContextLost?.();
+            this._abandonPackSlot(slot);
+            throw new Error(lost
+                ? "WebGL2 context was lost during asynchronous readback."
+                : "Asynchronous PBR readback exceeded 2000 ms.");
+        }
+        this._releasePackSlot(slot);
+        return buffer;
+    }
+
+    _disposePackSlots() {
+        for (const slot of this._packSlots) slot.dispose();
+        this._packSlots = [];
+        this._freePackSlots.clear();
+        this._packGl = null;
+    }
+
     dispose() {
         if (this.disposed) return;
         this._disposeTargets();
+        this._disposePackSlots();
+        this._bufferPools.clear();
         for (const prepared of this.preparedFamilies.values()) disposePrepared(prepared);
         this.preparedFamilies.clear();
         this.createRenderTarget = null;
@@ -848,6 +1333,7 @@ export class AlignedCaptureProducts {
     _disposeTargets() {
         for (const target of this.targets.values()) target.dispose();
         this.targets.clear();
+        this._disposePackSlots();
     }
 }
 

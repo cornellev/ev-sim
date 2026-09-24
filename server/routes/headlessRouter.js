@@ -1,5 +1,5 @@
 import express from "express";
-import { promises as fs } from "node:fs";
+import { createReadStream, promises as fs } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 
@@ -13,6 +13,70 @@ const EnqueueSchema = z.object({
     failFast: z.boolean().optional(),
     artifactProfile: z.enum(["evaluation", "training", "disabled"]).optional(),
 });
+
+const ClipMountPoseSchema = z.object({
+    position: z.object({ x: z.number(), y: z.number(), z: z.number() }),
+    rotation: z.object({
+        x: z.number(),
+        y: z.number(),
+        z: z.number(),
+        w: z.number().optional(),
+        order: z.string().optional(),
+    }),
+});
+
+const ClipRequestSchema = z.object({
+    profile: z.enum(["environment", "cosmos-nano"]),
+    manifestId: z.string().min(1),
+    expectedManifestRevision: z.number().int().nonnegative().optional(),
+    camera: z.discriminatedUnion("kind", [
+        z.object({
+            kind: z.literal("manifest"),
+            cameraId: z.string().min(1),
+        }),
+        z.object({
+            kind: z.literal("viewport"),
+            attachment: z.enum(["map", "vehicle"]),
+            environmentId: z.string().min(1),
+            parentId: z.string().min(1).optional(),
+            mountPose: ClipMountPoseSchema,
+            projection: z.object({
+                verticalFovDeg: z.number().positive().lt(180),
+                near: z.number().positive(),
+                far: z.number().positive(),
+            }),
+        }),
+    ]),
+    renderer: z.enum(["analytic", "pbr"]).optional(),
+    durationNs: z.number().int().positive().optional(),
+    width: z.number().int().positive().optional(),
+    height: z.number().int().positive().optional(),
+    actionTape: z.unknown().nullable().optional(),
+}).superRefine((value, context) => {
+    if (value.camera.kind === "viewport" && value.camera.attachment === "vehicle" && !value.camera.parentId) {
+        context.addIssue({
+            code: "custom",
+            message: "A vehicle viewport camera requires parentId.",
+            path: ["camera", "parentId"],
+        });
+    }
+    if (value.camera.kind === "viewport" && !(value.camera.projection.far > value.camera.projection.near)) {
+        context.addIssue({
+            code: "custom",
+            message: "Viewport far plane must be greater than near.",
+            path: ["camera", "projection", "far"],
+        });
+    }
+});
+
+function parseClipBody(body) {
+    if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).length === 0) return null;
+    const parsed = ClipRequestSchema.safeParse(body);
+    if (!parsed.success) {
+        throw Object.assign(new Error(parsed.error.issues.map((issue) => issue.message).join(" ")), { status: 400 });
+    }
+    return parsed.data;
+}
 
 const PreflightSchema = z.object({
     suiteId: z.string().min(1),
@@ -80,7 +144,7 @@ function assertSameOrigin(req) {
     }
 }
 
-export function createHeadlessRouter(headlessExperimentService) {
+export function createHeadlessRouter(headlessExperimentService, cosmosClipJob = null) {
     const router = express.Router();
     const artifactRoot = path.resolve(headlessExperimentService.artifactRoot);
 
@@ -166,6 +230,59 @@ export function createHeadlessRouter(headlessExperimentService) {
         };
     }));
 
+    router.get("/clips/preflight", handle(async () => {
+        if (!cosmosClipJob) throw Object.assign(new Error("Cosmos clip launch is not available."), { status: 404 });
+        return cosmosClipJob.preflight();
+    }));
+
+    router.post("/clips/preflight", handle(async (req) => {
+        assertSameOrigin(req);
+        if (!cosmosClipJob) throw Object.assign(new Error("Cosmos clip launch is not available."), { status: 404 });
+        const request = parseClipBody(req.body ?? {});
+        if (!request) return cosmosClipJob.preflight();
+        return cosmosClipJob.preflight(request);
+    }));
+
+    router.get("/clips/current", handle(async () => {
+        if (!cosmosClipJob) return { job: null };
+        return { job: cosmosClipJob.currentView() };
+    }));
+
+    router.post("/clips", handle(async (req) => {
+        assertSameOrigin(req);
+        if (!cosmosClipJob) throw Object.assign(new Error("Cosmos clip launch is not available."), { status: 404 });
+        return { job: await cosmosClipJob.start(parseClipBody(req.body ?? {})) };
+    }));
+
+    router.post("/clips/current/cancel", handle(async (req) => {
+        assertSameOrigin(req);
+        if (!cosmosClipJob) throw Object.assign(new Error("Cosmos clip launch is not available."), { status: 404 });
+        return { job: await cosmosClipJob.cancel() };
+    }));
+
+    router.get("/clips/current/files/:name", async (req, res) => {
+        try {
+            if (!cosmosClipJob) {
+                res.status(404).json({ error: "Cosmos clip launch is not available." });
+                return;
+            }
+            const opened = await cosmosClipJob.openVideo(req.params.name);
+            res.setHeader("Content-Type", "video/mp4");
+            res.setHeader("Content-Disposition", `attachment; filename="${opened.name}"`);
+            res.setHeader("Cache-Control", "no-cache");
+            const stream = opened.stream ? opened.stream() : createReadStream(opened.path);
+            stream.on("error", () => {
+                if (!res.headersSent) res.status(404).json({ error: "Clip video is missing." });
+                else res.destroy();
+            });
+            stream.pipe(res);
+        } catch (error) {
+            if (res.headersSent) return;
+            const status = Number.isInteger(error.status) ? error.status : 404;
+            res.status(status).json({ error: error.message });
+        }
+    });
+
     router.post("/runs", handle(async (req) => {
         assertSameOrigin(req);
         const payload = EnqueueSchema.parse(req.body ?? {});
@@ -229,7 +346,9 @@ function handle(fn) {
             res.json(result ?? null);
         } catch (error) {
             console.error(`[headless] ${req.method} ${req.originalUrl} failed:`, error);
-            const status = /cross-origin/i.test(error.message) ? 403 : 400;
+            const status = Number.isInteger(error.status)
+                ? error.status
+                : /cross-origin/i.test(error.message) ? 403 : 400;
             res.status(status).json({ error: error.message, details: error.details ?? null });
         }
     };

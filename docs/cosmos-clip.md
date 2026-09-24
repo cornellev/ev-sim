@@ -1,40 +1,36 @@
-# Cosmos 3 Nano transfer clip
+# Cosmos clip
 
-A finalized headless analytic run can be exported to one clip directory for a
-later Cosmos 3 Nano transfer. The simulator writes paired RGB and depth
-frames. Encoding and validation happen after the episode is finalized.
+The original Cosmos transfer clip is still the fixed analytic corridor. Camera
+clips of a saved manifest are documented in [camera-clips.md](camera-clips.md).
 
-## Handoff files
+## Corridor contract
 
-`rgb.mp4` is the reference video.
+`cev-sim.cosmos-clip` version 1 is unchanged:
 
-`depth.mp4` is the Nano depth `control_path`.
+- Manifest `cosmos-nano-clip`, camera `front-camera`, environment `corridor-acceptance`.
+- 1280×720, 121 frames, 30 fps.
+- Simulation step 11111111 ns, 363 steps, first capture at 33333333 ns.
+- Analytic renderer `canonical-analytic` version 1 and GPU backend v1.
+- Depth video mapping: invalid or non-positive samples are 0; otherwise
+  `1 + round(254 * clamp(depth / 200, 0, 1))`.
 
-`depth.f32` is the metric axial depth. The MP4 is only a visualization.
+`GET /api/headless/clips/preflight` and `POST /api/headless/clips` with an
+empty body still run this corridor. The Headless Runs profile **Analytic
+corridor** is that request.
 
-The geometry is 1280×720, 121 frames, at 30 fps.
+## Selected manifests
 
-A future JSON caption is supplied separately. This repository does not create
-that caption.
+`profile: "cosmos-nano"` derives the same resolution, timing, products, and
+frame count from a saved manifest. The checker accepts that document as
+`cev-sim.cosmos-clip` version 2. Analytic clips still require GPU backend v1.
+PBR clips require `pbr-mesh@1` and routed GPU backend v2. Version 1 still
+rejects a PBR renderer.
 
-Generation runs on a separate workstation or datacenter GPU through Cosmos
-Framework or vLLM-Omni. This repository does not run a Cosmos command, NIM
-client, prompt processor, or generated-output importer.
-
-## Export
-
-```text
-python -m cev_sim.cosmos_clip export \
-  --run-output <headless-output-directory> \
-  --camera-id front-camera \
-  --window-index 0 \
-  --output-root <clips-directory>
+```bash
+python3 -m cev_sim.cosmos_clip export --run-output <run> --output-root <clips>
+python3 -m cev_sim.cosmos_clip check <clip-directory>
+python3 -m cev_sim.clip export --contract cosmos-v2 --run-output <run> --output-root <clips>
 ```
 
-```text
-python -m cev_sim.cosmos_clip check <clip-directory>
-```
-
-The reference run is manifest `cosmos-nano-clip` in environment
-`corridor-acceptance`. It uses one analytic front camera, a 2 m/s verified
-straight route, and a lead vehicle about 13 m ahead.
+The version 1 exporter remains `python3 -m cev_sim.cosmos_clip`. Generic
+saved-environment clips use `python3 -m cev_sim.clip`.

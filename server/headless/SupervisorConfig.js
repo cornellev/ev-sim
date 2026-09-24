@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import net from "node:net";
+import path from "node:path";
 
 import { HeadlessRunnerError } from "./HeadlessRunnerErrors.js";
 import { resolveSensorTransportHostConfig } from "../sensor-transports/SensorTransportConfig.js";
@@ -141,6 +142,104 @@ export async function readSupervisorConfig(filePath) {
     } catch (error) {
         throw invalid(`Could not read supervisor config ${filePath}: ${error.message}`);
     }
+}
+
+const SUPERVISOR_CONFIG_ENV_NAMES = Object.freeze([
+    "CEV_SIM_HEADLESS_SUPERVISOR_CONFIG",
+    "CEV_SIM_SUPERVISOR_CONFIG",
+]);
+
+function projectEnvMode(env) {
+    if (env.NODE_ENV === "test") return "test";
+    if (env.NODE_ENV === "production") return "production";
+    return "development";
+}
+
+function parseEnvFile(text) {
+    const values = {};
+    for (const line of String(text).split(/\n/)) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#")) continue;
+        const match = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(trimmed);
+        if (!match) continue;
+        let value = match[2].trim();
+        const comment = value.match(/\s+#/);
+        if (comment && !(value.startsWith('"') || value.startsWith("'"))) value = value.slice(0, comment.index).trim();
+        if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+            value = value.slice(1, -1);
+        }
+        values[match[1]] = value;
+    }
+    return values;
+}
+
+/** Fill empty keys from `.env*` files. An existing process value wins. */
+export async function applyProjectEnvFiles(env, root) {
+    const mode = projectEnvMode(env);
+    const names = [
+        `.env.${mode}.local`,
+        mode === "test" ? null : ".env.local",
+        `.env.${mode}`,
+        ".env",
+    ].filter(Boolean);
+    for (const name of names) {
+        let text = "";
+        try {
+            text = await fs.readFile(path.join(root, name), "utf8");
+        } catch (error) {
+            if (error.code !== "ENOENT") throw error;
+            continue;
+        }
+        for (const [key, value] of Object.entries(parseEnvFile(text))) {
+            if (!String(env[key] || "").trim()) env[key] = value;
+        }
+    }
+    return env;
+}
+
+function supervisorConfigSelection(env) {
+    for (const name of SUPERVISOR_CONFIG_ENV_NAMES) {
+        const value = String(env[name] || "").trim();
+        if (value) return { name, value };
+    }
+    return null;
+}
+
+function configCandidates(value, root) {
+    if (path.isAbsolute(value)) return [value];
+    const fromRoot = path.resolve(root, value);
+    const fromCwd = path.resolve(value);
+    return fromRoot === fromCwd ? [fromRoot] : [fromRoot, fromCwd];
+}
+
+/**
+ * Read the supervisor document named by CEV_SIM_HEADLESS_SUPERVISOR_CONFIG,
+ * or CEV_SIM_SUPERVISOR_CONFIG. The value is a JSON path, or inline JSON.
+ * Relative paths resolve from the repository root.
+ */
+export async function readSupervisorConfigFromEnv(env = process.env, root = process.cwd()) {
+    await applyProjectEnvFiles(env, root);
+    const selected = supervisorConfigSelection(env);
+    if (!selected) return null;
+    if (selected.value.startsWith("{")) {
+        try {
+            return JSON.parse(selected.value);
+        } catch (error) {
+            throw invalid(`${selected.name} is not valid JSON: ${error.message}`);
+        }
+    }
+    const candidates = configCandidates(selected.value, root);
+    let lastError = null;
+    for (const candidate of candidates) {
+        try {
+            return await readSupervisorConfig(candidate);
+        } catch (error) {
+            lastError = error;
+        }
+    }
+    throw invalid(
+        `${selected.name} could not be read. Tried ${candidates.join(", ")}. ${lastError?.message || ""}`.trim(),
+    );
 }
 
 export function parseTcpAddress(value) {

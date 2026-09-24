@@ -141,9 +141,11 @@ import {
     validateAssetMetricsDomain,
 } from "../../app/editor-assets/AssetMetricSnapshot.js";
 import {
+    assetVisualLayerRootUseHashes,
     compileAssetVisualLayer,
     composeVisualLayers,
 } from "../../app/editor-assets/AssetVisualLayerCompiler.js";
+import { glbTriangleBounds } from "../../app/simulation/visual/GlbBounds.js";
 import {
     BINDING_SCOPES,
     createBindingManifest,
@@ -640,10 +642,7 @@ export class StorageService {
             sha256: entry.sha256,
             useHash: entry.useHash,
         }));
-        const assetRootUseHashes = [...new Set(assetInputs.flatMap((input) => [
-            input.revision.modelUseHash,
-            ...input.revision.definition.materials.flatMap((material) => material.textures.map((texture) => texture.useHash)),
-        ]))].sort();
+        const assetRootUseHashes = [...new Set(assetInputs.flatMap(assetVisualLayerRootUseHashes))].sort();
         const evidenceRecipeRoots = recipeRoots.map((entry) => ({
             scope: entry.scope,
             sha256: entry.asset.sha256,
@@ -695,6 +694,22 @@ export class StorageService {
             assetsByDigest.set(use.asset.sha256, use.asset);
         }
         const assetClosure = normalizePbrAssetClosure({ assets: [...assetsByDigest.values()] });
+        const meshBoundsByUse = new Map();
+        for (const input of assetInputs) {
+            const useHash = input.revision.modelUseHash;
+            if (!meshBoundsByUse.has(useHash)) {
+                const modelUse = closureUseMap.get(useHash);
+                if (modelUse?.asset?.mediaType !== "model/gltf-binary") {
+                    meshBoundsByUse.set(useHash, null);
+                } else {
+                    const bytes = await this.visualAssets.readPublishedBytes(modelUse.asset.sha256, {
+                        expectedSize: modelUse.asset.sizeBytes,
+                    });
+                    meshBoundsByUse.set(useHash, glbTriangleBounds(bytes));
+                }
+            }
+            input.meshBounds = meshBoundsByUse.get(useHash);
+        }
         const assetLayer = compileAssetVisualLayer({ world, inputs: assetInputs, closureUses: verification.closureUses });
         const descriptor = composeVisualLayers(baseDescriptor, assetLayer.description);
         const descriptorHash = hashVisualLayer(descriptor);
@@ -723,6 +738,7 @@ export class StorageService {
             visualLayerResource: visualLayer,
             renderRecipe: recipe,
             assetClosure,
+            sky: environment?.sky ?? null,
         });
         const evidence = {
             kind: PBR_RUN_EVIDENCE_KIND,
@@ -1870,6 +1886,7 @@ export class StorageService {
         }));
         const vehicleIds = new Set(manifest.initialState.vehicles.map((entry) => entry.id));
         for (const sensor of manifest.sensorRig.sensors) {
+            if (sensor.type === "camera" && sensor.poseReference === "map") continue;
             if (!vehicleIds.has(sensor.parentId)) {
                 throw new Error(`Sensor "${sensor.id}" references unknown run vehicle "${sensor.parentId}".`);
             }

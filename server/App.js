@@ -1,7 +1,11 @@
 const express = require('express');
 const next = require('next');
+const path = require('node:path');
+const { loadEnvConfig } = require('@next/env');
 
+const REPOSITORY_ROOT = path.resolve(__dirname, '..');
 const dev = process.env.NODE_ENV !== 'production';
+loadEnvConfig(REPOSITORY_ROOT, dev);
 const app = next({ dev });
 const handle = app.getRequestHandler();
 
@@ -17,8 +21,9 @@ app.prepare().then(async () => {
     const { LogService } = await import('./logging/LogService.js');
     const { createLogRouter } = await import('./routes/logRouter.js');
     const { HeadlessExperimentService } = await import('./headless/HeadlessExperimentService.js');
-    const { readSupervisorConfig } = await import('./headless/SupervisorConfig.js');
+    const { readSupervisorConfigFromEnv } = await import('./headless/SupervisorConfig.js');
     const { createHeadlessRouter } = await import('./routes/headlessRouter.js');
+    const { CosmosClipJob } = await import('./headless/CosmosClipJob.js');
     const {
         createRequestSecurityMiddleware,
         resolveHttpSecurityConfig,
@@ -38,13 +43,31 @@ app.prepare().then(async () => {
             ? Number(process.env.CEV_SIM_MAX_LOG_IMPORT_BYTES)
             : undefined,
     });
-    const supervisorConfig = process.env.CEV_SIM_HEADLESS_SUPERVISOR_CONFIG
-        ? await readSupervisorConfig(process.env.CEV_SIM_HEADLESS_SUPERVISOR_CONFIG)
-        : undefined;
+    let supervisorConfig;
+    let supervisorConfigError = null;
+    try {
+        supervisorConfig = await readSupervisorConfigFromEnv(process.env, REPOSITORY_ROOT) ?? undefined;
+    } catch (error) {
+        supervisorConfigError = error.message;
+        console.error(`[headless] ${error.message}`);
+    }
     const headlessExperimentService = new HeadlessExperimentService(storageService, logService, {
         supervisorConfig,
     });
     await headlessExperimentService.initialize();
+    const cosmosClipJob = new CosmosClipJob({
+        artifactRoot: headlessExperimentService.artifactRoot,
+        renderer: headlessExperimentService.supervisor.config.renderer,
+        resolveRenderer: async () => {
+            const loaded = await readSupervisorConfigFromEnv(process.env, REPOSITORY_ROOT);
+            return loaded?.renderer ?? {};
+        },
+        gpuTurn: headlessExperimentService.gpuTurn,
+        managedBusy: () => headlessExperimentService.managedWorkPending(),
+        supervisor: headlessExperimentService.supervisor,
+        storage: storageService,
+    });
+    await cosmosClipJob.initialize();
 
     // Parse JSON only for Express-owned routes. A global body parser locks the
     // request stream and breaks Next.js App Router handlers that still need to
@@ -56,8 +79,8 @@ app.prepare().then(async () => {
     server.use('/api/logs', createLogRouter(logService));
     mountStorageApi(server, storageService, { jsonParser });
     server.use('/api/scripting', jsonParser, createScriptingRouter(storageService));
-    server.use('/api/headless', headlessJsonParser, createHeadlessRouter(headlessExperimentService));
-    const path = require("node:path");
+    server.use('/api/headless', headlessJsonParser, createHeadlessRouter(headlessExperimentService, cosmosClipJob));
+    if (supervisorConfigError) cosmosClipJob.rendererError = supervisorConfigError;
     // three does not export `./package.json`; resolve the pinned Basis files via
     // the exported `examples/jsm` glob instead.
     const THREE_BASIS_DIR = path.dirname(

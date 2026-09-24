@@ -25,6 +25,7 @@ import {
     unprojectPixelToOptical,
     undistortNormalizedPointStrict,
     validateDistortion,
+    calibrationWarpTable,
     warpCalibratedImage,
 } from "../app/3d/environment/visual/VisualCapturePipeline.js";
 import {
@@ -173,13 +174,105 @@ test("calibrated warping shares validity while RGB is bilinear and depth/labels 
         rgb[index * 4 + 3] = 255;
         labels[index] = index;
     }
+    const warpTable = calibrationWarpTable(calibration);
+    assert.equal(calibrationWarpTable(calibration), warpTable);
+    assert.equal(warpTable.sourceX.length, 25);
+    assert.equal(warpTable.valid.length, 25);
     const rgbResult = warpCalibratedImage({ data: rgb, calibration, channels: 4, interpolation: "linear" });
     const labelResult = warpCalibratedImage({ data: labels, calibration, channels: 1, interpolation: "nearest" });
+    assert.equal(calibrationWarpTable(calibration), warpTable);
     assert.deepEqual([...rgbResult.validity], [...labelResult.validity]);
     assert.ok(rgbResult.validity.some((value) => value === 0));
     assert.equal(rgbResult.data[0], 0);
     assert.equal(labelResult.data[0], 0);
     assert.notDeepEqual([...rgbResult.data.filter((_, index) => index % 4 === 0)], [...labelResult.data]);
+    const reused = new Uint8Array(rgbResult.data.length);
+    const again = warpCalibratedImage({
+        data: rgb,
+        calibration,
+        channels: 4,
+        interpolation: "linear",
+        output: reused,
+    });
+    assert.equal(again.data, reused);
+    assert.deepEqual([...again.data], [...rgbResult.data]);
+    assert.deepEqual([...again.validity], [...rgbResult.validity]);
+});
+
+test("manifest none distortion accepts the normalized all-zero coefficient vector", () => {
+    const calibration = createVisualCameraCalibration({
+        width: 4,
+        height: 2,
+        intrinsics: { fx: 2, fy: 2, cx: 1.5, cy: 0.5 },
+        near: 0.1,
+        far: 20,
+        distortionModel: "none",
+        distortion: [0, 0, 0, 0, 0],
+    });
+    assert.equal(calibration.distortion.model, "none");
+    assert.deepEqual([...calibration.distortion.coefficients], []);
+    assert.throws(() => createVisualCameraCalibration({
+        width: 4,
+        height: 2,
+        intrinsics: { fx: 2, fy: 2, cx: 1.5, cy: 0.5 },
+        near: 0.1,
+        far: 20,
+        distortionModel: "none",
+        distortion: [0, 0, 0, 0.01, 0],
+    }), /none requires exactly 0 coefficients/);
+});
+
+test("sensor plumb_bob distortion aliases to Brown-Conrady before visual validation", () => {
+    const image = {
+        width: 4,
+        height: 2,
+        intrinsics: { fx: 2, fy: 2, cx: 1.5, cy: 0.5 },
+        near: 0.1,
+        far: 20,
+    };
+    const zeros = createVisualCameraCalibration({
+        ...image,
+        distortionModel: "plumb_bob",
+        distortion: [0, 0, 0, 0, 0],
+    });
+    assert.equal(zeros.distortion.model, "brown-conrady");
+    assert.deepEqual([...zeros.distortion.coefficients], [0, 0, 0, 0, 0]);
+
+    const nonzero = [0.1, -0.02, 0.001, -0.002, 0.004];
+    const brown = createVisualCameraCalibration({
+        ...image,
+        distortionModel: "plumb_bob",
+        distortion: nonzero,
+    });
+    assert.equal(brown.distortion.model, "brown-conrady");
+    assert.deepEqual([...brown.distortion.coefficients], nonzero);
+
+    const rationalCoefficients = [0.1, -0.02, 0.001, -0.002, 0.004, 0.01, -0.005, 0.001];
+    const rational = createVisualCameraCalibration({
+        ...image,
+        distortionModel: "plumb_bob",
+        distortion: rationalCoefficients,
+    });
+    assert.equal(rational.distortion.model, "rational-brown-conrady");
+    assert.deepEqual([...rational.distortion.coefficients], rationalCoefficients);
+
+    const wrapped = validateDistortion({ model: "plumb_bob", coefficients: [0, 0, 0, 0, 0] });
+    assert.equal(wrapped.model, "brown-conrady");
+    assert.deepEqual([...wrapped.coefficients], [0, 0, 0, 0, 0]);
+
+    const empty = createVisualCameraCalibration({
+        ...image,
+        distortionModel: "plumb_bob",
+        distortion: [],
+    });
+    assert.equal(empty.distortion.model, "none");
+    assert.deepEqual([...empty.distortion.coefficients], []);
+
+    assert.throws(() => validateDistortion({ model: "fisheye", coefficients: [] }), /Unsupported/);
+    assert.throws(
+        () => validateDistortion({ model: "brown-conrady", coefficients: [1, 2, 3, 4] }),
+        /exactly 5/,
+    );
 });
 
 test("row normalization and axial-depth decoding use top-left zero-plus-validity semantics", () => {

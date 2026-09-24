@@ -143,7 +143,10 @@ export class Shader {
     completePending() {
         if (!this._pack?.pending) return true;
         this._ensurePixelBuffer();
-        if (!this._pack.poll(this._pixelBuffer)) return false;
+        if (!this._pack.poll(this._pixelBuffer)) {
+            if (this._pack.isStale()) this._pack.reset();
+            return false;
+        }
         for (const listener of this.listeners) listener(this._pixelBuffer);
         return true;
     }
@@ -183,7 +186,7 @@ export class Shader {
             if (pack) {
                 try {
                     const gl = pack.gl;
-                    pack.begin(0, 0, w, h, gl.RGBA, gl.FLOAT);
+                    if (pack.begin(0, 0, w, h, gl.RGBA, gl.FLOAT) === false) return false;
                     return true;
                 } catch {
                     this._asyncDisabled = true;

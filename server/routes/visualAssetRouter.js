@@ -36,6 +36,7 @@ export function createVisualAssetRouter(service) {
     });
 
     router.post("/closures/validate", jsonParser, handle(async (req) => store().validateClosure(req.body ?? {})));
+    router.post("/access-sets/validate", jsonParser, handle(async (req) => store().validateAccessSet(req.body ?? {})));
 
     router.delete("/uses/sha256/:useHash", deletionDisabled);
     router.delete("/uses/sha256/:useHash/content", deletionDisabled);

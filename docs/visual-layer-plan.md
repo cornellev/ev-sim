@@ -42,7 +42,7 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
 - Core assumption: **Google approval, Google-derived assets, Gaussian
   splatting, and a model service are unavailable.**
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-09-19 — local bake/upload security; visual-layer identity unchanged**.
+- Last updated: **2026-09-24 — lane paint and Takram clouds in the color pass; worldHash unchanged**.
 - Implemented evidence: VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a,
   VIS-06b, VIS-07, VIS-08, VIS-09, VIS-10a, VIS-10b, VIS-11, VIS-12b,
   VIS-13a, VIS-13b, VIS-14, and VIS-16a acceptance evidence is recorded in the
@@ -3331,3 +3331,84 @@ already selects `canonical-analytic@1` with
 `measured-rgba-analytic-oracle@1`. It does not add a VIS milestone, change
 render-scene identity, `worldHash`, PBR, splats, or weather, and it does not
 invoke Cosmos. Completed visual-layer milestone status is unchanged.
+
+### 2026-09-23 — PBR run closure includes published appearance textures
+
+`pbr-mesh@1` resolution roots each v2 asset at `revision.modelUseHash` and
+every `revision.appearance[*].textures[*].useHash`. The compiled appearance
+GLB records empty dependencies, and child or replacement materials live on
+`revision.appearance` rather than `revision.definition.materials`. Walking
+only the source GLTF materials omitted those textures and rejected a valid
+published appearance. Assets whose appearance textures were already listed in
+`definition.materials` keep the same closure. `worldHash` and completed VIS
+milestone status are unchanged.
+
+### 2026-09-23 — Camera clips reuse the resolved visual layer
+
+Saved-environment and selected-manifest Cosmos clips render the resolved
+`pbr-mesh@1` scene when the request asks for PBR. Analytic requests stay on
+`canonical-analytic@1`. A PBR request never falls back to analytic. The clip
+uses the published GLTF, materials, actor transforms, camera geometry, and
+analytic oracle depth. It does not add a VIS milestone, change `worldHash`,
+or include browser-only sky, editor helpers, or unsaved scene state.
+
+### 2026-09-23 — CLIP-01 browser clip launch does not render in the page
+
+The Headless Runs Cosmos clip action starts the existing analytic headless
+camera on the server. It does not add a browser render path, change
+`canonical-analytic@1`, or alter visual identity. Completed visual-layer
+milestone status is unchanged.
+
+### 2026-09-24 — Asset residency uses published mesh bounds
+
+VIS-05b measured chunk distance from the instance matrix origin, with a 100 m
+required radius and a 120 m prefetch radius. A campus GLB is one chunk at that
+origin, while its triangles extend well past those radii. A camera standing
+inside the mesh but more than 120 m from the origin left the chunk unloaded.
+Analytic truth still rasterized, so depth was populated and measured RGB was
+empty.
+
+`cev-sim.visual-layer@1` instances may now carry world-space `bounds`. PBR
+resolution fills them from the published GLB's transformed POSITION accessor
+min and max. Chunk admission and LOD use the nearer of the origin and that
+box. Descriptors without bounds keep their hashes. `worldHash` and the
+progress ledger's completed milestone statuses are unchanged. Layers compiled
+with bounds receive a new visual-layer hash.
+
+### 2026-09-24 — Measured appearance uses per-material color, road surfaces, and sky
+
+A resolved PBR clip could show one albedo on every material, no road surface,
+and a black background. `worldHash` is unchanged. Visual-layer hashes are
+unchanged. `recipeHash` changes only when a sky is present.
+
+`VisualLayerMaterializer` keyed decoded images by texture slot for the whole
+instance, so the first `baseColor` was cloned onto every material. Each
+material now gets its own slot map. The texture cache still dedupes by digest.
+
+Road-tagged analytic triangles are also drawn in the appearance scene as
+asphalt (`#2d3034`, roughness 0.9, metalness 0). They are not added to the
+analytic bindings and they do not use semantic id colors. Corrected capture
+rejects polygon offset, so those meshes are lifted by the editor's 0.015
+surface elevation. Lane markings stay out of this pass. The triangles were
+already in analytic truth, so no new scene hash is required for them.
+
+`cev-sim.pbr-render-recipe@1` may include `sky`. Omitting it leaves the key
+off, keeps the previous recipe hash, and clears to opaque black. Resolution
+copies `environment.sky` when the authored recipe has no sky, without local
+preview URLs. Capture draws the Takram atmosphere quad and skips clouds, haze,
+and the editor composer. The validity proxy does not compile `SkyMaterial`. A
+clip-space mask keeps sky and equirectangular background pixels in the beauty
+image.
+
+### 2026-09-24 — Lane paint and Takram clouds stay in the color pass
+
+Compiled lane and border ribbons are drawn in the measured appearance scene.
+They use unlit double-sided materials, sit 0.02 m above the asphalt, and are
+not analytic bindings. Corrected capture still rejects polygon offset. A
+Takram sky with clouds keeps the atmosphere quad and composites
+`CloudsEffect` plus aerial perspective through a beauty composer on the color
+read only. Depth, semantic, and validity keep `renderer.render`. An omitted
+sky still clears to opaque black. AgX, dithering, and tone mapping stay out
+of this capture. `worldHash` and existing recipe hashes stay put: `sky` is
+already in the recipe, and lane paint is not a world or recipe input.
+Completed visual-layer milestone status is unchanged.

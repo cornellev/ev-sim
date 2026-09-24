@@ -124,7 +124,11 @@ the visual object as truth.
 
 Instance transforms are finite, nonsingular, column-major affine 4×4 matrices.
 Each instance records a primary `assetUri` and a non-empty `lodLevels` sequence
-from highest to lowest detail; its first level equals the primary URI. LOD
+from highest to lowest detail; its first level equals the primary URI. An
+instance may also record world-space triangle `bounds` as `{ min, max }`.
+Residency and LOD use the nearer of the instance origin and that box. The
+field is omitted when the mesh extent is unknown, and those descriptors keep
+their previous hash. LOD
 sequence order is semantic and is never sorted. Identifiers are non-empty NFC
 strings. Identifier collections use UTF-8 byte ordering; ordered numeric data
 such as matrices and LOD sequences retain their declared order.
@@ -548,12 +552,22 @@ shape. On stored-manifest update, omission also preserves an existing explicit
 recipe; explicit `null` resets it. Save, duplication, resolution, and JSON
 import/export preserve an explicit recipe.
 
-Normalization freezes the complete pixel contract: opaque black background;
-white unit ambient light; exposure 1; linear-sRGB working and sRGB output; no
-environment map, shadows, tone mapping, antialiasing, or dithering; OPAQUE/MASK
-alpha; glTF-declared or linear-repeat sampler defaults; UTF-8-stable ordering;
-material-driven double-sided culling; less-equal depth; high precision; and
-top-left RGBA8 readback. It reuses the static glTF/KTX2 profile, pinned decoder
+Normalization freezes the complete pixel contract: opaque black background
+when `sky` is omitted; white unit ambient light; exposure 1; linear-sRGB
+working and sRGB output; no environment map, shadows, tone mapping,
+antialiasing, or dithering; OPAQUE/MASK alpha; glTF-declared or linear-repeat
+sampler defaults; UTF-8-stable ordering; material-driven double-sided culling;
+less-equal depth; high precision; and top-left RGBA8 readback. An omitted
+`sky` is left out of the recipe, so existing recipe hashes stay put and the
+measured clear stays opaque black. Resolution copies `environment.sky` into
+the recipe when the authored recipe does not name one. That copy drops local
+preview URLs and changes only that run's `recipeHash`. A Takram sky draws the
+fullscreen atmosphere quad. When `sky.takram.cloudsEnabled` is true, the color
+pass also composites `CloudsEffect` and aerial perspective through a beauty
+composer. Depth, semantic, and validity stay on `renderer.render`. AgX,
+dithering, and tone mapping stay out of capture. Lane and border paint is
+appearance geometry lifted 0.02 m above the asphalt, and it changes neither
+`worldHash` nor `recipeHash`. An image sky is the equirectangular background. It reuses the static glTF/KTX2 profile, pinned decoder
 and transcoder policy, and `cev-sim.visual-lod-policy@1` bands `[0, 80, 200]`.
 Unsupported overrides fail rather than becoming host-dependent choices.
 Environment-map and actor mesh inputs are `{ asset, useHash }` pairs. Every

@@ -190,12 +190,19 @@ export class TransformRuntime {
         if (!validation.ok) {
             return validation;
         }
-        const vehicle = vehicles.find((entry) => (entry.telemetryId || entry.id) === sensorConfig.parentId) || null;
-        const basePose = rep103PoseFromVehicle(vehicle);
-        const mapPose = {
-            position: { ...basePose.position },
-            rotation: eulerToQuaternion(basePose.rotation),
-        };
+        const mapCamera = sensorConfig.type === "camera" && sensorConfig.poseReference === "map";
+        const vehicle = mapCamera
+            ? null
+            : vehicles.find((entry) => (entry.telemetryId || entry.id) === sensorConfig.parentId) || null;
+        const basePose = mapCamera
+            ? { position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0, order: "XYZ" } }
+            : rep103PoseFromVehicle(vehicle);
+        const mapPose = mapCamera
+            ? { position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0, w: 1 } }
+            : {
+                position: { ...basePose.position },
+                rotation: eulerToQuaternion(basePose.rotation),
+            };
         return {
             ok: true,
             captureTimeNs,
@@ -277,11 +284,13 @@ export function validateMeasurementFrame(tree, sensorConfig, frames = {}) {
         chain.push(current);
         if (current === frames.baseLink) break;
     }
-    if (current !== frames.baseLink) {
+    const mapCamera = sensorConfig.type === "camera" && sensorConfig.poseReference === "map";
+    const terminal = mapCamera ? frames.map : frames.baseLink;
+    if (current !== terminal) {
         return {
             ok: false,
             code: "invalid-tree",
-            message: `Measurement frame "${measurementFrameId}" does not resolve to "${frames.baseLink}".`,
+            message: `Measurement frame "${measurementFrameId}" does not resolve to "${terminal}".`,
         };
     }
     return { ok: true, mountFrameId, measurementFrameId, chain };
@@ -302,8 +311,9 @@ export function validateSensorRigFrames(manifest) {
         const measurement = sensor.measurementFrameId || sensor.frameId || mount;
         if (mount) frameIds.add(mount);
         if (measurement) frameIds.add(measurement);
+        const mapCamera = sensor.type === "camera" && sensor.poseReference === "map";
         bundle.staticTransforms.push({
-            parentFrameId: bundle.frames.baseLink,
+            parentFrameId: mapCamera ? bundle.frames.map : bundle.frames.baseLink,
             childFrameId: mount,
             translation: sensor.pose?.position || { x: 0, y: 0, z: 0 },
             rotation: eulerToQuaternion(sensor.pose?.rotation || {}),

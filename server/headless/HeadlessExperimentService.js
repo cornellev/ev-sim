@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { createExperimentResult, normalizeExperimentResult } from "../../app/experiments/ExperimentResult.js";
 import { RUN_BUNDLE_KIND, RUN_BUNDLE_VERSION } from "../../app/simulation/RunManifest.js";
+import { GpuTurn } from "./GpuTurn.js";
 import { resolveArtifactPolicy } from "./HeadlessArtifactSink.js";
 import {
     appendQueueEntry,
@@ -152,6 +153,7 @@ export class HeadlessExperimentService {
             this.logService.importStream(createReadStream(filePath), importOptions)
         ));
         this.publish = options.publish ?? ((event) => storageEvents.publish(event));
+        this.gpuTurn = options.gpuTurn ?? new GpuTurn();
         this.activeJob = null;
         this.starting = false;
         this.closing = false;
@@ -303,6 +305,13 @@ export class HeadlessExperimentService {
             cancelRequested: this.activeJob.cancelRequested,
             activeCaseIndex: this.activeJob.activeCaseIndex ?? null,
         } : null;
+    }
+
+    async managedWorkPending() {
+        await this.initialize();
+        if (this.activeJob || this.gpuTurn.holder === "experiment") return true;
+        const queue = await this.storage.getHeadlessExperimentQueue();
+        return Array.isArray(queue?.entries) && queue.entries.length > 0;
     }
 
     async getQueue() {
@@ -677,6 +686,8 @@ export class HeadlessExperimentService {
                 continue;
             }
 
+            const held = await this.gpuTurn.acquire("experiment", () => this.closing);
+            if (!held) break;
             try {
                 await this._runJob(entry, result, sidecars);
             } catch (error) {
@@ -691,6 +702,7 @@ export class HeadlessExperimentService {
                     await this._persistQueueError(entry, result, error.message).catch(() => {});
                 }
             } finally {
+                this.gpuTurn.release("experiment");
                 if (this.activeJob?.result.id === entry.resultId) {
                     this.activeJob = null;
                     this.liveHealth = {

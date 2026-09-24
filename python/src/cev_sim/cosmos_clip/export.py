@@ -88,7 +88,7 @@ def load_run(run_output: Path) -> tuple[dict, dict, dict]:
         provenance.get("kind") == "cev-sim.headless.provenance" and provenance.get("version") == 1,
         "provenance.json is not v1 headless provenance.",
     )
-    _require(results.get("completed") is True and results.get("interrupted") is False, "The run did not complete.")
+    _require(results.get("completed") is True and results.get("interrupted") is not True, "The run did not complete.")
     _require(int(results.get("step") or 0) >= 363, "The run ended before the clip's last capture step.")
     _require(bundle.get("resolvedHash") == results.get("resolvedHash"), "Resolved hash does not match the run result.")
     _require(

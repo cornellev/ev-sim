@@ -1,6 +1,6 @@
 import { LiDAR3d } from "./LiDAR3d.js";
 import * as THREE from "three";
-import { withPixelPackBufferUnbound } from "../util/glReadback.js";
+import { getWebGL2Context, PixelPackSlot, withPixelPackBufferUnbound } from "../util/glReadback.js";
 
 
 export class StereoCamera extends LiDAR3d {
@@ -101,6 +101,7 @@ export class StereoCamera extends LiDAR3d {
         this.cameraPixelBuffer = new Uint8Array(
             this.cameraSettings.width * this.cameraSettings.height * 4
         );
+        this._cameraPack = null;
     }
 
     onParentUpdate() {
@@ -126,27 +127,68 @@ export class StereoCamera extends LiDAR3d {
 
         if (!renderer || !scene) return;
 
-        this._cameraCaptureInFlight = true;
-
         this.sensorCamera.position.copy(this.getPosition());
         this.sensorCamera.rotation.copy(this.getRotation());
         this.sensorCamera.updateMatrixWorld(true);
 
+        const gl = getWebGL2Context(renderer);
+        if (gl) {
+            this._executePackedCamera(renderer, scene, gl);
+            return;
+        }
+
+        this._cameraCaptureInFlight = true;
+        const previousRenderTarget = renderer.getRenderTarget();
+        try {
+            renderer.setRenderTarget(this.cameraRenderTarget);
+            renderer.render(scene, this.sensorCamera);
+            withPixelPackBufferUnbound(renderer, () => {
+                renderer.readRenderTargetPixels(
+                    this.cameraRenderTarget,
+                    0,
+                    0,
+                    this.cameraSettings.width,
+                    this.cameraSettings.height,
+                    this.cameraPixelBuffer,
+                );
+            });
+        } finally {
+            renderer.setRenderTarget(previousRenderTarget);
+            this._cameraCaptureInFlight = false;
+        }
+
+        this._recordCameraFrame();
+    }
+
+    _executePackedCamera(renderer, scene, gl) {
+        const byteLength = this.cameraPixelBuffer.byteLength;
+        if (!this._cameraPack || this._cameraPack.gl !== gl || this._cameraPack.byteLength !== byteLength) {
+            this._cameraPack?.dispose?.();
+            this._cameraPack = new PixelPackSlot(gl, byteLength);
+        }
+        if (this._cameraPack.pending) {
+            if (!this._cameraPack.poll(this.cameraPixelBuffer)) {
+                if (this._cameraPack.isStale()) this._cameraPack.reset();
+                return;
+            }
+            this._recordCameraFrame();
+        }
+
         const previousRenderTarget = renderer.getRenderTarget();
         renderer.setRenderTarget(this.cameraRenderTarget);
         renderer.render(scene, this.sensorCamera);
-        withPixelPackBufferUnbound(renderer, () => {
-            renderer.readRenderTargetPixels(
-                this.cameraRenderTarget,
-                0,
-                0,
-                this.cameraSettings.width,
-                this.cameraSettings.height,
-                this.cameraPixelBuffer,
-            );
-        });
         renderer.setRenderTarget(previousRenderTarget);
+        this._cameraPack.begin(
+            0,
+            0,
+            this.cameraSettings.width,
+            this.cameraSettings.height,
+            gl.RGBA,
+            gl.UNSIGNED_BYTE,
+        );
+    }
 
+    _recordCameraFrame() {
         this._recordFrame(this.channels.camera, {
             timestamp: Date.now(),
             width: this.cameraSettings.width,
@@ -154,8 +196,6 @@ export class StereoCamera extends LiDAR3d {
             format: "rgba8",
             data: new Uint8Array(this.cameraPixelBuffer),
         });
-
-        this._cameraCaptureInFlight = false;
     }
 
     emitRays(buffer) {
@@ -223,6 +263,8 @@ export class StereoCamera extends LiDAR3d {
         for (const key of Object.keys(this.listeners)) this.listeners[key] = [];
         this.sensorCamera?.removeFromParent?.();
         this.cameraRenderTarget?.dispose?.();
+        this._cameraPack?.dispose?.();
+        this._cameraPack = null;
         this.sensorCamera = null;
         this.cameraRenderTarget = null;
         this.cameraPixelBuffer = null;

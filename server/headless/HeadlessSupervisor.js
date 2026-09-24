@@ -843,12 +843,27 @@ export class HeadlessSupervisor {
         let environment = null;
         let resourceFailure = null;
         const environmentKey = `managed:${randomUUID()}`;
+        let admissionHandle = null;
+        let admissionPinned = false;
+        let admissionReader = null;
         try {
             const verified = request.bundleBytes
                 ? verifyRunBundleBytes(Buffer.from(request.bundleBytes), {
                     expectedBundleBytesHash: request.bundleBytesHash,
                 })
                 : verifyRunBundle(request.bundle);
+            if (request.assetAdmission?.handle) {
+                admissionHandle = String(request.assetAdmission.handle);
+                await this.admissionManager.bind({
+                    handle: admissionHandle,
+                    bundleBytesHash: request.assetAdmission.bundleBytesHash || request.bundleBytesHash,
+                    canonicalBytes: request.bundleBytes,
+                });
+                await this.admissionManager.acquireBatch([admissionHandle]);
+                admissionPinned = true;
+                admissionReader = this.admissionManager.createDigestReader(admissionHandle, environmentKey);
+                request = { ...request, assetReader: admissionReader };
+            }
             const limits = resolveBatchResourceLimits(request.resourceLimits, this.config);
             validateStaticLimits(verified.resolved, limits, 0);
             await this.validateManagedRuntime(verified.resolved);
@@ -932,6 +947,11 @@ export class HeadlessSupervisor {
             if (environment) await this._releaseUdpEnvironment(environment).catch(() => {});
             try { await this.rendererPool.releaseEnvironment(environmentKey); }
             catch { /* best-effort cleanup after worker teardown */ }
+            if (admissionReader) await admissionReader.close().catch(() => {});
+            if (admissionPinned && admissionHandle) {
+                await this.admissionManager.releaseBatch([admissionHandle]).catch(() => {});
+            }
+            if (admissionHandle) await this.admissionManager.release(admissionHandle).catch(() => {});
             if (request.outputUri) await cleanupPartialDirectories(path.dirname(path.resolve(request.outputUri)));
         }
     }

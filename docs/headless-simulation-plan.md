@@ -10,7 +10,7 @@ language-neutral API authority is
 - Current milestone: **PR 12 — implementation complete; external hardware acceptance pending**
 - Next planned milestone: **None — the numbered headless implementation roadmap is complete**
 - Default implementation/review reasoning level: **Extra High**
-- Last updated: **2026-09-23** (CLIP-01 analytic clip export; milestone status unchanged)
+- Last updated: **2026-09-23** (saved-environment camera clips; milestone status unchanged)
 
 Progress:
 
@@ -499,6 +499,36 @@ compared with the committed characterization.
 - [Isaac Lab reinforcement-learning architecture](https://docs.nvidia.com/learning/physical-ai/getting-started-with-isaac-lab/latest/train-your-first-robot-with-isaac-lab/02-how-isaac-lab-accelerates-reinforcement-learning.html)
 
 ## Decision log
+
+### 2026-09-23 — Saved-environment camera clips (not PR 13)
+
+Maintenance replaces the fixed-corridor-only job with camera clips over any
+saved run manifest. `POST /api/headless/clips` and
+`POST /api/headless/clips/preflight` accept `profile: "environment"` or
+`profile: "cosmos-nano"`. `GET /clips/preflight` and `POST /clips` with an
+empty body remain the analytic `cosmos-nano-clip` corridor.
+`cev-sim.cosmos-clip` version 1 stays the corridor contract.
+`cev-sim.cosmos-clip` version 2 is the same timing and media contract for a
+selected manifest, with analytic GPU backend v1 or `pbr-mesh@1` routed GPU
+backend v2. Generic clips are `cev-sim.camera-clip` version 1. `headless.proto`
+is unchanged. This is not headless PR 13. Milestone status and the committed
+characterization fixture are unchanged.
+
+Camera sensors may set `poseReference: "map"`. Absence still means
+vehicle-relative, so existing vehicle-camera calibration and episode hashes
+stay the same. Candidate clips require a
+`cev-sim.headless.policy-action-tape` version 1 document whose action count
+equals the derived episode and which does not carry `episodeSpec`. Reference
+clips keep the scenario controller and reject a tape.
+
+### 2026-09-23 — CLIP-01 browser launch for the analytic clip (not PR 13)
+
+Headless Runs can start the fixed `cosmos-nano-clip` candidate run on the
+server and, after finalization, export and check the clip. The page downloads
+`rgb.mp4` and `depth.mp4`. Managed experiments still require reference
+control authority, so this job uses the candidate-control supervisor runner
+and does not enter the experiment queue. This is not headless PR 13.
+Milestone status, hashes, and the browser-tab renderer are unchanged.
 
 ### 2026-09-23 — CLIP-01 analytic RGB/depth clip export (not PR 13)
 

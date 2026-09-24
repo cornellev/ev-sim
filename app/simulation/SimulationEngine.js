@@ -687,6 +687,7 @@ export class SimulationEngine {
             if (this.steps > previousStep) this.accumulatorNs -= this.stepNs;
             this.accumulator = this.accumulatorNs / 1e9;
             subSteps += 1;
+            this.gpuCaptureEnabled = false;
             if (shouldContinue === false) break;
             if (this.realtime && this._nowMs() - frameStartMs > this.realtimeStepBudgetMs) break;
         }

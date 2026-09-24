@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { takeArcLengthBuildCount } from "../app/scenarios/route/geometry.js";
 import {
     buildArcLengthPolyline,
     filletPolyline,
@@ -117,6 +118,19 @@ test("followPolylineFromRoute does not mutate directed-A* verification", () => {
     assert.deepEqual(follow, result.route.verification.polyline);
     assert.equal(stableStringify(result.route.verification), before);
     assert.equal(sameEndpoints(follow, result.route.verification.polyline), true);
+});
+
+test("routeFollowerCommand builds the follow arc once per command", () => {
+    takeArcLengthBuildCount();
+    const command = routeFollowerCommand({
+        position: { x: 1, y: 0, z: 0 },
+        yaw: 0,
+        cruiseSpeedMps: 4,
+        followPolyline: L_PATH,
+    });
+    assert.equal(takeArcLengthBuildCount(), 1);
+    assert.equal(Number.isFinite(command.steeringRad), true);
+    assert.equal(Number.isFinite(command.distanceAlong), true);
 });
 
 test("routeFollowerCommand tracks a straight path with near-zero steer at cruise", () => {

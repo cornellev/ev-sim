@@ -98,12 +98,21 @@ class FakeRenderer {
         this.mode = mode;
     }
 
-    readRenderTargetPixels(target, x, y, width, height, output) {
+    readRenderTargetPixels(target, x, y, width, height, output, _cubeFace, textureIndex = 0) {
         this.readCalls += 1;
         this.onRead?.();
         if (this.failRead) throw new Error("injected readback failure");
         if (target.userData.captureTargetKind === "beauty") {
             output.set([255, 0, 0, 255, 0, 255, 0, 255]);
+            return;
+        }
+        if (this.mode === 10 && output instanceof Float32Array) {
+            output.set([2, 1, 0, 1, 4, 1, 0, 1]);
+            return;
+        }
+        if (this.mode === 11 && output instanceof Uint8Array) {
+            const values = textureIndex === 1 ? [70, 80] : [7, 8];
+            output.set([...pack(values[0]), ...pack(values[1])]);
             return;
         }
         if (output instanceof Uint8Array) {
@@ -237,6 +246,16 @@ test("VIS-06b pass sets canonicalize catalogs, products, bindings, and source us
         captureInput: passInput(state.visualHandle),
         bindings: [{ renderableId: "partial", materialKeys: ["paint"] }],
     }), /objectKey/);
+    assert.throws(() => assertVisualCapturePassSet({
+        kind: visualPassSet.kind,
+        version: visualPassSet.version,
+        family: visualPassSet.family,
+        captureInput: visualPassSet.captureInput,
+        products: ["validity", "beauty"],
+        bindings: visualPassSet.bindings,
+        catalogs: visualPassSet.catalogs,
+        sourceUseHashes: visualPassSet.sourceUseHashes,
+    }), /canonical/);
 });
 
 test("little-endian serialization and frontmost object masks preserve explicit validity", () => {
@@ -406,9 +425,12 @@ test("rights denial, cancellation, and readback errors restore state and publish
 
     const failedRenderer = new FakeRenderer();
     failedRenderer.failRead = true;
+    const failedCamera = new THREE.PerspectiveCamera();
+    const failedCameraMatrix = failedCamera.matrixWorld.elements.slice();
+    const failedProjection = failedCamera.projectionMatrix.elements.slice();
     const failed = new AlignedCaptureProducts({
         renderer: failedRenderer,
-        camera: new THREE.PerspectiveCamera(),
+        camera: failedCamera,
         visualSceneHandle: state.visualHandle,
         authorizeSourceUse: async () => {},
     });
@@ -423,6 +445,11 @@ test("rights denial, cancellation, and readback errors restore state and publish
     assert.equal(failedRenderer.autoClear, true);
     assert.equal(failedRenderer.xr.enabled, true);
     assert.equal(failedRenderer.shadowMap.enabled, true);
+    assert.equal(failedRenderer.toneMapping, 7);
+    assert.equal(failedRenderer.toneMappingExposure, 2);
+    assert.equal(failedRenderer.outputColorSpace, "original-space");
+    assert.deepEqual([...failedCamera.matrixWorld.elements], failedCameraMatrix);
+    assert.deepEqual([...failedCamera.projectionMatrix.elements], failedProjection);
     failed.dispose();
 });
 
@@ -525,6 +552,103 @@ test("unsupported appearance content is rejected before the first render", async
     capture.dispose();
 });
 
+test("a beauty composer paints color while analytic capture still uses renderer.render", async () => {
+    const visualScene = new THREE.Scene();
+    const surface = mesh(0x00ff00);
+    visualScene.add(surface);
+    const events = [];
+    const renderedScenes = [];
+    visualScene.userData.cevSimBeautyComposer = {
+        render() { events.push("composer"); },
+        outputBuffer: {
+            width: 2,
+            height: 1,
+            texture: { type: THREE.UnsignedByteType },
+            userData: { captureTargetKind: "beauty" },
+        },
+    };
+    const analyticScene = new THREE.Scene();
+    const truth = mesh(0xffffff);
+    analyticScene.add(truth);
+    const visualHandle = createOwnedCaptureScene({ role: "measured-appearance", scene: visualScene });
+    const analyticHandle = createOwnedCaptureScene({ role: "analytic-truth", scene: analyticScene });
+    const visualPassSet = createVisualCapturePassSet({
+        family: VISUAL_CAPTURE_PASS_FAMILIES.visual,
+        captureInput: passInput(visualHandle),
+        products: ["beauty"],
+        bindings: [],
+    });
+    const analyticPassSet = createVisualCapturePassSet({
+        family: VISUAL_CAPTURE_PASS_FAMILIES.analytic,
+        captureInput: passInput(analyticHandle),
+        products: ["axial-depth"],
+        bindings: [{ renderableId: "truth", semanticId: 1, instanceId: 1 }],
+    });
+    const renderer = new FakeRenderer();
+    const originalRender = renderer.render.bind(renderer);
+    renderer.render = (scene) => {
+        events.push("renderer");
+        renderedScenes.push(scene);
+        originalRender(scene);
+    };
+    const capture = new AlignedCaptureProducts({
+        renderer,
+        camera: new THREE.PerspectiveCamera(),
+        visualSceneHandle: visualHandle,
+        analyticSceneHandle: analyticHandle,
+    });
+    const result = await capture.capture({
+        visualPassSet,
+        visualRenderables: new Map(),
+        analyticPassSet,
+        analyticRenderables: new Map([["truth", truth]]),
+        signal: new AbortController().signal,
+    });
+    assert.deepEqual(events.filter((event) => event === "composer"), ["composer"]);
+    assert.ok(events.includes("renderer"));
+    assert.ok(events.indexOf("composer") < events.lastIndexOf("renderer"));
+    assert.equal(renderedScenes.includes(visualScene), false);
+    assert.equal(result.visual.products.beauty.length, 8);
+    capture.dispose();
+});
+
+test("sky meshes stay in the appearance scene and out of the material proxy", async () => {
+    const scene = new THREE.Scene();
+    const surface = mesh(0x00ff00);
+    surface.name = "surface";
+    const sky = new THREE.Mesh(
+        new THREE.PlaneGeometry(2, 2),
+        new THREE.ShaderMaterial({
+            vertexShader: "void main() {}",
+            fragmentShader: "void main() {}",
+        }),
+    );
+    sky.name = "TakramSkyQuad";
+    sky.userData.cevSimSky = true;
+    scene.add(surface, sky);
+    const handle = createOwnedCaptureScene({ role: "measured-appearance", scene });
+    const passSet = createVisualCapturePassSet({
+        family: VISUAL_CAPTURE_PASS_FAMILIES.visual,
+        captureInput: passInput(handle),
+        products: ["beauty"],
+        bindings: [],
+    });
+    const renderer = new FakeRenderer();
+    const capture = new AlignedCaptureProducts({
+        renderer,
+        camera: new THREE.PerspectiveCamera(),
+        visualSceneHandle: handle,
+    });
+    const result = await capture.capture({
+        visualPassSet: passSet,
+        visualRenderables: new Map(),
+        signal: new AbortController().signal,
+    });
+    assert.equal(result.visual.products.beauty.length, 8);
+    assert.ok(renderer.renderCalls > 0);
+    capture.dispose();
+});
+
 test("capture rights are role-specific and analytic truth has no visual source operations", () => {
     assert.deepEqual(captureRightsForRole("measured-appearance"), ["display", "machine-interpretation"]);
     assert.deepEqual(captureRightsForRole("bake-snapshot"), ["display", "machine-interpretation", "derivatives"]);
@@ -599,4 +723,202 @@ test("capture rights fail closed for every restricted source closure before rend
     });
     assert.ok(renderer.renderCalls > 0);
     owned.dispose();
+});
+
+test("WebGL2 aligned capture reads through a pixel-pack slot after the fence is consumed", async () => {
+    class FakeWebGL2 {}
+    const previous = globalThis.WebGL2RenderingContext;
+    globalThis.WebGL2RenderingContext = FakeWebGL2;
+    const events = [];
+    let waits = 0;
+    const gl = Object.assign(Object.create(FakeWebGL2.prototype), {
+        RGBA: 0x1908,
+        UNSIGNED_BYTE: 0x1401,
+        FLOAT: 0x1406,
+        PIXEL_PACK_BUFFER: 0x88eb,
+        PIXEL_PACK_BUFFER_BINDING: 0x88ed,
+        STREAM_READ: 0x88e1,
+        PACK_ALIGNMENT: 0x0d05,
+        SYNC_GPU_COMMANDS_COMPLETE: 0x9117,
+        TIMEOUT_EXPIRED: 0x911b,
+        WAIT_FAILED: 0x911d,
+        createBuffer: () => ({ id: "pbo" }),
+        bindBuffer() {},
+        bufferData() {},
+        getParameter: () => 4,
+        pixelStorei() {},
+        readPixels() { events.push("write"); },
+        fenceSync: () => ({ id: "sync" }),
+        flush() {},
+        clientWaitSync(_sync, _flags, timeout) {
+            assert.equal(timeout, 0);
+            waits += 1;
+            if (waits % 2 === 1) return 0x911b;
+            events.push("wait-ready");
+            return 0x9119;
+        },
+        deleteSync() { events.push("delete"); },
+        deleteBuffer() {},
+        getBufferSubData(_target, _offset, dest) {
+            assert.equal(events.at(-1), "wait-ready");
+            events.push("read");
+            dest.fill(255);
+        },
+        isContextLost: () => false,
+    });
+    try {
+        const state = scenes();
+        const renderer = new FakeRenderer();
+        renderer.context = gl;
+        const visualPassSet = createVisualCapturePassSet({
+            family: VISUAL_CAPTURE_PASS_FAMILIES.visual,
+            captureInput: passInput(state.visualHandle),
+            products: ["validity"],
+            bindings: [
+                { renderableId: "target-mesh", objectKey: "target", materialKeys: ["brick"] },
+            ],
+        });
+        const aligned = new AlignedCaptureProducts({
+            renderer,
+            camera: new THREE.PerspectiveCamera(),
+            visualSceneHandle: state.visualHandle,
+            authorizeSourceUse: async () => {},
+        });
+        const result = await aligned.capture({
+            visualPassSet,
+            visualRenderables: new Map([["target-mesh", state.target]]),
+            signal: new AbortController().signal,
+        });
+        assert.equal(renderer.readCalls, 0);
+        assert.ok(events.includes("write"));
+        assert.ok(events.includes("read"));
+        assert.ok(events.indexOf("read") > events.indexOf("write"));
+        assert.equal(events.filter((event) => event === "write").length, events.filter((event) => event === "read").length);
+        assert.ok(result.visual.products.validity.length > 0);
+        aligned.dispose();
+    } finally {
+        if (previous === undefined) delete globalThis.WebGL2RenderingContext;
+        else globalThis.WebGL2RenderingContext = previous;
+    }
+});
+
+test("WebGL2 aligned capture queues the next draw before the previous read finishes", async () => {
+    class FakeWebGL2 {}
+    const previous = globalThis.WebGL2RenderingContext;
+    globalThis.WebGL2RenderingContext = FakeWebGL2;
+    const events = [];
+    const gl = Object.assign(Object.create(FakeWebGL2.prototype), {
+        RGBA: 0x1908,
+        UNSIGNED_BYTE: 0x1401,
+        FLOAT: 0x1406,
+        PIXEL_PACK_BUFFER: 0x88eb,
+        PIXEL_PACK_BUFFER_BINDING: 0x88ed,
+        STREAM_READ: 0x88e1,
+        PACK_ALIGNMENT: 0x0d05,
+        SYNC_GPU_COMMANDS_COMPLETE: 0x9117,
+        TIMEOUT_EXPIRED: 0x911b,
+        WAIT_FAILED: 0x911d,
+        createBuffer: () => ({ id: events.length }),
+        bindBuffer() {},
+        bufferData() {},
+        getParameter: () => 4,
+        pixelStorei() {},
+        readPixels() { events.push("write"); },
+        fenceSync: () => ({ id: "sync" }),
+        flush() {},
+        clientWaitSync(_sync, _flags, timeout) {
+            assert.equal(timeout, 0);
+            if (events.filter((event) => event === "write").length < 2) return 0x911b;
+            events.push("wait-ready");
+            return 0x9119;
+        },
+        deleteSync() { events.push("delete"); },
+        deleteBuffer() {},
+        getBufferSubData(_target, _offset, dest) {
+            events.push("read");
+            dest.fill(255);
+        },
+        isContextLost: () => false,
+    });
+    try {
+        const state = scenes();
+        const renderer = new FakeRenderer();
+        renderer.context = gl;
+        renderer.onRender = () => events.push("draw");
+        const visualPassSet = createVisualCapturePassSet({
+            family: VISUAL_CAPTURE_PASS_FAMILIES.visual,
+            captureInput: passInput(state.visualHandle),
+            products: ["validity", "object-id"],
+            bindings: [
+                { renderableId: "target-mesh", objectKey: "target", materialKeys: ["brick"] },
+            ],
+        });
+        const aligned = new AlignedCaptureProducts({
+            renderer,
+            camera: new THREE.PerspectiveCamera(),
+            visualSceneHandle: state.visualHandle,
+            authorizeSourceUse: async () => {},
+        });
+        await aligned.capture({
+            visualPassSet,
+            visualRenderables: new Map([["target-mesh", state.target]]),
+            signal: new AbortController().signal,
+        });
+        const writes = events.map((event, index) => event === "write" ? index : -1).filter((index) => index >= 0);
+        const draws = events.map((event, index) => event === "draw" ? index : -1).filter((index) => index >= 0);
+        assert.equal(writes.length, 2);
+        assert.equal(draws.length, 2);
+        assert.ok(writes[0] < draws[1]);
+        const reads = events.map((event, index) => event === "read" ? index : -1).filter((index) => index >= 0);
+        const deletes = events.map((event, index) => event === "delete" ? index : -1).filter((index) => index >= 0);
+        assert.equal(reads.length, deletes.length);
+        reads.forEach((index, offset) => assert.ok(index < deletes[offset]));
+        aligned.dispose();
+    } finally {
+        if (previous === undefined) delete globalThis.WebGL2RenderingContext;
+        else globalThis.WebGL2RenderingContext = previous;
+    }
+});
+
+test("browser analytic products render the truth scene twice", async () => {
+    const state = scenes();
+    const renderer = new FakeRenderer();
+    const analyticPassSet = createVisualCapturePassSet({
+        family: VISUAL_CAPTURE_PASS_FAMILIES.analytic,
+        captureInput: passInput(state.analyticHandle),
+        products: ["axial-depth", "semantic-id", "instance-id"],
+        bindings: [
+            { renderableId: "truth-near", semanticId: 7, instanceId: 70 },
+            { renderableId: "truth-far", semanticId: 8, instanceId: 80 },
+        ],
+    });
+    const aligned = new AlignedCaptureProducts({
+        renderer,
+        camera: new THREE.PerspectiveCamera(),
+        analyticSceneHandle: state.analyticHandle,
+    });
+    const result = await aligned.capture({
+        analyticPassSet,
+        analyticRenderables: new Map([
+            ["truth-near", state.truthNear],
+            ["truth-far", state.truthFar],
+        ]),
+        signal: new AbortController().signal,
+    });
+    assert.equal(renderer.renderCalls, 2);
+    assert.deepEqual([...result.analytic.products.axialDepth], [2, 4]);
+    assert.deepEqual([...result.analytic.products.semanticId], [7, 8]);
+    assert.deepEqual([...result.analytic.products.instanceId], [70, 80]);
+    assert.deepEqual([...result.analytic.products.validity], [1, 1]);
+    const allocated = aligned.bufferAllocations;
+    await aligned.capture({
+        analyticPassSet,
+        analyticRenderables: new Map([
+            ["truth-near", state.truthNear],
+            ["truth-far", state.truthFar],
+        ]),
+        signal: new AbortController().signal,
+    });
+    assert.equal(aligned.bufferAllocations, allocated);
+    aligned.dispose();
 });

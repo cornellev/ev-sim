@@ -463,6 +463,48 @@
     100% { background-position: -200% 0; }
 }
 
+.clipPanel {
+    display: grid;
+    gap: 8px;
+    margin: 0 0 16px;
+    border: 1px solid var(--headless-line);
+    border-radius: var(--radius);
+    background: var(--headless-soft);
+    padding: 14px;
+}
+
+.clipPanel p {
+    margin: 0;
+    color: #888e92;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.clipPanel p[data-tone="danger"] {
+    color: #d7a3a3;
+}
+
+.clipHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.clipHeader strong {
+    display: block;
+    margin-top: 4px;
+    color: var(--slate-fg);
+    font-size: 14px;
+    font-weight: 590;
+}
+
+.clipPath {
+    overflow-wrap: anywhere;
+    font-family: var(--font-geist-mono), monospace;
+    font-size: 11px;
+}
+
 .launchForm {
     display: grid;
     gap: 12px;

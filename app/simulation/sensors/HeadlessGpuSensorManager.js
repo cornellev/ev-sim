@@ -1,3 +1,4 @@
+import { analyticGpuCameraPose } from "./AnalyticGpuCameraPose.js";
 import { SensorPublisher } from "./SensorPublisher.js";
 import { buildCameraInfo, buildImageMessage } from "./SensorMessages.js";
 import { compareUtf8 } from "../world/WorldDescription.js";
@@ -121,6 +122,16 @@ class HeadlessGpuSensorDevice {
                     rgb: products.rgb === true && Boolean(outputs.imageTopicId),
                     depth: products.depth === true && Boolean(outputs.depthTopicId),
                 },
+                analyticPose: analyticGpuCameraPose({
+                    sensor: this.config,
+                    vehicles: vehicles.map((vehicle) => ({
+                        id: vehicle.telemetryId || vehicle.id,
+                        position: vehicle.position,
+                        rotation: vehicle.rotation,
+                    })),
+                    width: dimensions.width,
+                    height: dimensions.height,
+                }),
             } : {}),
             includeObservation: this.perceptionObservations
                 && (this.type === "camera"
@@ -595,12 +606,7 @@ export class HeadlessGpuSensorManager {
             });
             this.cameraCalibrations = new Map(cameras.map((camera) => [
                 camera.id,
-                visualCapture.createVisualCameraCalibration({
-                    ...camera.calibration,
-                    distortionModel: camera.calibration.distortionModel === "plumb_bob"
-                        ? (camera.calibration.distortion?.length ? "brown-conrady" : "none")
-                        : camera.calibration.distortionModel,
-                }),
+                visualCapture.createVisualCameraCalibration(camera.calibration),
             ]));
         }
         this.scene = this.renderScene || this.lidarGeometry;
@@ -610,7 +616,8 @@ export class HeadlessGpuSensorManager {
         const vehicleIds = new Set(this.vehicles().map((vehicle) => vehicle.telemetryId || vehicle.id));
         this.devices = configs.map((config) => {
             if (!config.id || ids.has(config.id)) throw new Error("GPU sensor IDs must be unique and non-empty.");
-            if (!vehicleIds.has(config.parentId)) throw new Error(`GPU sensor ${config.id} references unknown vehicle ${config.parentId}.`);
+            const mapCamera = config.type === "camera" && config.poseReference === "map";
+            if (!mapCamera && !vehicleIds.has(config.parentId)) throw new Error(`GPU sensor ${config.id} references unknown vehicle ${config.parentId}.`);
             ids.add(config.id);
             return new HeadlessGpuSensorDevice(config, this, {
                 seed: this.seed,

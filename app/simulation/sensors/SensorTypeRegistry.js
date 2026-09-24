@@ -685,6 +685,16 @@ export function normalizeRunSensor(value = {}, index = 0, registry = sensorTypeR
         determinism: cloneObject(source.determinism),
     };
     const isCamera = type === "camera";
+    if (source.poseReference !== undefined && source.poseReference !== "map") {
+        throw new Error('poseReference must be "map" when set.');
+    }
+    if (source.poseReference === "map" && !isCamera) {
+        throw new Error('poseReference is only valid on camera sensors.');
+    }
+    const mapCamera = isCamera && source.poseReference === "map";
+    if (mapCamera && text(source.parentId)) {
+        throw new Error(`Camera "${id}" with poseReference "map" cannot name a parent vehicle.`);
+    }
     if (!isCamera && source.render !== undefined) {
         throw new Error("Render selection is only valid on camera sensors.");
     }
@@ -699,7 +709,8 @@ export function normalizeRunSensor(value = {}, index = 0, registry = sensorTypeR
         id,
         type,
         enabled: source.enabled !== false,
-        parentId: text(source.parentId, "ego"),
+        parentId: mapCamera ? null : text(source.parentId, "ego"),
+        ...(mapCamera ? { poseReference: "map" } : {}),
         frameId: text(source.frameId, defaultMeasurement),
         mountFrameId: text(source.mountFrameId, defaultMount),
         measurementFrameId: text(source.measurementFrameId, defaultMeasurement),

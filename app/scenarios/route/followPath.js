@@ -197,31 +197,31 @@ export function sameEndpoints(left, right, epsilon = 1e-6) {
     return distanceXZ(a[0], b[0]) <= epsilon && distanceXZ(a.at(-1), b.at(-1)) <= epsilon;
 }
 
-export function pointAtDistance(points, distanceMeters) {
-    const arc = buildArcLengthPolyline(points, FOLLOW_DISTANCE_METRIC);
-    if (arc.polyline.length === 0) return null;
-    if (arc.polyline.length === 1 || arc.totalLength <= EPSILON) {
-        return { ...arc.polyline[0], distance: 0, progress: 1, segment: 0 };
+export function pointAtDistance(points, distanceMeters, arc = null) {
+    const resolved = arc ?? buildArcLengthPolyline(points, FOLLOW_DISTANCE_METRIC);
+    if (resolved.polyline.length === 0) return null;
+    if (resolved.polyline.length === 1 || resolved.totalLength <= EPSILON) {
+        return { ...resolved.polyline[0], distance: 0, progress: 1, segment: 0 };
     }
-    const target = Math.max(0, Math.min(arc.totalLength, finiteNumber(distanceMeters, 0)));
-    let segment = arc.polyline.length - 2;
-    for (let index = 0; index < arc.cumulativeDistances.length - 1; index += 1) {
-        if (target <= arc.cumulativeDistances[index + 1] + EPSILON) {
+    const target = Math.max(0, Math.min(resolved.totalLength, finiteNumber(distanceMeters, 0)));
+    let segment = resolved.polyline.length - 2;
+    for (let index = 0; index < resolved.cumulativeDistances.length - 1; index += 1) {
+        if (target <= resolved.cumulativeDistances[index + 1] + EPSILON) {
             segment = index;
             break;
         }
     }
-    const start = arc.polyline[segment];
-    const end = arc.polyline[segment + 1];
-    const startDistance = arc.cumulativeDistances[segment];
-    const segmentLength = arc.cumulativeDistances[segment + 1] - startDistance;
+    const start = resolved.polyline[segment];
+    const end = resolved.polyline[segment + 1];
+    const startDistance = resolved.cumulativeDistances[segment];
+    const segmentLength = resolved.cumulativeDistances[segment + 1] - startDistance;
     const t = segmentLength <= EPSILON ? 0 : (target - startDistance) / segmentLength;
     return {
         x: start.x + (end.x - start.x) * t,
         y: start.y + (end.y - start.y) * t,
         z: start.z + (end.z - start.z) * t,
         distance: target,
-        progress: arc.totalLength <= EPSILON ? 1 : target / arc.totalLength,
+        progress: resolved.totalLength <= EPSILON ? 1 : target / resolved.totalLength,
         segment,
     };
 }

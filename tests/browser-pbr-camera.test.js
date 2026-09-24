@@ -3,9 +3,11 @@ import test from "node:test";
 import * as THREE from "three";
 
 import { BrowserPbrRenderRuntime } from "../app/3d/perception/BrowserPbrRenderRuntime.js";
+import { addPbrRoadMarkings } from "../app/3d/perception/PbrRoadMarkings.js";
 import {
     createVisualCameraCalibration,
     createVisualCaptureInput,
+    takeAnalyticBindingNormalizeCount,
 } from "../app/3d/environment/visual/VisualCapturePipeline.js";
 import { sanitizeMeasuredAppearanceObject } from "../app/3d/environment/visual/VisualLayerMaterializer.js";
 import { resolvedPbrRun } from "./helpers/pbrResolved.js";
@@ -84,7 +86,9 @@ test("VIS-14 prepares isolated browser scenes and routes measured and analytic p
     assert.notEqual(runtime.appearanceScene, runtime.analyticScene);
     assert.equal(runtime.appearanceScene.parent, null);
     assert.equal(runtime.analyticScene.parent, null);
-    const actorMesh = runtime.appearanceScene.getObjectByProperty("type", "Mesh");
+    const actorGroup = runtime.appearanceScene.getObjectByName("cev-sim.appearance-actor:ego");
+    const actorMesh = actorGroup.getObjectByProperty("type", "Mesh");
+    assert.equal(runtime.appearanceScene.getObjectByName("TakramSkyQuad"), undefined);
     assert.equal(actorMesh.userData.forged, undefined);
     assert.equal(actorMesh.userData.semanticId, undefined);
 
@@ -121,6 +125,7 @@ test("VIS-14 prepares isolated browser scenes and routes measured and analytic p
             };
         },
     };
+    takeAnalyticBindingNormalizeCount();
     const captured = await runtime.captureCamera({
         captureInput,
         enabled: { rgb: true, depth: true, semantic: true, instance: true },
@@ -135,12 +140,167 @@ test("VIS-14 prepares isolated browser scenes and routes measured and analytic p
     assert.equal(Number.isNaN(captured.depth[2]), true);
     assert.ok(captured.semantic instanceof Uint16Array);
     assert.ok(captured.instance instanceof Uint32Array);
+    await runtime.captureCamera({
+        captureInput,
+        enabled: { rgb: true, depth: true, semantic: true, instance: true },
+        renderProducts,
+        signal: new AbortController().signal,
+    });
+    assert.equal(takeAnalyticBindingNormalizeCount(), 0);
+    const child = actorMesh;
+    let childUpdates = 0;
+    const originalUpdate = child.updateMatrixWorld.bind(child);
+    child.updateMatrixWorld = (force) => {
+        childUpdates += 1;
+        return originalUpdate(force);
+    };
+    runtime._updateActors([vehicle]);
+    assert.equal(childUpdates, 0);
 
+    const actorClosures = () => rights.filter((request) => request.useHash === resolved.actorUseHash);
+    assert.equal(actorClosures().length, 1);
+    assert.deepEqual(actorClosures()[0].operations, ["display", "machine-interpretation"]);
     await runtime.cameraOptions().authorizeSourceUse({
         useHash: resolved.actorUseHash,
         operations: ["display", "machine-interpretation"],
     });
+    await runtime.cameraOptions().authorizeSourceUse({
+        useHash: resolved.actorUseHash,
+        operations: ["display", "machine-interpretation"],
+    });
+    assert.equal(actorClosures().length, 1);
     assert.deepEqual(rights.at(-1).operations, ["display", "machine-interpretation"]);
+    runtime.dispose();
+});
+
+test("prepared browser capture rights are one access-set check reused by later samples", async () => {
+    const resolved = resolvedPbrRun();
+    const closures = [];
+    const accessSets = [];
+    const vehicle = {
+        telemetryId: "ego",
+        position: new THREE.Vector3(0, 0, 0),
+        rotation: new THREE.Euler(0, 0, 0),
+    };
+    const runtime = new BrowserPbrRenderRuntime({
+        renderer: {},
+        assetClient: {
+            async validateClosure(request) { closures.push(request); },
+            async validateAccessSet(request) { accessSets.push(request); return { ok: true, operations: request.operations }; },
+        },
+        materializerFactory: fakeMaterializer,
+        vehicles: () => [vehicle],
+    });
+    await runtime.prepare(resolved, { vehicles: [vehicle] });
+    assert.equal(accessSets.length, 1);
+    assert.deepEqual(accessSets[0].useHashes, [resolved.actorUseHash]);
+    assert.deepEqual(accessSets[0].operations, ["display", "machine-interpretation"]);
+    assert.equal(closures.length, 0);
+    await runtime.cameraOptions().authorizeSourceUse({
+        useHash: resolved.actorUseHash,
+        operations: ["display", "machine-interpretation"],
+    });
+    await runtime.cameraOptions().authorizeSourceUse({
+        useHash: resolved.actorUseHash,
+        operations: ["display", "machine-interpretation"],
+    });
+    assert.equal(accessSets.length, 1);
+    assert.equal(closures.length, 0);
+    runtime.dispose();
+});
+
+test("road-tagged analytic surfaces are drawn into the measured appearance scene", async () => {
+    const resolved = resolvedPbrRun();
+    const runtime = new BrowserPbrRenderRuntime({
+        renderer: {},
+        assetClient: { async validateClosure() {} },
+        materializerFactory: fakeMaterializer,
+        vehicles: () => [{ telemetryId: "ego", position: new THREE.Vector3(), rotation: new THREE.Euler() }],
+    });
+    await runtime.prepare(resolved);
+    const roads = [];
+    runtime.appearanceScene.traverse((object) => {
+        if (object.userData?.cevSimRoadAppearance === true) roads.push(object);
+    });
+    assert.ok(roads.length > 0);
+    assert.equal(roads[0].material.color.getHex(), 0x2d3034);
+    assert.equal(roads[0].material.roughness, 0.9);
+    assert.equal(roads[0].material.metalness, 0);
+    assert.equal(roads[0].position.y, 0.015);
+    const analyticRoad = runtime.analyticScene.getObjectByName(roads[0].name);
+    assert.ok(analyticRoad);
+    assert.equal(analyticRoad.userData.cevSimRoadAppearance, undefined);
+    assert.equal(runtime.analyticRenderables.get(roads[0].name), analyticRoad);
+    assert.equal([...runtime.analyticRenderables.values()].includes(roads[0]), false);
+    const markings = [];
+    runtime.appearanceScene.traverse((object) => {
+        if (object.name === "RoadMarking") markings.push(object);
+    });
+    assert.ok(markings.length > 0);
+    for (const marking of markings) {
+        assert.equal(marking.material.polygonOffset, false);
+        assert.equal(marking.userData.cevSimRoadMarking, true);
+        assert.equal([...runtime.analyticRenderables.values()].includes(marking), false);
+        const positions = marking.geometry.getAttribute("position");
+        assert.ok(positions.getY(0) >= 0.02 - 1e-6);
+    }
+    runtime.dispose();
+});
+
+test("implicit two-lane roads paint a dashed yellow center line and empty roads add nothing", () => {
+    const scene = new THREE.Scene();
+    const meshes = addPbrRoadMarkings(scene, {
+        nodes: [{ id: "a", x: 0, z: 0 }, { id: "b", x: 40, z: 0 }],
+        edges: [{
+            id: "road",
+            startNodeId: "a",
+            endNodeId: "b",
+            bidirectional: true,
+            width: 7,
+            laneCount: 2,
+        }],
+    });
+    assert.ok(meshes.length >= 3);
+    assert.ok(meshes.some((mesh) => mesh.material.color.getHex() === 0xf0d25c));
+    assert.ok(meshes.every((mesh) => (
+        mesh.material.polygonOffset === false && mesh.userData.cevSimRoadMarking === true
+    )));
+    assert.equal(addPbrRoadMarkings(new THREE.Scene(), null).length, 0);
+    assert.equal(addPbrRoadMarkings(new THREE.Scene(), { edges: [] }).length, 0);
+});
+
+test("a resolved Takram sky is installed behind measured appearance", async () => {
+    const resolved = resolvedPbrRun({
+        sky: { mode: "takram", takram: { timeOfDay: 14.4, date: "2026-06-28" } },
+    });
+    let installed = null;
+    const runtime = new BrowserPbrRenderRuntime({
+        renderer: {},
+        assetClient: { async validateClosure() {} },
+        materializerFactory: fakeMaterializer,
+        vehicles: () => [{ telemetryId: "ego", position: new THREE.Vector3(), rotation: new THREE.Euler() }],
+        installTakramSky: async ({ scene, sky }) => {
+            installed = sky;
+            const group = new THREE.Group();
+            group.name = "TakramEnvironmentSky";
+            group.userData.cevSimSky = true;
+            const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.MeshBasicMaterial());
+            quad.name = "TakramSkyQuad";
+            quad.frustumCulled = false;
+            quad.renderOrder = -1;
+            quad.userData.cevSimSky = true;
+            quad.userData.cevSimRenderRuntimeOwned = true;
+            group.add(quad);
+            scene.add(group);
+        },
+    });
+    await runtime.prepare(resolved);
+    assert.equal(installed.mode, "takram");
+    assert.equal(installed.takram.timeOfDay, 14.4);
+    assert.equal(installed.takram.date, "2026-06-28");
+    const quad = runtime.appearanceScene.getObjectByName("TakramSkyQuad");
+    assert.equal(quad.userData.cevSimSky, true);
+    assert.equal(quad.frustumCulled, false);
     runtime.dispose();
 });
 

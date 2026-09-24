@@ -184,8 +184,9 @@ export class DeviceDatabase extends Database {
                 : options;
             const admission = pluginRecords.get(config.id);
             const factory = admission ? options.pluginSession?.sensorFactories?.get(config.type) : null;
-            const vehicle = byId.get(config.parentId);
-            if (!vehicle) throw new Error(`Sensor "${config.id}" references unknown parent vehicle "${config.parentId}".`);
+            const mapCamera = config.type === "camera" && config.poseReference === "map" && !admission;
+            const vehicle = mapCamera ? null : byId.get(config.parentId);
+            if (!mapCamera && !vehicle) throw new Error(`Sensor "${config.id}" references unknown parent vehicle "${config.parentId}".`);
             if (admission && (!factory || factory.pluginId !== admission.plugin.ownership.pluginId
                 || factory.runtimeHash !== admission.plugin.ownership.runtimeHash)) {
                 throw new Error(`Plugin sensor factory "${config.type}" does not match its admitted declaration.`);
@@ -211,8 +212,10 @@ export class DeviceDatabase extends Database {
             device.transformRuntime = options.transformRuntime ?? null;
             device.calibrationHash = options.calibrationHash ?? null;
             this.addDevice(device);
-            device.parentVehicle = vehicle;
-            vehicle.devices.push(device);
+            if (vehicle) {
+                device.parentVehicle = vehicle;
+                vehicle.devices.push(device);
+            }
             if (this.parent?.scene) device.setup(this.parent.scene);
         }
         this.loopDisabled = false;

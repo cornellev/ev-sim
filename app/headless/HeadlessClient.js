@@ -42,3 +42,44 @@ export function cancelHeadlessRun(resultId) {
 export function headlessArtifactUrl(resultId, caseIndex, artifactName) {
     return `/api/headless/runs/${encodeURIComponent(resultId)}/cases/${caseIndex}/artifacts/${encodeURIComponent(artifactName)}`;
 }
+
+export function preflightClip(body) {
+    if (body == null) return request("/clips/preflight");
+    return request("/clips/preflight", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function startClip(body) {
+    return request("/clips", { method: "POST", body: JSON.stringify(body ?? {}) });
+}
+
+export function getClip() {
+    return request("/clips/current");
+}
+
+export function cancelClip() {
+    return request("/clips/current/cancel", { method: "POST", body: "{}" });
+}
+
+export function clipVideoUrl(name) {
+    return `/api/headless/clips/current/files/${encodeURIComponent(name)}`;
+}
+
+export function getCosmosClipPreflight() {
+    return preflightClip();
+}
+
+export function getCosmosClip() {
+    return getClip();
+}
+
+export function startCosmosClip() {
+    return startClip();
+}
+
+export function cancelCosmosClip() {
+    return cancelClip();
+}
+
+export function cosmosClipVideoUrl(name) {
+    return clipVideoUrl(name);
+}
