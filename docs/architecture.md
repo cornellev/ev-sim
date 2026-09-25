@@ -90,8 +90,13 @@ leaves unlocked vehicles unchanged.
 `app/3d/Scene.js` creates the Three.js scene, camera, renderer, input managers, and shared `Data` object. `Data` owns registries for vehicles, devices, objects, city data, physics, settings, the orchestrator client, the simulation engine, and (in environment mode) earth tile streaming and import controllers.
 
 `app/simulation/SimulationEngine.js` is the browser adapter for the simulation
-loop. It owns RAF pacing, rendering, overlays, viewport controls, GPU capture
-throttling, and UI subscriptions. Authoritative fixed-step state transitions,
+loop. It owns RAF pacing, rendering, overlays, viewport controls, and UI
+subscriptions. Presentation RAF never awaits sensor work: it renders the latest
+completed state, retains bounded wall-time debt, and permits only one serialized
+fixed-step advancement at a time. The advance path still awaits every scheduled
+sensor capture inside the kernel sensor phase; presentation pressure never
+skips a due sample. Generation tokens prevent late work from publishing after
+pause, reset, replacement, or disposal. Authoritative fixed-step state transitions,
 integer clock advancement, queued inputs, lifecycle telemetry, and pure state
 snapshots live in `app/simulation/kernel/SimulationKernel.js`. A narrow runtime
 context connects the kernel to the current vehicle, device, physics, script,
@@ -100,6 +105,29 @@ scene, renderer, DOM, or `Data` object. In environment mode the browser adapter
 also drives the environment-owned tile session through
 `EnvironmentTileHost.update(camera, viewport)` while Google 3D Tiles are
 loaded.
+
+For browser `pbr-mesh@1`, `BrowserPbrWorkerRuntime` owns a dedicated module
+worker. The worker creates its own `OffscreenCanvas`, WebGL2 renderer, detached
+appearance and analytic scenes, per-camera `CameraRenderProducts`, aligned
+capture pipeline, PBO slots, and visual-resource leases. Preparation sends the
+immutable resolved run once. Fixed-step capture sends generation-scoped actor
+matrices, camera positions, canonical capture input, and enabled-product flags;
+the worker transfers product `ArrayBuffer`s back without cloning. Main-thread
+`ManifestCamera` objects retain lightweight role/generation/hash scene handles
+for validation and do not allocate render targets. Worker capability failure may
+select the byte-compatible inline runtime before a run starts. Failure after
+preparation is an infrastructure failure and pauses the run; there is no
+mid-frame renderer switch or product omission. Hosted Chromium and the browser
+worker share `PbrCaptureEnvironment`, `BrowserPbrRenderRuntime`, and aligned
+capture code. The inline fallback exposes a renderer-availability lease rather
+than blocking presentation for an entire asynchronous fixed-step advance.
+Aligned capture snapshots and restores Three.js/WebGL state around each draw,
+PBO issue/poll, or genuinely asynchronous injected readback. RAF may therefore
+present while fences are pending and while CPU product processing continues.
+If a lease is held, `SimulationEngine` retains one pending presentation and
+services it before launching accumulated simulation debt. Operational status
+and browser performance reports identify the selected implementation and the
+pre-run worker fallback reason.
 
 The kernel owns the run-scoped `prepare/reset/step/finalize/dispose`
 lifecycle. Resets reconstruct component state and seeded streams, while

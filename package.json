@@ -28,6 +28,7 @@
     "benchmark:headless:quick": "node --experimental-default-type=module scripts/headless-benchmark.mjs --quick",
     "benchmark:visual-scale": "node --experimental-default-type=module scripts/visual-scale-benchmark.mjs",
     "benchmark:visual-scale:quick": "node --experimental-default-type=module scripts/visual-scale-benchmark.mjs --quick",
+    "benchmark:browser-simulation": "node --experimental-default-type=module scripts/browser-simulation-benchmark.mjs",
     "dist:headless": "node --experimental-default-type=module scripts/build-headless-dist.mjs",
     "dist:verify": "node --experimental-default-type=module scripts/verify-headless-dist.mjs",
     "release:check": "node --experimental-default-type=module scripts/release-check.mjs",

@@ -100,7 +100,7 @@ class FakeRenderer {
 
     readRenderTargetPixels(target, x, y, width, height, output, _cubeFace, textureIndex = 0) {
         this.readCalls += 1;
-        this.onRead?.();
+        this.onRead?.(target, output);
         if (this.failRead) throw new Error("injected readback failure");
         if (target.userData.captureTargetKind === "beauty") {
             output.set([255, 0, 0, 255, 0, 255, 0, 255]);
@@ -351,14 +351,39 @@ test("VIS-15a aligned capture accepts asynchronous readback without using the br
     const { visualPassSet, analyticPassSet } = passSets(state);
     const renderer = new FakeRenderer();
     let asynchronousReads = 0;
+    let leaseDepth = 0;
+    let leaseRuns = 0;
+    const rendererLease = {
+        async runAsync(operation) {
+            leaseDepth += 1;
+            leaseRuns += 1;
+            try {
+                return await operation();
+            } finally {
+                leaseDepth -= 1;
+                assert.equal(renderer.target, null);
+                assert.equal(renderer.clearColor.getHex(), 0x123456);
+            }
+        },
+        runSync(operation) {
+            leaseDepth += 1;
+            try {
+                return operation();
+            } finally {
+                leaseDepth -= 1;
+            }
+        },
+    };
     const aligned = new AlignedCaptureProducts({
         renderer,
         camera: new THREE.PerspectiveCamera(),
         visualSceneHandle: state.visualHandle,
         analyticSceneHandle: state.analyticHandle,
         authorizeSourceUse: async () => {},
+        rendererLease,
         readback: async (_renderer, target, output, { signal }) => {
             signal.throwIfAborted();
+            assert.equal(leaseDepth, 1);
             await Promise.resolve();
             renderer.readRenderTargetPixels(target, 0, 0, target.width, target.height, output);
             asynchronousReads += 1;
@@ -378,6 +403,9 @@ test("VIS-15a aligned capture accepts asynchronous readback without using the br
         signal: new AbortController().signal,
     });
     assert.ok(asynchronousReads > 1);
+    assert.ok(leaseRuns > 1);
+    assert.ok(leaseRuns <= asynchronousReads);
+    assert.equal(leaseDepth, 0);
     assert.equal(renderer.readCalls, asynchronousReads);
     assert.deepEqual([...result.analytic.products.semanticId], [7, 8]);
     aligned.dispose();
@@ -612,6 +640,98 @@ test("a beauty composer paints color while analytic capture still uses renderer.
     capture.dispose();
 });
 
+test("beauty readback resolves the composer's post-render output target", async () => {
+    const visualScene = new THREE.Scene();
+    const surface = mesh(0x00ff00);
+    visualScene.add(surface);
+    const resizedTarget = (width, height, kind = "beauty") => ({
+        width,
+        height,
+        texture: { type: THREE.UnsignedByteType },
+        userData: { captureTargetKind: kind },
+        setSize(nextWidth, nextHeight) {
+            this.width = nextWidth;
+            this.height = nextHeight;
+        },
+    });
+    const staleOutput = resizedTarget(640, 360, "stale-beauty");
+    const replacementOutput = resizedTarget(2, 1);
+    const composer = {
+        inputBuffer: resizedTarget(640, 360),
+        outputBuffer: staleOutput,
+        passes: [],
+        render() { this.outputBuffer = replacementOutput; },
+    };
+    visualScene.userData.cevSimBeautyComposer = composer;
+    const visualHandle = createOwnedCaptureScene({ role: "measured-appearance", scene: visualScene });
+    const visualPassSet = createVisualCapturePassSet({
+        family: VISUAL_CAPTURE_PASS_FAMILIES.visual,
+        captureInput: passInput(visualHandle),
+        products: ["beauty"],
+        bindings: [],
+    });
+    const renderer = new FakeRenderer();
+    const readTargets = [];
+    renderer.onRead = (target) => readTargets.push(target);
+    const capture = new AlignedCaptureProducts({
+        renderer,
+        camera: new THREE.PerspectiveCamera(),
+        visualSceneHandle: visualHandle,
+    });
+    const result = await capture.capture({
+        visualPassSet,
+        visualRenderables: new Map(),
+        signal: new AbortController().signal,
+    });
+    assert.equal(staleOutput.width, 2);
+    assert.equal(staleOutput.height, 1);
+    assert.equal(readTargets.at(-1), replacementOutput);
+    assert.equal(result.visual.products.beauty.length, 8);
+    capture.dispose();
+});
+
+test("beauty readback reports the post-render target dimensions before image warping", async () => {
+    const visualScene = new THREE.Scene();
+    const surface = mesh(0x00ff00);
+    visualScene.add(surface);
+    const target = (width, height) => ({
+        width,
+        height,
+        texture: { type: THREE.UnsignedByteType },
+        userData: { captureTargetKind: "beauty" },
+        setSize(nextWidth, nextHeight) {
+            this.width = nextWidth;
+            this.height = nextHeight;
+        },
+    });
+    const composer = {
+        inputBuffer: target(2, 1),
+        outputBuffer: target(2, 1),
+        passes: [],
+        render() { this.outputBuffer = target(1, 1); },
+    };
+    visualScene.userData.cevSimBeautyComposer = composer;
+    const visualHandle = createOwnedCaptureScene({ role: "measured-appearance", scene: visualScene });
+    const visualPassSet = createVisualCapturePassSet({
+        family: VISUAL_CAPTURE_PASS_FAMILIES.visual,
+        captureInput: passInput(visualHandle),
+        products: ["beauty"],
+        bindings: [],
+    });
+    const capture = new AlignedCaptureProducts({
+        renderer: new FakeRenderer(),
+        camera: new THREE.PerspectiveCamera(),
+        visualSceneHandle: visualHandle,
+    });
+    await assert.rejects(capture.capture({
+        visualPassSet,
+        visualRenderables: new Map(),
+        signal: new AbortController().signal,
+    }), (error) => error.code === "VISUAL_CAPTURE_TARGET_SIZE_INVALID"
+        && /must be 2x1 after draw; got 1x1/.test(error.message));
+    capture.dispose();
+});
+
 test("sky meshes stay in the appearance scene and out of the material proxy", async () => {
     const scene = new THREE.Scene();
     const surface = mesh(0x00ff00);
@@ -723,6 +843,115 @@ test("capture rights fail closed for every restricted source closure before rend
     });
     assert.ok(renderer.renderCalls > 0);
     owned.dispose();
+});
+
+test("PBO beauty readback allocates after a 320x180 composer resize and survives presentation", async () => {
+    class FakeWebGL2 {}
+    const previous = globalThis.WebGL2RenderingContext;
+    globalThis.WebGL2RenderingContext = FakeWebGL2;
+    const allocations = [];
+    const reads = [];
+    const gl = Object.assign(Object.create(FakeWebGL2.prototype), {
+        RGBA: 0x1908,
+        UNSIGNED_BYTE: 0x1401,
+        FLOAT: 0x1406,
+        PIXEL_PACK_BUFFER: 0x88eb,
+        PIXEL_PACK_BUFFER_BINDING: 0x88ed,
+        STREAM_READ: 0x88e1,
+        PACK_ALIGNMENT: 0x0d05,
+        SYNC_GPU_COMMANDS_COMPLETE: 0x9117,
+        TIMEOUT_EXPIRED: 0x911b,
+        WAIT_FAILED: 0x911d,
+        CONDITION_SATISFIED: 0x9119,
+        createBuffer: () => ({ id: allocations.length }),
+        bindBuffer() {},
+        bufferData(_target, byteLength) { allocations.push(byteLength); },
+        getParameter: () => 4,
+        pixelStorei() {},
+        readPixels(_x, _y, width, height) { reads.push([width, height]); },
+        fenceSync: () => ({ id: "sync" }),
+        flush() {},
+        clientWaitSync: () => 0x9119,
+        deleteSync() {},
+        deleteBuffer() {},
+        getBufferSubData(_target, _offset, dest) { dest.fill(255); },
+        isContextLost: () => false,
+    });
+    try {
+        const target = (width, height) => ({
+            width,
+            height,
+            texture: { type: THREE.UnsignedByteType },
+            userData: { captureTargetKind: "beauty" },
+            setSize(nextWidth, nextHeight) {
+                this.width = nextWidth;
+                this.height = nextHeight;
+            },
+        });
+        const visualScene = new THREE.Scene();
+        visualScene.add(mesh(0x00ff00));
+        const output = target(1280, 720);
+        let composerRenders = 0;
+        const composer = {
+            inputBuffer: target(1280, 720),
+            outputBuffer: output,
+            passes: [],
+            render() { composerRenders += 1; },
+        };
+        visualScene.userData.cevSimBeautyComposer = composer;
+        const visualHandle = createOwnedCaptureScene({ role: "measured-appearance", scene: visualScene });
+        const cameraCalibration = calibration(320, 180);
+        const captureInput = createVisualCaptureInput({
+            calibration: cameraCalibration,
+            pose: { matrixWorld: new THREE.Matrix4().elements },
+            sceneHandle: visualHandle,
+            captureTimeNs: 99,
+        });
+        const visualPassSet = createVisualCapturePassSet({
+            family: VISUAL_CAPTURE_PASS_FAMILIES.visual,
+            captureInput,
+            products: ["beauty"],
+            bindings: [],
+        });
+        const renderer = new FakeRenderer();
+        renderer.context = gl;
+        let presentationInterleaved = false;
+        const rendererLease = {
+            runSync(operation) {
+                const result = operation();
+                if (!presentationInterleaved && composerRenders > 0 && result?.slot) {
+                    presentationInterleaved = true;
+                    output.setSize(1280, 720);
+                }
+                return result;
+            },
+        };
+        const capture = new AlignedCaptureProducts({
+            renderer,
+            camera: new THREE.PerspectiveCamera(),
+            visualSceneHandle: visualHandle,
+            rendererLease,
+        });
+        const request = () => capture.capture({
+            visualPassSet,
+            visualRenderables: new Map(),
+            signal: new AbortController().signal,
+        });
+        const first = await request();
+        const second = await request();
+        assert.equal(presentationInterleaved, true);
+        assert.equal(composerRenders, 2);
+        assert.equal(first.visual.products.beauty.length, 230400);
+        assert.equal(second.visual.products.beauty.length, 230400);
+        assert.ok(allocations.length >= 1);
+        assert.ok(allocations.every((byteLength) => byteLength === 230400));
+        assert.ok(reads.length >= 4);
+        assert.ok(reads.every(([width, height]) => width === 320 && height === 180));
+        capture.dispose();
+    } finally {
+        if (previous === undefined) delete globalThis.WebGL2RenderingContext;
+        else globalThis.WebGL2RenderingContext = previous;
+    }
 });
 
 test("WebGL2 aligned capture reads through a pixel-pack slot after the fence is consumed", async () => {

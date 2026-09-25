@@ -6,6 +6,25 @@
  * INVALID_OPERATION. Async reads bind our own PBO, then restore Spark's.
  */
 
+const asyncPixelPackCapability = new WeakMap();
+
+function supportsAsyncPixelPack(gl) {
+    const cached = asyncPixelPackCapability.get(gl);
+    if (cached !== undefined) return cached;
+    let supported = true;
+    try {
+        const debug = gl.getExtension?.("WEBGL_debug_renderer_info");
+        const renderer = debug ? String(gl.getParameter(debug.UNMASKED_RENDERER_WEBGL) ?? "") : "";
+        // Chromium's software WebGL2 backend exposes these APIs, but its
+        // fences can remain TIMEOUT_EXPIRED indefinitely in headless runs.
+        supported = !/swiftshader/i.test(renderer);
+    } catch {
+        supported = true;
+    }
+    asyncPixelPackCapability.set(gl, supported);
+    return supported;
+}
+
 /**
  * @param {import("three").WebGLRenderer | null | undefined} renderer
  * @returns {WebGL2RenderingContext | null}
@@ -19,6 +38,7 @@ export function getWebGL2Context(renderer) {
         return null;
     }
     if (typeof gl.getBufferSubData !== "function") return null;
+    if (!supportsAsyncPixelPack(gl)) return null;
     return gl;
 }
 
@@ -52,14 +72,38 @@ export function withPixelPackBufferUnbound(renderer, readback) {
     }
 }
 
+let readbackTaskChannel = null;
+const readbackTaskQueue = [];
+
+function ensureReadbackTaskChannel() {
+    if (readbackTaskChannel || typeof MessageChannel === "undefined") return readbackTaskChannel;
+    const channel = new MessageChannel();
+    channel.port1.onmessage = () => {
+        readbackTaskQueue.shift()?.();
+        if (readbackTaskQueue.length === 0) channel.port1.unref?.();
+    };
+    channel.port1.unref?.();
+    channel.port2.unref?.();
+    readbackTaskChannel = channel;
+    return channel;
+}
+
 /**
  * Yield so the browser can flush GL commands and signal fences.
  * `clientWaitSync` cannot block: browsers set `MAX_CLIENT_WAIT_TIMEOUT_WEBGL`
- * to 0, and a longer timeout raises INVALID_OPERATION.
+ * to 0, and a longer timeout raises INVALID_OPERATION. MessageChannel avoids
+ * the nested-timer clamp on the capture hot path.
  */
 export function yieldForGpuReadback() {
     return new Promise((resolve) => {
-        setTimeout(resolve, 0);
+        const channel = ensureReadbackTaskChannel();
+        if (!channel) {
+            setTimeout(resolve, 0);
+            return;
+        }
+        readbackTaskQueue.push(resolve);
+        channel.port1.ref?.();
+        channel.port2.postMessage(0);
     });
 }
 
@@ -100,9 +144,10 @@ export class PixelPackSlot {
         this.pbo = gl.createBuffer();
         const alignment = gl.getParameter(gl.PACK_ALIGNMENT);
         this.packAlignment = Number.isFinite(alignment) ? alignment : 4;
+        const previous = gl.getParameter(gl.PIXEL_PACK_BUFFER_BINDING);
         gl.bindBuffer(gl.PIXEL_PACK_BUFFER, this.pbo);
         gl.bufferData(gl.PIXEL_PACK_BUFFER, this.byteLength, gl.STREAM_READ);
-        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, previous);
         this.sync = null;
         this.dropped = false;
         this.pollAttempts = 0;
@@ -141,6 +186,10 @@ export class PixelPackSlot {
         this.pollAttempts = 0;
         this.dropped = false;
         this.begunAtMs = Date.now();
+        const previous = gl.getParameter(gl.PIXEL_PACK_BUFFER_BINDING);
+        const previousReadBuffer = typeof gl.readBuffer === "function"
+            ? gl.getParameter(gl.READ_BUFFER)
+            : null;
         try {
             gl.bindBuffer(gl.PIXEL_PACK_BUFFER, this.pbo);
             gl.pixelStorei(gl.PACK_ALIGNMENT, 1);
@@ -152,10 +201,8 @@ export class PixelPackSlot {
             this.sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
             gl.flush();
         } finally {
-            gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
-            if (attachmentIndex > 0 && typeof gl.readBuffer === "function") {
-                gl.readBuffer(gl.COLOR_ATTACHMENT0 ?? 0x8CE0);
-            }
+            gl.bindBuffer(gl.PIXEL_PACK_BUFFER, previous);
+            if (previousReadBuffer !== null) gl.readBuffer(previousReadBuffer);
         }
         return Boolean(this.sync);
     }
@@ -186,9 +233,10 @@ export class PixelPackSlot {
 
     _copy(dest) {
         const gl = this.gl;
+        const previous = gl.getParameter(gl.PIXEL_PACK_BUFFER_BINDING);
         gl.bindBuffer(gl.PIXEL_PACK_BUFFER, this.pbo);
         gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, dest);
-        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, previous);
         this._deleteSync();
         this.dropped = false;
         this.pollAttempts = 0;
@@ -212,9 +260,10 @@ export class PixelPackSlot {
             this.pbo = null;
         }
         this.pbo = gl.createBuffer();
+        const previous = gl.getParameter(gl.PIXEL_PACK_BUFFER_BINDING);
         gl.bindBuffer(gl.PIXEL_PACK_BUFFER, this.pbo);
         gl.bufferData(gl.PIXEL_PACK_BUFFER, this.byteLength, gl.STREAM_READ);
-        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, previous);
     }
 
     _deleteSync() {

@@ -7,6 +7,7 @@ import { PluginSensorDevice } from "../../simulation/sensors/PluginSensorAdapter
 import { CpuLidarScene } from "../../simulation/sensors/CpuLidarScene.js";
 import { SensorPublisher as BrowserSensorPublisher } from "../devices/SensorPublisher.js";
 import { encodeTopicValue, registerMsgDefinition } from "../../client/TopicCodec.js";
+import { browserSimulationPerformance } from "../../simulation/performance/BrowserSimulationPerformance.js";
 
 function summarizeMeasurementState(state) {
     if (state == null) return null;
@@ -159,7 +160,7 @@ export class DeviceDatabase extends Database {
         this.pluginSensorScene?.dispose();
         this.pluginSensorScene = null;
         for (const device of this.devices) {
-            if (!device.manifestManaged && !device.vehicleOwned) {
+            if (!device.manifestManaged) {
                 device._legacyEnabledBeforeRun ??= device.enabled;
                 if (typeof device.setEnabled === "function") device.setEnabled(false);
                 else device.enabled = false;
@@ -222,6 +223,7 @@ export class DeviceDatabase extends Database {
     }
 
     resetSchedule(runtimeOptions = {}) {
+        this.renderRuntime?.reset?.();
         for (const device of this.devices) {
             device.resetRunState?.(runtimeOptions);
             if ("measurementState" in device) device.measurementState = null;
@@ -245,6 +247,7 @@ export class DeviceDatabase extends Database {
 
     async updateAsync(dt, clock = null) {
         if (this.loopDisabled) return;
+        const updateStart = browserSimulationPerformance.now();
         const ordered = [...this.devices].sort((left, right) => String(left.telemetryId || "").localeCompare(String(right.telemetryId || "")));
         const publishers = ordered
             .filter((device) => device.enabled && device.contractPublisher)
@@ -279,6 +282,10 @@ export class DeviceDatabase extends Database {
                 this._publishDevice(device, clock);
             }
         } catch (error) {
+            browserSimulationPerformance.recordTiming(
+                "deviceDatabaseUpdate",
+                browserSimulationPerformance.now() - updateStart,
+            );
             for (const [publisher, checkpoint] of checkpoints) {
                 publisher.discardEnqueued?.(checkpoint);
             }
@@ -295,6 +302,10 @@ export class DeviceDatabase extends Database {
                 publisher.discardEnqueued?.(checkpoints.get(publisher), { syncGroupKey: key });
             }
         }
+        browserSimulationPerformance.recordTiming(
+            "deviceDatabaseUpdate",
+            browserSimulationPerformance.now() - updateStart,
+        );
     }
 
     deliver(clock) {

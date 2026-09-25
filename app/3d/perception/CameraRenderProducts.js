@@ -132,6 +132,7 @@ export class CameraRenderProducts {
         authorizeSourceUse = null,
         renderPolicy = null,
         alignedReadback = null,
+        rendererLease = null,
     } = {}) {
         this.renderer = renderer;
         this.camera = camera;
@@ -142,6 +143,7 @@ export class CameraRenderProducts {
         this.authorizeSourceUse = authorizeSourceUse;
         this.renderPolicy = renderPolicy;
         this.alignedReadback = alignedReadback;
+        this.rendererLease = rendererLease;
         if (captureMode === CORRECTED_VISUAL_CAPTURE_MODE) {
             this.calibration = assertVisualCameraCalibration(calibration);
             this.sceneHandle = assertOwnedCaptureScene(sceneHandle, { role: "measured-appearance" });
@@ -482,6 +484,7 @@ export class CameraRenderProducts {
             authorizeSourceUse: this.authorizeSourceUse,
             renderPolicy: this.renderPolicy,
             readback: this.alignedReadback,
+            rendererLease: this.rendererLease,
         });
         return this._alignedProducts.capture({
             visualPassSet,
@@ -519,6 +522,7 @@ export class CameraRenderProducts {
         this.analyticSceneHandle = null;
         this.authorizeSourceUse = null;
         this.renderPolicy = null;
+        this.rendererLease = null;
     }
 }
 

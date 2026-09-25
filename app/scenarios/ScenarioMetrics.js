@@ -13,8 +13,8 @@ import {
     environmentDocumentFrom,
 } from "./route/roadGraph.js";
 import {
+    createRouteProjectionIndex,
     projectPoseToRoute,
-    routeTangentAtPose,
 } from "./route/Route.js";
 
 const EPSILON = 1e-9;
@@ -215,6 +215,7 @@ export class ScenarioMetricCollector {
     constructor(options = {}) {
         this._options = { ...options };
         this._route = null;
+        this._routeProjectionIndex = null;
         this._environment = null;
         this._roadGraph = null;
         this._footprint = null;
@@ -226,6 +227,7 @@ export class ScenarioMetricCollector {
     configure(options = {}) {
         this._options = { ...this._options, ...options };
         this._route = options.route ?? this._route;
+        this._routeProjectionIndex = this._route ? createRouteProjectionIndex(this._route) : null;
         this._environment = options.environment ?? this._environment;
         this._footprint = options.footprint === undefined
             ? this._footprint
@@ -262,6 +264,7 @@ export class ScenarioMetricCollector {
         this._startAlong = null;
         this._remainingAtStart = null;
         this._routeAvailable = null;
+        this._routeProjection = null;
         this._current = emptyCurrent();
         this._episode = emptyEpisode();
         this._everOffRoad = false;
@@ -328,14 +331,16 @@ export class ScenarioMetricCollector {
             current["route-progress-ratio"] = null;
             return;
         }
-        const projection = projectPoseToRoute(route, position);
+        const projection = projectPoseToRoute(route, position, { index: this._routeProjectionIndex });
         if (!projection) {
             this._routeAvailable = false;
+            this._routeProjection = null;
             current["route-progress"] = null;
             current["route-progress-ratio"] = null;
             return;
         }
         this._routeAvailable = true;
+        this._routeProjection = projection;
         if (this._startAlong === null) {
             this._startAlong = projection.distanceAlong;
             this._remainingAtStart = Math.max(0, totalLength - this._startAlong);
@@ -371,8 +376,8 @@ export class ScenarioMetricCollector {
             current["wrong-way"] = null;
             return;
         }
-        const tangentInfo = routeTangentAtPose(this._route, position);
-        if (!tangentInfo?.tangent) {
+        const tangent = this._routeProjection?.tangent;
+        if (!tangent) {
             current["wrong-way"] = null;
             return;
         }
@@ -402,7 +407,7 @@ export class ScenarioMetricCollector {
             return;
         }
         const motionDir = { x: motionX / motionLength, z: motionZ / motionLength };
-        const alignment = motionDir.x * tangentInfo.tangent.x + motionDir.z * tangentInfo.tangent.z;
+        const alignment = motionDir.x * tangent.x + motionDir.z * tangent.z;
         const wrongWay = alignment < -EPSILON;
         current["wrong-way"] = wrongWay ? 1 : 0;
         if (wrongWay) this._everWrongWay = true;

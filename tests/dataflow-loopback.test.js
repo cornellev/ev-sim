@@ -173,6 +173,29 @@ test("perception sync-group topics share calibration hash and encode through loo
     assert.ok(metadataEntries.every((entry) => entry.options.descriptorMetadata.captureTimeNs === stamp));
 });
 
+test("non-routed sensor topics retain prepared bytes instead of raw pixel payloads", () => {
+    const store = new SignalStore({}, { sourceId: "prepared-sensor-route" });
+    const manifest = createDefaultRunManifest();
+    const router = new TopicContractRouter(manifest, { telemetry: store });
+    const topic = manifest.topics.find((entry) => entry.id === "front-camera-image");
+    const raw = { width: 1, height: 1, data: Uint8Array.from([1, 2, 3, 4]) };
+    const retained = Uint8Array.from([9, 8, 7]);
+    const routed = router.routeOutbound(topic.id, {
+        value: raw,
+        retainedValue: retained,
+        typeStr: topic.schema.type,
+    }, {
+        producer: topic.producer,
+        logClass: "heavy",
+        captureTimeNs: 1,
+        deliveryTimeNs: 1,
+        cycle: 1,
+    });
+    assert.equal(routed.ok, true);
+    assert.equal(store.read(router.producerPath(topic, topic.producer)).value, retained);
+    assert.equal(router.lastProducer.get(topic.contractId).value, retained);
+});
+
 test("transform runtime publishes live TF fixtures through the contract router", () => {
     registerCatalogSchemas();
     const store = new SignalStore({}, { sourceId: "tf-loopback" });

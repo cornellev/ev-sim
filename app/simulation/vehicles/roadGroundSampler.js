@@ -51,6 +51,7 @@ function pitchFromTangent(dx, dy, dz, yaw) {
 }
 
 function roadSegmentTangent(point, projection, graph) {
+    if (projection?.surfaceTangent) return projection.surfaceTangent;
     const edge = graph.edges.get(String(projection.edgeId));
     if (!edge) return { dx: 1, dy: 0, dz: 0 };
 

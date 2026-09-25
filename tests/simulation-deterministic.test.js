@@ -502,7 +502,7 @@ test("realtime advanceSimulation respects step budget and leaves accumulator deb
     assert.ok(engine.accumulatorNs >= engine.stepNs * 8);
 });
 
-test("async frame captures GPU sensors on the first substep only", async () => {
+test("async frame preserves every due GPU sensor substep", async () => {
     const { engine } = harness({ nowMs: () => 0, realtimeStepBudgetMs: 1000 });
     engine.deterministic = true;
     engine.realtime = true;
@@ -511,17 +511,162 @@ test("async frame captures GPU sensors on the first substep only", async () => {
     engine.fixedDt = 0.02;
     engine.maxSubSteps = 4;
     engine.accumulatorNs = 0;
-    engine.gpuCaptureEnabled = true;
     engine.autonomyOverlay.updateFromRuntime = () => {};
     let captures = 0;
     engine.kernel.advanceStepAsync = async () => {
         engine.steps += 1;
-        if (engine.gpuCaptureEnabled) captures += 1;
+        captures += 1;
         return true;
     };
     await engine._advanceSimulationAsync(0.05);
     assert.equal(engine.steps, 2);
-    assert.equal(captures, 1);
-    assert.equal(engine.gpuCaptureEnabled, false);
+    assert.equal(captures, 2);
     engine.dispose();
+});
+
+test("presentation RAF continues while one serialized worker capture is pending", async () => {
+    const originalRaf = globalThis.requestAnimationFrame;
+    const originalCancel = globalThis.cancelAnimationFrame;
+    let rafCalls = 0;
+    globalThis.requestAnimationFrame = () => ++rafCalls;
+    globalThis.cancelAnimationFrame = () => {};
+    try {
+        const { engine } = harness({ nowMs: () => 0 });
+        let resolveAdvance;
+        let advances = 0;
+        let renders = 0;
+        engine.renderRuntime = { implementation: "worker", presentationBlocked: false };
+        engine.render = () => { renders += 1; };
+        engine._advanceSimulationAsync = () => {
+            advances += 1;
+            return new Promise((resolve) => { resolveAdvance = resolve; });
+        };
+        engine.status = "playing";
+        engine.looping = true;
+        engine.lastFrameMs = 0;
+        engine._frame(16);
+        await Promise.resolve();
+        engine._frame(32);
+        assert.equal(rafCalls, 2);
+        assert.equal(advances, 1);
+        assert.equal(renders, 2);
+        resolveAdvance();
+        await new Promise((resolve) => setImmediate(resolve));
+        engine.stopLoop();
+        engine.dispose();
+    } finally {
+        globalThis.requestAnimationFrame = originalRaf;
+        globalThis.cancelAnimationFrame = originalCancel;
+    }
+});
+
+test("inline presentation is serviced before accumulated debt launches another advance", async () => {
+    const { engine } = harness({ nowMs: () => 0 });
+    const runtime = { implementation: "inline", presentationBlocked: false };
+    const order = [];
+    const completions = [];
+    engine.renderRuntime = runtime;
+    engine.render = () => {
+        order.push("presentation");
+        return true;
+    };
+    engine._advanceSimulationAsync = () => {
+        order.push("advance-start");
+        return new Promise((resolve) => completions.push(resolve));
+    };
+    engine.status = "playing";
+    engine._pendingFrameNs = 16_000_000;
+    engine._launchAsyncAdvance();
+    await Promise.resolve();
+
+    runtime.presentationBlocked = true;
+    engine._requestPresentation();
+    engine._pendingFrameNs = 16_000_000;
+    runtime.presentationBlocked = false;
+    order.push("advance-complete");
+    completions.shift()();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.deepEqual(order.slice(0, 4), [
+        "advance-start",
+        "advance-complete",
+        "presentation",
+        "advance-start",
+    ]);
+    completions.shift()();
+    await new Promise((resolve) => setImmediate(resolve));
+    engine.dispose();
+});
+
+test("inline lease release presents the latest camera frame and retains fallback diagnostics", async () => {
+    const { engine } = harness();
+    let blocked = true;
+    let availabilityListener = null;
+    let renders = 0;
+    const runtime = {
+        implementation: "inline",
+        get presentationBlocked() { return blocked; },
+        subscribe(listener) {
+            listener({ state: "ready", diagnostic: null, error: null });
+            return () => {};
+        },
+        subscribePresentationAvailability(listener) {
+            availabilityListener = listener;
+            listener(!blocked);
+            return () => { availabilityListener = null; };
+        },
+        dispose() {},
+    };
+    engine._bindRenderRuntime(runtime, {
+        fallbackReason: { code: "PBR_WORKER_UNSUPPORTED", message: "unsupported" },
+    });
+    const scene = {
+        add(object) { object.parent = this; },
+        remove(object) { if (object.parent === this) object.parent = null; },
+    };
+    engine.configure({
+        scene,
+        camera: { position: { x: 0, y: 0, z: 0 } },
+        renderer: { render() { renders += 1; } },
+    });
+    engine.perspectiveView.applyFrame = () => {};
+
+    assert.equal(engine.render(), false);
+    assert.equal(renders, 0);
+    blocked = false;
+    availabilityListener(true);
+    await Promise.resolve();
+
+    assert.equal(renders, 1);
+    assert.equal(engine.renderProviderStatus.implementation, "inline");
+    assert.equal(engine.renderProviderStatus.fallbackReason.code, "PBR_WORKER_UNSUPPORTED");
+    engine.dispose();
+});
+
+test("late async advancement cannot emit state after stop invalidates its generation", async () => {
+    const originalRaf = globalThis.requestAnimationFrame;
+    const originalCancel = globalThis.cancelAnimationFrame;
+    globalThis.requestAnimationFrame = () => 1;
+    globalThis.cancelAnimationFrame = () => {};
+    try {
+        const { engine } = harness({ nowMs: () => 0 });
+        let resolveAdvance;
+        let emitted = 0;
+        engine.renderRuntime = { implementation: "worker", presentationBlocked: false };
+        engine.render = () => {};
+        engine._emitFrame = () => { emitted += 1; };
+        engine._advanceSimulationAsync = () => new Promise((resolve) => { resolveAdvance = resolve; });
+        engine.status = "playing";
+        engine.looping = true;
+        engine._frame(16);
+        await Promise.resolve();
+        engine.stopLoop();
+        resolveAdvance();
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.equal(emitted, 0);
+        engine.dispose();
+    } finally {
+        globalThis.requestAnimationFrame = originalRaf;
+        globalThis.cancelAnimationFrame = originalCancel;
+    }
 });

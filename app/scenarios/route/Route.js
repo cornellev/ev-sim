@@ -785,6 +785,72 @@ export function getRoutePolyline(route) {
     return dedupePolyline(route?.waypoints ?? []);
 }
 
+function polylineBounds(polyline) {
+    if (!polyline.length) return null;
+    let minX = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let minZ = Number.POSITIVE_INFINITY;
+    let maxZ = Number.NEGATIVE_INFINITY;
+    for (const point of polyline) {
+        minX = Math.min(minX, point.x);
+        maxX = Math.max(maxX, point.x);
+        minZ = Math.min(minZ, point.z);
+        maxZ = Math.max(maxZ, point.z);
+    }
+    return Object.freeze({ minX, maxX, minZ, maxZ });
+}
+
+function distanceToBoundsXZ(point, bounds) {
+    if (!point || !bounds) return 0;
+    const dx = point.x < bounds.minX
+        ? bounds.minX - point.x
+        : point.x > bounds.maxX ? point.x - bounds.maxX : 0;
+    const dz = point.z < bounds.minZ
+        ? bounds.minZ - point.z
+        : point.z > bounds.maxZ ? point.z - bounds.maxZ : 0;
+    return Math.hypot(dx, dz);
+}
+
+/**
+ * Immutable, run-scoped projection data for a canonical route. The index is
+ * operational only: it never participates in route or episode identity.
+ */
+export function createRouteProjectionIndex(route) {
+    const distanceMetric = route?.verification?.distanceMetric ?? "3d";
+    if (Array.isArray(route?.sections) && route.sections.length) {
+        let prefix = 0;
+        const sections = route.sections.map((section) => {
+            const arc = buildArcLengthPolyline(section.polyline ?? [], distanceMetric);
+            const length = section.length ?? arc.totalLength;
+            const indexed = Object.freeze({
+                section,
+                arc,
+                prefix,
+                length,
+                bounds: polylineBounds(arc.polyline),
+            });
+            prefix += length;
+            return indexed;
+        });
+        return Object.freeze({
+            route,
+            distanceMetric,
+            sections: Object.freeze(sections),
+            arc: null,
+            totalLength: route.totalLength ?? prefix,
+        });
+    }
+    const arc = buildArcLengthPolyline(getRoutePolyline(route), distanceMetric);
+    return Object.freeze({
+        route,
+        distanceMetric,
+        sections: Object.freeze([]),
+        arc,
+        bounds: polylineBounds(arc.polyline),
+        totalLength: route?.totalLength ?? arc.totalLength,
+    });
+}
+
 export function routeSectionCount(route) {
     if (Array.isArray(route?.sections) && route.sections.length > 0) return route.sections.length;
     const waypoints = Array.isArray(route) ? route : route?.waypoints;
@@ -842,22 +908,28 @@ function sectionAtDistance(route, distance) {
     return route.sections.at(-1)?.index ?? route.sections.length - 1;
 }
 
-export function projectPoseToRoute(route, pose) {
-    if (Array.isArray(route?.sections) && route.sections.length) {
-        let prefix = 0;
+export function projectPoseToRoute(route, pose, options = {}) {
+    const index = options.index?.route === route
+        ? options.index
+        : createRouteProjectionIndex(route);
+    const exhaustive = options.exhaustive === true;
+    if (index.sections.length) {
         let best = null;
-        const totalLength = route.totalLength ?? route.sections.reduce((sum, section) => (
-            sum + (section.length ?? buildArcLengthPolyline(section.polyline ?? [], route?.verification?.distanceMetric ?? "3d").totalLength)
-        ), 0);
-        for (const section of route.sections) {
-            const projection = projectPointToPolyline(pose, section.polyline ?? [], { distanceMetric: route?.verification?.distanceMetric ?? "3d" });
-            const length = section.length ?? buildArcLengthPolyline(section.polyline ?? [], route?.verification?.distanceMetric ?? "3d").totalLength;
+        const point = pointFrom(pose);
+        for (const indexed of index.sections) {
+            if (!exhaustive && best
+                && distanceToBoundsXZ(point, indexed.bounds) > best.distance + EPSILON) continue;
+            const { section, arc, prefix } = indexed;
+            const projection = projectPointToPolyline(pose, arc.polyline, {
+                distanceMetric: index.distanceMetric,
+                arc,
+            });
             if (projection) {
                 const distanceAlong = prefix + projection.distanceAlong;
                 const candidate = {
                     ...projection,
                     distanceAlong,
-                    progress: totalLength <= EPSILON ? 1 : distanceAlong / totalLength,
+                    progress: index.totalLength <= EPSILON ? 1 : distanceAlong / index.totalLength,
                     section: section.index ?? 0,
                 };
                 if (!best
@@ -866,12 +938,14 @@ export function projectPoseToRoute(route, pose) {
                     best = candidate;
                 }
             }
-            prefix += length;
         }
         return best;
     }
 
-    const projection = projectPointToPolyline(pose, getRoutePolyline(route), { distanceMetric: route?.verification?.distanceMetric ?? "3d" });
+    const projection = projectPointToPolyline(pose, index.arc.polyline, {
+        distanceMetric: index.distanceMetric,
+        arc: index.arc,
+    });
     if (!projection) return null;
     return { ...projection, section: projection.segment };
 }
@@ -880,8 +954,8 @@ export function projectPoseToRoute(route, pose) {
  * Directed route tangent at the closest projection of `pose`.
  * Uses the verified polyline travel direction (not the ambient road edge).
  */
-export function routeTangentAtPose(route, pose) {
-    const projection = projectPoseToRoute(route, pose);
+export function routeTangentAtPose(route, pose, options = {}) {
+    const projection = options.projection ?? projectPoseToRoute(route, pose, options);
     if (!projection) return null;
     return {
         projection,

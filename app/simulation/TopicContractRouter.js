@@ -245,11 +245,13 @@ export class TopicContractRouter {
         // Publish producer once. When intentionally routing active, `_writeActive`
         // owns the producer write so the same payload is not stored twice.
         if (!routeActive) {
-            this._publish(producerPath, info.value, {
+            const hasRetainedValue = Object.prototype.hasOwnProperty.call(info, "retainedValue");
+            const retainedValue = hasRetainedValue ? info.retainedValue : info.value;
+            this._publish(producerPath, retainedValue, {
                 ...metadata,
                 timeUs: Math.round(publishTimeNs / 1000),
                 cycle: publishCycle,
-                type: "json",
+                type: hasRetainedValue ? "bytes" : "json",
                 source: producer,
                 category: "topics",
                 replayRole: producer === "oracle" ? "derived" : "state",
@@ -274,7 +276,7 @@ export class TopicContractRouter {
                 },
             });
             this.lastProducer.set(topic.contractId || topic.id, {
-                value: info.value,
+                value: retainedValue,
                 topic: topic.name,
                 typeStr: info.typeStr ?? topicRosType(topic),
                 contractId: topic.contractId,

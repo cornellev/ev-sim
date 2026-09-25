@@ -3412,3 +3412,77 @@ sky still clears to opaque black. AgX, dithering, and tone mapping stay out
 of this capture. `worldHash` and existing recipe hashes stay put: `sky` is
 already in the recipe, and lane paint is not a world or recipe input.
 Completed visual-layer milestone status is unchanged.
+
+### 2026-09-24 — Interactive PBR capture moves off the presentation thread
+
+Performance maintenance adds a dedicated browser `OffscreenCanvas` PBR worker
+without changing `pbr-mesh@1`, the visual scale profiles, any render recipe,
+product encoding, run/episode/world hash, or the fixed-step sensor contract.
+`SimulationEngine` now keeps presentation RAF independent from one serialized
+asynchronous fixed-step advance. Every due camera sample still executes in the
+kernel sensor phase, including catch-up substeps. The removed display-budget
+skip was operationally incorrect because it could omit a scheduled sample.
+
+`BrowserPbrWorkerRuntime` probes WebGL2, float attachments, PBO/fence readback,
+worker image decoding, the pinned KTX2 transcoder, and a representative capture
+before run preparation. It sends immutable run data once and thereafter sends
+generation-scoped actor matrices, camera positions, canonical capture inputs,
+and product flags. Product buffers transfer back. A capability failure may use
+the exact inline implementation before the run begins; a prepared-worker loss
+is an infrastructure failure and never falls back or drops products. Browser
+and hosted Chromium now share `PbrCaptureEnvironment`.
+
+The maintenance gate is `cev-sim.browser-performance-report@1`, emitted by
+`npm run benchmark:browser-simulation -- --manifest <id>` (or
+`--manifest-file <path>` for a non-persisted benchmark variant). The manifest must be
+a 60 Hz fixed-step run with exactly one zero-latency 320x180 PBR camera at 30 Hz
+requesting RGB, depth, semantic, and instance. After warm-up the required gate
+is at least 58 displayed FPS, p95 presentation interval at most 18.3 ms, at least 99%
+realtime simulation rate, at least 59.4 steps/s, no long task over 50 ms, equal
+due/captured/delivered counts, and no more than 32 MiB heap growth in the
+30-minute soak. The report includes capture/readback/warp/encode timings,
+queue depth/bytes, WebSocket bytes, and explicit skipped/undelivered counts.
+
+Deterministic maintenance also adds run-scoped route projection indexes,
+stable paved-surface road grids, reuse of selected road segments/tangents,
+cached calibration warp tables, explicit capture topology/transform revisions,
+MessageChannel readback yielding, zero-latency prepared-packet encoding, and
+bounded reset/disposal cleanup. Randomized indexed-versus-exhaustive tests and
+the committed action-tape characterization remain the semantic gate. This work
+does not create a VIS milestone or headless PR 13, and all existing open
+VIS-15/16/17 target evidence remains open.
+
+### 2026-09-24 — Inline PBR presentation starvation remediation
+
+The first non-awaiting RAF implementation treated the complete inline
+fixed-step advance as exclusive renderer ownership. Continuous camera work
+could therefore start another advance before RAF observed an idle interval,
+starving vehicle, follow-camera, and orbit presentation until pause. The
+fallback now owns a dynamic renderer lease only while capture mutates or reads
+shared Three.js/WebGL state. Draw/PBO operations restore render targets, clear
+state, color space, XR/shadow flags, framebuffers, and pixel-pack bindings
+before yielding; PBO fence waits and CPU processing no longer suppress RAF.
+Software backends such as SwiftShader that expose fence APIs but cannot
+complete this capture path are rejected by the asynchronous-readback
+capability check and use exact synchronous inline readback instead; requested
+products are never omitted.
+
+`SimulationEngine` retains a deferred presentation while the lease is held and
+services it before launching accumulated simulation debt. Worker failures and
+unsupported-worker selection remain pre-run fallbacks, but their exact reason
+and the selected `worker` or `inline` implementation are retained in
+`cev-sim.browser-performance-report@1`, together with renderer-blocked time,
+deferred presentations, and the maximum actual presentation interval. Use
+`npm run benchmark:browser-simulation -- --force-inline` to exercise the
+fallback gate. Product cadence, bytes, ordering, timestamps, provider version,
+visual profiles, and all simulation/hash projections remain unchanged.
+
+The first renderer-lease implementation exposed a hardware-PBO ordering bug in
+the beauty pass: it sized the CPU readback from the composer's pre-render target
+before `EffectComposer.render()` resized or swapped that target for the sensor
+resolution. A 320x180 RGBA capture could therefore reach calibration with a
+buffer other than 230400 bytes. Capture jobs now draw first, resolve and validate
+the post-render target, and allocate and issue the PBO within the same short
+lease. Issued dimensions are retained independently while the fence is pending,
+so an intervening presentation cannot change row normalization. Worker, inline
+PBO, and synchronous readback retain identical product and cadence contracts.

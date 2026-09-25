@@ -15,6 +15,7 @@ import {
 	registerMsgDefinitionFromFile,
 	requireBytes as _requireBytes,
 } from "./TopicCodec.js";
+import { browserSimulationPerformance } from "../simulation/performance/BrowserSimulationPerformance.js";
 
 let WebSocketImpl = typeof WebSocket !== "undefined" ? WebSocket : null;
 
@@ -150,6 +151,23 @@ function buildTopicDataFromEncodedName(encodedName, payload) {
 	out.set(encodedName, 1);
 	out.set(payload, 1 + encodedName.length);
 	return out;
+}
+
+function buildEncodedPublishPacket(topicName, encodedValue) {
+	const encodedName = encoder.encode(topicName);
+	if (encodedName.length > MAX_TOPIC_NAME_LEN) {
+		throw new Error(`Topic name exceeds ${MAX_TOPIC_NAME_LEN} UTF-8 bytes`);
+	}
+	const encoded = encodedValue instanceof Uint8Array
+		? encodedValue
+		: new Uint8Array(encodedValue || []);
+	const valueOffset = 2 + encodedName.length;
+	const packet = new Uint8Array(valueOffset + encoded.length);
+	packet[0] = OP_CODES.publish;
+	packet[1] = encodedName.length;
+	packet.set(encodedName, 2);
+	packet.set(encoded, valueOffset);
+	return { packet, valueOffset, encoded: packet.subarray(valueOffset) };
 }
 
 function parseTopicInfo(view, offset) {
@@ -341,18 +359,15 @@ class Client {
 	}
 
 	async publishEncoded(topic, encodedValue, options = {}) {
-		const encodedName = encoder.encode(topic);
-		const encodedBytes = encodedValue instanceof Uint8Array
-			? encodedValue
-			: new Uint8Array(encodedValue || []);
-		const packetBytes = 1 + 1 + encodedName.length + encodedBytes.length;
-		this._assertSendBudget(packetBytes, options);
-		const out = new Uint8Array(packetBytes);
-		out[0] = OP_CODES.publish;
-		out[1] = encodedName.length;
-		out.set(encodedName, 2);
-		out.set(encodedBytes, 2 + encodedName.length);
-		await this._send(out, { ...options, prechecked: true });
+		const prepared = buildEncodedPublishPacket(topic, encodedValue);
+		await this.publishPrepared(prepared.packet, options);
+	}
+
+	async publishPrepared(packet, options = {}) {
+		const bytes = packet instanceof Uint8Array ? packet : new Uint8Array(packet || []);
+		browserSimulationPerformance.recordWebSocketBytes(bytes.byteLength);
+		this._assertSendBudget(bytes.byteLength, options);
+		await this._send(bytes, { ...options, prechecked: true });
 	}
 
 	async syncTypesFromServer(options = {}) {
@@ -563,6 +578,7 @@ export {
 
 export {
 	Client,
+	buildEncodedPublishPacket,
 	buildTopicData,
 	syncTypesFromServer,
 	syncTypesToServer,

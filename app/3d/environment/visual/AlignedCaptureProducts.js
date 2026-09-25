@@ -459,7 +459,16 @@ function prepareProxyScene(sceneHandle, passSet, renderables) {
             mesh.castShadow = false;
             mesh.receiveShadow = false;
             proxy.add(mesh);
-            entries.push({ source: object, proxy: mesh });
+            let cursor = object;
+            let dynamic = false;
+            while (cursor && cursor !== checkedHandle.scene) {
+                if (cursor.userData?.cevSimCaptureDynamic === true) {
+                    dynamic = true;
+                    break;
+                }
+                cursor = cursor.parent;
+            }
+            entries.push({ source: object, proxy: mesh, dynamic });
         });
         if (coverBackground) {
             // SkyMaterial cannot feed the capture proxy. This mask is drawn
@@ -563,21 +572,34 @@ function disposePrepared(prepared) {
 }
 
 function syncPrepared(prepared, sceneHandle, passSet, renderables) {
+    const topologyRevision = Number(sceneHandle.scene?.userData?.cevSimCaptureTopologyRevision) || null;
     if (!prepared || prepared.sceneRole !== sceneHandle.role
         || prepared.sceneGeneration !== sceneHandle.generation
         || prepared.sceneDescriptionHash !== sceneHandle.descriptionHash
-        || prepared.bindingSignature !== JSON.stringify(passSet.bindings)) return false;
+        || prepared.topologyRevision !== topologyRevision) return false;
+    const previousBindings = prepared.bindings ?? [];
+    const sameBindings = previousBindings === passSet.bindings
+        || (previousBindings.length === passSet.bindings.length
+            && previousBindings.every((binding, index) => binding === passSet.bindings[index]));
+    if (!sameBindings) return false;
     const resolved = renderableMap(renderables, `${passSet.family} renderables`);
     for (const [id, object] of prepared.bindingObjects) {
         if (resolved.get(id) !== object) return false;
     }
-    const visibleMeshes = [];
-    sceneHandle.scene.traverse((object) => {
-        if (object.isMesh && effectiveVisible(object) && !isCaptureSky(object)) visibleMeshes.push(object);
-    });
-    if (visibleMeshes.length !== prepared.entries.length
-        || visibleMeshes.some((object, index) => object !== prepared.entries[index].source)) return false;
-    for (const entry of prepared.entries) {
+    if (topologyRevision === null) {
+        const visibleMeshes = [];
+        sceneHandle.scene.traverse((object) => {
+            if (object.isMesh && effectiveVisible(object) && !isCaptureSky(object)) visibleMeshes.push(object);
+        });
+        if (visibleMeshes.length !== prepared.entries.length
+            || visibleMeshes.some((object, index) => object !== prepared.entries[index].source)) return false;
+    }
+    const transformRevision = Number(sceneHandle.scene?.userData?.cevSimCaptureTransformRevision) || null;
+    if (topologyRevision !== null && prepared.transformRevision === transformRevision) return true;
+    const entries = topologyRevision === null
+        ? prepared.entries
+        : prepared.entries.filter((entry) => entry.dynamic);
+    for (const entry of entries) {
         if (!matrixElementsEqual(entry.proxy.matrix.elements, entry.source.matrixWorld.elements)) {
             entry.proxy.matrix.copy(entry.source.matrixWorld);
             entry.proxy.matrixWorld.copy(entry.source.matrixWorld);
@@ -585,6 +607,7 @@ function syncPrepared(prepared, sceneHandle, passSet, renderables) {
         entry.proxy.layers.mask = entry.source.layers.mask;
         entry.proxy.renderOrder = entry.source.renderOrder;
     }
+    prepared.transformRevision = transformRevision;
     return true;
 }
 
@@ -603,33 +626,80 @@ function presentBeautyComposer(composer, camera, width, height) {
         for (const pass of composer.passes ?? []) pass.setSize?.(width, height);
     }
     composer.render(0);
+    return composer.outputBuffer;
+}
+
+function assertCaptureTargetSize(target, width, height, label) {
+    const actualWidth = Number(target?.width);
+    const actualHeight = Number(target?.height);
+    if (actualWidth !== width || actualHeight !== height) {
+        const actual = Number.isFinite(actualWidth) && Number.isFinite(actualHeight)
+            ? `${actualWidth}x${actualHeight}`
+            : "unavailable";
+        throw captureError(
+            "VISUAL_CAPTURE_TARGET_SIZE_INVALID",
+            `${label} render target must be ${width}x${height} after draw; got ${actual}.`,
+        );
+    }
+    return target;
 }
 
 function snapshotRenderer(renderer) {
     const clearColor = new THREE.Color();
     renderer.getClearColor?.(clearColor);
+    const gl = renderer.getContext?.() ?? null;
+    const webgl2 = gl && typeof WebGL2RenderingContext !== "undefined"
+        && gl instanceof WebGL2RenderingContext;
     return {
         target: renderer.getRenderTarget?.() ?? null,
+        activeCubeFace: renderer.getActiveCubeFace?.() ?? 0,
+        activeMipmapLevel: renderer.getActiveMipmapLevel?.() ?? 0,
         clearColor,
         clearAlpha: renderer.getClearAlpha?.() ?? 1,
+        clearDepth: renderer.getClearDepth?.(),
+        clearStencil: renderer.getClearStencil?.(),
         autoClear: renderer.autoClear,
+        autoClearColor: renderer.autoClearColor,
+        autoClearDepth: renderer.autoClearDepth,
+        autoClearStencil: renderer.autoClearStencil,
         toneMapping: renderer.toneMapping,
         toneMappingExposure: renderer.toneMappingExposure,
         outputColorSpace: renderer.outputColorSpace,
         xrEnabled: renderer.xr?.enabled,
         shadowEnabled: renderer.shadowMap?.enabled,
+        gl: webgl2 ? {
+            context: gl,
+            drawFramebuffer: gl.getParameter(gl.DRAW_FRAMEBUFFER_BINDING),
+            readFramebuffer: gl.getParameter(gl.READ_FRAMEBUFFER_BINDING),
+            readBuffer: gl.getParameter(gl.READ_BUFFER),
+            pixelPackBuffer: gl.getParameter(gl.PIXEL_PACK_BUFFER_BINDING),
+            packAlignment: gl.getParameter(gl.PACK_ALIGNMENT),
+        } : null,
     };
 }
 
 function restoreRenderer(renderer, state) {
-    renderer.setRenderTarget?.(state.target);
+    renderer.setRenderTarget?.(state.target, state.activeCubeFace, state.activeMipmapLevel);
     renderer.setClearColor?.(state.clearColor, state.clearAlpha);
+    if (state.clearDepth !== undefined) renderer.setClearDepth?.(state.clearDepth);
+    if (state.clearStencil !== undefined) renderer.setClearStencil?.(state.clearStencil);
     if (state.autoClear !== undefined) renderer.autoClear = state.autoClear;
+    if (state.autoClearColor !== undefined) renderer.autoClearColor = state.autoClearColor;
+    if (state.autoClearDepth !== undefined) renderer.autoClearDepth = state.autoClearDepth;
+    if (state.autoClearStencil !== undefined) renderer.autoClearStencil = state.autoClearStencil;
     if (state.toneMapping !== undefined) renderer.toneMapping = state.toneMapping;
     if (state.toneMappingExposure !== undefined) renderer.toneMappingExposure = state.toneMappingExposure;
     if (state.outputColorSpace !== undefined) renderer.outputColorSpace = state.outputColorSpace;
     if (renderer.xr && state.xrEnabled !== undefined) renderer.xr.enabled = state.xrEnabled;
     if (renderer.shadowMap && state.shadowEnabled !== undefined) renderer.shadowMap.enabled = state.shadowEnabled;
+    if (state.gl?.context && !state.gl.context.isContextLost?.()) {
+        const gl = state.gl.context;
+        gl.bindFramebuffer?.(gl.DRAW_FRAMEBUFFER, state.gl.drawFramebuffer);
+        gl.bindFramebuffer?.(gl.READ_FRAMEBUFFER, state.gl.readFramebuffer);
+        gl.readBuffer?.(state.gl.readBuffer);
+        gl.bindBuffer?.(gl.PIXEL_PACK_BUFFER, state.gl.pixelPackBuffer);
+        gl.pixelStorei?.(gl.PACK_ALIGNMENT, state.gl.packAlignment);
+    }
 }
 
 function snapshotCamera(camera) {
@@ -691,6 +761,7 @@ export class AlignedCaptureProducts {
         createRenderTarget = null,
         renderPolicy = null,
         readback = null,
+        rendererLease = null,
     } = {}) {
         if (!renderer || !camera) {
             throw captureError("VISUAL_CAPTURE_RENDERER_INVALID", "Renderer and camera are required.");
@@ -702,6 +773,7 @@ export class AlignedCaptureProducts {
         this.authorizeSourceUse = authorizeSourceUse;
         this.renderPolicy = renderPolicy;
         this.readback = readback;
+        this.rendererLease = rendererLease;
         this.createRenderTarget = createRenderTarget ?? ((width, height, options) => (
             new THREE.WebGLRenderTarget(width, height, options)
         ));
@@ -716,6 +788,56 @@ export class AlignedCaptureProducts {
         this.bufferAllocations = 0;
         this._packGl = null;
         this.disposed = false;
+        this.lastCaptureTimings = Object.freeze({ captureMs: 0, readbackMs: 0, warpMs: 0 });
+    }
+
+    _runRendererSync(operation) {
+        if (typeof this.rendererLease?.runSync === "function") {
+            return this.rendererLease.runSync(operation);
+        }
+        return operation();
+    }
+
+    async _runRendererAsync(operation) {
+        if (typeof this.rendererLease?.runAsync === "function") {
+            return this.rendererLease.runAsync(operation);
+        }
+        return operation();
+    }
+
+    _configureRendererForCapture() {
+        if (this.renderer.xr) this.renderer.xr.enabled = false;
+        if (this.renderer.shadowMap) this.renderer.shadowMap.enabled = false;
+        this.renderer.autoClear = false;
+        if (this.renderPolicy) {
+            this.renderer.toneMapping = THREE.NoToneMapping;
+            this.renderer.toneMappingExposure = Number(this.renderPolicy.exposure ?? 1);
+            this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+        }
+    }
+
+    _withCaptureRendererSync(operation) {
+        return this._runRendererSync(() => {
+            const state = snapshotRenderer(this.renderer);
+            try {
+                this._configureRendererForCapture();
+                return operation();
+            } finally {
+                restoreRenderer(this.renderer, state);
+            }
+        });
+    }
+
+    async _withCaptureRendererAsync(operation) {
+        return this._runRendererAsync(async () => {
+            const state = snapshotRenderer(this.renderer);
+            try {
+                this._configureRendererForCapture();
+                return await operation();
+            } finally {
+                restoreRenderer(this.renderer, state);
+            }
+        });
     }
 
     _prepare(passSet, sceneHandle, renderables) {
@@ -726,7 +848,9 @@ export class AlignedCaptureProducts {
         prepared.sceneRole = sceneHandle.role;
         prepared.sceneGeneration = sceneHandle.generation;
         prepared.sceneDescriptionHash = sceneHandle.descriptionHash;
-        prepared.bindingSignature = JSON.stringify(passSet.bindings);
+        prepared.bindings = passSet.bindings;
+        prepared.topologyRevision = Number(sceneHandle.scene?.userData?.cevSimCaptureTopologyRevision) || null;
+        prepared.transformRevision = Number(sceneHandle.scene?.userData?.cevSimCaptureTransformRevision) || null;
         this.preparedFamilies.set(passSet.family, prepared);
         return prepared;
     }
@@ -837,6 +961,7 @@ export class AlignedCaptureProducts {
     }
 
     async _readRenderTarget(target, ArrayType, signal, attachmentIndex = 0) {
+        const readbackStart = performance.now();
         abortIfRequested(signal);
         assertContextAvailable(this.renderer, { requireFloat: target.texture?.type === THREE.FloatType });
         const buffer = this._acquireBuffer(ArrayType, target.width * target.height * 4);
@@ -865,10 +990,13 @@ export class AlignedCaptureProducts {
             throw error;
         }
         abortIfRequested(signal);
-        return this._normalizeRead(buffer, target.width, target.height);
+        const result = this._normalizeRead(buffer, target.width, target.height);
+        this._captureTimings.readbackMs += performance.now() - readbackStart;
+        return result;
     }
 
     _binaryValidity(raw, calibration, width, height) {
+        const warpStart = performance.now();
         const warpData = this._acquireBuffer(Float32Array, width * height);
         const warpMask = this._acquireBuffer(Uint8Array, width * height);
         const warped = warpNearest(raw, calibration, 1, warpData, warpMask);
@@ -879,16 +1007,20 @@ export class AlignedCaptureProducts {
         this._releaseBuffer(raw);
         this._releaseBuffer(warpData);
         this._releaseBuffer(warpMask);
+        this._captureTimings.warpMs += performance.now() - warpStart;
         return validity;
     }
 
     _warpProduct(raw, calibration, channels, validity) {
+        const warpStart = performance.now();
         const product = new raw.constructor(raw.length);
         const mask = this._acquireBuffer(Uint8Array, raw.length / channels);
         const warped = warpNearest(raw, calibration, channels, product, mask);
         this._releaseBuffer(mask);
         this._releaseBuffer(raw);
-        return zeroInvalid(warped.data, channels, validity);
+        const result = zeroInvalid(warped.data, channels, validity);
+        this._captureTimings.warpMs += performance.now() - warpStart;
+        return result;
     }
 
     async _captureFamily(passSet, sceneHandle, prepared, signal) {
@@ -913,7 +1045,7 @@ export class AlignedCaptureProducts {
                         this._abandonPackSlot(job.slot);
                         throw new Error("Asynchronous PBR readback lost its fence before readback.");
                     }
-                    if (!this._tryFinishPackedRead(job.slot, job.buffer)) {
+                    if (!this._runRendererSync(() => this._tryFinishPackedRead(job.slot, job.buffer))) {
                         if (job.slot?.gl?.isContextLost?.()) {
                             throw new Error("WebGL2 context was lost during asynchronous readback.");
                         }
@@ -925,7 +1057,7 @@ export class AlignedCaptureProducts {
                         continue;
                     }
                     job.filled = true;
-                    job.rgba = this._normalizeRead(job.buffer, job.target.width, job.target.height);
+                    job.rgba = this._normalizeRead(job.buffer, job.readWidth, job.readHeight);
                 }
                 if (job.needsValidity && !validity) continue;
                 job.settle(job.rgba);
@@ -937,21 +1069,51 @@ export class AlignedCaptureProducts {
 
         const issue = async (job) => {
             abortIfRequested(signal);
-            job.draw();
+            const drawAndResolveTarget = () => assertCaptureTargetSize(
+                job.draw() ?? (typeof job.target === "function" ? job.target() : job.target),
+                width,
+                height,
+                job.label ?? `${passSet.family} capture`,
+            );
             if (!pipeline) {
-                const rgba = await this._readRenderTarget(
-                    job.target,
-                    job.ArrayType,
-                    signal,
-                    job.attachmentIndex ?? 0,
-                );
+                const rgba = await this._withCaptureRendererAsync(async () => {
+                    const target = drawAndResolveTarget();
+                    return this._readRenderTarget(
+                        target,
+                        job.ArrayType,
+                        signal,
+                        job.attachmentIndex ?? 0,
+                    );
+                });
                 job.settle(rgba);
                 this._releaseBuffer(rgba);
                 return;
             }
-            const buffer = this._acquireBuffer(job.ArrayType, job.target.width * job.target.height * 4);
-            const slot = this._beginPackedRead(job.target, buffer, job.attachmentIndex ?? 0);
-            pending.push({ ...job, buffer, slot, filled: false, settled: false, rgba: null });
+            const issued = this._withCaptureRendererSync(() => {
+                const target = drawAndResolveTarget();
+                const readWidth = target.width;
+                const readHeight = target.height;
+                const buffer = this._acquireBuffer(job.ArrayType, readWidth * readHeight * 4);
+                try {
+                    return {
+                        target,
+                        readWidth,
+                        readHeight,
+                        buffer,
+                        slot: this._beginPackedRead(target, buffer, job.attachmentIndex ?? 0),
+                    };
+                } catch (error) {
+                    this._releaseBuffer(buffer);
+                    throw error;
+                }
+            });
+            pending.push({
+                ...job,
+                ...issued,
+                filled: false,
+                settled: false,
+                rgba: null,
+            });
             pump();
         };
 
@@ -973,21 +1135,24 @@ export class AlignedCaptureProducts {
 
         const queueBeauty = () => {
             const composer = sceneHandle.scene?.userData?.cevSimBeautyComposer ?? null;
-            const target = composer?.outputBuffer ?? this._target("beauty", width, height);
             return issue({
                 needsValidity: true,
                 ArrayType: Uint8Array,
-                target,
+                label: "Beauty",
+                target: () => composer?.outputBuffer ?? this._target("beauty", width, height),
                 draw: () => {
                     const background = this.renderPolicy?.backgroundColorRgba;
                     this.renderer.setClearColor?.(
                         background ? new THREE.Color(background[0], background[1], background[2]) : 0x000000,
                         background ? background[3] : 0,
                     );
-                    if (composer) presentBeautyComposer(composer, this.camera, width, height);
-                    else this._draw(sceneHandle.scene, target, { mode: null, materials: [] });
+                    if (composer) return presentBeautyComposer(composer, this.camera, width, height);
+                    const target = this._target("beauty", width, height);
+                    this._draw(sceneHandle.scene, target, { mode: null, materials: [] });
+                    return target;
                 },
                 settle: (rgba) => {
+                    const warpStart = performance.now();
                     const product = new Uint8Array(rgba.length);
                     const mask = this._acquireBuffer(Uint8Array, pixels);
                     const warped = warpCalibratedImage({
@@ -1000,6 +1165,7 @@ export class AlignedCaptureProducts {
                     });
                     this._releaseBuffer(mask);
                     products.beauty = zeroInvalid(warped.data, 4, validity);
+                    this._captureTimings.warpMs += performance.now() - warpStart;
                 },
             });
         };
@@ -1063,35 +1229,44 @@ export class AlignedCaptureProducts {
             const wantInstance = requested.has("instance-id");
             if (wantSemantic && wantInstance) {
                 const idTarget = this._target("id", width, height, 2);
-                this._drawIdAttachments(prepared.scene, idTarget);
                 const settleId = (channelName) => (rgba) => {
                     const raw = this._acquireBuffer(Uint32Array, pixels);
                     decodeUint32Into(rgba, raw);
                     products[channelName] = this._warpProduct(raw, calibration, 1, validity);
                 };
                 if (!pipeline) {
-                    const semantic = await this._readRenderTarget(idTarget, Uint8Array, signal, 0);
-                    const instance = await this._readRenderTarget(idTarget, Uint8Array, signal, 1);
+                    const [semantic, instance] = await this._withCaptureRendererAsync(async () => {
+                        this._drawIdAttachments(prepared.scene, idTarget);
+                        const semantic = await this._readRenderTarget(idTarget, Uint8Array, signal, 0);
+                        const instance = await this._readRenderTarget(idTarget, Uint8Array, signal, 1);
+                        return [semantic, instance];
+                    });
                     if (!validity) throw new Error("Analytic validity was not produced.");
                     settleId("semanticId")(semantic);
                     settleId("instanceId")(instance);
                     this._releaseBuffer(semantic);
                     this._releaseBuffer(instance);
                 } else {
-                    for (const [attachmentIndex, resultName] of [[0, "semanticId"], [1, "instanceId"]]) {
-                        const buffer = this._acquireBuffer(Uint8Array, idTarget.width * idTarget.height * 4);
-                        const slot = this._beginPackedRead(idTarget, buffer, attachmentIndex);
-                        pending.push({
-                            needsValidity: true,
-                            target: idTarget,
-                            buffer,
-                            slot,
-                            filled: false,
-                            settled: false,
-                            rgba: null,
-                            settle: settleId(resultName),
+                    const issued = this._withCaptureRendererSync(() => {
+                        this._drawIdAttachments(prepared.scene, idTarget);
+                        return [[0, "semanticId"], [1, "instanceId"]].map(([attachmentIndex, resultName]) => {
+                            const buffer = this._acquireBuffer(Uint8Array, idTarget.width * idTarget.height * 4);
+                            const slot = this._beginPackedRead(idTarget, buffer, attachmentIndex);
+                            return {
+                                needsValidity: true,
+                                target: idTarget,
+                                readWidth: idTarget.width,
+                                readHeight: idTarget.height,
+                                buffer,
+                                slot,
+                                filled: false,
+                                settled: false,
+                                rgba: null,
+                                settle: settleId(resultName),
+                            };
                         });
-                    }
+                    });
+                    pending.push(...issued);
                     pump();
                 }
             } else if (wantSemantic) {
@@ -1128,6 +1303,7 @@ export class AlignedCaptureProducts {
         }
 
         if (pipeline) {
+            const readbackStart = performance.now();
             const deadline = Date.now() + 2000;
             while (pump()) {
                 abortIfRequested(signal);
@@ -1139,6 +1315,7 @@ export class AlignedCaptureProducts {
                 }
                 await yieldForGpuReadback();
             }
+            this._captureTimings.readbackMs += performance.now() - readbackStart;
         }
         if (!products.validity) {
             throw captureError("VISUAL_CAPTURE_PRODUCT_INVALID", "Aligned capture did not produce validity.");
@@ -1158,6 +1335,8 @@ export class AlignedCaptureProducts {
         analyticRenderables = new Map(),
         signal = null,
     } = {}) {
+        const captureStart = performance.now();
+        this._captureTimings = { captureMs: 0, readbackMs: 0, warpMs: 0 };
         if (this.disposed) throw captureError("VISUAL_CAPTURE_DISPOSED", "Aligned capture renderer is disposed.");
         if (!visualPassSet && !analyticPassSet) {
             throw captureError("VISUAL_CAPTURE_PASS_SET_INVALID", "At least one capture pass set is required.");
@@ -1191,7 +1370,6 @@ export class AlignedCaptureProducts {
 
         let visualPrepared = null;
         let analyticPrepared = null;
-        const rendererState = snapshotRenderer(this.renderer);
         const cameraState = snapshotCamera(this.camera);
         const visualSceneState = snapshotSceneState(this.visualSceneHandle?.scene);
         const analyticSceneState = snapshotSceneState(this.analyticSceneHandle?.scene);
@@ -1206,14 +1384,6 @@ export class AlignedCaptureProducts {
                 : null;
             const input = visual?.captureInput ?? analytic.captureInput;
             applyCaptureCamera(this.camera, input);
-            if (this.renderer.xr) this.renderer.xr.enabled = false;
-            if (this.renderer.shadowMap) this.renderer.shadowMap.enabled = false;
-            this.renderer.autoClear = false;
-            if (this.renderPolicy) {
-                this.renderer.toneMapping = THREE.NoToneMapping;
-                this.renderer.toneMappingExposure = Number(this.renderPolicy.exposure ?? 1);
-                this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-            }
             if (visual) {
                 visualResult = await this._captureFamily(
                     visual,
@@ -1240,10 +1410,11 @@ export class AlignedCaptureProducts {
             this._disposeTargets();
             throw error;
         } finally {
+            this._captureTimings.captureMs = performance.now() - captureStart;
+            this.lastCaptureTimings = Object.freeze({ ...this._captureTimings });
             restoreSceneState(analyticSceneState);
             restoreSceneState(visualSceneState);
             restoreCamera(this.camera, cameraState);
-            restoreRenderer(this.renderer, rendererState);
         }
     }
 
@@ -1327,6 +1498,7 @@ export class AlignedCaptureProducts {
         this.preparedFamilies.clear();
         this.createRenderTarget = null;
         this.readback = null;
+        this.rendererLease = null;
         this.disposed = true;
     }
 

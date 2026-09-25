@@ -76,8 +76,9 @@ export class ManifestVehicle extends PhysicalVehicle {
             const device = createVehicleSensorDevice(entry, { vehicleManifestId: this.vehicleManifestId });
             if (typeof device.setEnabled === "function") device.setEnabled(entry.enabled !== false);
             else device.enabled = entry.enabled !== false;
-            // Preserve this state across DeviceDatabase.configureFromManifest —
-            // the vehicle document is their source of truth, not the run sensorRig.
+            // Created from the vehicle document. addToScene uses this to call
+            // setup when the device missed DeviceDatabase.setup. A run still
+            // disables it; disposeRun restores the enabled state set above.
             device.vehicleOwned = true;
             this.addDevice(device);
         }

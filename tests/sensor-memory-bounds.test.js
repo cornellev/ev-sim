@@ -4,11 +4,12 @@ import test from "node:test";
 import { TopicInputQueue } from "../app/simulation/TopicInputQueue.js";
 import { SensorPublisher } from "../app/3d/devices/SensorPublisher.js";
 import {
+    encodePublishedTopicAsync,
     encodePoolHasCapacity,
     encodePoolStats,
     resetEncodePoolForTests,
 } from "../app/3d/devices/SensorEncodePool.js";
-import { Client, registerMsgDefinition } from "../app/client/Client.js";
+import { buildEncodedPublishPacket, Client, registerMsgDefinition } from "../app/client/Client.js";
 
 function registerImageSchema() {
     registerMsgDefinition("builtin_interfaces/Time", "int32 sec\nuint32 nanosec\n");
@@ -131,6 +132,153 @@ test("Client rejects publishes when WebSocket bufferedAmount exceeds ceiling", a
         /websocket-backpressure/,
     );
     assert.ok(client.backpressureEvents >= 1);
+});
+
+test("prepared publishes share the packet-backed encoded value without a second packet allocation", async () => {
+    const encoded = Uint8Array.from([10, 20, 30, 40]);
+    const prepared = buildEncodedPublishPacket("/camera", encoded);
+    assert.equal(prepared.encoded.buffer, prepared.packet.buffer);
+    assert.deepEqual([...prepared.encoded], [...encoded]);
+    let sent = null;
+    const client = new Client({ url: "ws://localhost:9", reconnect: false });
+    client._assertSendBudget = () => {};
+    client._send = async (packet) => { sent = packet; };
+    await client.publishPrepared(prepared.packet);
+    assert.equal(sent, prepared.packet);
+});
+
+test("zero-latency encoding can transfer ownership of the original heavy buffer", async () => {
+    const OriginalWorker = globalThis.Worker;
+    class TransferWorker {
+        postMessage(message, transfers = []) {
+            const cloned = structuredClone(message, { transfer: transfers });
+            if (cloned.init) return;
+            const packet = Uint8Array.from([1, 0, 42]);
+            queueMicrotask(() => this.onmessage?.({
+                data: { id: cloned.id, ok: true, packet, valueOffset: 2 },
+            }));
+        }
+
+        terminate() {}
+    }
+    globalThis.Worker = TransferWorker;
+    try {
+        resetEncodePoolForTests({ workerCount: 1 });
+        const image = makeImage(4096);
+        const encoded = encodePublishedTopicAsync("/image", "sensor_msgs/Image", image, {
+            transferOwnership: true,
+        });
+        assert.equal(image.data.buffer.byteLength, 0);
+        const prepared = await encoded;
+        assert.equal(prepared.encoded.buffer, prepared.packet.buffer);
+        assert.deepEqual([...prepared.encoded], [42]);
+    } finally {
+        resetEncodePoolForTests({ workerCount: 0 }).dispose();
+        if (OriginalWorker === undefined) delete globalThis.Worker;
+        else globalThis.Worker = OriginalWorker;
+    }
+});
+
+test("zero-latency heavy frames await prepared worker encoding before same-step delivery", async () => {
+    registerImageSchema();
+    let resolveEncode;
+    const prepared = buildEncodedPublishPacket("/image", Uint8Array.from([1, 2, 3]));
+    let encodeOptions = null;
+    const encodingPool = {
+        isHeavySensorValue: () => true,
+        estimateEncodeBytes: (value) => value.data.byteLength,
+        encodePoolHasCapacity: () => true,
+        encodePublishedTopicAsync: (topic, type, value, options) => new Promise((resolve) => {
+            encodeOptions = options;
+            resolveEncode = resolve;
+        }),
+        cancelEncodeOwner: () => ({ cancelled: 0, generation: 1 }),
+        bumpEncodeOwnerGeneration: () => 0,
+    };
+    const published = [];
+    const client = {
+        isOpen: () => true,
+        publishPrepared(packet) {
+            published.push(packet);
+            return Promise.resolve();
+        },
+    };
+    const device = {
+        telemetryId: "cam",
+        captureAt: () => [{ topicId: "image", signal: "image", value: makeImage(4096) }],
+        getParent: () => ({
+            getParent: () => ({
+                bindings: () => ({ signalStore: { publishSignal() {}, emitTelemetryEvent() {} } }),
+                client: () => ({ get: () => client }),
+                simulation: () => ({ timeNs: 0, steps: 0, pause() {} }),
+            }),
+        }),
+    };
+    const publisher = new SensorPublisher(device, {
+        id: "cam",
+        rateHz: 60,
+        phaseNs: 0,
+        latency: { fixedNs: 0, jitterNs: 0 },
+        maxQueueFrames: 2,
+        health: {},
+        calibration: { products: {} },
+        outputs: {},
+    }, {
+        seed: "zero-latency",
+        encodingPool,
+        topics: [{
+            id: "image",
+            name: "/image",
+            type: "sensor_msgs/Image",
+            schema: { type: "sensor_msgs/Image" },
+            routeDownstream: false,
+        }],
+    });
+    let completed = false;
+    const update = publisher.updateAsync({ step: 1, timeNs: 16_666_667 }).then(() => { completed = true; });
+    await Promise.resolve();
+    assert.equal(completed, false);
+    assert.equal(encodeOptions.transferOwnership, true);
+    resolveEncode(prepared);
+    await update;
+    publisher.deliver({ step: 1, timeNs: 16_666_667 });
+    assert.equal(published.length, 1);
+    assert.equal(published[0], prepared.packet);
+    publisher.dispose();
+});
+
+test("zero-latency encode worker loss is an infrastructure failure", async () => {
+    const device = {
+        telemetryId: "cam",
+        captureAt: () => [{ topicId: "image", signal: "image", value: makeImage(4096) }],
+        getParent: () => null,
+    };
+    const publisher = new SensorPublisher(device, {
+        id: "cam",
+        rateHz: 60,
+        phaseNs: 0,
+        latency: { fixedNs: 0, jitterNs: 0 },
+        maxQueueFrames: 2,
+        health: {},
+        calibration: { products: {} },
+        outputs: {},
+    }, {
+        seed: "worker-loss",
+        encodingPool: {
+            isHeavySensorValue: () => true,
+            estimateEncodeBytes: () => 4096,
+            encodePoolHasCapacity: () => true,
+            encodePublishedTopicAsync: () => Promise.reject(new Error("encode worker lost")),
+            cancelEncodeOwner: () => ({ cancelled: 0, generation: 1 }),
+            bumpEncodeOwnerGeneration: () => 0,
+        },
+        topics: [{ id: "image", name: "/image", type: "sensor_msgs/Image", schema: { type: "sensor_msgs/Image" } }],
+    });
+    await assert.rejects(
+        publisher.updateAsync({ step: 1, timeNs: 16_666_667 }),
+        (error) => error.infrastructureFailure === true && error.code === "SENSOR_ENCODE_FAILED",
+    );
+    publisher.dispose();
 });
 
 function makePublisher(client, pause) {

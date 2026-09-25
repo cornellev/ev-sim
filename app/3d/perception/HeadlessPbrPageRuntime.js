@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { KTX2Loader } from "three/examples/jsm/loaders/KTX2Loader.js";
 
 import { BrowserPbrRenderRuntime } from "./BrowserPbrRenderRuntime.js";
-import { CameraRenderProducts } from "./CameraRenderProducts.js";
+import { PbrCaptureEnvironment } from "./PbrCaptureEnvironment.js";
 import { readRenderTargetPixelsWithFence } from "../util/glReadback.js";
 
 function decodeBase64(value) {
@@ -60,94 +60,6 @@ function serializedProduct(value, type) {
         binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
     }
     return { type, length: value.length, base64: btoa(binary) };
-}
-
-class PreparedPbrEnvironment {
-    constructor({ environmentKey, slot, renderer, runtime, vehicles, sensorRig }) {
-        this.environmentKey = environmentKey;
-        this.slot = slot;
-        this.renderer = renderer;
-        this.runtime = runtime;
-        this.vehicles = vehicles;
-        this.sensorRig = sensorRig;
-        this.cameras = new Map();
-    }
-
-    camera(request) {
-        const existing = this.cameras.get(request.id);
-        if (existing) return existing;
-        const calibration = request.captureInput.calibration;
-        const camera = new THREE.PerspectiveCamera(50, calibration.image.width / calibration.image.height,
-            calibration.clipping.near, calibration.clipping.far);
-        const options = this.runtime.cameraOptions();
-        const products = new CameraRenderProducts({
-            renderer: this.renderer,
-            scene: options.captureSceneHandle.scene,
-            camera,
-            width: calibration.image.width,
-            height: calibration.image.height,
-            near: calibration.clipping.near,
-            far: calibration.clipping.far,
-            captureMode: options.captureMode,
-            calibration,
-            sceneHandle: options.captureSceneHandle,
-            analyticSceneHandle: options.analyticSceneHandle,
-            authorizeSourceUse: options.authorizeSourceUse,
-            renderPolicy: options.renderPolicy,
-            alignedReadback: readRenderTargetPixelsWithFence,
-        });
-        const created = { camera, products };
-        this.cameras.set(request.id, created);
-        return created;
-    }
-
-    async capture(requests) {
-        const vehicles = requests[0]?.vehicles || this.vehicles;
-        const devices = requests.map((request) => ({
-            renderRuntime: this.runtime,
-            getPosition: () => request.captureInput.pose.position,
-        }));
-        await this.runtime.prepareCapture({ devices, vehicles });
-        const completed = [];
-        for (const request of requests) {
-            const enabled = request.products || {};
-            const wantsPixels = enabled.rgb || enabled.depth || enabled.semantic || enabled.instance;
-            const camera = wantsPixels ? this.camera(request) : null;
-            const localScene = this.runtime.cameraOptions().captureSceneHandle;
-            const captureInput = {
-                ...request.captureInput,
-                scene: {
-                    role: localScene.role,
-                    generation: localScene.generation,
-                    descriptionHash: localScene.descriptionHash,
-                },
-            };
-            const captured = wantsPixels ? await this.runtime.captureCamera({
-                captureInput,
-                enabled,
-                renderProducts: camera.products,
-            }) : {};
-            completed.push({
-                id: request.id,
-                type: "camera",
-                captureTimeNs: request.captureInput.captureTimeNs,
-                aligned: true,
-                products: {
-                    rgb: serializedProduct(captured.rgb, "uint8"),
-                    depth: serializedProduct(captured.depth, "float32"),
-                    semantic: serializedProduct(captured.semantic, "uint16"),
-                    instance: serializedProduct(captured.instance, "uint32"),
-                },
-            });
-        }
-        return completed;
-    }
-
-    dispose() {
-        for (const camera of this.cameras.values()) camera.products.dispose();
-        this.cameras.clear();
-        this.runtime.dispose();
-    }
 }
 
 class HeadlessPbrPageRuntime {
@@ -231,13 +143,14 @@ class HeadlessPbrPageRuntime {
                 sensorRig: payload.sensorRig,
                 vehicles,
             });
-            const prepared = new PreparedPbrEnvironment({
+            const prepared = new PbrCaptureEnvironment({
                 environmentKey: payload.environmentKey,
                 slot: payload.slot,
                 renderer,
                 runtime,
                 vehicles,
                 sensorRig: payload.sensorRig,
+                mapProduct: serializedProduct,
             });
             this.environments.set(payload.environmentKey, prepared);
             slot.environments.add(payload.environmentKey);

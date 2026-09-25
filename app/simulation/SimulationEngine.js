@@ -3,12 +3,14 @@ import { PerspectiveViewController } from "../3d/camera/PerspectiveViewControlle
 import { attachPerspectiveView, detachPerspectiveView } from "../3d/camera/perspectiveViewRegistry.js";
 import { AutonomyOverlay } from "../3d/overlay/AutonomyOverlay.js";
 import { BrowserPbrRenderRuntime } from "../3d/perception/BrowserPbrRenderRuntime.js";
+import { BrowserPbrWorkerRuntime } from "../3d/perception/BrowserPbrWorkerRuntime.js";
 import { ScenarioDiagnostics } from "../scenarios/ScenarioDiagnostics.js";
 import { ScenarioRuntime } from "../scenarios/ScenarioRuntime.js";
 import { SimulationKernel } from "./kernel/SimulationKernel.js";
 import { createSimulationRuntimeContext } from "./kernel/SimulationRuntimeContext.js";
 import { BrowserPluginModuleSource } from "../plugin/browser/BrowserPluginModuleSource.js";
 import { PluginRunSession, pluginRuntimeCapabilitiesForRun } from "../plugin/PluginRunSession.js";
+import { browserSimulationPerformance } from "./performance/BrowserSimulationPerformance.js";
 
 const KERNEL_PROPERTIES = [
     "stepNs",
@@ -68,8 +70,11 @@ export class SimulationEngine {
         this.maxSubSteps = options.maxSubSteps ?? 10;
         this.realtimeStepBudgetMs = options.realtimeStepBudgetMs ?? 12;
         this._nowMs = typeof options.nowMs === "function" ? options.nowMs : () => performance.now();
-        this.gpuCaptureEnabled = true;
         this._displayPixelRatio = null;
+        this.pbrWorkerEnabled = options.pbrWorkerEnabled !== false;
+        this.pbrWorkerFactory = options.pbrWorkerFactory;
+        this.pbrInlineFactory = options.pbrInlineFactory
+            ?? ((runtimeOptions) => new BrowserPbrRenderRuntime(runtimeOptions));
 
         this.scene = null;
         this.camera = null;
@@ -89,6 +94,13 @@ export class SimulationEngine {
         this.renderRuntime = null;
         this.renderProviderStatus = null;
         this._asyncAdvanceTail = Promise.resolve();
+        this._advanceInFlight = null;
+        this._advanceGeneration = 0;
+        this._pendingFrameNs = 0;
+        this._presentationRequested = false;
+        this._presentationRequestGeneration = 0;
+        this._presentationServiceQueued = false;
+        this._renderPresentationUnsubscribe = null;
 
         this.scenarioDiagnostics = new ScenarioDiagnostics();
         this.autonomyOverlay = new AutonomyOverlay();
@@ -217,6 +229,66 @@ export class SimulationEngine {
         this.autonomyOverlay?.attach?.(scene, camera);
     }
 
+    _bindRenderRuntime(runtime, { fallbackReason = null } = {}) {
+        this._renderPresentationUnsubscribe?.();
+        this._renderPresentationUnsubscribe = null;
+        this.renderRuntime = runtime;
+        const operational = {
+            implementation: runtime?.implementation ?? null,
+            fallbackReason: fallbackReason ? {
+                code: fallbackReason.code ?? "PBR_WORKER_UNAVAILABLE",
+                message: fallbackReason.message,
+            } : null,
+        };
+        browserSimulationPerformance.recordRenderRuntime(operational);
+        runtime?.subscribe?.((status) => {
+            this.renderProviderStatus = { ...status, ...operational };
+        });
+        this._renderPresentationUnsubscribe = runtime?.subscribePresentationAvailability?.((available) => {
+            if (available) this._queuePendingPresentation();
+        }) ?? null;
+    }
+
+    _presentationBlocked() {
+        if (!this.renderRuntime) return false;
+        if (typeof this.renderRuntime.presentationBlocked === "boolean") {
+            return this.renderRuntime.presentationBlocked;
+        }
+        return Boolean(this._advanceInFlight && this.renderRuntime.implementation !== "worker");
+    }
+
+    _requestPresentation() {
+        this._presentationRequested = true;
+        this._presentationRequestGeneration = this._advanceGeneration;
+        browserSimulationPerformance.recordPresentationDeferred();
+    }
+
+    _invalidatePendingPresentation() {
+        this._presentationRequested = false;
+        this._presentationRequestGeneration = this._advanceGeneration;
+        this._presentationServiceQueued = false;
+    }
+
+    _queuePendingPresentation() {
+        if (!this._presentationRequested || this._presentationServiceQueued) return;
+        this._presentationServiceQueued = true;
+        queueMicrotask(() => {
+            this._presentationServiceQueued = false;
+            this._servicePendingPresentation();
+        });
+    }
+
+    _servicePendingPresentation() {
+        if (!this._presentationRequested) return false;
+        if (this._presentationRequestGeneration !== this._advanceGeneration) {
+            this._presentationRequested = false;
+            return false;
+        }
+        if (this._presentationBlocked()) return false;
+        this._presentationRequested = false;
+        return this.render();
+    }
+
     async _prepareRendering(resolvedRun, options = {}) {
         this._disposeRendering();
         const provider = resolvedRun?.renderScene?.description?.provider;
@@ -232,25 +304,59 @@ export class SimulationEngine {
             } : null;
             return null;
         }
-        const runtime = new BrowserPbrRenderRuntime({
-            renderer: this.renderer,
-            vehicles: () => this.data.vehicles?.()?.vehicles ?? [],
-        });
-        this.renderRuntime = runtime;
-        runtime.subscribe((status) => {
-            this.renderProviderStatus = status;
-        });
-        await runtime.prepare(resolvedRun, {
+        const vehicles = () => this.data.vehicles?.()?.vehicles ?? [];
+        let fallbackReason = null;
+        if (this.pbrWorkerEnabled && (this.pbrWorkerFactory || BrowserPbrWorkerRuntime.supported())) {
+            const workerRuntime = new BrowserPbrWorkerRuntime({
+                ...(this.pbrWorkerFactory ? { workerFactory: this.pbrWorkerFactory } : {}),
+                vehicles,
+            });
+            this._bindRenderRuntime(workerRuntime);
+            try {
+                await workerRuntime.prepare(resolvedRun, {
+                    sensorRig: options.sensorRig,
+                    vehicles: options.vehicles,
+                });
+                return workerRuntime;
+            } catch (error) {
+                workerRuntime.dispose();
+                if (error?.code !== "PBR_WORKER_UNAVAILABLE"
+                    && error?.code !== "PBR_WORKER_REQUEST_FAILED"
+                    && error?.code !== "PBR_WORKER_FAILED") {
+                    throw error;
+                }
+                fallbackReason = {
+                    code: error.workerCauseCode ?? error.code ?? "PBR_WORKER_UNAVAILABLE",
+                    message: error.message,
+                };
+            }
+        } else if (this.pbrWorkerEnabled) {
+            fallbackReason = {
+                code: "PBR_WORKER_UNSUPPORTED",
+                message: "This browser does not expose Worker and OffscreenCanvas PBR capture support.",
+            };
+        } else {
+            fallbackReason = {
+                code: "PBR_WORKER_DISABLED",
+                message: "PBR worker capture was disabled for this run.",
+            };
+        }
+        const inlineRuntime = this.pbrInlineFactory({ renderer: this.renderer, vehicles });
+        this._bindRenderRuntime(inlineRuntime, { fallbackReason });
+        await inlineRuntime.prepare(resolvedRun, {
             sensorRig: options.sensorRig,
             vehicles: options.vehicles,
         });
-        return runtime;
+        return inlineRuntime;
     }
 
     _disposeRendering() {
+        this._renderPresentationUnsubscribe?.();
+        this._renderPresentationUnsubscribe = null;
         this.renderRuntime?.dispose?.();
         this.renderRuntime = null;
         this.renderProviderStatus = null;
+        browserSimulationPerformance.recordRenderRuntime();
     }
 
     setEnvironmentRuntime({ loader = null, persistence = null } = {}) {
@@ -397,6 +503,9 @@ export class SimulationEngine {
 
     stopLoop() {
         this.looping = false;
+        this._advanceGeneration += 1;
+        this._pendingFrameNs = 0;
+        this._invalidatePendingPresentation();
         if (this.rafId !== null) {
             cancelAnimationFrame(this.rafId);
             this.rafId = null;
@@ -429,11 +538,17 @@ export class SimulationEngine {
     }
 
     pause() {
+        this._advanceGeneration += 1;
+        this._pendingFrameNs = 0;
+        this._invalidatePendingPresentation();
         this.kernel.pause();
         this._emit();
     }
 
     stop({ reset = true, dispatchEpisode = true } = {}) {
+        this._advanceGeneration += 1;
+        this._pendingFrameNs = 0;
+        this._invalidatePendingPresentation();
         this.accumulator = 0;
         this.accumulatorNs = 0;
         if (reset) this.frames = 0;
@@ -445,6 +560,9 @@ export class SimulationEngine {
     }
 
     reset(episodeSpec = null) {
+        this._advanceGeneration += 1;
+        this._pendingFrameNs = 0;
+        this._invalidatePendingPresentation();
         this.frames = 0;
         this.accumulator = 0;
         this.accumulatorNs = 0;
@@ -593,8 +711,10 @@ export class SimulationEngine {
         return this.kernel.queueTopicInput(info);
     }
 
-    async _frame(nowMs) {
+    _frame(nowMs) {
         if (!this.looping) return;
+        this.rafId = requestAnimationFrame(this._frame);
+        browserSimulationPerformance.recordRaf(nowMs);
 
         const rawFrameDt = (nowMs - this.lastFrameMs) / 1000;
         this.lastFrameMs = nowMs;
@@ -608,32 +728,78 @@ export class SimulationEngine {
         }
 
         if (this.status === "playing") {
-            try {
-                if (this.renderRuntime) {
-                    await this._serializeAsyncAdvance(() => this._advanceSimulationAsync(frameDt));
-                }
-                else this._advanceSimulation(frameDt);
-            } catch (error) {
-                this.kernel.pause();
-                if (this.renderProviderStatus?.state !== "error") {
-                    this.renderProviderStatus = {
-                        ...(this.renderProviderStatus ?? {}),
-                        state: "error",
-                        diagnostic: { code: error.code ?? "PBR_CAPTURE_FAILED", message: error.message },
-                        error: { code: error.code ?? "PBR_CAPTURE_FAILED", message: error.message },
-                    };
+            if (this.renderRuntime) {
+                const maxDebtNs = Math.max(this.stepNs, Math.round(this.maxFrameDt * 1e9));
+                this._pendingFrameNs = Math.min(
+                    maxDebtNs,
+                    this._pendingFrameNs + Math.max(0, Math.round(frameDt * 1e9)),
+                );
+                this._launchAsyncAdvance();
+            } else {
+                try {
+                    this._advanceSimulation(frameDt);
+                    this._emitFrame();
+                } catch (error) {
+                    this._handleAdvanceError(error);
                 }
             }
-            this._emitFrame();
+        } else {
+            this._pendingFrameNs = 0;
         }
-        if (this.viewportActive && this.sceneRenderEnabled && this.modules.rendering) this.render();
-        if (this.looping) this.rafId = requestAnimationFrame(this._frame);
+        if (this.viewportActive && this.sceneRenderEnabled && this.modules.rendering) {
+            this.render();
+        }
+    }
+
+    _launchAsyncAdvance() {
+        if (this._advanceInFlight || this.status !== "playing" || this._pendingFrameNs <= 0) return;
+        const frameNs = this._pendingFrameNs;
+        this._pendingFrameNs = 0;
+        const generation = this._advanceGeneration;
+        const startMs = this._nowMs();
+        const startTimeNs = this.timeNs;
+        const startSteps = this.steps;
+        const pending = this._serializeAsyncAdvance(() => this._advanceSimulationAsync(frameNs / 1e9));
+        this._advanceInFlight = pending;
+        pending.then(() => {
+            if (generation === this._advanceGeneration) {
+                const durationMs = Math.max(0, this._nowMs() - startMs);
+                browserSimulationPerformance.recordTiming("simulationAdvance", durationMs);
+                browserSimulationPerformance.recordSimulation(
+                    this.timeNs - startTimeNs,
+                    durationMs,
+                    this.steps - startSteps,
+                );
+                this._emitFrame();
+            }
+        }).catch((error) => {
+            if (generation !== this._advanceGeneration) return;
+            this._handleAdvanceError(error);
+        }).finally(() => {
+            if (this._advanceInFlight !== pending) return;
+            this._advanceInFlight = null;
+            this._servicePendingPresentation();
+            if (generation === this._advanceGeneration && this._pendingFrameNs > 0) {
+                queueMicrotask(() => this._launchAsyncAdvance());
+            }
+        });
+    }
+
+    _handleAdvanceError(error) {
+        this.kernel.pause();
+        this._pendingFrameNs = 0;
+        if (this.renderProviderStatus?.state === "error") return;
+        this.renderProviderStatus = {
+            ...(this.renderProviderStatus ?? {}),
+            state: "error",
+            diagnostic: { code: error.code ?? "PBR_CAPTURE_FAILED", message: error.message },
+            error: { code: error.code ?? "PBR_CAPTURE_FAILED", message: error.message },
+        };
     }
 
     _advanceSimulation(frameDt) {
         const scaledDt = frameDt * this.speed;
         const frameStartMs = this.realtime ? this._nowMs() : 0;
-        this.gpuCaptureEnabled = true;
         if (!this.deterministic) {
             this._fixedStep(scaledDt);
             return;
@@ -651,7 +817,6 @@ export class SimulationEngine {
             if (this.steps > previousStep) this.accumulatorNs -= this.stepNs;
             this.accumulator = this.accumulatorNs / 1e9;
             subSteps += 1;
-            this.gpuCaptureEnabled = false;
             if (shouldContinue === false) break;
             if (this.realtime && subSteps > 0 && this._nowMs() - frameStartMs > this.realtimeStepBudgetMs) {
                 break;
@@ -669,7 +834,6 @@ export class SimulationEngine {
     async _advanceSimulationAsync(frameDt) {
         const scaledDt = frameDt * this.speed;
         const frameStartMs = this.realtime ? this._nowMs() : 0;
-        this.gpuCaptureEnabled = true;
         if (!this.deterministic) {
             await this._fixedStepAsync(scaledDt);
             return;
@@ -687,7 +851,6 @@ export class SimulationEngine {
             if (this.steps > previousStep) this.accumulatorNs -= this.stepNs;
             this.accumulator = this.accumulatorNs / 1e9;
             subSteps += 1;
-            this.gpuCaptureEnabled = false;
             if (shouldContinue === false) break;
             if (this.realtime && this._nowMs() - frameStartMs > this.realtimeStepBudgetMs) break;
         }
@@ -788,7 +951,12 @@ export class SimulationEngine {
     }
 
     render() {
-        if (!this.sceneRenderEnabled || !this.scene || !this.camera || !this.renderer) return;
+        if (!this.sceneRenderEnabled || !this.scene || !this.camera || !this.renderer) return false;
+        if (this._presentationBlocked()) {
+            this._requestPresentation();
+            return false;
+        }
+        this._presentationRequested = false;
         this.perspectiveView?.applyFrame?.(this.camera, this.controls);
         this._applyDisplayPerformance();
         this.data.earthTilesManager?.()?.update?.(this.camera, {
@@ -797,11 +965,14 @@ export class SimulationEngine {
         });
         if (this.data.skyManager?.()?.render?.()) {
             this.frames += 1;
-            return;
+            browserSimulationPerformance.recordPresentation();
+            return true;
         }
         this.renderer.render(this.scene, this.camera);
         this.frames += 1;
+        browserSimulationPerformance.recordPresentation();
         this._reconcileVisualInterest();
+        return true;
     }
 
     _reconcileVisualInterest() {

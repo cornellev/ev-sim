@@ -1033,7 +1033,32 @@ export default function TotalScene({
 
     useEffect(() => {
         if (!sceneData) return undefined;
-        return getRunSessionController().attachData(sceneData);
+        const controller = getRunSessionController();
+        const detach = controller.attachData(sceneData);
+        const benchmarkEnabled = new URLSearchParams(window.location.search).get("browserPerformance") === "1";
+        let benchmarkRuntime = null;
+        if (benchmarkEnabled) {
+            benchmarkRuntime = Object.freeze({
+                prepare: (resolved, { forceInline = false } = {}) => {
+                    sceneData.simulation().pbrWorkerEnabled = forceInline !== true;
+                    return controller.prepare(resolved, { autoplay: false });
+                },
+                play: () => controller.play(),
+                pause: () => controller.pause(),
+                snapshot: () => ({
+                    run: controller.getSnapshot(),
+                    simulation: sceneData.simulation().getSnapshot(),
+                    renderImplementation: sceneData.simulation().renderRuntime?.implementation ?? null,
+                }),
+            });
+            globalThis.__cevSimBenchmarkRuntime = benchmarkRuntime;
+        }
+        return () => {
+            if (globalThis.__cevSimBenchmarkRuntime === benchmarkRuntime) {
+                delete globalThis.__cevSimBenchmarkRuntime;
+            }
+            detach?.();
+        };
     }, [sceneData]);
 
     useEffect(() => {

@@ -4,6 +4,7 @@
  */
 
 import { encodeTopicValue } from "../../client/TopicCodec.js";
+import { buildEncodedPublishPacket } from "../../client/Client.js";
 import { catalogSchemas } from "../../autonomy/AutonomyContractCatalog.js";
 
 const DEFAULT_WORKER_COUNT = 1;
@@ -73,13 +74,21 @@ class SensorEncodePool {
 
     _bindWorker(worker, index) {
         worker.onmessage = (event) => {
-            const { id, ok, bytes, error, kind } = event.data || {};
+            const { id, ok, bytes, packet, valueOffset, error, kind } = event.data || {};
             if (kind === "init") return;
             const entry = this.pending.get(id);
             if (!entry) return;
-            this._finish(id, entry, ok
-                ? (bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []))
-                : null,
+            const result = packet
+                ? (() => {
+                    const preparedPacket = packet instanceof Uint8Array ? packet : new Uint8Array(packet);
+                    return {
+                        packet: preparedPacket,
+                        valueOffset,
+                        encoded: preparedPacket.subarray(valueOffset),
+                    };
+                })()
+                : (bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []));
+            this._finish(id, entry, ok ? result : null,
             ok ? null : new Error(error || "encode worker failed"));
         };
         worker.onerror = (event) => {
@@ -189,9 +198,12 @@ class SensorEncodePool {
         forceSync = false,
         ownerId = null,
         ownerGeneration = null,
+        topic = null,
+        transferOwnership = false,
     } = {}) {
         if (forceSync || !isHeavySensorValue(value) || this.workers.length === 0) {
-            return Promise.resolve(encodeTopicValue(typeStr, value));
+            const encoded = encodeTopicValue(typeStr, value);
+            return Promise.resolve(topic ? buildEncodedPublishPacket(topic, encoded) : encoded);
         }
         const bytes = estimateEncodeBytes(value);
         if (!this.hasCapacity(bytes)) {
@@ -207,7 +219,8 @@ class SensorEncodePool {
         const workerIndex = this.pending.size % this.workers.length;
         const worker = this.workers[workerIndex];
         if (!worker) {
-            return Promise.resolve(encodeTopicValue(typeStr, value));
+            const encoded = encodeTopicValue(typeStr, value);
+            return Promise.resolve(topic ? buildEncodedPublishPacket(topic, encoded) : encoded);
         }
         return new Promise((resolve, reject) => {
             const entry = {
@@ -234,13 +247,17 @@ class SensorEncodePool {
             this.pending.set(id, entry);
             this.pendingBytes += bytes;
             if (value?.data?.buffer instanceof ArrayBuffer) {
-                // Copy before transfer so the main-thread message value stays valid for SignalStore.
+                if (transferOwnership) {
+                    worker.postMessage({ id, typeStr, value, topic }, [value.data.buffer]);
+                    return;
+                }
+                // Latency queues and routed topics retain their structured value.
                 const copy = value.data.slice();
                 const payload = { ...value, data: copy };
-                worker.postMessage({ id, typeStr, value: payload }, [copy.buffer]);
+                worker.postMessage({ id, typeStr, value: payload, topic }, [copy.buffer]);
                 return;
             }
-            worker.postMessage({ id, typeStr, value });
+            worker.postMessage({ id, typeStr, value, topic });
         });
     }
 
@@ -281,6 +298,10 @@ export function isHeavySensorValue(value) {
  */
 export function encodeTopicValueAsync(typeStr, value, options = {}) {
     return getPool().encode(typeStr, value, options);
+}
+
+export function encodePublishedTopicAsync(topic, typeStr, value, options = {}) {
+    return getPool().encode(typeStr, value, { ...options, topic });
 }
 
 export function encodePoolHasCapacity(bytes = 0) {

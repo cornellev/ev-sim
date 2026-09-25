@@ -6,6 +6,7 @@ import {
 import { buildDiagnosticArray } from "./SensorMessages.js";
 import { simulationSha256 } from "../kernel/SimulationHashes.js";
 import { encodeNativeSensorPacket, packetPayloadDigest } from "./NativeSensorPacket.js";
+import { browserSimulationPerformance } from "../performance/BrowserSimulationPerformance.js";
 
 const DEFAULT_MAX_QUEUE_BYTES = 64 * 1024 * 1024;
 
@@ -245,14 +246,12 @@ export class SensorPublisher {
     _captureContext(clock) {
         const captureTimeNs = this.nextCaptureStep * this.stepNs;
         const sampleIndex = this.sampleIndex++;
-        const skip = this.device.gpuCapture
-            && this.device.getParent?.()?.getParent?.()?.simulation?.()?.gpuCaptureEnabled === false;
         const scope = `${this.seed}:sensor:${this.config.id}:sample:${sampleIndex}`;
         return {
             captureTimeNs,
             sampleIndex,
             scanDurationNs: this.periodSteps * this.stepNs,
-            skip,
+            skip: false,
             rng: new SeededRNG(scope),
             measurementRng: new SeededRNG(`${scope}:measurement`),
             pluginRng: new SeededRNG(`${scope}:plugin`),
@@ -261,22 +260,24 @@ export class SensorPublisher {
         };
     }
 
-    _acceptCapture(captured, context, captureStartNs) {
+    _acceptCapture(captured, context, captureStartNs, { allowOwnershipTransfer = false } = {}) {
         const result = normalizeCaptureResult(captured, context.captureTimeNs, context.sampleIndex);
         const captureDurationNs = Math.max(0, this._time() - captureStartNs);
         this.health.captureTimeNs = captureDurationNs;
         this.health.captureTimeTotalNs += captureDurationNs;
         if (result.messages.length > 0 || result.nativePackets.length > 0 || result.observation) {
             this.health.capturedFrames += 1;
-            this.enqueue(
+            return this.enqueue(
                 result.messages,
                 result.captureTimeNs,
                 result.sampleIndex,
                 result.rng || context.rng,
                 result.observation,
                 result.nativePackets,
+                { allowOwnershipTransfer },
             );
         }
+        return null;
     }
 
     update(clock) {
@@ -299,31 +300,41 @@ export class SensorPublisher {
             }
             this.nextCaptureStep += this.periodSteps;
         }
+        browserSimulationPerformance.recordSensorState(this.config.id, this.health);
     }
 
     async updateAsync(clock) {
         this._initializeSchedule(clock);
-        while (clock.step >= this.nextCaptureStep) {
-            const context = this._captureContext(clock);
-            if (!context.skip) {
-                try {
-                    this.health.captureAttempts += 1;
-                    const captureStartNs = this._time();
-                    const captured = await this.device.captureAt?.(context);
-                    this._acceptCapture(captured, context, captureStartNs);
-                } catch (error) {
-                    if (error?.infrastructureFailure || this.pluginStrict) throw error;
-                    this._event("capture-failed", "error", {
-                        sampleIndex: context.sampleIndex,
-                        reason: error.message,
-                    });
+        try {
+            while (clock.step >= this.nextCaptureStep) {
+                const context = this._captureContext(clock);
+                if (!context.skip) {
+                    try {
+                        this.health.captureAttempts += 1;
+                        const captureStartNs = this._time();
+                        const captured = await this.device.captureAt?.(context);
+                        const frame = this._acceptCapture(captured, context, captureStartNs, {
+                            allowOwnershipTransfer: true,
+                        });
+                        if (frame?.zeroLatency && frame.encodePromise) await frame.encodePromise;
+                    } catch (error) {
+                        if (error?.infrastructureFailure || this.pluginStrict) throw error;
+                        this._event("capture-failed", "error", {
+                            sampleIndex: context.sampleIndex,
+                            reason: error.message,
+                        });
+                    }
                 }
+                this.nextCaptureStep += this.periodSteps;
             }
-            this.nextCaptureStep += this.periodSteps;
+        } finally {
+            browserSimulationPerformance.recordSensorState(this.config.id, this.health);
         }
     }
 
-    enqueue(messages, captureTimeNs, sampleIndex, rng, observation = null, nativePackets = []) {
+    enqueue(messages, captureTimeNs, sampleIndex, rng, observation = null, nativePackets = [], {
+        allowOwnershipTransfer = false,
+    } = {}) {
         const stepNs = this.stepNs || this.manifestStepNs || 16_666_667;
         const delivery = resolveSensorDelivery(this.config, captureTimeNs, rng, stepNs);
         const {
@@ -375,7 +386,7 @@ export class SensorPublisher {
                 error.infrastructureFailure = true;
                 throw error;
             }
-            return;
+            return null;
         }
         this.queue.push({
             captureTimeNs,
@@ -395,14 +406,21 @@ export class SensorPublisher {
             encodeCancelled: false,
             bytes: frameBytes,
             zeroLatency: delivery.fixedLatencyNs <= 0 && delivery.jitterNs <= 0,
+            allowOwnershipTransfer,
         });
         const frame = this.queue[this.queue.length - 1];
         this.queuedBytes += frameBytes;
-        this._beginEncode(frame);
+        frame.encodePromise = this._beginEncode(frame);
         this.health.queueDepth = this.queue.length;
         this.health.queueBytes = this.queuedBytes;
         this.health.queueHighWaterMark = Math.max(this.health.queueHighWaterMark, this.queue.length);
         this.health.queueBytesHighWaterMark = Math.max(this.health.queueBytesHighWaterMark, this.queuedBytes);
+        browserSimulationPerformance.recordQueue(
+            this.config.id,
+            this.health.queueDepth,
+            this.health.queueBytes,
+        );
+        return frame;
     }
 
     _beginEncode(frame) {
@@ -410,10 +428,9 @@ export class SensorPublisher {
             const topic = this.topics.get(message.topicId);
             return topic && this.encodingPool?.isHeavySensorValue?.(message.value);
         });
-        if (heavy.length === 0 || frame.zeroLatency) {
-            // Zero-latency frames deliver same-tick; skip speculative async encode.
+        if (heavy.length === 0) {
             frame.encodeReady = true;
-            return;
+            return null;
         }
         const bytesNeeded = estimateFrameBytes(
             heavy,
@@ -421,28 +438,49 @@ export class SensorPublisher {
         );
         if (!this.encodingPool?.encodePoolHasCapacity?.(bytesNeeded)) {
             this.health.encodeRejected += 1;
+            if (frame.zeroLatency) {
+                const error = new Error("encode-pool-full");
+                error.code = "SENSOR_ENCODE_CAPACITY";
+                error.infrastructureFailure = true;
+                return Promise.reject(error);
+            }
             frame.encodeReady = true;
-            return;
+            return null;
         }
         const generation = this.encodeGeneration;
+        const encodeStartMs = browserSimulationPerformance.now();
         const jobs = heavy.map(async (message) => {
             const topic = this.topics.get(message.topicId);
-            const encoded = await this.encodingPool.encodeTopicValueAsync(topic.schema?.type || topic.type, message.value, {
+            const encode = this.encodingPool.encodePublishedTopicAsync
+                ? this.encodingPool.encodePublishedTopicAsync.bind(this.encodingPool, topic.name)
+                : this.encodingPool.encodeTopicValueAsync.bind(this.encodingPool);
+            const encoded = await encode(topic.schema?.type || topic.type, message.value, {
                 ownerId: this.encodeOwnerId,
                 ownerGeneration: generation,
+                transferOwnership: frame.zeroLatency
+                    && frame.allowOwnershipTransfer
+                    && topic.routeDownstream === false
+                    && !frame.observation
+                    && frame.nativePackets.length === 0,
             });
             if (generation !== this.encodeGeneration || frame.encodeCancelled) {
                 throw new Error("encode cancelled");
             }
             frame.encodedByTopic.set(message.topicId, encoded);
         });
-        Promise.all(jobs).then(() => {
+        const pending = Promise.all(jobs).then(() => {
             if (generation !== this.encodeGeneration || frame.encodeCancelled) return;
             frame.encodeReady = true;
         }).catch((error) => {
             // Worker/timeout/cancel are best-effort. Deliver falls through to sync encode.
             const reason = String(error?.message || error);
             frame.encodeReady = true;
+            if (frame.zeroLatency) {
+                error.code ||= "SENSOR_ENCODE_FAILED";
+                error.infrastructureFailure = true;
+                frame.encodeFailed = true;
+                throw error;
+            }
             if (reason.includes("cancelled")
                 || reason.includes("encode-pool-full")
                 || reason.includes("timeout")
@@ -453,7 +491,13 @@ export class SensorPublisher {
                 sampleIndex: frame.sampleIndex,
                 reason,
             });
+        }).finally(() => {
+            browserSimulationPerformance.recordTiming(
+                "sensorEncode",
+                browserSimulationPerformance.now() - encodeStartMs,
+            );
         });
+        return pending;
     }
 
     deliver(clock) {
@@ -505,6 +549,11 @@ export class SensorPublisher {
             frame.encodedByTopic = null;
         }
         this._publishHealth(clock);
+        browserSimulationPerformance.recordSensorState(this.config.id, this.health);
+        browserSimulationPerformance.recordTiming(
+            "sensorDelivery",
+            Number(this.health.transportTimeNs || 0) / 1e6,
+        );
     }
 
     _deliverMessage(message, frame, clock) {
@@ -517,7 +566,8 @@ export class SensorPublisher {
         let encoded;
         try {
             const encodeStartNs = this._time();
-            encoded = frame.encodedByTopic?.get(message.topicId)
+            const prepared = frame.encodedByTopic?.get(message.topicId);
+            encoded = prepared?.encoded || prepared
                 || this.encodeTopicValue(topic.schema?.type || topic.type, message.value);
             const encodeDurationNs = Math.max(0, this._time() - encodeStartNs);
             this.health.encodeTimeNs = encodeDurationNs;
@@ -589,7 +639,11 @@ export class SensorPublisher {
                 });
             }
         } else {
-            client.publishEncoded(topic.name, encoded, { required: topic.required === true }).catch((error) => {
+            const prepared = frame.encodedByTopic?.get(message.topicId);
+            const publishing = prepared?.packet && typeof client.publishPrepared === "function"
+                ? client.publishPrepared(prepared.packet, { required: topic.required === true })
+                : client.publishEncoded(topic.name, encoded, { required: topic.required === true });
+            publishing.catch((error) => {
                 const reason = error?.message || String(error);
                 if (reason.includes("websocket-backpressure")) {
                     this._incrementFrameDrop();
@@ -607,7 +661,11 @@ export class SensorPublisher {
                 });
             });
         }
-        this.topicRouter?.routeOutbound(topic.id, { value: message.value, typeStr: topic.schema?.type || topic.type }, {
+        this.topicRouter?.routeOutbound(topic.id, {
+            value: message.value,
+            retainedValue: encoded,
+            typeStr: topic.schema?.type || topic.type,
+        }, {
             producer: topic.producer || "simulator",
             observationalOracle: topic.producer === "oracle" && this.config.health?.observationalOracle !== false,
             captureTimeNs: frame.captureTimeNs,

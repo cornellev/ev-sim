@@ -42,6 +42,39 @@ function fakeMaterializer(options) {
     };
 }
 
+test("inline PBR renderer lease exposes only the synchronous WebGL critical section", () => {
+    const runtime = new BrowserPbrRenderRuntime({ renderer: {} });
+    const availability = [];
+    const unsubscribe = runtime.subscribePresentationAvailability((available) => {
+        availability.push(available);
+    });
+    assert.equal(runtime.presentationBlocked, false);
+    runtime.rendererLease.runSync(() => {
+        assert.equal(runtime.presentationBlocked, true);
+    });
+    assert.equal(runtime.presentationBlocked, false);
+    assert.deepEqual(availability, [true, false, true]);
+    unsubscribe();
+    runtime.dispose();
+});
+
+test("inline PBR renderer lease remains blocked for a genuinely asynchronous readback", async () => {
+    const runtime = new BrowserPbrRenderRuntime({ renderer: {} });
+    const availability = [];
+    let finishReadback;
+    runtime.subscribePresentationAvailability((available) => availability.push(available));
+    const readback = runtime.rendererLease.runAsync(() => new Promise((resolve) => {
+        finishReadback = resolve;
+    }));
+    assert.equal(runtime.presentationBlocked, true);
+    assert.deepEqual(availability, [true, false]);
+    finishReadback();
+    await readback;
+    assert.equal(runtime.presentationBlocked, false);
+    assert.deepEqual(availability, [true, false, true]);
+    runtime.dispose();
+});
+
 test("VIS-14 prepares isolated browser scenes and routes measured and analytic products atomically", async () => {
     const resolved = resolvedPbrRun();
     const rights = [];

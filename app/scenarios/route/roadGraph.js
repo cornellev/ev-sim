@@ -36,6 +36,7 @@ const DEFAULT_ROAD_WIDTH = 7;
 const DEFAULT_INTERSECTION_RADIUS = 5;
 const CENTERLINE_EPSILON = 1e-6;
 const INTERSECTION_CONNECTOR_SAMPLES = 9;
+const ROAD_SPATIAL_CELL_METERS = 32;
 
 function compareText(left, right) {
     const a = String(left);
@@ -275,7 +276,7 @@ export function buildDirectedRoadGraph(value) {
             }
         }
     }
-    return {
+    const graph = {
         document,
         nodes,
         edges,
@@ -288,6 +289,13 @@ export function buildDirectedRoadGraph(value) {
         compiledPlan,
         infeasibleMovements,
     };
+    Object.defineProperty(graph, "spatialIndex", {
+        configurable: false,
+        enumerable: false,
+        writable: false,
+        value: buildRoadSpatialIndex(graph),
+    });
+    return graph;
 }
 
 /** Turn legality for the search: sparse turn rules plus v7 connector feasibility. */
@@ -319,6 +327,103 @@ function pointInIndexedSurface(point, surface, tolerance = 0) {
         if (pointInTriangleXZ(point, surface.vertices[surface.indices[index]], surface.vertices[surface.indices[index + 1]], surface.vertices[surface.indices[index + 2]])) return true;
     }
     return false;
+}
+
+function addSpatialBounds(cells, kind, id, bounds) {
+    if (!bounds) return;
+    const minX = Math.floor(bounds.min.x / ROAD_SPATIAL_CELL_METERS);
+    const maxX = Math.floor(bounds.max.x / ROAD_SPATIAL_CELL_METERS);
+    const minZ = Math.floor(bounds.min.z / ROAD_SPATIAL_CELL_METERS);
+    const maxZ = Math.floor(bounds.max.z / ROAD_SPATIAL_CELL_METERS);
+    for (let x = minX; x <= maxX; x += 1) {
+        for (let z = minZ; z <= maxZ; z += 1) {
+            const key = `${x}:${z}`;
+            const cell = cells.get(key) ?? { edges: new Set(), junctions: new Set() };
+            cell[kind].add(id);
+            cells.set(key, cell);
+        }
+    }
+}
+
+function pointsBounds(points, padding = 0) {
+    if (!points?.length) return null;
+    let minX = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let minZ = Number.POSITIVE_INFINITY;
+    let maxZ = Number.NEGATIVE_INFINITY;
+    for (const point of points) {
+        minX = Math.min(minX, point.x);
+        maxX = Math.max(maxX, point.x);
+        minZ = Math.min(minZ, point.z);
+        maxZ = Math.max(maxZ, point.z);
+    }
+    return {
+        min: { x: minX - padding, z: minZ - padding },
+        max: { x: maxX + padding, z: maxZ + padding },
+    };
+}
+
+function buildRoadSpatialIndex(graph) {
+    const cells = new Map();
+    for (const edge of graph.edges.values()) {
+        const halfWidth = finiteNumber(edge.width, DEFAULT_ROAD_WIDTH) * 0.5
+            + finiteNumber(edge.shoulderWidth, 0);
+        const bounds = edge.compiled?.fullSurface?.bounds
+            ?? pointsBounds(
+                edge.compiled?.samples?.points
+                    ?? [graph.nodes.get(edge.startNodeId), graph.nodes.get(edge.endNodeId)].filter(Boolean),
+                halfWidth,
+            );
+        addSpatialBounds(cells, "edges", edge.id, bounds);
+    }
+    if (graph.geometryVersion === 2) {
+        for (const junction of graph.compiledPlan?.junctions ?? []) {
+            addSpatialBounds(cells, "junctions", String(junction.node.id), junction.surface?.bounds);
+        }
+    } else {
+        for (const node of graph.nodes.values()) {
+            const isIntersection = node.kind === "intersection" || (graph.degree.get(node.id) ?? 0) > 1;
+            if (!isIntersection) continue;
+            const radius = intersectionRadius(node.id, graph, {});
+            addSpatialBounds(cells, "junctions", node.id, {
+                min: { x: node.x - radius, z: node.z - radius },
+                max: { x: node.x + radius, z: node.z + radius },
+            });
+        }
+    }
+    return Object.freeze({ cellMeters: ROAD_SPATIAL_CELL_METERS, cells });
+}
+
+function spatialCandidates(graph, point, tolerance = 0) {
+    const index = graph.spatialIndex;
+    if (!index) return null;
+    const edgeIds = new Set();
+    const junctionIds = new Set();
+    const minX = Math.floor((point.x - tolerance) / index.cellMeters);
+    const maxX = Math.floor((point.x + tolerance) / index.cellMeters);
+    const minZ = Math.floor((point.z - tolerance) / index.cellMeters);
+    const maxZ = Math.floor((point.z + tolerance) / index.cellMeters);
+    for (let x = minX; x <= maxX; x += 1) {
+        for (let z = minZ; z <= maxZ; z += 1) {
+            const cell = index.cells.get(`${x}:${z}`);
+            if (!cell) continue;
+            for (const id of cell.edges) edgeIds.add(id);
+            for (const id of cell.junctions) junctionIds.add(id);
+        }
+    }
+    return {
+        edgeIds: [...edgeIds].sort(compareText),
+        junctionIds: [...junctionIds].sort(compareText),
+    };
+}
+
+function withRoadRuntimeProjection(projection, { segment = null, tangent = null } = {}) {
+    if (!projection) return projection;
+    Object.defineProperties(projection, {
+        surfaceSegment: { configurable: false, enumerable: false, value: segment },
+        surfaceTangent: { configurable: false, enumerable: false, value: tangent },
+    });
+    return projection;
 }
 
 function samplePolylineAtFraction(points, cumulative, total, fraction) {
@@ -363,8 +468,12 @@ function lanePointAtFraction(edge, laneIndex, fraction) {
 }
 
 function projectPointToRoadNetworkV2(point, graph, tolerance) {
+    const candidates = spatialCandidates(graph, point, tolerance);
+    const junctionIds = candidates ? new Set(candidates.junctionIds) : null;
+    const edgeIds = candidates?.edgeIds ?? [...graph.edges.keys()];
     const intersections = [];
     for (const junction of graph.compiledPlan.junctions) {
+        if (junctionIds && !junctionIds.has(String(junction.node.id))) continue;
         if (!pointInIndexedSurface(point, junction.surface, tolerance)) continue;
         const node = junction.node;
         const sampled = sampleIndexedSurfacePoint(point, junction.surface);
@@ -385,8 +494,9 @@ function projectPointToRoadNetworkV2(point, graph, tolerance) {
         });
     }
     const roads = [];
-    for (const edge of graph.edges.values()) {
-        if (!edge.compiled) continue;
+    for (const edgeId of edgeIds) {
+        const edge = graph.edges.get(edgeId);
+        if (!edge?.compiled) continue;
         const projection = projectPointToCompiledRoad(point, edge.compiled);
         const halfWidth = finiteNumber(edge.width, DEFAULT_ROAD_WIDTH) * 0.5 + finiteNumber(edge.shoulderWidth, 0);
         if (!projection || projection.distance > halfWidth + tolerance + EPSILON) continue;
@@ -396,7 +506,9 @@ function projectPointToRoadNetworkV2(point, graph, tolerance) {
         const laneIndex = nearestLaneIndexForOffset(edge, rightOffset);
         const laneMode = roadLaneCount(edge) === 1 || Math.abs(rightOffset) > CENTERLINE_EPSILON ? "fixed" : "auto";
         const snappedPoint = laneMode === "fixed" ? lanePointAtFraction(edge, laneIndex, projection.fraction) : projection.point;
-        roads.push({
+        const start = edge.compiled.samples.points[projection.segment];
+        const end = edge.compiled.samples.points[projection.segment + 1] ?? start;
+        roads.push(withRoadRuntimeProjection({
             kind: "road",
             nodeId: null,
             edgeId: edge.id,
@@ -411,7 +523,14 @@ function projectPointToRoadNetworkV2(point, graph, tolerance) {
             ...snappedPoint,
             distance: projection.distance,
             halfWidth,
-        });
+        }, {
+            segment: projection.segment,
+            tangent: {
+                dx: end.x - start.x,
+                dy: finiteNumber(end.y, 0) - finiteNumber(start.y, 0),
+                dz: end.z - start.z,
+            },
+        }));
     }
     if (intersections.length) return intersections.sort(projectionSort)[0];
     return roads.length ? roads.sort(projectionSort)[0] : null;
@@ -462,12 +581,18 @@ export function projectPointToRoadNetwork(value, environment, options = {}) {
         : buildDirectedRoadGraph(environmentValue);
     const tolerance = Math.max(0, finiteNumber(options.tolerance, 0));
     if (graph.geometryVersion === 2) return projectPointToRoadNetworkV2(point, graph, tolerance);
+    const candidates = spatialCandidates(graph, point, tolerance);
+    const candidateJunctionIds = options.intersectionRadius === undefined && candidates
+        ? new Set(candidates.junctionIds)
+        : null;
+    const candidateEdgeIds = candidates?.edgeIds ?? [...graph.edges.keys()];
     const intersections = [];
     const roads = [];
 
     for (const node of graph.nodes.values()) {
         const isIntersection = node.kind === "intersection" || (graph.degree.get(node.id) ?? 0) > 1;
         if (!isIntersection) continue;
+        if (candidateJunctionIds && !candidateJunctionIds.has(node.id)) continue;
         const distance = distanceXZ(point, node);
         const radius = intersectionRadius(node.id, graph, options);
         if (distance <= radius + tolerance + EPSILON) {
@@ -487,7 +612,9 @@ export function projectPointToRoadNetwork(value, environment, options = {}) {
         }
     }
 
-    for (const edge of graph.edges.values()) {
+    for (const edgeId of candidateEdgeIds) {
+        const edge = graph.edges.get(edgeId);
+        if (!edge) continue;
         const start = graph.nodes.get(edge.startNodeId);
         const end = graph.nodes.get(edge.endNodeId);
         if (!start || !end) continue;
@@ -503,7 +630,7 @@ export function projectPointToRoadNetwork(value, environment, options = {}) {
             const snappedPoint = laneMode === "fixed"
                 ? laneCenterPoint(projection.point, start, end, edge, laneIndex)
                 : { ...projection.point };
-            roads.push({
+            roads.push(withRoadRuntimeProjection({
                 kind: "road",
                 nodeId: null,
                 edgeId: edge.id,
@@ -517,7 +644,14 @@ export function projectPointToRoadNetwork(value, environment, options = {}) {
                 ...snappedPoint,
                 distance: projection.distance,
                 halfWidth,
-            });
+            }, {
+                segment: 0,
+                tangent: {
+                    dx: end.x - start.x,
+                    dy: finiteNumber(end.y, 0) - finiteNumber(start.y, 0),
+                    dz: end.z - start.z,
+                },
+            }));
         }
     }
 

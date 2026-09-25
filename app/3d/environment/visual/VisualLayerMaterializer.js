@@ -908,7 +908,10 @@ export class VisualLayerMaterializer {
     async _decodeTextureBytes(bytes, mediaType, slot, signal) {
         this._throwIfStale(this._generation, signal);
         try {
-            if (this.decodeTexture) return await this.decodeTexture(bytes, mediaType, slot);
+            if (this.decodeTexture) {
+                const decoded = await this.decodeTexture(bytes, mediaType, slot);
+                if (decoded !== undefined && decoded !== null) return decoded;
+            }
             const THREE = await this._three();
             if (mediaType === "image/ktx2") {
                 const ktx2 = await this._ensureKtx2(null, new Map([["ktx2", { bytes, mediaType }]]));

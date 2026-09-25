@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
     deterministicDirectedAStar,
+    buildDirectedRoadGraph,
+    createRouteProjectionIndex,
     hashEnvironmentRoadNetwork,
     isRouteVerificationCurrent,
     moveWaypoint,
     normalizeWaypoints,
     projectPointToRoadNetwork,
+    projectPoseToRoute,
     removeWaypoint,
     reorderWaypoint,
     rightTravelNormal,
@@ -62,6 +65,38 @@ test("road projection rejects non-road territory and recognizes intersection foo
     assert.equal(intersection.nodeId, "b");
 
     assert.equal(projectPointToRoadNetwork({ x: 2, z: 3 }, environment), null);
+});
+
+test("route and road spatial indexes preserve exhaustive projection results", () => {
+    const route = {
+        verification: { distanceMetric: "3d" },
+        totalLength: 30,
+        sections: [
+            { index: 0, length: 10, polyline: [{ x: 0, y: 0, z: 0 }, { x: 10, y: 0, z: 0 }] },
+            { index: 1, length: 10, polyline: [{ x: 10, y: 0, z: 0 }, { x: 10, y: 0, z: 10 }] },
+            { index: 2, length: 10, polyline: [{ x: 10, y: 0, z: 10 }, { x: 20, y: 0, z: 10 }] },
+        ],
+    };
+    const index = createRouteProjectionIndex(route);
+    const environment = roadEnvironment();
+    const indexedGraph = buildDirectedRoadGraph(environment);
+    const exhaustiveGraph = { ...indexedGraph };
+    let state = 0x5eed1234;
+    const random = () => {
+        state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+        return state / 0x100000000;
+    };
+    for (let sample = 0; sample < 500; sample += 1) {
+        const point = { x: random() * 30 - 5, y: random() * 4 - 2, z: random() * 20 - 5 };
+        assert.deepEqual(
+            projectPoseToRoute(route, point, { index }),
+            projectPoseToRoute(route, point, { index, exhaustive: true }),
+        );
+        assert.deepEqual(
+            projectPointToRoadNetwork(point, environment, { graph: indexedGraph }),
+            projectPointToRoadNetwork(point, environment, { graph: exhaustiveGraph }),
+        );
+    }
 });
 
 test("deterministic A* respects one-way edges and stable edge ordering", () => {

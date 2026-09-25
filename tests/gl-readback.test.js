@@ -9,6 +9,26 @@ test("WebGL2 pixel-pack helpers no-op without a WebGL2 renderer", () => {
     assert.equal(withPixelPackBufferUnbound(null, () => 7), 7);
 });
 
+test("SwiftShader is not admitted as asynchronous pixel-pack capable", () => {
+    class FakeWebGL2 {}
+    const previous = globalThis.WebGL2RenderingContext;
+    globalThis.WebGL2RenderingContext = FakeWebGL2;
+    const debug = { UNMASKED_RENDERER_WEBGL: 0x9246 };
+    const gl = Object.assign(Object.create(FakeWebGL2.prototype), {
+        fenceSync() {},
+        clientWaitSync() {},
+        getBufferSubData() {},
+        getExtension: () => debug,
+        getParameter: () => "ANGLE (Google, Vulkan (SwiftShader Device), SwiftShader driver)",
+    });
+    try {
+        assert.equal(getWebGL2Context({ getContext: () => gl }), null);
+    } finally {
+        if (previous === undefined) delete globalThis.WebGL2RenderingContext;
+        else globalThis.WebGL2RenderingContext = previous;
+    }
+});
+
 test("PixelPackSlot reports stale fences and resets", async () => {
     const { PixelPackSlot } = await import("../app/3d/util/glReadback.js");
     const deleted = [];
@@ -88,7 +108,7 @@ test("PixelPackSlot copies a signaled fence before deleting it and refuses a sec
     slot.dispose();
 });
 
-test("two pixel-pack slots can be in flight and begin does not query GL state", async () => {
+test("two pixel-pack slots can be in flight while preserving pixel-pack bindings", async () => {
     const { PixelPackSlot } = await import("../app/3d/util/glReadback.js");
     let queries = 0;
     let reads = 0;
@@ -119,7 +139,7 @@ test("two pixel-pack slots can be in flight and begin does not query GL state", 
     assert.equal(second.begin(0, 0, 1, 2, 0x1908, 0x1401), true);
     assert.equal(first.begin(0, 0, 1, 2, 0x1908, 0x1401), false);
     assert.equal(reads, 2);
-    assert.equal(queries, afterConstruct);
+    assert.equal(queries, afterConstruct + 2);
     assert.equal(first.poll(new Uint8Array(8)), true);
     assert.equal(second.poll(new Uint8Array(8)), true);
     first.dispose();

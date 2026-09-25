@@ -21,6 +21,8 @@ import { VisualAssetClient } from "../environment/visual/VisualAssetClient.js";
 import { installImageSky, installTakramSky, releaseTakramSky } from "./PbrAppearanceSky.js";
 import { addPbrRoadMarkings } from "./PbrRoadMarkings.js";
 import { rep103PoseToThree } from "../../autonomy/CoordinateFrames.js";
+import { browserSimulationPerformance } from "../../simulation/performance/BrowserSimulationPerformance.js";
+import { RendererPresentationLease } from "./RendererPresentationLease.js";
 
 const PROVIDER = Object.freeze({ id: "pbr-mesh", version: 1 });
 const ROAD_SURFACE_COLOR = 0x2d3034;
@@ -84,6 +86,13 @@ function primitiveMesh(primitive, { appearance = false } = {}) {
 }
 
 function vehicleMatrix(vehicle) {
+    const serializedMatrix = vehicle?.matrixWorld;
+    if (Array.isArray(serializedMatrix) || ArrayBuffer.isView(serializedMatrix)) {
+        if (serializedMatrix.length !== 16) {
+            throw new Error("A serialized PBR actor matrix must contain 16 elements.");
+        }
+        return new THREE.Matrix4().fromArray(serializedMatrix);
+    }
     if (vehicle?.sceneObject?.matrixWorld) {
         vehicle.sceneObject.updateMatrixWorld?.(true);
         return vehicle.sceneObject.matrixWorld.clone();
@@ -198,12 +207,17 @@ export class BrowserPbrRenderRuntime {
         renderer,
         assetClient = new VisualAssetClient(),
         materializerFactory = (options) => new VisualLayerMaterializer(options),
+        installImageSky: installImageSkyOverride = null,
         installTakramSky: installTakramSkyOverride = null,
         vehicles = () => [],
     } = {}) {
         this.renderer = renderer;
+        this.implementation = "inline";
+        this.rendererLease = new RendererPresentationLease();
+        this.runtimeOwnsProducts = false;
         this.assetClient = assetClient;
         this.materializerFactory = materializerFactory;
+        this.installImageSky = installImageSkyOverride;
         this.installTakramSky = installTakramSkyOverride;
         this.vehicleSource = vehicles;
         this.generation = 0;
@@ -240,6 +254,14 @@ export class BrowserPbrRenderRuntime {
         return ["ready", "streaming", "degraded"].includes(this.status.state);
     }
 
+    get presentationBlocked() {
+        return this.rendererLease.blocked;
+    }
+
+    subscribePresentationAvailability(listener) {
+        return this.rendererLease.subscribe(listener);
+    }
+
     cameraOptions() {
         if (!this.ready) throw infrastructureError(new Error("PBR render runtime is not ready."));
         return {
@@ -249,6 +271,7 @@ export class BrowserPbrRenderRuntime {
             analyticSceneHandle: this.analyticSceneHandle,
             authorizeSourceUse: (request) => this.authorizeSourceUse(request),
             renderPolicy: this.renderPolicy,
+            rendererLease: this.rendererLease,
         };
     }
 
@@ -272,6 +295,10 @@ export class BrowserPbrRenderRuntime {
 
             this.appearanceScene = new THREE.Scene();
             this.analyticScene = new THREE.Scene();
+            this.appearanceScene.userData.cevSimCaptureTopologyRevision = 1;
+            this.appearanceScene.userData.cevSimCaptureTransformRevision = 1;
+            this.analyticScene.userData.cevSimCaptureTopologyRevision = 1;
+            this.analyticScene.userData.cevSimCaptureTransformRevision = 1;
             this._configureRecipe(description.recipe);
             this._buildAnalyticScene(description.analyticTruth.description, description.actors);
             addPbrRoadMarkings(this.appearanceScene, resolved.world?.description?.roads);
@@ -303,6 +330,7 @@ export class BrowserPbrRenderRuntime {
                 access: resolved.evidence.visualAssets.access,
                 uses,
             }, resolved.world, { interest: initialInterest });
+            this._appearanceResidencySignature = this._residencySignature();
             this._throwIfStale(generation);
 
             await this._buildActorAppearances(description.actors, resolved.evidence.visualAssets.roots);
@@ -353,6 +381,11 @@ export class BrowserPbrRenderRuntime {
                 throw new Error(materializerStatus.error?.message || "Required PBR residency failed.");
             }
             const residency = materializerStatus.residency;
+            const residencySignature = this._residencySignature(residency);
+            if (residencySignature !== this._appearanceResidencySignature) {
+                this._appearanceResidencySignature = residencySignature;
+                this.appearanceScene.userData.cevSimCaptureTopologyRevision += 1;
+            }
             const resident = new Set(residency?.residentChunkIds ?? []);
             const missing = (residency?.requiredChunkIds ?? []).filter((id) => !resident.has(id));
             if (missing.length > 0) {
@@ -400,6 +433,11 @@ export class BrowserPbrRenderRuntime {
                 analyticRenderables: this.analyticRenderables,
                 signal,
             });
+            for (const [name, durationMs] of Object.entries(
+                renderProducts?._alignedProducts?.lastCaptureTimings ?? {},
+            )) {
+                browserSimulationPerformance.recordTiming(`capture.${name}`, durationMs);
+            }
             const analytic = captured.analytic?.products;
             const depth = analytic?.axialDepth;
             if (depth && analytic.validity) {
@@ -429,6 +467,7 @@ export class BrowserPbrRenderRuntime {
         this.controller?.abort();
         this.controller = null;
         this._releaseResources();
+        this.rendererLease.reset({ preserveListeners });
         this.status = this._snapshot("idle");
         if (!preserveListeners) this.listeners.clear();
     }
@@ -460,12 +499,14 @@ export class BrowserPbrRenderRuntime {
             const analyticGroup = new THREE.Group();
             analyticGroup.name = `cev-sim.analytic-actor:${actor.actorId}`;
             analyticGroup.matrixAutoUpdate = false;
+            analyticGroup.userData.cevSimCaptureDynamic = true;
             this.analyticScene.add(analyticGroup);
             for (const primitive of actor.primitives) this._addAnalyticPrimitive(primitive, analyticGroup);
 
             const appearanceGroup = new THREE.Group();
             appearanceGroup.name = `cev-sim.appearance-actor:${actor.actorId}`;
             appearanceGroup.matrixAutoUpdate = false;
+            appearanceGroup.userData.cevSimCaptureDynamic = true;
             const visualTransform = new THREE.Group();
             visualTransform.matrix.fromArray(actorById.get(actor.actorId).transform);
             visualTransform.matrixAutoUpdate = false;
@@ -509,7 +550,8 @@ export class BrowserPbrRenderRuntime {
     async _installSky(sky) {
         if (!sky) return;
         if (sky.mode === "image") {
-            const texture = await installImageSky({ scene: this.appearanceScene, sky });
+            const install = this.installImageSky ?? installImageSky;
+            const texture = await install({ scene: this.appearanceScene, sky });
             if (this.environmentTexture && this.environmentTexture !== texture) {
                 this.environmentTexture.dispose?.();
             }
@@ -586,6 +628,8 @@ export class BrowserPbrRenderRuntime {
 
     _updateActors(vehicles) {
         const byId = new Map(vehicles.map((vehicle, index) => [actorId(vehicle, index), vehicle]));
+        let analyticMovedAny = false;
+        let appearanceMovedAny = false;
         for (const [id, groups] of this.actorGroups) {
             const vehicle = byId.get(id);
             if (!vehicle) throw new Error(`Resolved PBR actor "${id}" is not present in the simulation.`);
@@ -593,16 +637,25 @@ export class BrowserPbrRenderRuntime {
             const analyticMoved = !matrixElementsMatch(groups.analytic.matrix, matrix);
             const appearanceMoved = !matrixElementsMatch(groups.appearance.matrix, matrix);
             if (analyticMoved) {
+                analyticMovedAny = true;
                 groups.analytic.matrix.copy(matrix);
                 groups.analytic.matrixWorldNeedsUpdate = true;
                 groups.analytic.updateMatrixWorld(true);
             }
             if (appearanceMoved) {
+                appearanceMovedAny = true;
                 groups.appearance.matrix.copy(matrix);
                 groups.appearance.matrixWorldNeedsUpdate = true;
                 groups.appearance.updateMatrixWorld(true);
             }
         }
+        if (analyticMovedAny) this.analyticScene.userData.cevSimCaptureTransformRevision += 1;
+        if (appearanceMovedAny) this.appearanceScene.userData.cevSimCaptureTransformRevision += 1;
+    }
+
+    _residencySignature(residency = this.materializer?.residencySnapshot?.()) {
+        const ids = residency?.residentChunkIds ?? residency?.residentChunks ?? [];
+        return Array.isArray(ids) ? [...ids].map(String).sort().join("\0") : String(ids ?? "");
     }
 
     _vehicles() {
@@ -671,6 +724,7 @@ export class BrowserPbrRenderRuntime {
         this._semanticIds = null;
         this.actorGroups = new Map();
         this.rootUseHashes = [];
+        this._appearanceResidencySignature = null;
         this.renderPolicy = null;
         this._rightsCache?.clear();
         this._rightsInflight?.clear();

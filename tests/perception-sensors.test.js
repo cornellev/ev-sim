@@ -387,9 +387,8 @@ test("sensor publisher publishes health on deliver only and skips unchanged coun
     assert.ok(signals.length > afterDeliver);
 });
 
-test("GPU sensor captures are skipped when the display frame has no remaining budget", () => {
+test("GPU sensor captures are never skipped by presentation pacing", () => {
     let captures = 0;
-    const simulation = { gpuCaptureEnabled: false };
     const device = {
         telemetryId: "front-camera",
         gpuCapture: true,
@@ -397,11 +396,7 @@ test("GPU sensor captures are skipped when the display frame has no remaining bu
             captures += 1;
             return [{ topicId: "front-camera-image", signal: "image", value: { header: {} } }];
         },
-        getParent: () => ({
-            getParent: () => ({
-                simulation: () => simulation,
-            }),
-        }),
+        getParent: () => null,
     };
     const publisher = new SensorPublisher(device, {
         id: "front-camera",
@@ -415,12 +410,11 @@ test("GPU sensor captures are skipped when the display frame has no remaining bu
         health: { deadlineNs: 0 },
     }, { seed: "gpu-budget", topics: [] });
     publisher.update({ step: 2, timeNs: 33_333_334 });
-    assert.equal(captures, 0);
-    assert.equal(publisher.health.capturedFrames, 0);
-    simulation.gpuCaptureEnabled = true;
-    publisher.update({ step: 4, timeNs: 66_666_668 });
     assert.equal(captures, 1);
     assert.equal(publisher.health.capturedFrames, 1);
+    publisher.update({ step: 4, timeNs: 66_666_668 });
+    assert.equal(captures, 2);
+    assert.equal(publisher.health.capturedFrames, 2);
 });
 
 test("oracle 3D detections stamp map and only include in-view objects", () => {

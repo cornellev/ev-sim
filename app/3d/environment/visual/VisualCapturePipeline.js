@@ -1348,6 +1348,13 @@ export function calibrationWarpTable(calibration) {
     const sourceX = new Float64Array(count);
     const sourceY = new Float64Array(count);
     const valid = new Uint8Array(count);
+    const nearestPixel = new Int32Array(count);
+    const linear00 = new Int32Array(count);
+    const linear01 = new Int32Array(count);
+    const linear10 = new Int32Array(count);
+    const linear11 = new Int32Array(count);
+    const linearTx = new Float64Array(count);
+    const linearTy = new Float64Array(count);
     const { fx, fy, cx, cy } = checked.intrinsics;
     for (let y = 0; y < height; y += 1) {
         for (let x = 0; x < width; x += 1) {
@@ -1362,10 +1369,37 @@ export function calibrationWarpTable(calibration) {
             sourceY[index] = mappedY;
             if (mappedX >= 0 && mappedX <= width - 1 && mappedY >= 0 && mappedY <= height - 1) {
                 valid[index] = 1;
+                const floorX = Math.floor(mappedX);
+                const floorY = Math.floor(mappedY);
+                const x0 = Math.max(0, Math.min(width - 1, floorX));
+                const y0 = Math.max(0, Math.min(height - 1, floorY));
+                const x1 = Math.min(width - 1, x0 + 1);
+                const y1 = Math.min(height - 1, y0 + 1);
+                nearestPixel[index] = Math.round(mappedY) * width
+                    + Math.max(0, Math.min(width - 1, Math.round(mappedX)));
+                linear00[index] = y0 * width + x0;
+                linear01[index] = y0 * width + x1;
+                linear10[index] = y1 * width + x0;
+                linear11[index] = y1 * width + x1;
+                linearTx[index] = mappedX - floorX;
+                linearTy[index] = mappedY - floorY;
             }
         }
     }
-    const table = Object.freeze({ sourceX, sourceY, valid, width, height });
+    const table = Object.freeze({
+        sourceX,
+        sourceY,
+        valid,
+        nearestPixel,
+        linear00,
+        linear01,
+        linear10,
+        linear11,
+        linearTx,
+        linearTy,
+        width,
+        height,
+    });
     WARP_TABLE_CACHE.set(checked, table);
     return table;
 }
@@ -1398,14 +1432,36 @@ export function warpCalibratedImage({
     const integerOutput = isIntegerTypedArray(destination);
     for (let pixelIndex = 0; pixelIndex < width * height; pixelIndex += 1) {
         if (table.valid[pixelIndex] !== 1) continue;
-        const mappedX = table.sourceX[pixelIndex];
-        const mappedY = table.sourceY[pixelIndex];
         mask[pixelIndex] = 1;
+        const destinationOffset = pixelIndex * channels;
+        if (interpolation === "nearest") {
+            const sourceOffset = table.nearestPixel[pixelIndex] * channels;
+            if (channels === 1) destination[destinationOffset] = data[sourceOffset];
+            else if (channels === 4) {
+                destination[destinationOffset] = data[sourceOffset];
+                destination[destinationOffset + 1] = data[sourceOffset + 1];
+                destination[destinationOffset + 2] = data[sourceOffset + 2];
+                destination[destinationOffset + 3] = data[sourceOffset + 3];
+            } else {
+                for (let channel = 0; channel < channels; channel += 1) {
+                    destination[destinationOffset + channel] = data[sourceOffset + channel];
+                }
+            }
+            continue;
+        }
+        const tx = table.linearTx[pixelIndex];
+        const ty = table.linearTy[pixelIndex];
+        const offset00 = table.linear00[pixelIndex] * channels;
+        const offset01 = table.linear01[pixelIndex] * channels;
+        const offset10 = table.linear10[pixelIndex] * channels;
+        const offset11 = table.linear11[pixelIndex] * channels;
         for (let channel = 0; channel < channels; channel += 1) {
-            const value = interpolation === "linear"
-                ? sampleLinear(data, width, height, channels, mappedX, mappedY, channel)
-                : sampleNearest(data, width, channels, mappedX, mappedY, channel);
-            destination[pixelIndex * channels + channel] = interpolation === "linear" && integerOutput
+            const a = data[offset00 + channel];
+            const b = data[offset01 + channel];
+            const c = data[offset10 + channel];
+            const d = data[offset11 + channel];
+            const value = (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty;
+            destination[destinationOffset + channel] = integerOutput
                 ? Math.round(value)
                 : value;
         }

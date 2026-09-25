@@ -25,6 +25,7 @@ import {
     warpCalibratedImage,
 } from "../environment/visual/VisualCapturePipeline.js";
 import { getSharedPerceptionTruthIndex } from "../../autonomy/PerceptionTruthIndex.js";
+import { browserSimulationPerformance } from "../../simulation/performance/BrowserSimulationPerformance.js";
 
 function gaussian(rng) {
     const left = Math.max(Number.EPSILON, rng.next());
@@ -56,7 +57,9 @@ export class ManifestCamera extends Device {
             : options.analyticSceneHandle ?? null;
         this.authorizeSourceUse = options.authorizeSourceUse ?? null;
         this.renderPolicy = options.renderPolicy ?? null;
+        this.rendererLease = options.rendererLease ?? null;
         this.renderRuntime = options.renderRuntime ?? null;
+        this.runtimeOwnsProducts = options.runtimeOwnsProducts === true;
         this.visualCalibration = this.captureMode === CORRECTED_VISUAL_CAPTURE_MODE
             ? createVisualCameraCalibration(config.calibration)
             : null;
@@ -80,6 +83,7 @@ export class ManifestCamera extends Device {
         );
         if (this.captureMode === LEGACY_VISUAL_CAPTURE_MODE) scene.add(this.sensorCamera);
         const data = this.getParent()?.getParent?.();
+        if (this.runtimeOwnsProducts) return;
         this.renderProducts = new CameraRenderProducts({
             renderer: data?.renderer,
             scene,
@@ -94,6 +98,7 @@ export class ManifestCamera extends Device {
             analyticSceneHandle: this.analyticSceneHandle,
             authorizeSourceUse: this.authorizeSourceUse,
             renderPolicy: this.renderPolicy,
+            rendererLease: this.rendererLease,
         });
     }
 
@@ -137,7 +142,7 @@ export class ManifestCamera extends Device {
         const calibration = this.config.calibration;
         const products = calibration.products || {};
         const outputs = this.config.outputs || {};
-        const warp = captured.aligned === true
+        const warpPixels = captured.aligned === true
             ? (pixels) => pixels
             : this.captureMode === CORRECTED_VISUAL_CAPTURE_MODE
             ? (pixels, channels, interpolation) => warpCalibratedImage({
@@ -155,6 +160,17 @@ export class ManifestCamera extends Device {
                 channels,
                 interpolation,
             });
+        const warp = (pixels, channels, interpolation) => {
+            const start = browserSimulationPerformance.now();
+            try {
+                return warpPixels(pixels, channels, interpolation);
+            } finally {
+                browserSimulationPerformance.recordTiming(
+                    "calibrationWarp",
+                    browserSimulationPerformance.now() - start,
+                );
+            }
+        };
         const pixels = captured.rgb ? warp(captured.rgb, 4, "linear") : null;
         if (pixels && (noise.model === "gaussian" || noise.bias !== 0)) {
             for (let offset = 0; offset < pixels.length; offset += 4) {
@@ -309,7 +325,7 @@ export class ManifestCamera extends Device {
         const data = this.getParent()?.getParent?.();
         const renderer = data?.renderer;
         const scene = data?.scene;
-        if (!renderer || !scene || !this.sensorCamera || !this.renderProducts) return [];
+        if (!renderer || !scene || !this.sensorCamera || (!this.renderProducts && !this.runtimeOwnsProducts)) return [];
         if (!this.renderRuntime) {
             const error = new Error("Corrected browser camera is missing its resolved render runtime.");
             error.code = "PBR_RENDER_RUNTIME_MISSING";
@@ -352,11 +368,21 @@ export class ManifestCamera extends Device {
             calibration.width,
             calibration.height,
         );
-        const captured = await this.renderRuntime.captureCamera({
-            captureInput: this.lastCaptureInput,
-            enabled: this._enabledProducts(),
-            renderProducts: this.renderProducts,
-        });
+        const captureStart = browserSimulationPerformance.now();
+        let captured;
+        try {
+            captured = await this.renderRuntime.captureCamera({
+                captureInput: this.lastCaptureInput,
+                enabled: this._enabledProducts(),
+                renderProducts: this.renderProducts,
+                cameraId: this.telemetryId,
+            });
+        } finally {
+            browserSimulationPerformance.recordTiming(
+                "cameraCapture",
+                browserSimulationPerformance.now() - captureStart,
+            );
+        }
         return this._buildMessages({
             captureTimeNs,
             sampleIndex,
