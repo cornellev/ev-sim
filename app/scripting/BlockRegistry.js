@@ -69,6 +69,29 @@ export class BlockRegistry {
         return blockClass;
     }
 
+    ensureBuiltin(type, blockClass) {
+        const typeId = String(type ?? "").trim();
+        if (!typeId || typeof blockClass !== "function") {
+            throw new BlockRegistryError("REGISTRY_DEFINITION_INVALID", "A block type and class are required.");
+        }
+        if (this.#sealed) {
+            throw new BlockRegistryError("REGISTRY_SEALED", `Block registry is sealed; cannot register "${typeId}".`);
+        }
+        const current = this.#entries.get(typeId);
+        if (!current) return this.register(typeId, blockClass, "builtin");
+        if (current.ownership !== "builtin") {
+            throw new BlockRegistryError(
+                "REGISTRY_CONFLICT",
+                `Block type "${typeId}" is already registered.`,
+                { type: typeId, existingOwnership: current.ownership, attemptedOwnership: "builtin" },
+            );
+        }
+        if (current.blockClass === blockClass) return current.blockClass;
+        blockClass.blockType = typeId;
+        this.#entries.set(typeId, Object.freeze({ type: typeId, blockClass, ownership: "builtin" }));
+        return blockClass;
+    }
+
     get(type) {
         return this.#entries.get(String(type ?? ""))?.blockClass ?? null;
     }

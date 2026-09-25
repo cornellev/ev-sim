@@ -12,10 +12,10 @@ const LEGACY_HIDDEN_BLOCKS = Object.freeze([
 
 export function registerBuiltInBlocks(registry = defaultBlockRegistry) {
     UNIT_CATALOG_META.forEach((entry) => {
-        registry.register(entry.type, entry.blockClass, "builtin");
+        registry.ensureBuiltin(entry.type, entry.blockClass);
     });
     LEGACY_HIDDEN_BLOCKS.forEach((entry) => {
-        registry.register(entry.type, entry.blockClass, "builtin");
+        registry.ensureBuiltin(entry.type, entry.blockClass);
     });
     return registry;
 }

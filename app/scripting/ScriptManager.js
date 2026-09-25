@@ -1,6 +1,6 @@
 
 import { pluginOwnershipFromUnit, stampGraphPluginLock } from "../plugin/PluginGraphLocks.js";
-import { defaultBlockRegistry, registerBlockType } from "./BlockRegistry.js";
+import { defaultBlockRegistry } from "./BlockRegistry.js";
 import { assertSupportedArtifact, createRuntimeError } from "./runtime/Artifact.js";
 import { compileVisualScript } from "./runtime/Compiler.js";
 import { createVisualScriptRunner } from "./runtime/Runner.js";
@@ -440,8 +440,6 @@ export class CompiledProgramUnitBlock extends UnitBlock {
     }
 }
 
-registerBlockType("CompiledProgramUnitBlock", CompiledProgramUnitBlock);
-
 export class LocalScriptProgramBlock extends CompiledProgramUnitBlock {
     static blockType = "LocalScriptProgramBlock";
     static isLocalScriptBlock = true;
@@ -455,9 +453,6 @@ export class LocalScriptProgramBlock extends CompiledProgramUnitBlock {
         });
     }
 }
-
-registerBlockType("LocalScriptProgramBlock", LocalScriptProgramBlock);
-
 
 // Below, this I made myself
 

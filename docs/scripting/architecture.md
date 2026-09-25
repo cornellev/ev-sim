@@ -50,7 +50,7 @@ app/scripting/UnitCatalog.meta.js
 app/scripting/UnitCatalog.js
 ```
 
-`registerBuiltInBlocks.js` registers each explicit metadata type. `AddMenu.js` renders placeable
+`registerBuiltInBlocks.js` is the only built-in registrar. A later built-in registration of the same type replaces the class. `AddMenu.js` renders placeable
 built-in entries after React components are attached by type, then merges the revisioned plugin
 catalog. Built-in placeable blocks still need both a backend class and component. Plugin units
 use a generic `SettingsForm` unless the package `registerUi` view loads.
