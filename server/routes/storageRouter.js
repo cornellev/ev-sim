@@ -1,5 +1,6 @@
 import express from "express";
 import { storageEvents } from "../mcp/events.js";
+import { jsonHandler } from "./jsonHandler.js";
 
 /**
  * Builds the Express router mounted at `/api/storage`.
@@ -259,18 +260,7 @@ function assetContentType(fileName) {
  * Wrap an async handler so it always responds with JSON and forwards errors as
  * a 500 with a readable message instead of crashing the request.
  */
-function handle(fn) {
-    return async (req, res) => {
-        try {
-            const result = await fn(req);
-            res.json(result ?? null);
-        } catch (error) {
-            const status = Number(error.statusCode) || 400;
-            console.error(`[storage] ${req.method} ${req.originalUrl} failed:`, error);
-            res.status(status).json(error.toJSON?.() ?? { error: error.message, code: error.code, currentRevision: error.currentRevision });
-        }
-    };
-}
+const handle = (fn) => jsonHandler(fn, { logPrefix: "storage" });
 
 function parseExpectedRevision(value) {
     if (value === undefined || value === null || value === "") return undefined;

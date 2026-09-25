@@ -2,7 +2,10 @@ import { canonicalFiniteNumber } from "../../simulation/kernel/SimulationHashes.
 
 /**
  * JSON-compatible stable serialization used by scenario route hashes.
- * Object keys and Map entries are sorted; array order remains significant.
+ * Object keys and Map entries use UTF-16 code-unit order, not the UTF-8
+ * order of simulationSemanticHash. Array order remains significant.
+ * Finite numbers pass through canonicalFiniteNumber. Maps, Sets, and cycles
+ * are accepted here and rejected by the other canonicalizers.
  */
 export function stableStringify(value) {
     const seen = new WeakSet();

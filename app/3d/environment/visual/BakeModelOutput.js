@@ -9,6 +9,8 @@ import {
     sha256ExactBytes,
     sha256ExactUtf8,
 } from "../../../simulation/visual/VisualLayer.js";
+import { compareUtf8 } from "../../../math/compareUtf8.js";
+import { createExactParser } from "../../../validation/exactJson.js";
 import {
     INTRINSIC_CHANNEL_BY_NAME,
     INTRINSIC_PBR_PROPOSED,
@@ -75,8 +77,6 @@ export const INTRINSIC_MATERIAL_NONDETERMINISM_SCOPES = Object.freeze([
 export const INTRINSIC_MATERIAL_PRECISIONS = Object.freeze(["bf16", "fp16", "fp32"]);
 export const INTRINSIC_MATERIAL_RESIZE_MODES = Object.freeze(["declared", "identity"]);
 
-const SHA256_PATTERN = /^[a-f0-9]{64}$/;
-const textEncoder = new TextEncoder();
 const TOP_LEVEL_KEYS = Object.freeze(["kind", "version", "requestHash", "samples"]);
 const SAMPLE_KEYS = Object.freeze([
     "sampleId", "viewId", "width", "height", "sourceDimensions", "effectiveDimensions", "outputs",
@@ -146,60 +146,15 @@ function fail(path, message, code) {
     throw modelError(`${path}: ${message}`, code);
 }
 
-function plainObject(value, path) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) fail(path, "expected an object");
-    return value;
-}
-
-function allowedKeys(value, allowed, path) {
-    const source = plainObject(value, path);
-    const unknown = Object.keys(source).find((key) => !allowed.includes(key));
-    if (unknown) fail(`${path}.${unknown}`, "unknown field");
-    return source;
-}
-
-function denseArray(value, path) {
-    if (!Array.isArray(value)) fail(path, "expected an array");
-    const keys = Object.keys(value);
-    if (keys.length !== value.length || keys.some((key, index) => key !== String(index))) {
-        fail(path, "sparse or extended arrays are outside the JSON data model");
-    }
-    return value;
-}
-
-function compareUtf8(left, right) {
-    const a = textEncoder.encode(String(left));
-    const b = textEncoder.encode(String(right));
-    const length = Math.min(a.length, b.length);
-    for (let index = 0; index < length; index += 1) {
-        if (a[index] !== b[index]) return a[index] - b[index];
-    }
-    return a.length - b.length;
-}
-
-function text(value, path, { allowEmpty = false } = {}) {
-    if (typeof value !== "string") fail(path, "expected a string");
-    if (!allowEmpty && value.length === 0) fail(path, "expected a non-empty string");
-    if (value !== value.normalize("NFC")) fail(path, "identifier must be NFC text");
-    return value;
-}
-
-function finite(value, path) {
-    if (typeof value !== "number" || !Number.isFinite(value)) fail(path, "expected a finite number");
-    return Object.is(value, -0) ? 0 : value;
-}
-
-function integer(value, path, { min = 0 } = {}) {
-    const number = finite(value, path);
-    if (!Number.isSafeInteger(number) || number < min) fail(path, `expected a safe integer >= ${min}`);
-    return number;
-}
-
-function digest(value, path) {
-    const result = text(value, path);
-    if (!SHA256_PATTERN.test(result)) fail(path, "expected a lowercase SHA-256 digest");
-    return result;
-}
+const {
+    plainObject,
+    allowedKeys,
+    denseArray,
+    text,
+    finite,
+    integer,
+    sha256Hex: digest,
+} = createExactParser(fail, { text: "always-nfc", integer: "finite" });
 
 function freezeDeep(value) {
     if (!value || typeof value !== "object") return value;

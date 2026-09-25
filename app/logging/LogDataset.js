@@ -1,3 +1,4 @@
+import { cloneJson } from "../util/cloneJson.js";
 import { decodeRecordStream } from "./SFLogCodec.js";
 import { getLogAttachments, getLogAutonomySnapshot, getLogChunk, getLogEvents, getLogIndex, getLogPoseSeries, getLogSeries, getLogSnapshot } from "./LogClient.js";
 import { simplifyTrajectory, poseSampleFromValue } from "../spatial/trajectorySimplify.js";
@@ -5,8 +6,7 @@ import { simplifyTrajectory, poseSampleFromValue } from "../spatial/trajectorySi
 const datasetCache = new Map();
 
 function clone(value) {
-    if (typeof structuredClone === "function") return structuredClone(value);
-    return JSON.parse(JSON.stringify(value));
+    return cloneJson(value);
 }
 
 function maybeClone(value, shouldClone) {

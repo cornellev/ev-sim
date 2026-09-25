@@ -1,5 +1,7 @@
 import semver from "semver";
 
+import { deepFreeze } from "../util/cloneJson.js";
+
 import { validateCapabilityGrants } from "../plugin-api/capabilities.js";
 import { PLUGIN_PORT_TYPES } from "../plugin-api/ports.js";
 import { clonePluginJson } from "./PluginJson.js";
@@ -136,12 +138,6 @@ function normalizeSystem(value, pluginId, path) {
     if (!Number.isSafeInteger(source.priority)) throw new Error(`${path}.priority must be a safe integer.`);
     if (!Number.isSafeInteger(source.stateVersion) || source.stateVersion < 1) throw new Error(`${path}.stateVersion must be a positive safe integer.`);
     return { id, phase: "scripts", priority: source.priority, stateVersion: source.stateVersion };
-}
-
-function deepFreeze(value) {
-    if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
-    Object.values(value).forEach(deepFreeze);
-    return Object.freeze(value);
 }
 
 export function assertPluginDocument(value) {

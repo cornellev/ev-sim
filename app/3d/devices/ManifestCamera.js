@@ -11,6 +11,7 @@ import {
     buildTrafficControlStates,
 } from "./SensorMessages.js";
 import { rep103PoseToThree, threeCameraLookAlongMountForwardEuler } from "../../autonomy/CoordinateFrames.js";
+import { gaussianSample } from "../../autonomy/LocalizationMeasurements.js";
 import {
     CameraRenderProducts,
     projectTruthBoundsToImage,
@@ -28,8 +29,7 @@ import { getSharedPerceptionTruthIndex } from "../../autonomy/PerceptionTruthInd
 import { browserSimulationPerformance } from "../../simulation/performance/BrowserSimulationPerformance.js";
 
 function gaussian(rng) {
-    const left = Math.max(Number.EPSILON, rng.next());
-    return Math.sqrt(-2 * Math.log(left)) * Math.cos(2 * Math.PI * rng.next());
+    return gaussianSample(rng);
 }
 
 export class ManifestCamera extends Device {

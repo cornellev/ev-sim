@@ -1,5 +1,7 @@
+import { clamp01 as clampUnit } from "../../math/linalg.js";
+
 function clamp01(value) {
-    return Math.max(0, Math.min(1, Number(value) || 0));
+    return clampUnit(Number(value) || 0);
 }
 
 export function simulationHasStoppedClock(simState = {}) {

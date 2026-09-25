@@ -1,39 +1,19 @@
+import {
+    add3 as add,
+    distance3 as distance,
+    distanceXZ,
+    lerp3 as lerp,
+    normalize3,
+    scale3 as scale,
+    sub3 as subtract,
+} from "../math/linalg.js";
 import { laneCenterRightOffset, roadLaneCount } from "./RoadLaneModel.js";
 import { ROAD_GEOMETRY_POLICY_V1, validateRoadGeometryPolicy } from "./RoadGeometryPolicy.js";
 
 const EPSILON = 1e-9;
 
-function lerp(left, right, t) {
-    return {
-        x: left.x + (right.x - left.x) * t,
-        y: left.y + (right.y - left.y) * t,
-        z: left.z + (right.z - left.z) * t,
-    };
-}
-
-function add(left, right) {
-    return { x: left.x + right.x, y: left.y + right.y, z: left.z + right.z };
-}
-
-function subtract(left, right) {
-    return { x: left.x - right.x, y: left.y - right.y, z: left.z - right.z };
-}
-
-function scale(value, amount) {
-    return { x: value.x * amount, y: value.y * amount, z: value.z * amount };
-}
-
-function distance(left, right) {
-    return Math.hypot(right.x - left.x, right.y - left.y, right.z - left.z);
-}
-
-function distanceXZ(left, right) {
-    return Math.hypot(right.x - left.x, right.z - left.z);
-}
-
 function normalize(value) {
-    const magnitude = Math.hypot(value.x, value.y, value.z);
-    return magnitude <= EPSILON ? null : scale(value, 1 / magnitude);
+    return normalize3(value, EPSILON);
 }
 
 function cubicPoint(span, u) {

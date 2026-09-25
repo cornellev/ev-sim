@@ -1,12 +1,9 @@
 import { BlockOutput, CompiledProgramUnitBlock, ScriptManager } from "../../ScriptManager.js";
 import { UNIT, UNIT_TYPE, finiteInt32 } from "../../types/PortTypes.js";
 
+import { freezePort } from "../defineBlock.js";
 export const MAX_REPEAT_COUNT = 256;
 export const RESERVED_REPEAT_INPUTS = Object.freeze(["index", "item", "count"]);
-
-function freezePort(port) {
-    return Object.freeze({ label: port.label, type: port.type });
-}
 
 export function repeatProgramPorts(state = {}) {
     const inputPorts = state?.compiledProgram?.interface?.inputs || [];

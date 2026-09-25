@@ -4,6 +4,7 @@ import path from "node:path";
 import { z } from "zod";
 
 import { resolveSupervisorConfig, SUPERVISOR_PRESETS } from "../headless/SupervisorConfig.js";
+import { jsonHandler } from "./jsonHandler.js";
 import { queuePositionFor } from "../headless/HeadlessExperimentQueue.js";
 
 const EnqueueSchema = z.object({
@@ -339,17 +340,12 @@ export function createHeadlessRouter(headlessExperimentService, cosmosClipJob = 
     return router;
 }
 
-function handle(fn) {
-    return async (req, res) => {
-        try {
-            const result = await fn(req);
-            res.json(result ?? null);
-        } catch (error) {
-            console.error(`[headless] ${req.method} ${req.originalUrl} failed:`, error);
-            const status = Number.isInteger(error.status)
-                ? error.status
-                : /cross-origin/i.test(error.message) ? 403 : 400;
-            res.status(status).json({ error: error.message, details: error.details ?? null });
-        }
-    };
-}
+const handle = (fn) => jsonHandler(fn, {
+    logPrefix: "headless",
+    statusOf(error) {
+        return Number.isInteger(error.status)
+            ? error.status
+            : /cross-origin/i.test(error.message) ? 403 : 400;
+    },
+    bodyOf: (error) => ({ error: error.message, details: error.details ?? null }),
+});

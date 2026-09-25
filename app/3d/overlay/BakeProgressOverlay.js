@@ -12,6 +12,7 @@ import {
     IconPlayerStop as FaStop,
     IconPlayerTrackNext as FaStepForward,
 } from "@tabler/icons-react";
+import { clamp01 as clampUnit } from "../../math/linalg.js";
 import { prepareRgbaForPng } from "../environment/visualization/bakeUpload";
 import { cn } from "./ui/cn";
 
@@ -23,7 +24,7 @@ const TABS = [
 const BAKE_OVERLAY_CONTROL_LOCK = "bake-progress-overlay";
 
 function clamp01(value) {
-    return Math.max(0, Math.min(1, Number(value) || 0));
+    return clampUnit(Number(value) || 0);
 }
 
 function formatNumber(value) {

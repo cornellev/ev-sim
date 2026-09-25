@@ -1,22 +1,8 @@
 /** Continuous 3D SAT for a translating AABB against a static convex mesh. */
 
+import { cross3a as cross, dot3a as dot, sub3a as subtract } from "../math/linalg.js";
+
 const EPSILON = 1e-12;
-
-function dot(point, axis) {
-    return point[0] * axis[0] + point[1] * axis[1] + point[2] * axis[2];
-}
-
-function cross(left, right) {
-    return [
-        left[1] * right[2] - left[2] * right[1],
-        left[2] * right[0] - left[0] * right[2],
-        left[0] * right[1] - left[1] * right[0],
-    ];
-}
-
-function subtract(left, right) {
-    return [left[0] - right[0], left[1] - right[1], left[2] - right[2]];
-}
 
 function canonicalAxis(axis) {
     const length = Math.hypot(...axis);

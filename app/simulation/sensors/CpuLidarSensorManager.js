@@ -1,3 +1,4 @@
+import { cloneJson } from "../../util/cloneJson.js";
 import { SensorPublisher } from "./SensorPublisher.js";
 import { compareUtf8 } from "../world/WorldDescription.js";
 import { assertLidarGeometryResource } from "../lidar/LidarGeometry.js";
@@ -5,7 +6,7 @@ import { assertCpuLidarBackendSelection } from "./CpuLidarBackend.js";
 import { buildLidarCapture } from "./LidarProducts.js";
 
 function clone(value) {
-    return typeof structuredClone === "function" ? structuredClone(value) : JSON.parse(JSON.stringify(value));
+    return cloneJson(value);
 }
 
 class HeadlessCpuLidarDevice {

@@ -1,3 +1,4 @@
+import { clamp, lerp3 } from "../math/linalg.js";
 import { roadLaneCount } from "./RoadLaneModel.js";
 import { buildRoadSurface, validateGeometry } from "./RoadGeometry.js";
 import { ROAD_GEOMETRY_POLICY_V1 } from "./RoadGeometryPolicy.js";
@@ -11,10 +12,6 @@ function compareText(left, right) {
     return a < b ? -1 : a > b ? 1 : 0;
 }
 
-function clamp(value, minimum, maximum) {
-    return Math.max(minimum, Math.min(maximum, value));
-}
-
 function canonicalMetricValue(value, decimals) {
     if (typeof value === "number") {
         const factor = 10 ** decimals;
@@ -26,7 +23,7 @@ function canonicalMetricValue(value, decimals) {
 }
 
 function lerp(left, right, t) {
-    return { x: left.x + (right.x - left.x) * t, y: left.y + (right.y - left.y) * t, z: left.z + (right.z - left.z) * t };
+    return lerp3(left, right, t);
 }
 
 function normalizeXZ(value) {

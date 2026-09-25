@@ -2,6 +2,10 @@
  * Shared helpers for MCP tool handlers.
  */
 
+export function publishDomain(events, domain) {
+    return (id, action, data = null) => events.publish({ domain, id, action, data });
+}
+
 export function ok(data) {
     return {
         content: [{ type: "text", text: JSON.stringify(data, null, 2) }],

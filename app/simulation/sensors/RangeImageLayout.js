@@ -1,3 +1,5 @@
+import { deepFreeze } from "../../util/cloneJson.js";
+
 export const RANGE_IMAGE_LAYOUT_KIND = "cev-sim.range-image-layout";
 export const RANGE_IMAGE_LAYOUT_VERSION = 1;
 export const RANGE_IMAGE_MIN_NEAR_METERS = 1e-4;
@@ -29,12 +31,6 @@ function angle(value, path, { minimum, maximum, maximumInclusive = false }) {
         throw new RangeError(`${path} must be in [${minimum}, ${maximum}${right}.`);
     }
     return normalized;
-}
-
-function deepFreeze(value) {
-    if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
-    Object.values(value).forEach(deepFreeze);
-    return Object.freeze(value);
 }
 
 export function rangeImageDimensions(layout) {

@@ -1,3 +1,4 @@
+import { cloneJson } from "../util/cloneJson.js";
 import {
     canonicalExactStringify,
     sha256ExactBytes,
@@ -23,7 +24,7 @@ function exactHash(domain, value) {
 }
 
 function clone(value) {
-    return typeof structuredClone === "function" ? structuredClone(value) : JSON.parse(JSON.stringify(value));
+    return cloneJson(value);
 }
 
 export function pluginSensorEffectiveConfigHash(record) {

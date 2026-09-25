@@ -1,6 +1,8 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
+import { writeExclusiveUtf8 } from "./exclusiveUtf8.js";
+
 import { canonicalExactStringify, parseExactJson } from "../../app/simulation/visual/VisualLayer.js";
 import {
     assertBakeMaterialProposalSet,
@@ -39,22 +41,12 @@ export class BakeMaterialProposalStore {
         assertBakeMaterialProposalSet(proposalSet);
         const digest = hashBakeMaterialProposalSet(proposalSet);
         const body = canonicalExactStringify(proposalSet);
-        await writeExclusiveUtf8(this.pathFor(digest), body);
+        await writeExclusiveUtf8(
+            this.pathFor(digest),
+            body,
+            (name) => `Material proposal digest collision at ${name}.`,
+        );
         return digest;
     }
 }
 
-async function writeExclusiveUtf8(filePath, body) {
-    await fs.mkdir(path.dirname(filePath), { recursive: true });
-    const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-    await fs.writeFile(tempPath, body, "utf8");
-    try {
-        await fs.link(tempPath, filePath);
-    } catch (error) {
-        if (error.code !== "EEXIST") throw error;
-        const existing = await fs.readFile(filePath, "utf8");
-        if (existing !== body) throw new Error(`Material proposal digest collision at ${path.basename(filePath)}.`);
-    } finally {
-        await fs.rm(tempPath, { force: true });
-    }
-}

@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { prepareAnalyticGpuFrame } from "../../app/simulation/sensors/AnalyticGpuScene.js";
 import { supervisorError } from "./HeadlessProtocol.js";
 import {
     assertVisualCaptureInput,
@@ -511,110 +512,11 @@ export class ChromiumWebGlRendererAdapter {
     async captureGroup(scene, requests, contextIndex) {
         if (!this.page || !this.browser) throw infrastructureError("Chromium renderer is not running.");
         try {
+            const jobs = prepareAnalyticGpuFrame({ scene, jobs: requests });
             const values = await this.page.evaluate(async ({ jobs, resolvedScene, slot }) => {
                 const context = globalThis.__cevGpuContexts?.[slot];
                 if (!context?.gl || context.gl.isContextLost()) throw new Error("WebGL2 context is lost.");
                 const gl = context.gl;
-                const quaternion = (rotation = {}) => {
-                    const x = Number(rotation.x || 0) / 2;
-                    const y = Number(rotation.y || 0) / 2;
-                    const z = Number(rotation.z || 0) / 2;
-                    const cx = Math.cos(x);
-                    const sx = Math.sin(x);
-                    const cy = Math.cos(y);
-                    const sy = Math.sin(y);
-                    const cz = Math.cos(z);
-                    const sz = Math.sin(z);
-                    return [
-                        sx * cy * cz + cx * sy * sz,
-                        cx * sy * cz - sx * cy * sz,
-                        cx * cy * sz + sx * sy * cz,
-                        cx * cy * cz - sx * sy * sz,
-                    ];
-                };
-                const multiplyQuaternion = (a, b) => [
-                    a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
-                    a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
-                    a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3],
-                    a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2],
-                ];
-                const rotate = (value, q) => {
-                    const [x, y, z] = value;
-                    const [qx, qy, qz, qw] = q;
-                    const ix = qw * x + qy * z - qz * y;
-                    const iy = qw * y + qz * x - qx * z;
-                    const iz = qw * z + qx * y - qy * x;
-                    const iw = -qx * x - qy * y - qz * z;
-                    return [
-                        ix * qw + iw * -qx + iy * -qz - iz * -qy,
-                        iy * qw + iw * -qy + iz * -qx - ix * -qz,
-                        iz * qw + iw * -qz + ix * -qy - iy * -qx,
-                    ];
-                };
-                const boxTriangles = (primitive) => {
-                    const c = primitive.center;
-                    const s = primitive.size;
-                    const hx = s.x * 0.5;
-                    const hy = s.y * 0.5;
-                    const hz = s.z * 0.5;
-                    const v = [
-                        [c.x - hx, c.y - hy, c.z - hz], [c.x + hx, c.y - hy, c.z - hz],
-                        [c.x + hx, c.y + hy, c.z - hz], [c.x - hx, c.y + hy, c.z - hz],
-                        [c.x - hx, c.y - hy, c.z + hz], [c.x + hx, c.y - hy, c.z + hz],
-                        [c.x + hx, c.y + hy, c.z + hz], [c.x - hx, c.y + hy, c.z + hz],
-                    ];
-                    return [
-                        [0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7],
-                        [0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5],
-                        [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7],
-                    ].map((face) => face.map((index) => v[index]));
-                };
-                const primitiveTriangles = (primitive) => primitive.shape === "triangle"
-                    ? [primitive.vertices.map((value) => [value.x, value.y, value.z])]
-                    : boxTriangles(primitive);
-                const trianglesFor = (job) => {
-                    const triangles = [];
-                    const append = (primitive, transform = null) => {
-                        for (let vertices of primitiveTriangles(primitive)) {
-                            if (transform) {
-                                vertices = vertices.map((vertex) => {
-                                    const rotated = rotate(vertex, transform.quaternion);
-                                    return rotated.map((value, index) => value + transform.position[index]);
-                                });
-                            }
-                            const a = vertices[0];
-                            const b = vertices[1];
-                            const c = vertices[2];
-                            const ab = b.map((value, index) => value - a[index]);
-                            const ac = c.map((value, index) => value - a[index]);
-                            const normal = [
-                                ab[1] * ac[2] - ab[2] * ac[1],
-                                ab[2] * ac[0] - ab[0] * ac[2],
-                                ab[0] * ac[1] - ab[1] * ac[0],
-                            ];
-                            const length = Math.hypot(...normal) || 1;
-                            triangles.push({
-                                vertices,
-                                normal: normal.map((value) => value / length),
-                                semanticId: Number(primitive.semanticId || 0),
-                                instanceId: Number(primitive.instanceId || 0),
-                            });
-                        }
-                    };
-                    for (const primitive of resolvedScene.staticPrimitives || []) append(primitive);
-                    const vehicles = new Map((job.vehicles || []).map((vehicle) => [vehicle.id, vehicle]));
-                    for (const actor of resolvedScene.actors || []) {
-                        if (job.sensor?.poseReference !== "map" && actor.actorId === job.sensor?.parentId) continue;
-                        const vehicle = vehicles.get(actor.actorId);
-                        if (!vehicle) continue;
-                        const transform = {
-                            position: [vehicle.position.x, vehicle.position.y, vehicle.position.z],
-                            quaternion: quaternion(vehicle.rotation),
-                        };
-                        for (const primitive of actor.primitives || []) append(primitive, transform);
-                    }
-                    return triangles;
-                };
                 const compile = (type, source) => {
                     const shader = gl.createShader(type);
                     gl.shaderSource(shader, source);
@@ -625,7 +527,7 @@ export class ChromiumWebGlRendererAdapter {
                     return shader;
                 };
                 const renderLidar = (job) => {
-                    const triangles = trianglesFor(job);
+                    const triangles = job.triangles || [];
                     if (triangles.length === 0) return [];
                     const packed = new Float32Array(triangles.length * 16);
                     triangles.forEach((triangle, index) => {
@@ -677,20 +579,8 @@ export class ChromiumWebGlRendererAdapter {
                     if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
                         throw new Error(gl.getProgramInfoLog(program) || "GPU LiDAR shader linking failed.");
                     }
-                    const parent = (job.vehicles || []).find((vehicle) => vehicle.id === job.sensor.parentId);
-                    if (!parent) throw new Error(`GPU sensor parent ${job.sensor.parentId} is missing.`);
-                    const vehicleQ = quaternion(parent.rotation);
-                    const pose = job.sensor.pose || {};
-                    const localPosition = [pose.position?.x || 0, pose.position?.z || 0, pose.position?.y || 0];
-                    const rotatedPosition = rotate(localPosition, vehicleQ);
-                    const origin = rotatedPosition.map((value, index) => value
-                        + [parent.position.x, parent.position.y, parent.position.z][index]);
-                    const localQ = quaternion({
-                        x: pose.rotation?.x || 0,
-                        y: pose.rotation?.z || 0,
-                        z: pose.rotation?.y || 0,
-                    });
-                    const sensorQ = multiplyQuaternion(vehicleQ, localQ);
+                    const origin = job.lidarPose.origin;
+                    const sensorQ = job.lidarPose.quaternion;
                     gl.useProgram(program);
                     gl.uniform1i(gl.getUniformLocation(program, "uTriangles"), 0);
                     gl.uniform1i(gl.getUniformLocation(program, "uCount"), triangles.length);
@@ -732,7 +622,7 @@ export class ChromiumWebGlRendererAdapter {
                     return topLeft;
                 };
                 const prepareCamera = (job) => {
-                    const triangles = trianglesFor(job);
+                    const triangles = job.triangles || [];
                     const materials = new Map((resolvedScene.materials || []).map((entry) => [
                         Number(entry.semanticId),
                         (entry.colorRgba || [128, 128, 128, 255]).map((value) => Number(value) / 255),
@@ -761,34 +651,8 @@ export class ChromiumWebGlRendererAdapter {
                         if (triangles.length === 0) return null;
                         if (calibrated && job.products?.depth !== true) return null;
                         if (!job.sensor) throw new Error(`GPU camera ${job.id} is missing its sensor.`);
-                        if (job.analyticPose) return job.analyticPose;
-                        const mapCamera = job.sensor.poseReference === "map";
-                        const parent = mapCamera
-                            ? { position: { x: 0, y: 0, z: 0 }, rotation: {} }
-                            : (job.vehicles || []).find((vehicle) => vehicle.id === job.sensor.parentId);
-                        if (!parent) throw new Error(`GPU sensor parent ${job.sensor.parentId} is missing.`);
-                        const vehicleQ = quaternion(parent.rotation);
-                        const sensorPose = job.sensor.pose || {};
-                        const localPosition = [sensorPose.position?.x || 0, sensorPose.position?.z || 0, sensorPose.position?.y || 0];
-                        const rotatedPosition = rotate(localPosition, vehicleQ);
-                        const origin = rotatedPosition.map((value, index) => value
-                            + [parent.position.x, parent.position.y, parent.position.z][index]);
-                        const mountQ = multiplyQuaternion(vehicleQ, quaternion({
-                            x: sensorPose.rotation?.x || 0,
-                            y: sensorPose.rotation?.z || 0,
-                            z: sensorPose.rotation?.y || 0,
-                        }));
-                        const cameraQ = multiplyQuaternion(mountQ, quaternion({ y: -Math.PI / 2 }));
-                        return {
-                            origin,
-                            inverseQ: [-cameraQ[0], -cameraQ[1], -cameraQ[2], cameraQ[3]],
-                            projection: [
-                                1 / Math.tan(job.sensor.calibration.verticalFovDeg * Math.PI / 360),
-                                job.width / job.height,
-                                job.sensor.calibration.near,
-                                job.sensor.calibration.far,
-                            ],
-                        };
+                        if (!job.analyticPose) throw new Error(`GPU camera ${job.id} is missing its analytic pose.`);
+                        return job.analyticPose;
                     })();
                     const linkProgram = (vertexSource, fragmentSource) => {
                         const vertex = compile(gl.VERTEX_SHADER, vertexSource);
@@ -997,7 +861,7 @@ export class ChromiumWebGlRendererAdapter {
                     }
                 }
                 return output;
-            }, { jobs: requests, resolvedScene: scene, slot: contextIndex });
+            }, { jobs, resolvedScene: scene, slot: contextIndex });
             const decodeBase64 = (value) => Buffer.from(String(value || ""), "base64");
             return values.map((entry) => {
                 if (entry.type !== "camera") {

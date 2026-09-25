@@ -1,58 +1,8 @@
-import { BlockOutput, UnitBlock } from "../../ScriptManager.js";
+import { BlockOutput } from "../../ScriptManager.js";
 import { finiteFloat } from "../../types/PortTypes.js";
 import { pidStep, requireDt } from "./temporalMath.js";
 
-function freezePort(port) {
-    return Object.freeze({ label: port.label, type: port.type });
-}
-
-function freezePorts(inputs, outputs) {
-    return Object.freeze({
-        inputs: Object.freeze(inputs.map(freezePort)),
-        outputs: Object.freeze(outputs.map(freezePort)),
-    });
-}
-
-function defineStatefulBlock({ type, ports, execute, init, serialize, hydrate }) {
-    class Block extends UnitBlock {
-        static blockType = type;
-
-        constructor(uuid) {
-            super(uuid);
-            init?.call(this);
-        }
-
-        register() {
-            for (const port of ports.inputs) this.registerInput(port.label, port.type);
-            for (const port of ports.outputs) this.registerOutput(port.label, port.type);
-        }
-
-        valid() {
-            return ports.inputs.every((port) => this.hasInput(port.label));
-        }
-
-        serializeRuntimeState() {
-            return serialize ? serialize.call(this) : {};
-        }
-
-        hydrateRuntimeState(state = {}) {
-            if (hydrate) hydrate.call(this, state);
-        }
-
-        execute() {
-            return execute.call(this);
-        }
-    }
-
-    try {
-        Object.defineProperty(Block, "name", { value: type });
-    } catch {
-        // Class name is non-configurable in some engines; blockType is the authority.
-    }
-
-    return Block;
-}
-
+import { freezePorts, defineStatefulBlock } from "../defineBlock.js";
 const PID_PORTS = freezePorts(
     [
         { label: "setpoint", type: "float64" },

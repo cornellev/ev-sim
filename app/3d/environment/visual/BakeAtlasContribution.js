@@ -3,6 +3,7 @@
  * Records are sorted so identical observations encode to identical bytes.
  */
 
+import { compareUtf8 } from "../../../math/compareUtf8.js";
 import { sha256ExactBytes } from "../../../simulation/visual/VisualLayer.js";
 import { hashBakeConstruction } from "./BakeConstructionPolicy.js";
 
@@ -249,16 +250,6 @@ function digestBytes(value, label) {
 
 function bytesDigest(bytes) {
     return [...bytes].map((entry) => entry.toString(16).padStart(2, "0")).join("");
-}
-
-function compareUtf8(left, right) {
-    const a = textEncoder.encode(String(left));
-    const b = textEncoder.encode(String(right));
-    const length = Math.min(a.length, b.length);
-    for (let index = 0; index < length; index += 1) {
-        if (a[index] !== b[index]) return a[index] - b[index];
-    }
-    return a.length - b.length;
 }
 
 function normalizeV2Record(record) {

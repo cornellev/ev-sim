@@ -1,3 +1,4 @@
+import { cloneJson } from "../util/cloneJson.js";
 import { PLUGIN_CAPABILITIES } from "../plugin-api/capabilities.js";
 import { BlockRegistry } from "../scripting/BlockRegistry.js";
 import { registerBuiltInBlocks } from "../scripting/registerBuiltInBlocks.js";
@@ -38,7 +39,7 @@ export const PLUGIN_OVERLAY_OWNER_PREFIX = "plugin:";
 
 function clone(value) {
     if (value === undefined) return undefined;
-    return typeof structuredClone === "function" ? structuredClone(value) : JSON.parse(JSON.stringify(value));
+    return cloneJson(value);
 }
 
 function effectKey(value) {

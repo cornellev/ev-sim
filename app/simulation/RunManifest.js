@@ -24,6 +24,7 @@ import { validateScalarParameterTarget } from "../scenarios/ScenarioDocument.js"
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { assertRunIdentityCounters } from "./kernel/RunIdentity.js";
+import { canonicalStringify } from "./canonicalJson.js";
 import { canonicalNumericTree } from "./kernel/SimulationHashes.js";
 import { renderSceneProviderRegistry } from "./render/RenderSceneProviderRegistry.js";
 import { normalizePbrRenderRecipe } from "./render/PbrRenderScene.js";
@@ -879,16 +880,7 @@ export function validateRunManifest(value, {
     return { ok: issues.length === 0, manifest, issues };
 }
 
-export function canonicalStringify(value) {
-    const normalize = (entry) => {
-        if (Array.isArray(entry)) return entry.map(normalize);
-        if (!entry || typeof entry !== "object") return entry;
-        return Object.fromEntries(
-            Object.keys(entry).sort().map((key) => [key, normalize(entry[key])])
-        );
-    };
-    return JSON.stringify(normalize(value));
-}
+export { canonicalStringify };
 
 export function stripRunMetadata(value) {
     const volatile = new Set(["createdAt", "updatedAt", "exportedAt", "clientRevision", "revision", "definitionHash", "resolvedHash"]);

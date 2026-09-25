@@ -20,45 +20,7 @@ import {
 } from "../../types/PortTypes.js";
 import { ZERO_VEC2, ZERO_VEC3 } from "../geometry/vectorMath.js";
 
-function freezePort(port) {
-    return Object.freeze({ label: port.label, type: port.type });
-}
-
-function freezePorts(inputs, outputs) {
-    return Object.freeze({
-        inputs: Object.freeze(inputs.map(freezePort)),
-        outputs: Object.freeze(outputs.map(freezePort)),
-    });
-}
-
-function defineBlock({ type, ports, execute, valid }) {
-    class Block extends UnitBlock {
-        static blockType = type;
-
-        register() {
-            for (const port of ports.inputs) this.registerInput(port.label, port.type);
-            for (const port of ports.outputs) this.registerOutput(port.label, port.type);
-        }
-
-        valid() {
-            if (valid) return valid.call(this);
-            return ports.inputs.every((port) => this.hasInput(port.label));
-        }
-
-        execute() {
-            return execute.call(this);
-        }
-    }
-
-    try {
-        Object.defineProperty(Block, "name", { value: type });
-    } catch {
-        // Class name is non-configurable in some engines; blockType is the authority.
-    }
-
-    return Block;
-}
-
+import { freezePorts, defineBlock } from "../defineBlock.js";
 function waypointsOf(route) {
     if (Array.isArray(route)) return route;
     return Array.isArray(route?.waypoints) ? route.waypoints : [];

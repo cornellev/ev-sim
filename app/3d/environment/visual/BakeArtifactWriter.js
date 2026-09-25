@@ -3,6 +3,7 @@
  * outputs merged into the current visual-layer descriptor/access closure.
  */
 
+import { createExactParser } from "../../../validation/exactJson.js";
 import {
     VISUAL_ASSET_PROFILE,
     VISUAL_ASSET_USE_KIND,
@@ -96,8 +97,6 @@ const GENERATED_ASSET_KEYS = Object.freeze([
 const GENERATED_ASSET_KEYS_V2 = Object.freeze([
     "chunkKey", "pageIndex", "role", "sha256", "mediaType", "sizeBytes", "useHash",
 ]);
-const SHA256 = /^[a-f0-9]{64}$/;
-
 function artifactError(code, message) {
     const error = new Error(message);
     error.code = code;
@@ -108,36 +107,17 @@ function fail(path, message) {
     throw artifactError("BAKE_ARTIFACT_INVALID", `${path}: ${message}`);
 }
 
-function plainObject(value, path) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) fail(path, "expected an object");
-    return value;
-}
-
-function allowedKeys(value, allowed, path) {
-    const source = plainObject(value, path);
-    const unknown = Object.keys(source).find((key) => !allowed.includes(key));
-    if (unknown) fail(`${path}.${unknown}`, "unknown field");
-    return source;
-}
-
-function digest(value, path) {
-    if (typeof value !== "string" || !SHA256.test(value)) fail(path, "expected a lowercase SHA-256 digest");
-    return value;
-}
+const {
+    plainObject,
+    allowedKeys,
+    sha256Hex: digest,
+    text,
+    integer,
+} = createExactParser(fail, { digest: "pattern", integer: "integer-word" });
 
 function digestOrNull(value, path) {
     if (value == null) return null;
     return digest(value, path);
-}
-
-function text(value, path) {
-    if (typeof value !== "string" || !value) fail(path, "expected a non-empty string");
-    return value;
-}
-
-function integer(value, path, { min = 0 } = {}) {
-    if (!Number.isSafeInteger(value) || value < min) fail(path, `expected an integer >= ${min}`);
-    return value;
 }
 
 function copyTyped(data) {

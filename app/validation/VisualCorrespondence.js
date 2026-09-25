@@ -1,3 +1,5 @@
+import { compareUtf8 } from "../math/compareUtf8.js";
+import { createExactParser } from "./exactJson.js";
 import {
     assertSha256Digest,
     canonicalExactStringify,
@@ -54,17 +56,12 @@ function fail(path, message) {
     throw new TypeError(`${path}: ${message}`);
 }
 
-function object(value, path) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) fail(path, "expected an object");
-    return value;
-}
-
-function text(value, path) {
-    if (typeof value !== "string" || value.length === 0 || value !== value.normalize("NFC")) {
-        fail(path, "expected a non-empty NFC string");
-    }
-    return value;
-}
+const {
+    plainObject: object,
+    text,
+    integer,
+    boolean,
+} = createExactParser(fail, { text: "nfc-nonempty", integer: "integer-word" });
 
 function digest(value, path) {
     try {
@@ -72,11 +69,6 @@ function digest(value, path) {
     } catch (error) {
         fail(path, error.message);
     }
-}
-
-function integer(value, path, { min = 0 } = {}) {
-    if (!Number.isSafeInteger(value) || value < min) fail(path, `expected an integer >= ${min}`);
-    return value;
 }
 
 function finite(value, path) {
@@ -88,11 +80,6 @@ function ratio(value, path) {
     const result = finite(value, path);
     if (result < 0 || result > 1) fail(path, "expected a ratio in [0, 1]");
     return result;
-}
-
-function boolean(value, path) {
-    if (typeof value !== "boolean") fail(path, "expected a boolean");
-    return value;
 }
 
 function array(value, path, { min = 0 } = {}) {
@@ -128,15 +115,6 @@ function sortedUnique(values, path, key) {
     return values;
 }
 
-function compareUtf8(left, right) {
-    const leftBytes = textEncoder.encode(left);
-    const rightBytes = textEncoder.encode(right);
-    const length = Math.min(leftBytes.length, rightBytes.length);
-    for (let index = 0; index < length; index += 1) {
-        if (leftBytes[index] !== rightBytes[index]) return leftBytes[index] - rightBytes[index];
-    }
-    return leftBytes.length - rightBytes.length;
-}
 
 function exactAssert(value, normalize, label) {
     const normalized = normalize(value);

@@ -1,7 +1,7 @@
 import { linspace, nearestRoadEdge, sampleRoadFrame, sampleRouteFrame } from "../../../roads/PathFrame.js";
 import { sampleRoute } from "../../../scenarios/route/Route.js";
 import { cloneValue } from "../../runtime/SignalStore.js";
-import { BlockOutput, UnitBlock } from "../../ScriptManager.js";
+import { BlockOutput } from "../../ScriptManager.js";
 import {
     POSE3D_TYPE,
     ROAD_ID_TYPE,
@@ -12,48 +12,10 @@ import {
     normalizePose3d,
 } from "../../types/PortTypes.js";
 
+import { freezePorts, defineBlock } from "../defineBlock.js";
 export const MAX_SCATTER_COUNT = 256;
 export const SPAWN_PROP_OVERLAY_ERROR = "Spawn Prop requires an episode overlay (bind the script to episode-reset).";
 export const SCATTER_SOURCE_ERROR = "Scatter Features requires exactly one of route or edgeId.";
-
-function freezePort(port) {
-    return Object.freeze({ label: port.label, type: port.type });
-}
-
-function freezePorts(inputs, outputs) {
-    return Object.freeze({
-        inputs: Object.freeze(inputs.map(freezePort)),
-        outputs: Object.freeze(outputs.map(freezePort)),
-    });
-}
-
-function defineBlock({ type, ports, execute, valid }) {
-    class Block extends UnitBlock {
-        static blockType = type;
-
-        register() {
-            for (const port of ports.inputs) this.registerInput(port.label, port.type);
-            for (const port of ports.outputs) this.registerOutput(port.label, port.type);
-        }
-
-        valid() {
-            if (valid) return valid.call(this);
-            return ports.inputs.every((port) => this.hasInput(port.label));
-        }
-
-        execute() {
-            return execute.call(this);
-        }
-    }
-
-    try {
-        Object.defineProperty(Block, "name", { value: type });
-    } catch {
-        // Class name is non-configurable in some engines; blockType is the authority.
-    }
-
-    return Block;
-}
 
 function runtimeContext(unit) {
     return unit.manager?.getRuntimeContext?.() ?? {};

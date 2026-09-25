@@ -33,8 +33,8 @@ import {
     STBNLoader,
 } from "@takram/three-geospatial";
 import { DitheringEffect } from "@takram/three-geospatial-effects";
-import { EXRLoader } from "three/examples/jsm/loaders/EXRLoader.js";
-import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
+import { localEnuToEcefBasis } from "../../autonomy/Geodesy.js";
+import { loadSkyTexture } from "../perception/PbrAppearanceSky.js";
 import {
     getSkyDate,
     getSkyRuntimeSource,
@@ -50,7 +50,6 @@ const SKY_OBJECT_FLAGS = Object.freeze({
     bakeIgnore: true,
     preserveInEarthImportMode: true,
 });
-const ECEF_Z_AXIS = new THREE.Vector3(0, 0, 1);
 
 function tagSkyObject(object) {
     Object.assign(object.userData, SKY_OBJECT_FLAGS);
@@ -77,22 +76,15 @@ function makeConfigKey(config) {
     });
 }
 
-function isExrSource(source) {
-    return /\.exr($|\?)/i.test(source);
-}
-
-function isHdrSource(source) {
-    return /\.hdr($|\?)/i.test(source);
-}
-
 function makeLocalToECEFMatrix(positionECEF, result = new THREE.Matrix4()) {
-    const up = positionECEF.clone().normalize();
-    const east = ECEF_Z_AXIS.clone().cross(up).normalize();
-    const north = up.clone().cross(east).normalize();
-
+    const { east, up, north } = localEnuToEcefBasis(positionECEF);
     // The app's world is Y-up with X/Z as the ground plane. Map that local
     // frame to an east/up/north tangent frame at the observer location.
-    result.makeBasis(east, up, north);
+    result.makeBasis(
+        new THREE.Vector3(east.x, east.y, east.z),
+        new THREE.Vector3(up.x, up.y, up.z),
+        new THREE.Vector3(north.x, north.y, north.z),
+    );
     result.setPosition(positionECEF);
     return result;
 }
@@ -339,25 +331,7 @@ export class EnvironmentSkyManager {
     }
 
     loadEnvironmentTexture(source) {
-        const loader = isExrSource(source)
-            ? new EXRLoader()
-            : isHdrSource(source)
-                ? new RGBELoader()
-                : new THREE.TextureLoader();
-
-        return new Promise((resolve, reject) => {
-            loader.load(
-                source,
-                (texture) => {
-                    if (!isExrSource(source) && !isHdrSource(source)) {
-                        texture.colorSpace = THREE.SRGBColorSpace;
-                    }
-                    resolve(texture);
-                },
-                undefined,
-                reject,
-            );
-        });
+        return loadSkyTexture(source);
     }
 
     loadCloudTextures(effect) {

@@ -7,6 +7,7 @@ import {
     canonicalExactStringify,
     sha256ExactUtf8,
 } from "../../../simulation/visual/VisualLayer.js";
+import { createExactParser } from "../../../validation/exactJson.js";
 import { compareUtf8 } from "./BakeRunCatalog.js";
 import {
     PROJECTED_CAPTURED_RADIANCE_WRITER,
@@ -54,7 +55,6 @@ export const BAKE_REUSE_REASONS = Object.freeze({
     ALREADY_PUBLISHED: "already-published",
 });
 
-const SHA256 = /^[a-f0-9]{64}$/;
 const GENERATED_ID = /^bake-[a-f0-9]{64}$/;
 const MANIFEST_KEYS = Object.freeze([
     "kind", "version", "sourceWorldHash", "keyVersion", "globalKey",
@@ -102,47 +102,14 @@ function fail(path, message) {
     throw reuseError("BAKE_REUSE_INVALID", `${path}: ${message}`);
 }
 
-function plainObject(value, path) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) fail(path, "expected an object");
-    return value;
-}
-
-function allowedKeys(value, allowed, path) {
-    const source = plainObject(value, path);
-    const unknown = Object.keys(source).find((key) => !allowed.includes(key));
-    if (unknown) fail(`${path}.${unknown}`, "unknown field");
-    return source;
-}
-
-function denseArray(value, path) {
-    if (!Array.isArray(value)) fail(path, "expected an array");
-    const keys = Object.keys(value);
-    if (keys.length !== value.length || keys.some((key, index) => key !== String(index))) {
-        fail(path, "sparse or extended arrays are outside the JSON data model");
-    }
-    return value;
-}
-
-function text(value, path, { identifier = false, allowEmpty = false } = {}) {
-    if (typeof value !== "string") fail(path, "expected a string");
-    if (!allowEmpty && value.length === 0) fail(path, "expected a non-empty string");
-    if (identifier && value !== value.normalize("NFC")) fail(path, "identifier must be NFC text");
-    return value;
-}
-
-function integer(value, path, { min = 0 } = {}) {
-    const number = Object.is(value, -0) ? 0 : value;
-    if (typeof number !== "number" || !Number.isFinite(number) || !Number.isSafeInteger(number) || number < min) {
-        fail(path, `expected a safe integer >= ${min}`);
-    }
-    return number;
-}
-
-function digest(value, path) {
-    const result = text(value, path);
-    if (!SHA256.test(result)) fail(path, "expected a lowercase SHA-256 digest");
-    return result;
-}
+const {
+    plainObject,
+    allowedKeys,
+    denseArray,
+    text,
+    integer,
+    sha256Hex: digest,
+} = createExactParser(fail, { text: "split", integer: "canonical" });
 
 function digestOrNull(value, path) {
     if (value == null) return null;

@@ -3,17 +3,7 @@ import { BlockOutput, UnitBlock } from "../../ScriptManager.js";
 import { asArray, arrayType, normalizeItemType } from "../valueOps.js";
 import * as arrayOps from "./arrayOps.js";
 
-function freezePort(port) {
-    return Object.freeze({ label: port.label, type: port.type });
-}
-
-function freezePorts(inputs, outputs) {
-    return Object.freeze({
-        inputs: Object.freeze(inputs.map(freezePort)),
-        outputs: Object.freeze(outputs.map(freezePort)),
-    });
-}
-
+import { freezePorts } from "../defineBlock.js";
 function applyPorts(unit, ports) {
     for (const port of ports.inputs) unit.registerInput(port.label, port.type);
     for (const port of ports.outputs) unit.registerOutput(port.label, port.type);

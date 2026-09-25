@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import subprocess
@@ -32,33 +31,8 @@ from .contract import (
     ClipError,
     clip_directory_name,
 )
+from cev_sim.clip.check import depth_statistics, sha256_bytes, sha256_file
 from .video import assert_video_contract, probe_video
-
-
-def sha256_bytes(value: bytes) -> str:
-    return hashlib.sha256(value).hexdigest()
-
-
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def depth_statistics(depth: np.ndarray) -> dict:
-    valid = np.isfinite(depth) & (depth > 0)
-    count = int(np.count_nonzero(valid))
-    if count == 0:
-        return {"depthValidCount": 0, "depthValidFraction": 0.0, "depthMin": None, "depthMax": None}
-    values = depth[valid]
-    return {
-        "depthValidCount": count,
-        "depthValidFraction": count / int(depth.size),
-        "depthMin": float(np.min(values)),
-        "depthMax": float(np.max(values)),
-    }
 
 
 def _reject(errors: list[str], message: str) -> None:

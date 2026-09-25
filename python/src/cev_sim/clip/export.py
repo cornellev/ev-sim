@@ -12,7 +12,7 @@ from pathlib import Path
 
 import numpy as np
 
-from cev_sim.clip.check import check_clip
+from cev_sim.clip.check import check_clip, depth_statistics, sha256_bytes, sha256_file
 from cev_sim.clip.contract import (
     CLIP_KIND,
     CLIP_VERSION,
@@ -31,7 +31,6 @@ from cev_sim.config import (
     ROUTED_GPU_SENSOR_VERSION,
 )
 from cev_sim.cosmos_clip.check import check_clip as check_cosmos_clip
-from cev_sim.cosmos_clip.check import depth_statistics, sha256_bytes, sha256_file
 from cev_sim.cosmos_clip.contract import (
     ANALYTIC_RENDERER,
     CAPTURE_INTERVAL_NS,

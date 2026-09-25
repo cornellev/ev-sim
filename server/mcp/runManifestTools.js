@@ -2,13 +2,11 @@ import { ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { storageEvents } from "./events.js";
-import { fail, ok } from "./toolResult.js";
+import { fail, ok, publishDomain } from "./toolResult.js";
 
 const JsonObjectSchema = z.record(z.string(), z.any());
 
-function publish(id, action, data = null) {
-    return storageEvents.publish({ domain: "run-manifest", id, action, data });
-}
+const publish = publishDomain(storageEvents, "run-manifest");
 
 function resolvedSummary(resolved) {
     return {

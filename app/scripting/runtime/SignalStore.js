@@ -1,3 +1,4 @@
+import { cloneJson } from "../../util/cloneJson.js";
 import { normalizeSignalPath } from "./SignalPaths.js";
 import { simulationTimeUsFromValues } from "../../telemetry/SimulationClock.js";
 
@@ -29,14 +30,12 @@ function signalPathParts(path) {
 export function cloneValue(value) {
     if (value === undefined) return undefined;
     if (value === null || typeof value !== "object") return value;
-    if (typeof structuredClone === "function") {
-        try {
-            return structuredClone(value);
-        } catch {
-            // Fall through to JSON cloning for plain telemetry payloads.
-        }
+    try {
+        return cloneJson(value);
+    } catch {
+        // Fall through to JSON cloning for plain telemetry payloads.
+        return JSON.parse(JSON.stringify(value));
     }
-    return JSON.parse(JSON.stringify(value));
 }
 
 function createSourceId() {

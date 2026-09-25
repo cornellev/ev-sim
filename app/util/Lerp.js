@@ -1,12 +1,15 @@
 
+import { lerp as lerpScalar, lerp3 } from "../math/linalg.js";
+
 export function lerp(a, b, t) {
-    return a + (b - a) * t;
+    return lerpScalar(a, b, t);
 }
 
 export function lerpVec3(out, a, b, t) {
-    out.x = lerp(a.x, b.x, t);
-    out.y = lerp(a.y, b.y, t);
-    out.z = lerp(a.z, b.z, t);
+    const next = lerp3(a, b, t);
+    out.x = next.x;
+    out.y = next.y;
+    out.z = next.z;
     return out;
 }
 

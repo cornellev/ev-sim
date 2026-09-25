@@ -3,12 +3,12 @@ import { z } from "zod";
 
 import { compareExperimentToBaseline } from "../../app/experiments/BaselineComparison.js";
 import { storageEvents } from "./events.js";
-import { fail, ok } from "./toolResult.js";
+import { fail, ok, publishDomain } from "./toolResult.js";
 
 const JsonObjectSchema = z.record(z.string(), z.any());
 
 function publish(domain, id, action, data = null) {
-    return storageEvents.publish({ domain, id, action, data });
+    return publishDomain(storageEvents, domain)(id, action, data);
 }
 
 function browserCommand(action, id, data = {}) {

@@ -1,8 +1,7 @@
 import { sha256ExactBytes } from "../simulation/visual/VisualLayer.js";
-
-const GLB_MAGIC = 0x46546c67;
-const JSON_CHUNK = 0x4e4f534a;
-const BIN_CHUNK = 0x004e4942;
+import { GLB_BIN_CHUNK, GLB_JSON_CHUNK, GLB_MAGIC, readGlb } from "../simulation/visual/GlbContainer.js";
+const JSON_CHUNK = GLB_JSON_CHUNK;
+const BIN_CHUNK = GLB_BIN_CHUNK;
 const PNG_SIGNATURE = Object.freeze([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const KTX2_IDENTIFIER = Object.freeze([
     0xab, 0x4b, 0x54, 0x58, 0x20, 0x32, 0x30, 0xbb, 0x0d, 0x0a, 0x1a, 0x0a,
@@ -84,22 +83,21 @@ function mediaTypeFor(path) {
 }
 
 function parseGlb(bytes) {
-    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    if (bytes.byteLength < 20 || view.getUint32(0, true) !== GLB_MAGIC || view.getUint32(4, true) !== 2 || view.getUint32(8, true) !== bytes.byteLength) throw new Error("Entry GLB has an invalid version-2 header.");
-    const chunks = [];
-    let offset = 12;
-    while (offset + 8 <= bytes.byteLength) {
-        const length = view.getUint32(offset, true);
-        const type = view.getUint32(offset + 4, true);
-        const end = offset + 8 + length;
-        if (end > bytes.byteLength || length % 4 !== 0) throw new Error("Entry GLB has an invalid chunk table.");
-        chunks.push({ type, bytes: bytes.slice(offset + 8, end) });
-        offset = end;
-    }
-    if (offset !== bytes.byteLength || chunks[0]?.type !== JSON_CHUNK) throw new Error("Entry GLB must begin with a JSON chunk.");
-    let end = chunks[0].bytes.length;
-    while (end > 0 && [0, 9, 10, 13, 32].includes(chunks[0].bytes[end - 1])) end -= 1;
-    return { json: JSON.parse(new TextDecoder().decode(chunks[0].bytes.slice(0, end))), chunks: chunks.slice(1) };
+    const parsed = readGlb(bytes, {
+        requireTotalLength: true,
+        requireAligned: true,
+        requireLeadingJson: true,
+        json: "last",
+        jsonPadding: "whitespace",
+        ErrorType: Error,
+        headerMessage: "Entry GLB has an invalid version-2 header.",
+        chunkMessage: "Entry GLB has an invalid chunk table.",
+        trailingMessage: "Entry GLB must begin with a JSON chunk.",
+        leadingJsonMessage: "Entry GLB must begin with a JSON chunk.",
+        copyChunks: true,
+        missingJsonMessage: "Entry GLB must begin with a JSON chunk.",
+    });
+    return { json: parsed.json, chunks: parsed.chunks.slice(1) };
 }
 
 function encodeGlb(json, chunks) {

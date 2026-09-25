@@ -4,6 +4,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
+import { compareUtf8 } from "../../app/math/compareUtf8.js";
 import { listPhysicsBackendSelections } from "../../app/physics/PhysicsBackend.js";
 import { getHeadlessProfileCapabilities } from "../../app/simulation/headless/ProfileRegistry.js";
 import { createStateSensorBackendSelection, STATE_SENSOR_TYPES } from "../../app/simulation/sensors/StateSensorBackend.js";
@@ -63,9 +64,6 @@ const HEALTH = Object.freeze({ SERVING: 1, DEGRADED: 2, NOT_SERVING: 3 });
 const INFRASTRUCTURE_CODES = new Set(["RESOURCE_LIMIT", "STEP_TIMEOUT", "WORKER_CRASHED", "ARTIFACT_FAILURE"]);
 const PACKAGE_VERSION = createRequire(import.meta.url)("../../package.json").version;
 
-function compareUtf8(left, right) {
-    return Buffer.from(String(left)).compare(Buffer.from(String(right)));
-}
 
 function environmentKeyOf(environment) {
     return environment.environmentKey ?? `${environment.batch.id}:${environment.index}`;

@@ -1,3 +1,5 @@
+import { compareUtf8 } from "../../math/compareUtf8.js";
+import { cross3a, dot3a, sub3a } from "../../math/linalg.js";
 import { FEATURE_GEOMETRY_BY_TYPE } from "../../3d/editor/objects/types/builtinProp.js";
 import { createBuiltInIGVCEnvironmentDocument } from "../../3d/igvc/IGVCEnvironmentDocument.js";
 import {
@@ -20,18 +22,9 @@ export const WORLD_DESCRIPTION_V2 = 2;
 export const WORLD_DESCRIPTION_V3 = 3;
 export const SUPPORTED_WORLD_DESCRIPTION_VERSIONS = Object.freeze([WORLD_DESCRIPTION_VERSION, WORLD_DESCRIPTION_V2, WORLD_DESCRIPTION_V3]);
 
-const textEncoder = new TextEncoder();
 const DEFAULT_ROAD_WIDTH = 7;
 
-export function compareUtf8(left, right) {
-    const a = textEncoder.encode(String(left));
-    const b = textEncoder.encode(String(right));
-    const length = Math.min(a.length, b.length);
-    for (let index = 0; index < length; index += 1) {
-        if (a[index] !== b[index]) return a[index] - b[index];
-    }
-    return a.length - b.length;
-}
+export { compareUtf8 };
 
 function finite(value, label) {
     const result = Number(value);
@@ -764,15 +757,15 @@ export function assertWorldResource(resource) {
 }
 
 function vector3Difference(left, right) {
-    return [left[0] - right[0], left[1] - right[1], left[2] - right[2]];
+    return sub3a(left, right);
 }
 
 function cross3(left, right) {
-    return [left[1] * right[2] - left[2] * right[1], left[2] * right[0] - left[0] * right[2], left[0] * right[1] - left[1] * right[0]];
+    return cross3a(left, right);
 }
 
 function dot3(left, right) {
-    return left[0] * right[0] + left[1] * right[1] + left[2] * right[2];
+    return dot3a(left, right);
 }
 
 function assertProxyMesh(proxy, { convex = false } = {}) {

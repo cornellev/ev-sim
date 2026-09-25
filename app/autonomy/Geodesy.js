@@ -1,5 +1,25 @@
+import { cross3 } from "../math/linalg.js";
+
 const WGS84_A = 6378137;
 const WGS84_E2 = 0.00669437999014;
+const ECEF_Z_AXIS = Object.freeze({ x: 0, y: 0, z: 1 });
+
+/** Matches THREE.Vector3.normalize, including the zero-length case. */
+function unit3(value) {
+    const length = Math.sqrt(value.x * value.x + value.y * value.y + value.z * value.z) || 1;
+    return { x: value.x / length, y: value.y / length, z: value.z / length };
+}
+
+/**
+ * East / up / north basis at an ECEF position.
+ * This is the sky and geospatial tangent frame, not GeoFrame's east-up-south axes.
+ */
+export function localEnuToEcefBasis(positionEcef) {
+    const up = unit3(positionEcef);
+    const east = unit3(cross3(ECEF_Z_AXIS, up));
+    const north = unit3(cross3(up, east));
+    return { east, up, north };
+}
 
 function radians(value) {
     return Number(value) * Math.PI / 180;

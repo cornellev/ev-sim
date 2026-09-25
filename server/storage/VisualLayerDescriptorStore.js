@@ -1,6 +1,8 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
+import { writeExclusiveUtf8 } from "./exclusiveUtf8.js";
+
 import {
     assertVisualLayer,
     canonicalExactStringify,
@@ -47,24 +49,12 @@ export class VisualLayerDescriptorStore {
         assertVisualLayer(descriptor);
         const digest = hashVisualLayer(descriptor);
         const bytes = canonicalExactStringify(descriptor);
-        await writeExclusiveUtf8(this.pathFor(digest), bytes);
+        await writeExclusiveUtf8(
+            this.pathFor(digest),
+            bytes,
+            (name) => `Visual layer digest collision at ${name}.`,
+        );
         return digest;
     }
 }
 
-async function writeExclusiveUtf8(filePath, bytes) {
-    await fs.mkdir(path.dirname(filePath), { recursive: true });
-    const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-    await fs.writeFile(tempPath, bytes, "utf8");
-    try {
-        await fs.link(tempPath, filePath);
-    } catch (error) {
-        if (error.code !== "EEXIST") throw error;
-        const existing = await fs.readFile(filePath, "utf8");
-        if (existing !== bytes) {
-            throw new Error(`Visual layer digest collision at ${path.basename(filePath)}.`);
-        }
-    } finally {
-        await fs.rm(tempPath, { force: true });
-    }
-}

@@ -9,6 +9,8 @@ import {
     sha256ExactBytes,
     sha256ExactUtf8,
 } from "../../../simulation/visual/VisualLayer.js";
+import { compareUtf8 } from "../../../math/compareUtf8.js";
+import { createExactParser } from "../../../validation/exactJson.js";
 import {
     INTRINSIC_CHANNEL_BY_NAME,
     MATERIAL_PROPOSAL_ORIGINS,
@@ -21,8 +23,6 @@ export const BAKE_MATERIAL_PROPOSAL_SET_VERSION = 1;
 export const PROPOSAL_CONFIDENCE_ENCODING = "float32-le-scalar";
 export const PROPOSAL_KNOWN_MASK_ENCODING = "uint8-scalar";
 
-const SHA256_PATTERN = /^[a-f0-9]{64}$/;
-const textEncoder = new TextEncoder();
 const TOP_LEVEL_KEYS = Object.freeze([
     "kind", "version", "recipeHash", "snapshotHash", "planHash", "requestHash",
     "responseHash", "sources", "units",
@@ -46,53 +46,14 @@ function fail(path, message, code) {
     throw proposalError(`${path}: ${message}`, code);
 }
 
-function plainObject(value, path) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) fail(path, "expected an object");
-    return value;
-}
-
-function allowedKeys(value, allowed, path) {
-    const source = plainObject(value, path);
-    const unknown = Object.keys(source).find((key) => !allowed.includes(key));
-    if (unknown) fail(`${path}.${unknown}`, "unknown field");
-    return source;
-}
-
-function denseArray(value, path) {
-    if (!Array.isArray(value)) fail(path, "expected an array");
-    const keys = Object.keys(value);
-    if (keys.length !== value.length || keys.some((key, index) => key !== String(index))) {
-        fail(path, "sparse or extended arrays are outside the JSON data model");
-    }
-    return value;
-}
-
-function compareUtf8(left, right) {
-    const a = textEncoder.encode(String(left));
-    const b = textEncoder.encode(String(right));
-    const length = Math.min(a.length, b.length);
-    for (let index = 0; index < length; index += 1) {
-        if (a[index] !== b[index]) return a[index] - b[index];
-    }
-    return a.length - b.length;
-}
-
-function text(value, path) {
-    if (typeof value !== "string" || value.length === 0) fail(path, "expected a non-empty string");
-    if (value !== value.normalize("NFC")) fail(path, "identifier must be NFC text");
-    return value;
-}
-
-function digest(value, path, { nullable = false } = {}) {
-    if (nullable && value == null) return null;
-    if (typeof value !== "string" || !SHA256_PATTERN.test(value)) fail(path, "expected a lowercase SHA-256 digest");
-    return value;
-}
-
-function integer(value, path, { min = 0 } = {}) {
-    if (!Number.isSafeInteger(value) || value < min) fail(path, `expected a safe integer >= ${min}`);
-    return value;
-}
+const {
+    plainObject,
+    allowedKeys,
+    denseArray,
+    text,
+    sha256Hex: digest,
+    integer,
+} = createExactParser(fail, { text: "nonempty-nfc", digest: "nullable" });
 
 function revisionRecord(value, path, { nullable = false } = {}) {
     if (nullable && value == null) return null;

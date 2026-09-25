@@ -13,17 +13,9 @@ import { MeshBVH } from "three-mesh-bvh";
 import { rep103PoseToThree } from "../../autonomy/CoordinateFrames.js";
 import { compareUtf8 } from "../world/WorldDescription.js";
 import { assertLidarGeometryResource } from "../lidar/LidarGeometry.js";
+import { BOX_FACES } from "./BoxFaces.js";
 
 export const CPU_LIDAR_NEAR_METERS = 1e-4;
-
-const BOX_FACES = Object.freeze([
-    [0, 2, 1], [0, 3, 2],
-    [4, 5, 6], [4, 6, 7],
-    [0, 1, 5], [0, 5, 4],
-    [1, 2, 6], [1, 6, 5],
-    [2, 3, 7], [2, 7, 6],
-    [3, 0, 4], [3, 4, 7],
-]);
 
 function boxVertices(primitive) {
     const { center, size } = primitive;

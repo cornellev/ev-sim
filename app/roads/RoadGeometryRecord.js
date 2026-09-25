@@ -1,3 +1,10 @@
+import {
+    add3 as add,
+    length3 as length,
+    normalize3,
+    scale3 as scale,
+    sub3 as subtract,
+} from "../math/linalg.js";
 import { cloneRoadLanes, validateRoadLaneLayout } from "./RoadLaneModel.js";
 
 const MODES = new Set(["auto", "aligned", "free"]);
@@ -13,25 +20,8 @@ function vector(value) {
     return point(value);
 }
 
-function add(left, right) {
-    return { x: left.x + right.x, y: left.y + right.y, z: left.z + right.z };
-}
-
-function subtract(left, right) {
-    return { x: left.x - right.x, y: left.y - right.y, z: left.z - right.z };
-}
-
-function scale(value, amount) {
-    return { x: value.x * amount, y: value.y * amount, z: value.z * amount };
-}
-
-function length(value) {
-    return Math.hypot(value.x, value.y, value.z);
-}
-
 function normalize(value) {
-    const magnitude = length(value);
-    return magnitude <= EPSILON ? null : scale(value, 1 / magnitude);
+    return normalize3(value, EPSILON);
 }
 
 function issue(path, code, message, objectId = null) {

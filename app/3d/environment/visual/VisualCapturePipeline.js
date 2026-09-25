@@ -6,6 +6,12 @@ import {
     rep103PoseToThree,
     threeCameraLookAlongMountForwardRotation,
 } from "../../../autonomy/CoordinateFrames.js";
+import {
+    invertRigidMat4,
+    mat4FromQuaternionTranslation,
+    multiplyMat4,
+    quaternionFromRotationMatrix,
+} from "../../../math/linalg.js";
 
 export const VISUAL_CAMERA_CALIBRATION_KIND = "cev-sim.visual-camera-calibration";
 export const VISUAL_CAMERA_CALIBRATION_VERSION = 1;
@@ -416,97 +422,23 @@ export function projectionMatrixFromCalibration(calibration) {
 export function multiplyColumnMajorMatrices(left, right) {
     const a = assertMatrix(left, "left");
     const b = assertMatrix(right, "right");
-    const result = new Array(16).fill(0);
-    for (let column = 0; column < 4; column += 1) {
-        for (let row = 0; row < 4; row += 1) {
-            for (let index = 0; index < 4; index += 1) {
-                result[column * 4 + row] += a[index * 4 + row] * b[column * 4 + index];
-            }
-        }
-    }
-    return freezeArray(result);
+    return freezeArray(multiplyMat4(a, b));
 }
 
 export function invertRigidTransform(matrix) {
     const value = assertMatrix(matrix, "matrixWorld");
-    const result = [
-        value[0], value[4], value[8], 0,
-        value[1], value[5], value[9], 0,
-        value[2], value[6], value[10], 0,
-        0, 0, 0, 1,
-    ];
-    const tx = value[12];
-    const ty = value[13];
-    const tz = value[14];
-    result[12] = -(result[0] * tx + result[4] * ty + result[8] * tz);
-    result[13] = -(result[1] * tx + result[5] * ty + result[9] * tz);
-    result[14] = -(result[2] * tx + result[6] * ty + result[10] * tz);
-    return freezeArray(result);
+    return freezeArray(invertRigidMat4(value));
 }
 
 function matrixFromPose(position, quaternion) {
-    const { x, y, z, w } = quaternion;
-    const x2 = x + x;
-    const y2 = y + y;
-    const z2 = z + z;
-    const xx = x * x2;
-    const xy = x * y2;
-    const xz = x * z2;
-    const yy = y * y2;
-    const yz = y * z2;
-    const zz = z * z2;
-    const wx = w * x2;
-    const wy = w * y2;
-    const wz = w * z2;
-    return freezeArray([
-        1 - (yy + zz), xy + wz, xz - wy, 0,
-        xy - wz, 1 - (xx + zz), yz + wx, 0,
-        xz + wy, yz - wx, 1 - (xx + yy), 0,
-        position.x, position.y, position.z, 1,
-    ]);
+    return freezeArray(mat4FromQuaternionTranslation(quaternion, position));
 }
 
 function quaternionFromMatrix(matrix) {
-    const m11 = matrix[0];
-    const m12 = matrix[4];
-    const m13 = matrix[8];
-    const m21 = matrix[1];
-    const m22 = matrix[5];
-    const m23 = matrix[9];
-    const m31 = matrix[2];
-    const m32 = matrix[6];
-    const m33 = matrix[10];
-    const trace = m11 + m22 + m33;
-    let x;
-    let y;
-    let z;
-    let w;
-    if (trace > 0) {
-        const scale = 0.5 / Math.sqrt(trace + 1);
-        w = 0.25 / scale;
-        x = (m32 - m23) * scale;
-        y = (m13 - m31) * scale;
-        z = (m21 - m12) * scale;
-    } else if (m11 > m22 && m11 > m33) {
-        const scale = 2 * Math.sqrt(1 + m11 - m22 - m33);
-        w = (m32 - m23) / scale;
-        x = 0.25 * scale;
-        y = (m12 + m21) / scale;
-        z = (m13 + m31) / scale;
-    } else if (m22 > m33) {
-        const scale = 2 * Math.sqrt(1 + m22 - m11 - m33);
-        w = (m13 - m31) / scale;
-        x = (m12 + m21) / scale;
-        y = 0.25 * scale;
-        z = (m23 + m32) / scale;
-    } else {
-        const scale = 2 * Math.sqrt(1 + m33 - m11 - m22);
-        w = (m21 - m12) / scale;
-        x = (m13 + m31) / scale;
-        y = (m23 + m32) / scale;
-        z = 0.25 * scale;
-    }
-    const quaternion = freezeQuaternion({ x, y, z, w }, "matrixWorld.quaternion");
+    const extracted = quaternionFromRotationMatrix(matrix);
+    const quaternion = freezeQuaternion(extracted, "matrixWorld.quaternion");
+    // Hemisphere flip is applied to the raw Shepperd result. Normalization can
+    // leave a negative w only for a -0 edge; keep the historical post-normalize flip.
     return quaternion.w < 0
         ? Object.freeze({
             x: -quaternion.x,

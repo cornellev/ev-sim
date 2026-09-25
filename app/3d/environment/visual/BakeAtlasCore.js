@@ -20,6 +20,15 @@ import {
     seamCosine,
 } from "./BakeConstructionPolicy.js";
 import { quantizeConfidence, quantizeFacing } from "./BakeAtlasContribution.js";
+import {
+    add3,
+    cross3,
+    dot3,
+    length3,
+    normalize3,
+    scale3,
+    sub3,
+} from "../../../math/linalg.js";
 
 const UV_EPS = 1e-6;
 const AREA_EPS = 1e-12;
@@ -44,37 +53,31 @@ function vec(x, y, z) {
 }
 
 function sub(a, b) {
-    return vec(a.x - b.x, a.y - b.y, a.z - b.z);
+    return sub3(a, b);
 }
 
 function add(a, b) {
-    return vec(a.x + b.x, a.y + b.y, a.z + b.z);
+    return add3(a, b);
 }
 
 function scale(a, s) {
-    return vec(a.x * s, a.y * s, a.z * s);
+    return scale3(a, s);
 }
 
 function dot(a, b) {
-    return a.x * b.x + a.y * b.y + a.z * b.z;
+    return dot3(a, b);
 }
 
 function cross(a, b) {
-    return vec(
-        a.y * b.z - a.z * b.y,
-        a.z * b.x - a.x * b.z,
-        a.x * b.y - a.y * b.x,
-    );
+    return cross3(a, b);
 }
 
 function length(a) {
-    return Math.hypot(a.x, a.y, a.z);
+    return length3(a);
 }
 
 function normalize(a) {
-    const mag = length(a);
-    if (!(mag > 0)) return vec(0, 0, 0);
-    return scale(a, 1 / mag);
+    return normalize3(a, 0, { x: 0, y: 0, z: 0 });
 }
 
 function vertex(triangle, index) {

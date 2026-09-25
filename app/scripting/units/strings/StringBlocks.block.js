@@ -1,47 +1,10 @@
-import { BlockOutput, UnitBlock } from "../../ScriptManager.js";
+import { BlockOutput } from "../../ScriptManager.js";
 import { finiteInt32 } from "../../types/PortTypes.js";
 import { asArray } from "../valueOps.js";
 import * as stringOps from "./stringOps.js";
 
-function freezePort(port) {
-    return Object.freeze({ label: port.label, type: port.type });
-}
-
-function freezePorts(inputs, outputs = [{ label: "out", type: "string" }]) {
-    return Object.freeze({
-        inputs: Object.freeze(inputs.map(freezePort)),
-        outputs: Object.freeze(outputs.map(freezePort)),
-    });
-}
-
-function defineBlock({ type, ports, execute, valid }) {
-    class Block extends UnitBlock {
-        static blockType = type;
-
-        register() {
-            for (const port of ports.inputs) this.registerInput(port.label, port.type);
-            for (const port of ports.outputs) this.registerOutput(port.label, port.type);
-        }
-
-        valid() {
-            if (valid) return valid.call(this);
-            return ports.inputs.every((port) => this.hasInput(port.label));
-        }
-
-        execute() {
-            return execute.call(this);
-        }
-    }
-
-    try {
-        Object.defineProperty(Block, "name", { value: type });
-    } catch {
-        // Class name is non-configurable in some engines; blockType is the authority.
-    }
-
-    return Block;
-}
-
+import { createBlockHelpers } from "../defineBlock.js";
+const { freezePorts, defineBlock } = createBlockHelpers({ defaultOutputType: "string" });
 function out(value) {
     return new BlockOutput().set("out", value);
 }

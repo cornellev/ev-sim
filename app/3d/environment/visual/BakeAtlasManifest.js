@@ -7,6 +7,7 @@ import {
     canonicalExactStringify,
     sha256ExactUtf8,
 } from "../../../simulation/visual/VisualLayer.js";
+import { createExactParser } from "../../../validation/exactJson.js";
 import { compareUtf8 } from "./BakeRunCatalog.js";
 import { hashBakeConstruction } from "./BakeConstructionPolicy.js";
 
@@ -14,7 +15,6 @@ export const BAKE_ATLAS_MANIFEST_KIND = "cev-sim.bake-atlas-manifest";
 export const BAKE_ATLAS_MANIFEST_VERSION = 1;
 export const BAKE_ATLAS_MANIFEST_VERSION_V2 = 2;
 
-const SHA256 = /^[a-f0-9]{64}$/;
 const MANIFEST_KEYS = Object.freeze([
     "kind", "version", "constructionHash", "appearanceMode", "chunks",
 ]);
@@ -39,55 +39,16 @@ function fail(path, message) {
     throw error;
 }
 
-function plainObject(value, path) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) fail(path, "expected an object");
-    return value;
-}
-
-function allowedKeys(value, allowed, path) {
-    const source = plainObject(value, path);
-    const unknown = Object.keys(source).find((key) => !allowed.includes(key));
-    if (unknown) fail(`${path}.${unknown}`, "unknown field");
-    return source;
-}
-
-function denseArray(value, path) {
-    if (!Array.isArray(value)) fail(path, "expected an array");
-    const keys = Object.keys(value);
-    if (keys.length !== value.length || keys.some((key, index) => key !== String(index))) {
-        fail(path, "sparse or extended arrays are outside the JSON data model");
-    }
-    return value;
-}
-
-function text(value, path, { identifier = false } = {}) {
-    if (typeof value !== "string" || !value) fail(path, "expected a non-empty string");
-    if (identifier && value !== value.normalize("NFC")) fail(path, "identifier must be NFC text");
-    return value;
-}
-
-function integer(value, path, { min = 0 } = {}) {
-    if (typeof value !== "number" || !Number.isFinite(value) || !Number.isSafeInteger(value) || value < min) {
-        fail(path, `expected a safe integer >= ${min}`);
-    }
-    return value;
-}
-
-function digest(value, path) {
-    const result = text(value, path);
-    if (!SHA256.test(result)) fail(path, "expected a lowercase SHA-256 digest");
-    return result;
-}
-
-function boolean(value, path) {
-    if (typeof value !== "boolean") fail(path, "expected a boolean");
-    return value;
-}
-
-function finite(value, path) {
-    if (typeof value !== "number" || !Number.isFinite(value)) fail(path, "expected a finite number");
-    return Object.is(value, -0) ? 0 : value;
-}
+const {
+    plainObject,
+    allowedKeys,
+    denseArray,
+    text,
+    integer,
+    sha256Hex: digest,
+    boolean,
+    finite,
+} = createExactParser(fail);
 
 function intrinsicRecord(value, path) {
     const source = allowedKeys(value ?? {}, INTRINSIC_KEYS, path);

@@ -1,3 +1,4 @@
+import { compareUtf8 } from "../math/compareUtf8.js";
 import { simulationSha256 } from "../simulation/kernel/SimulationHashes.js";
 
 export const PHYSICS_BACKEND_KIND = 1;
@@ -35,17 +36,6 @@ export const PHYSICS_BACKEND_CONFIG_V2 = Object.freeze({
 });
 export const PHYSICS_BACKEND_CONFIG_HASH_V2 = simulationSha256(PHYSICS_BACKEND_CONFIG_V2);
 
-const utf8Encoder = new TextEncoder();
-
-function compareUtf8(left, right) {
-    const a = utf8Encoder.encode(String(left));
-    const b = utf8Encoder.encode(String(right));
-    const length = Math.min(a.length, b.length);
-    for (let index = 0; index < length; index += 1) {
-        if (a[index] !== b[index]) return a[index] - b[index];
-    }
-    return a.length - b.length;
-}
 
 function worldHasCollisionProxies(world) {
     return (world?.assetProxies ?? []).some((entry) => (entry.collision?.length ?? 0) > 0);

@@ -1,3 +1,4 @@
+import { deepFreeze } from "../../util/cloneJson.js";
 import { clonePluginJson } from "../../plugin/PluginJson.js";
 import { PLUGIN_ERROR_CODES, assertSynchronous, pluginError } from "../../plugin/PluginErrors.js";
 import { simulationSha256 } from "../kernel/SimulationHashes.js";
@@ -14,12 +15,6 @@ export const PLUGIN_SENSOR_LIFECYCLE_METHODS = Object.freeze([
     "finalize",
     "dispose",
 ]);
-
-function deepFreeze(value) {
-    if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
-    for (const entry of Object.values(value)) deepFreeze(entry);
-    return Object.freeze(value);
-}
 
 function fields(record, sensorId, hook) {
     return {

@@ -11,6 +11,7 @@ import {
     pointFrom,
     projectPointToPolyline,
 } from "./geometry.js";
+import { clamp } from "../../math/linalg.js";
 import {
     FOLLOW_DISTANCE_METRIC,
     FOLLOW_PATH_DEFAULT_KINEMATICS,
@@ -43,10 +44,6 @@ export function resolveFollowerKinematics(candidates = []) {
         }
     }
     return { ...FOLLOW_PATH_DEFAULT_KINEMATICS };
-}
-
-function clamp(value, min, max) {
-    return Math.max(min, Math.min(max, value));
 }
 
 /**

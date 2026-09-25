@@ -1,3 +1,4 @@
+import { clamp01 as clampUnit, distance3, distanceXZ as xzDistance } from "../../math/linalg.js";
 import { canonicalFiniteNumber } from "../../simulation/kernel/SimulationHashes.js";
 
 const EPSILON = 1e-9;
@@ -24,18 +25,17 @@ export function pointFrom(value, fallback = null) {
 }
 
 export function clamp01(value) {
-    return Math.max(0, Math.min(1, finiteNumber(value, 0)));
+    return clampUnit(finiteNumber(value, 0));
 }
 
 export function distanceXZ(left, right) {
-    return Math.hypot(right.x - left.x, right.z - left.z);
+    return xzDistance(left, right);
 }
 
 export function distance3d(left, right) {
-    return Math.hypot(
-        right.x - left.x,
-        finiteNumber(right.y, 0) - finiteNumber(left.y, 0),
-        right.z - left.z,
+    return distance3(
+        { x: left.x, y: finiteNumber(left.y, 0), z: left.z },
+        { x: right.x, y: finiteNumber(right.y, 0), z: right.z },
     );
 }
 

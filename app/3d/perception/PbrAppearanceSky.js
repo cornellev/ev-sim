@@ -21,11 +21,11 @@ import { DataTextureLoader, parseUint8Array } from "@takram/three-geospatial";
 import { EXRLoader } from "three/examples/jsm/loaders/EXRLoader.js";
 import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
 
+import { localEnuToEcefBasis } from "../../autonomy/Geodesy.js";
 import { getSkyDate, getSkyRuntimeSource, SKY_MODES, SKY_QUALITY_PRESETS } from "../skybox/EnvironmentSkyConfig.js";
 import { assertAllowedBrowserResourceUrl } from "../../security/BrowserResourcePolicy.js";
 
 const OBSERVER_ECEF = new THREE.Vector3(3954947, 3354895, 3700264);
-const ECEF_Z_AXIS = new THREE.Vector3(0, 0, 1);
 const HEADLESS_PBR_ORIGIN = "http://cev-sim.invalid";
 const HEADLESS_CLOUD_ASSET_ROOT = "/runtime/node_modules/@takram/three-clouds/assets";
 
@@ -35,19 +35,21 @@ export function cloudTextureUrl(filename, remoteUrl) {
 }
 
 function makeLocalToECEFMatrix(positionECEF, result = new THREE.Matrix4()) {
-    const up = positionECEF.clone().normalize();
-    const east = ECEF_Z_AXIS.clone().cross(up).normalize();
-    const north = up.clone().cross(east).normalize();
-    result.makeBasis(east, up, north);
+    const { east, up, north } = localEnuToEcefBasis(positionECEF);
+    result.makeBasis(
+        new THREE.Vector3(east.x, east.y, east.z),
+        new THREE.Vector3(up.x, up.y, up.z),
+        new THREE.Vector3(north.x, north.y, north.z),
+    );
     result.setPosition(positionECEF);
     return result;
 }
 
-function isExrSource(source) {
+export function isExrSource(source) {
     return /\.exr($|\?)/i.test(source);
 }
 
-function isHdrSource(source) {
+export function isHdrSource(source) {
     return /\.hdr($|\?)/i.test(source);
 }
 
@@ -66,7 +68,7 @@ export function orientTakramSky(skyMaterial, sky) {
     skyMaterial.worldToECEFMatrix?.copy(worldToECEF);
 }
 
-function loadSkyTexture(source) {
+export function loadSkyTexture(source) {
     const loader = isExrSource(source)
         ? new EXRLoader()
         : isHdrSource(source)

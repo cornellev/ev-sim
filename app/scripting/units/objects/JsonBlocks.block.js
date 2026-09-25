@@ -3,18 +3,8 @@ import { cloneValue, deleteByPath, getByPath, setByPath } from "../../runtime/Si
 import { parseValueByType } from "../program/ProgramTypes.js";
 import { normalizeItemType } from "../valueOps.js";
 
+import { freezePorts } from "../defineBlock.js";
 const PATH_MISSING = Symbol("json-path-missing");
-
-function freezePort(port) {
-    return Object.freeze({ label: port.label, type: port.type });
-}
-
-function freezePorts(inputs, outputs) {
-    return Object.freeze({
-        inputs: Object.freeze(inputs.map(freezePort)),
-        outputs: Object.freeze(outputs.map(freezePort)),
-    });
-}
 
 function isPlainObject(value) {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);

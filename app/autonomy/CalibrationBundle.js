@@ -8,22 +8,12 @@ import {
     eulerToQuaternion,
     rep103PoseToThree,
 } from "./CoordinateFrames.js";
+import { canonicalStringify } from "../simulation/canonicalJson.js";
 import { canonicalNumericTree } from "../simulation/kernel/SimulationHashes.js";
 
 function text(value, fallback = "") {
     const normalized = String(value ?? "").trim();
     return normalized || fallback;
-}
-
-function canonicalStringify(value) {
-    const normalize = (entry) => {
-        if (Array.isArray(entry)) return entry.map(normalize);
-        if (!entry || typeof entry !== "object") return entry;
-        return Object.fromEntries(
-            Object.keys(entry).sort().map((key) => [key, normalize(entry[key])]),
-        );
-    };
-    return JSON.stringify(normalize(value));
 }
 
 function defaultSensorFrames(sensor) {

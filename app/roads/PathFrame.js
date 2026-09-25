@@ -1,3 +1,4 @@
+import { clamp01 as clampUnit } from "../math/linalg.js";
 import { resolveRoadEdge } from "./RoadGeometryRecord.js";
 import { projectPointToRoad, sampleCenterline } from "./RoadGeometry.js";
 import { sampleRoute } from "../scenarios/route/Route.js";
@@ -11,10 +12,7 @@ function finiteNumber(value, fallback = 0) {
 }
 
 function clamp01(value) {
-    const numeric = finiteNumber(value, 0);
-    if (numeric < 0) return 0;
-    if (numeric > 1) return 1;
-    return numeric;
+    return clampUnit(finiteNumber(value, 0));
 }
 
 function xzRightNormal(heading) {

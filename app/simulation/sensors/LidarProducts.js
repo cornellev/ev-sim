@@ -1,8 +1,8 @@
+import { gaussianSample } from "../../autonomy/LocalizationMeasurements.js";
 import { buildPointCloud2, buildSemanticPointCloud2 } from "./SensorMessages.js";
 
 function gaussian(rng) {
-    const left = Math.max(Number.EPSILON, rng.next());
-    return Math.sqrt(-2 * Math.log(left)) * Math.cos(2 * Math.PI * rng.next());
+    return gaussianSample(rng);
 }
 
 /** Apply host-owned noise and point dropout exactly once to an explicit range image. */

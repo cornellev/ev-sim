@@ -5,68 +5,38 @@
  * continuity limit and a 5 mm camera-facing offset.
  */
 
+import {
+    invertRigidMat4,
+    mat4FromQuaternionTranslation,
+    transformPointMat4 as transformPoint,
+} from "../../../math/linalg.js";
+
 export const PROJECTED_CAPTURE_CELL_SIZE_PX = 10;
 export const PROJECTED_CAPTURE_MAX_TRIANGLE_DEPTH_DELTA = 1;
 export const PROJECTED_CAPTURE_SURFACE_OFFSET = 0.005;
 
 export function mat4FromPose(position, rotation) {
-    const x = Number(rotation?.x) || 0;
-    const y = Number(rotation?.y) || 0;
-    const z = Number(rotation?.z) || 0;
-    const w = Number(rotation?.w) || 1;
-    const x2 = x + x;
-    const y2 = y + y;
-    const z2 = z + z;
-    const xx = x * x2;
-    const xy = x * y2;
-    const xz = x * z2;
-    const yy = y * y2;
-    const yz = y * z2;
-    const zz = z * z2;
-    const wx = w * x2;
-    const wy = w * y2;
-    const wz = w * z2;
-    return [
-        1 - (yy + zz), xy + wz, xz - wy, 0,
-        xy - wz, 1 - (xx + zz), yz + wx, 0,
-        xz + wy, yz - wx, 1 - (xx + yy), 0,
-        Number(position?.x) || 0,
-        Number(position?.y) || 0,
-        Number(position?.z) || 0,
-        1,
-    ];
+    return mat4FromQuaternionTranslation(
+        {
+            x: Number(rotation?.x) || 0,
+            y: Number(rotation?.y) || 0,
+            z: Number(rotation?.z) || 0,
+            w: Number(rotation?.w) || 1,
+        },
+        {
+            x: Number(position?.x) || 0,
+            y: Number(position?.y) || 0,
+            z: Number(position?.z) || 0,
+        },
+    );
 }
 
 export function invertAffineMat4(m) {
-    const out = new Float64Array(16);
-    out[0] = m[0];
-    out[1] = m[4];
-    out[2] = m[8];
-    out[3] = 0;
-    out[4] = m[1];
-    out[5] = m[5];
-    out[6] = m[9];
-    out[7] = 0;
-    out[8] = m[2];
-    out[9] = m[6];
-    out[10] = m[10];
-    out[11] = 0;
-    const tx = m[12];
-    const ty = m[13];
-    const tz = m[14];
-    out[12] = -(out[0] * tx + out[4] * ty + out[8] * tz);
-    out[13] = -(out[1] * tx + out[5] * ty + out[9] * tz);
-    out[14] = -(out[2] * tx + out[6] * ty + out[10] * tz);
-    out[15] = 1;
-    return out;
+    return Float64Array.from(invertRigidMat4(m));
 }
 
 export function transformPointMat4(m, x, y, z) {
-    return {
-        x: m[0] * x + m[4] * y + m[8] * z + m[12],
-        y: m[1] * x + m[5] * y + m[9] * z + m[13],
-        z: m[2] * x + m[6] * y + m[10] * z + m[14],
-    };
+    return transformPoint(m, { x, y, z });
 }
 
 export function cameraDepthOfWorld(invCamera, x, y, z) {

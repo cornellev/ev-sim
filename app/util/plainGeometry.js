@@ -4,10 +4,11 @@
  * `canonicalFiniteNumber` in `simulation/kernel/SimulationHashes.js`.
  */
 
+import { cloneJson } from "./cloneJson.js";
+
 export function clonePlain(value) {
     if (value === undefined) return undefined;
-    if (typeof structuredClone === "function") return structuredClone(value);
-    return JSON.parse(JSON.stringify(value));
+    return cloneJson(value);
 }
 
 export function plainObject(value) {

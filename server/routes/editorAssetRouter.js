@@ -1,5 +1,7 @@
 import express from "express";
 
+import { jsonHandler } from "./jsonHandler.js";
+
 export function createEditorAssetRouter(service) {
     const router = express.Router();
     const store = () => service.editorAssets;
@@ -46,14 +48,4 @@ function expected(req) {
     return Number.isInteger(parsed) ? parsed : value;
 }
 
-function handle(fn) {
-    return async (req, res) => {
-        try {
-            res.json((await fn(req)) ?? null);
-        } catch (error) {
-            const status = Number(error.statusCode) || 400;
-            console.error(`[editor-assets] ${req.method} ${req.originalUrl} failed:`, error);
-            res.status(status).json(error.toJSON?.() ?? { error: error.message, code: error.code, currentRevision: error.currentRevision });
-        }
-    };
-}
+const handle = (fn) => jsonHandler(fn, { logPrefix: "editor-assets" });

@@ -21,11 +21,9 @@ export function nonNegativeInteger(value, fallback = 0) {
     return Number.isFinite(normalized) && normalized >= 0 ? normalized : fallback;
 }
 
-export function cloneValue(value) {
-    if (typeof structuredClone === "function") return structuredClone(value);
-    return JSON.parse(JSON.stringify(value));
-}
+export { cloneJson as cloneValue, deepFreeze } from "../util/cloneJson.js";
 
+/** UTF-16 key order. Not the UTF-8 order of simulationSemanticHash. */
 export function canonicalize(value) {
     if (Array.isArray(value)) return value.map(canonicalize);
     if (!isPlainObject(value)) return value;
@@ -49,12 +47,6 @@ export function stableHash(value) {
         second ^= second >>> 13;
     }
     return `${(first >>> 0).toString(16).padStart(8, "0")}${(second >>> 0).toString(16).padStart(8, "0")}`;
-}
-
-export function deepFreeze(value) {
-    if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
-    for (const nested of Object.values(value)) deepFreeze(nested);
-    return Object.freeze(value);
 }
 
 export function uniqueValues(values, key = canonicalStringify) {

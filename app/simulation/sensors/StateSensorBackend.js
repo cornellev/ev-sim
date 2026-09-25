@@ -1,3 +1,5 @@
+import { compareUtf8 } from "../../math/compareUtf8.js";
+import { cloneJson } from "../../util/cloneJson.js";
 import {
     buildGnssMeasurement,
     buildImuMeasurement,
@@ -30,7 +32,6 @@ export const STATE_SENSOR_BACKEND_CONFIG = Object.freeze({
 });
 
 export const STATE_SENSOR_BACKEND_CONFIG_HASH = simulationSha256(STATE_SENSOR_BACKEND_CONFIG);
-const UTF8 = new TextEncoder();
 
 export function createStateSensorBackendSelection() {
     return {
@@ -128,17 +129,7 @@ export class StateSensorBackendRegistry {
 }
 
 function clone(value) {
-    return typeof structuredClone === "function" ? structuredClone(value) : JSON.parse(JSON.stringify(value));
-}
-
-function compareUtf8(left, right) {
-    const a = UTF8.encode(String(left));
-    const b = UTF8.encode(String(right));
-    const length = Math.min(a.length, b.length);
-    for (let index = 0; index < length; index += 1) {
-        if (a[index] !== b[index]) return a[index] - b[index];
-    }
-    return a.length - b.length;
+    return cloneJson(value);
 }
 
 class HeadlessStateSensorDevice {

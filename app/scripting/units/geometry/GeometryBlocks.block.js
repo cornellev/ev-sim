@@ -1,4 +1,4 @@
-import { BlockOutput, UnitBlock } from "../../ScriptManager.js";
+import { BlockOutput } from "../../ScriptManager.js";
 import {
     POSE2D_TYPE,
     POSE3D_TYPE,
@@ -11,45 +11,8 @@ import {
 } from "../../types/PortTypes.js";
 import * as vectorMath from "./vectorMath.js";
 
-function freezePort(port) {
-    return Object.freeze({ label: port.label, type: port.type });
-}
-
-function freezePorts(inputs, outputs = [{ label: "out", type: VEC2_TYPE }]) {
-    return Object.freeze({
-        inputs: Object.freeze(inputs.map(freezePort)),
-        outputs: Object.freeze(outputs.map(freezePort)),
-    });
-}
-
-function defineBlock({ type, ports, execute, valid }) {
-    class Block extends UnitBlock {
-        static blockType = type;
-
-        register() {
-            for (const port of ports.inputs) this.registerInput(port.label, port.type);
-            for (const port of ports.outputs) this.registerOutput(port.label, port.type);
-        }
-
-        valid() {
-            if (valid) return valid.call(this);
-            return ports.inputs.every((port) => this.hasInput(port.label));
-        }
-
-        execute() {
-            return execute.call(this);
-        }
-    }
-
-    try {
-        Object.defineProperty(Block, "name", { value: type });
-    } catch {
-        // Class name is non-configurable in some engines; blockType is the authority.
-    }
-
-    return Block;
-}
-
+import { createBlockHelpers } from "../defineBlock.js";
+const { freezePorts, defineBlock } = createBlockHelpers({ defaultOutputType: VEC2_TYPE });
 function out(value) {
     return new BlockOutput().set("out", value);
 }

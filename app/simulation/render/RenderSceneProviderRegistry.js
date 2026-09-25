@@ -2,6 +2,7 @@ import {
     VISUAL_CAMERA_PRODUCT_PROFILE,
     VISUAL_RENDER_PROVIDERS,
 } from "../visual/VisualLayer.js";
+import { createExactParser } from "../../validation/exactJson.js";
 
 export const CAMERA_RENDER_PRODUCT_KEYS = Object.freeze([
     "rgb",
@@ -79,12 +80,9 @@ function fail(code, message, details = null) {
     throw new RenderSceneProviderError(code, message, details);
 }
 
-function plainObject(value, path) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
-        fail("MALFORMED_RENDER_SELECTION", `${path}: expected an object`);
-    }
-    return value;
-}
+const { plainObject } = createExactParser((path, message) => {
+    fail("MALFORMED_RENDER_SELECTION", `${path}: ${message}`);
+});
 
 function assertKeys(value, allowed, path) {
     const unknown = Object.keys(value).find((key) => !allowed.includes(key));

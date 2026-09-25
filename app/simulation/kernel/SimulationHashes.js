@@ -1,3 +1,4 @@
+import { compareUtf8Bytes } from "../../math/compareUtf8.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { simulationIdentityVersion } from "./RunIdentity.js";
@@ -54,11 +55,7 @@ function compareUtf8(left, right) {
         b = textEncoder.encode(String(right));
         utf8KeyCache.set(right, b);
     }
-    const length = Math.min(a.length, b.length);
-    for (let index = 0; index < length; index += 1) {
-        if (a[index] !== b[index]) return a[index] - b[index];
-    }
-    return a.length - b.length;
+    return compareUtf8Bytes(a, b);
 }
 
 function byteHex(value) {

@@ -1,3 +1,5 @@
+import { gaussianSample } from "../../autonomy/LocalizationMeasurements.js";
+import { cloneJson } from "../../util/cloneJson.js";
 import { analyticGpuCameraPose } from "./AnalyticGpuCameraPose.js";
 import { SensorPublisher } from "./SensorPublisher.js";
 import { buildCameraInfo, buildImageMessage } from "./SensorMessages.js";
@@ -6,12 +8,11 @@ import { assertGpuSensorBackendSelection } from "./GpuSensorBackend.js";
 import { buildLidarCapture } from "./LidarProducts.js";
 
 function clone(value) {
-    return typeof structuredClone === "function" ? structuredClone(value) : JSON.parse(JSON.stringify(value));
+    return cloneJson(value);
 }
 
 function gaussian(rng) {
-    const left = Math.max(Number.EPSILON, rng.next());
-    return Math.sqrt(-2 * Math.log(left)) * Math.cos(2 * Math.PI * rng.next());
+    return gaussianSample(rng);
 }
 
 function gridSize(config) {

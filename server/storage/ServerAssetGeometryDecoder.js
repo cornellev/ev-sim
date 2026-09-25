@@ -1,5 +1,7 @@
 /** Minimal deterministic GLTF geometry decoding for ED-07 server recompilation. */
 
+import { readGlb } from "../../app/simulation/visual/GlbContainer.js";
+
 const COMPONENTS = new Map([
     [5120, { bytes: 1, read: "getInt8" }],
     [5121, { bytes: 1, read: "getUint8" }],
@@ -11,21 +13,15 @@ const COMPONENTS = new Map([
 const WIDTHS = new Map([["SCALAR", 1], ["VEC2", 2], ["VEC3", 3], ["VEC4", 4], ["MAT4", 16]]);
 
 function parseGlb(bytes) {
-    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    if (view.getUint32(0, true) !== 0x46546c67 || view.getUint32(4, true) !== 2 || view.getUint32(8, true) !== bytes.byteLength) throw new TypeError("Compiled GLB header is invalid.");
-    let offset = 12;
-    let json = null;
-    let binary = null;
-    while (offset < bytes.byteLength) {
-        const length = view.getUint32(offset, true);
-        const type = view.getUint32(offset + 4, true);
-        const chunk = bytes.subarray(offset + 8, offset + 8 + length);
-        if (type === 0x4e4f534a) json = JSON.parse(new TextDecoder().decode(chunk).replace(/\0+$/u, ""));
-        else if (type === 0x004e4942) binary = chunk;
-        offset += 8 + length;
-    }
-    if (!json) throw new TypeError("Compiled GLB has no JSON chunk.");
-    return { json, binary };
+    const parsed = readGlb(bytes, {
+        requireTotalLength: true,
+        minimumLength: 12,
+        json: "last",
+        jsonPadding: "nul",
+        headerMessage: "Compiled GLB header is invalid.",
+        missingJsonMessage: "Compiled GLB has no JSON chunk.",
+    });
+    return { json: parsed.json, binary: parsed.bin };
 }
 
 function parseDocument(bytes, mediaType) {

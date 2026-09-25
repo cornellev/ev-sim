@@ -15,6 +15,7 @@ import {
     normalizeVisualLodPolicy,
     sha256ExactUtf8,
 } from "../visual/VisualLayer.js";
+import { createExactParser } from "../../validation/exactJson.js";
 import {
     assertLidarGeometryResource,
     createLidarGeometryResource,
@@ -41,13 +42,7 @@ function fail(path, message) {
     throw new TypeError(`${path}: ${message}`);
 }
 
-function object(value, path) {
-    if (!value || typeof value !== "object" || Array.isArray(value)
-        || (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null)) {
-        fail(path, "expected an object");
-    }
-    return value;
-}
+const { plainObject: object } = createExactParser(fail, { prototype: "object-or-null" });
 
 function keys(value, allowed, path) {
     const unknown = Object.keys(value).find((key) => !allowed.includes(key));

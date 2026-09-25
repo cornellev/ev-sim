@@ -1,3 +1,5 @@
+import { compareUtf8 } from "../../math/compareUtf8.js";
+import { createExactParser } from "../../validation/exactJson.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 
@@ -218,13 +220,7 @@ function fail(path, message) {
     throw new TypeError(`${path}: ${message}`);
 }
 
-function plainObject(value, path) {
-    if (!value || typeof value !== "object" || Array.isArray(value)
-        || (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null)) {
-        fail(path, "expected an object");
-    }
-    return value;
-}
+const { plainObject } = createExactParser(fail, { prototype: "object-or-null" });
 
 function assertKeys(value, allowed, path) {
     const unknown = Object.keys(value).find((key) => !allowed.includes(key));
@@ -299,15 +295,6 @@ function enumValue(value, values, path) {
     return result;
 }
 
-function compareUtf8(left, right) {
-    const a = textEncoder.encode(left);
-    const b = textEncoder.encode(right);
-    const length = Math.min(a.length, b.length);
-    for (let index = 0; index < length; index += 1) {
-        if (a[index] !== b[index]) return a[index] - b[index];
-    }
-    return a.length - b.length;
-}
 
 function assertDenseJsonArray(value, path) {
     const keys = Object.keys(value);

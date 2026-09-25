@@ -1,4 +1,6 @@
 import { eulerToQuaternion } from "../../../autonomy/CoordinateFrames.js";
+import { compareUtf8 } from "../../../math/compareUtf8.js";
+import { createExactParser } from "../../../validation/exactJson.js";
 import {
     canonicalExactStringify,
     sha256ExactBytes,
@@ -83,8 +85,6 @@ export const DEFAULT_BAKE_CACHE_POLICY = Object.freeze({
     mode: "none",
 });
 
-const SHA256_PATTERN = /^[a-f0-9]{64}$/;
-const textEncoder = new TextEncoder();
 const CONFIG_KEYS = Object.freeze([
     "kind", "version", "environmentId", "seed", "paths", "views", "buildings",
     "passPolicy", "planner", "sampling", "ordering", "seedKeys", "outputRoles",
@@ -135,57 +135,20 @@ function fail(path, message) {
     throw bakeError("BAKE_CONTRACT_INVALID", `${path}: ${message}`);
 }
 
-function plainObject(value, path) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) fail(path, "expected an object");
-    return value;
-}
-
-function allowedKeys(value, allowed, path) {
-    const object = plainObject(value, path);
-    const unknown = Object.keys(object).find((key) => !allowed.includes(key));
-    if (unknown) fail(path, `${unknown} is not supported`);
-    return object;
-}
-
-function denseArray(value, path) {
-    if (!Array.isArray(value)) fail(path, "expected an array");
-    const keys = Object.keys(value);
-    if (keys.length !== value.length || keys.some((key, index) => key !== String(index))) {
-        fail(path, "sparse or extended arrays are outside the JSON data model");
-    }
-    return value;
-}
-
-function text(value, path, { identifier = false, allowEmpty = false } = {}) {
-    if (typeof value !== "string") fail(path, "expected a string");
-    if (!allowEmpty && value.length === 0) fail(path, "expected a non-empty string");
-    if (identifier && value !== value.normalize("NFC")) fail(path, "identifier must be NFC text");
-    return value;
-}
-
-function finite(value, path) {
-    if (typeof value !== "number" || !Number.isFinite(value)) fail(path, "expected a finite number");
-    return Object.is(value, -0) ? 0 : value;
-}
-
-function integer(value, path, { min = 0 } = {}) {
-    const number = finite(value, path);
-    if (!Number.isSafeInteger(number) || number < min) {
-        fail(path, `expected a safe integer >= ${min}`);
-    }
-    return number;
-}
-
-function boolean(value, path) {
-    if (typeof value !== "boolean") fail(path, "expected a boolean");
-    return value;
-}
-
-function digest(value, path) {
-    const result = text(value, path);
-    if (!SHA256_PATTERN.test(result)) fail(path, "expected a lowercase SHA-256 digest");
-    return result;
-}
+const {
+    plainObject,
+    allowedKeys,
+    denseArray,
+    text,
+    finite,
+    integer,
+    boolean,
+    sha256Hex: digest,
+} = createExactParser(fail, {
+    unknownField: "unsupported",
+    text: "split",
+    integer: "finite",
+});
 
 function digestOrNull(value, path) {
     if (value === null) return null;
@@ -197,15 +160,7 @@ function stringOrNull(value, path) {
     return text(value, path, { allowEmpty: true });
 }
 
-export function compareUtf8(left, right) {
-    const a = textEncoder.encode(String(left));
-    const b = textEncoder.encode(String(right));
-    const length = Math.min(a.length, b.length);
-    for (let index = 0; index < length; index += 1) {
-        if (a[index] !== b[index]) return a[index] - b[index];
-    }
-    return a.length - b.length;
-}
+export { compareUtf8 };
 
 function uniqueSorted(values, path, normalizeEntry = (entry, itemPath) => text(entry, itemPath, { identifier: true })) {
     const list = denseArray(values, path).map((entry, index) => normalizeEntry(entry, `${path}.${index}`));

@@ -1,3 +1,4 @@
+import { compareUtf8 } from "../../math/compareUtf8.js";
 import { simulationSha256 } from "../kernel/SimulationHashes.js";
 import { HeadlessEpisodeError } from "./HeadlessErrors.js";
 
@@ -16,18 +17,9 @@ export const SCALAR_TYPE = Object.freeze({
 });
 
 export const BYTE_ORDER_LITTLE_ENDIAN = 1;
-const UTF8 = new TextEncoder();
 const TYPE_BYTES = Object.freeze({ 1: 4, 2: 8, 3: 1, 4: 1, 5: 2, 6: 2, 7: 4, 8: 4, 9: 8, 10: 8, 11: 1 });
 
-export function compareUtf8(left, right) {
-    const a = UTF8.encode(String(left));
-    const b = UTF8.encode(String(right));
-    const length = Math.min(a.length, b.length);
-    for (let index = 0; index < length; index += 1) {
-        if (a[index] !== b[index]) return a[index] - b[index];
-    }
-    return a.length - b.length;
-}
+export { compareUtf8 };
 
 export function tensorSpec(dtype, shape) {
     const scalar = typeof dtype === "number" ? dtype : SCALAR_TYPE[dtype];

@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { verifyPluginPackage } from "../../app/plugin/PluginPackage.js";
 import { storageEvents } from "./events.js";
-import { fail, ok } from "./toolResult.js";
+import { fail, ok, publishDomain } from "./toolResult.js";
 import { installPluginSource, removePluginSource } from "../plugins/pluginLibrary.js";
 
 const SourceSchema = z.object({
@@ -11,9 +11,7 @@ const SourceSchema = z.object({
     packageHash: z.string().optional(),
 });
 
-function publish(pluginId, action, data) {
-    return storageEvents.publish({ domain: "plugin", id: pluginId, action, data });
-}
+const publish = publishDomain(storageEvents, "plugin");
 
 /**
  * @param {import("@modelcontextprotocol/sdk/server/mcp.js").McpServer} server

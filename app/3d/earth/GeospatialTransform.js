@@ -3,11 +3,10 @@ import { convertFromLatLng } from "../../util/Location.js";
 import {
     ecefToWgs84,
     enuOffsetToWgs84 as enuOffsetToWgs84Pure,
+    localEnuToEcefBasis,
+    WGS84_A,
+    wgs84ToEcef,
 } from "../../autonomy/Geodesy.js";
-
-const WGS84_A = 6378137;
-const WGS84_E2 = 0.00669437999014;
-const ECEF_Z_AXIS = new THREE.Vector3(0, 0, 1);
 
 /**
  * Convert WGS84 lat/lng (degrees) and height (meters) to ECEF coordinates.
@@ -17,19 +16,19 @@ const ECEF_Z_AXIS = new THREE.Vector3(0, 0, 1);
  * @param {THREE.Vector3} [target]
  */
 export function latLngHeightToECEF(latDeg, lngDeg, heightMeters = 0, target = new THREE.Vector3()) {
-    const lat = THREE.MathUtils.degToRad(latDeg);
-    const lng = THREE.MathUtils.degToRad(lngDeg);
-    const sinLat = Math.sin(lat);
-    const cosLat = Math.cos(lat);
-    const sinLng = Math.sin(lng);
-    const cosLng = Math.cos(lng);
-    const n = WGS84_A / Math.sqrt(1 - WGS84_E2 * sinLat * sinLat);
+    const ecef = wgs84ToEcef(latDeg, lngDeg, heightMeters);
+    return target.set(ecef.x, ecef.y, ecef.z);
+}
 
-    return target.set(
-        (n + heightMeters) * cosLat * cosLng,
-        (n + heightMeters) * cosLat * sinLng,
-        (n * (1 - WGS84_E2) + heightMeters) * sinLat,
+function applyLocalEnuBasis(positionECEF, result) {
+    const { east, up, north } = localEnuToEcefBasis(positionECEF);
+    result.makeBasis(
+        new THREE.Vector3(east.x, east.y, east.z),
+        new THREE.Vector3(up.x, up.y, up.z),
+        new THREE.Vector3(north.x, north.y, north.z),
     );
+    result.setPosition(positionECEF);
+    return result;
 }
 
 /**
@@ -39,14 +38,7 @@ export function latLngHeightToECEF(latDeg, lngDeg, heightMeters = 0, target = ne
  * @param {THREE.Matrix4} [result]
  */
 export function makeLocalToECEFMatrix(latDeg, lngDeg, result = new THREE.Matrix4()) {
-    const positionECEF = latLngHeightToECEF(latDeg, lngDeg, 0);
-    const up = positionECEF.clone().normalize();
-    const east = ECEF_Z_AXIS.clone().cross(up).normalize();
-    const north = up.clone().cross(east).normalize();
-
-    result.makeBasis(east, up, north);
-    result.setPosition(positionECEF);
-    return result;
+    return applyLocalEnuBasis(latLngHeightToECEF(latDeg, lngDeg, 0), result);
 }
 
 /**

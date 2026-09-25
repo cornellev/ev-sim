@@ -3,6 +3,7 @@ import Unit from "../../util/Unit.js";
 import { Road } from "./Road.js";
 import { Intersection } from "./Intersection.js";
 import { Triangle } from "../data/objects/Triangle.js";
+import { clamp } from "../../math/linalg.js";
 import { laneDividerDescriptors, roadLaneWidth, roadLanes } from "../../roads/RoadLaneModel.js";
 
 const DEFAULT_ROAD_OPTIONS = {
@@ -36,10 +37,6 @@ const DEFAULT_NETWORK_OPTIONS = {
     minRoadLength: 3,
     tension: 0.15,
 };
-
-function clamp(value, min, max) {
-    return Math.min(Math.max(value, min), max);
-}
 
 function getNodeAdjacency(edges) {
     const adjacency = new Map();

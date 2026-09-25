@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { gaussianSample } from "../../app/autonomy/LocalizationMeasurements.js";
 import { flipRows, warpBrownConrady } from "../../app/3d/perception/CameraRenderProducts.js";
 import { SeededRNG } from "../../app/util/SeededRNG.js";
 
@@ -10,8 +11,7 @@ function rngAtState(state) {
 }
 
 function gaussian(rng) {
-    const left = Math.max(Number.EPSILON, rng.next());
-    return Math.sqrt(-2 * Math.log(left)) * Math.cos(2 * Math.PI * rng.next());
+    return gaussianSample(rng);
 }
 
 function digest(value) {
