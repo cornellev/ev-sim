@@ -14,14 +14,14 @@ from [`docs/plugin-api.md`](plugin-api.md) rather than this roadmap.
 
 | Milestone | Implementation | Verification | Merge status |
 | --- | --- | --- | --- |
-| PLG-01: foundation, isolated registries, verified packages | Complete in working tree | Verified | Unmerged |
-| PLG-02: resolved selection and deterministic unit execution | Complete in working tree | Verified | Unmerged |
-| PLG-03: systems and expanded simulator capabilities | Complete in working tree | Verified | Unmerged |
-| PLG-04: editor/UI integration and distribution acceptance | Complete in working tree | Verified | Unmerged |
-| PLG-05: custom range-image sensors and native packet products | Complete in working tree | Verified | Unmerged |
-| PLG-06a: portable plugin files and classic PCAP artifacts | Complete in working tree | Verified | Unmerged |
-| PLG-06b: supervisor-owned live UDP transport | Complete in working tree | Verified | Unmerged |
-| PLG-07: custom sensor authoring and UI | Complete in working tree | Verified | Unmerged |
+| PLG-01: foundation, isolated registries, verified packages | Complete | Verified | Merged |
+| PLG-02: resolved selection and deterministic unit execution | Complete | Verified | Merged |
+| PLG-03: systems and expanded simulator capabilities | Complete | Verified | Merged |
+| PLG-04: editor/UI integration and distribution acceptance | Complete | Verified | Merged |
+| PLG-05: custom range-image sensors and native packet products | Complete | Verified | Merged |
+| PLG-06a: portable plugin files and classic PCAP artifacts | Complete | Verified | Merged |
+| PLG-06b: supervisor-owned live UDP transport | Complete | Verified | Merged |
+| PLG-07: custom sensor authoring and UI | Complete | Verified | Merged |
 
 Only a merged change may be marked merged. A milestone is verified only when
 all of its acceptance commands and evidence entries are present in this
@@ -678,6 +678,8 @@ change the outstanding PR-12 hosted, soak, NVIDIA x64, or Jetson ARM64 gates.
 | Identity / distribution | Characterization, lint, soak, dist | `npm run fixtures:headless`; `git diff --exit-code -- tests/fixtures/headless/characterization.v1.json`; `npm run lint`; `npm test`; `npm run test:python`; `npm run lint:python`; `npm run proto:python`; `npm run build`; `npm run test:soak:quick`; `npm run dist:headless`; `npm run dist:verify`; `git diff --check` | Characterization unchanged. ESLint 0 errors, one pre-existing `MapSurface.js` warning. Node 1,582 passed, 0 failed, 4 existing skips. Python 69/69; Ruff and generated-Protobuf checks passed. Production Next.js build passed. Quick soak passed (`protocol` 1.4). Dist verify passed, including installed-worker/plugin `node:dgram` exclusion. Whitespace check passed. Artifact digests: npm `6b51acaa1d30650b703bea584b265bb7f5290e9f60e10c293af069497ddf4b27`, wheel `736545a3b617474d35c44b5e818c651da4deb27a52ac2067647ee3c1ed606def`, sdist `d7e2d2515dd3e066d2b8fb8d710e0800b16daff0f6814dc05b5064f8e4bc80e2` |
 
 ## Decision log
+
+- **2026-09-26 — PLG-01 through PLG-07 are merged.** `origin/plugin` is an ancestor of `origin/main`, and later plugin UI commits landed on `main` after that branch tip. The status table now records each milestone as merged. Acceptance evidence is unchanged. Dated notes below that say a milestone "remains unmerged" describe the state at acceptance time. This is not headless PR 13 and does not close the outstanding PR-12 hosted, soak, NVIDIA x64, or Jetson ARM64 gates.
 
 - **2026-09-21 — Helios scan IPC flow control.** A full Helios `submit-batch`
   exceeds Node's 16 KiB IPC high-water mark, so `child.send()` returns false

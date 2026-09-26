@@ -17,6 +17,40 @@ function finiteOr(value, fallback) {
 }
 
 /**
+ * Ackermann centerline in vehicle-local XZ. +X is forward. Steering uses the
+ * Three.js plant sign (positive right), matching {@link updateControlsPathRibbon}.
+ * This function does not touch Three.js.
+ * @param {number} steeringAngleRad
+ * @param {{ wheelbase?: number, lookahead?: number, segments?: number }} [options]
+ * @returns {{ x: number, z: number }[]}
+ */
+export function sampleAckermannCenterline(steeringAngleRad, options = {}) {
+    const wheelbase = Math.max(0.1, finiteOr(options.wheelbase, 1.5));
+    const lookahead = finiteOr(options.lookahead, 8);
+    const segments = Math.max(2, Math.floor(finiteOr(options.segments, 24)));
+    const curvature = Math.tan(finiteOr(steeringAngleRad, 0)) / wheelbase;
+    const ds = lookahead / segments;
+    let x = 0;
+    let z = 0;
+    let headingX = 1;
+    let headingZ = 0;
+    const points = [];
+    for (let index = 0; index <= segments; index += 1) {
+        points.push({ x, z });
+        x += headingX * ds;
+        z += headingZ * ds;
+        const turn = curvature * ds;
+        const cos = Math.cos(turn);
+        const sin = Math.sin(turn);
+        const nextX = headingX * cos + headingZ * sin;
+        const nextZ = -headingX * sin + headingZ * cos;
+        headingX = nextX;
+        headingZ = nextZ;
+    }
+    return points;
+}
+
+/**
  * Fill a ribbon BufferGeometry (2 verts per segment) along an Ackermann arc
  * in vehicle-local coordinates. Origin is (0, pathY, 0), heading is +X.
  * @param {THREE.BufferGeometry} geometry

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { IconPower } from "@tabler/icons-react";
 import { DeviceOverlay } from "./DeviceOverlay";
+import { planActorId, setPlanSelection, subscribePlanSelection } from "../../spatial/planview/selection.js";
 
 const EMPTY_VEHICLES = [];
 const HIERARCHY_CONTROL_LOCK = "simulation-vehicle-hierarchy";
@@ -16,13 +17,15 @@ function getVehicleName(vehicle, index) {
 
 export function VehicleOverlay({ data }) {
     const [expandedVehicles, setExpandedVehicles] = useState({});
-    const [selectedVehicleIndex, setSelectedVehicleIndex] = useState(null);
+    const [selectedActorId, setSelectedActorId] = useState(null);
     const [selectedDeviceRef, setSelectedDeviceRef] = useState(null);
     const [deviceOverlayVisible, setDeviceOverlayVisible] = useState(false);
     const [deviceEnabledOverrides, setDeviceEnabledOverrides] = useState({});
     const [, refreshDevices] = useState(0);
 
     const vehicles = useMemo(() => data?.vehicles?.()?.vehicles ?? EMPTY_VEHICLES, [data]);
+
+    useEffect(() => subscribePlanSelection(setSelectedActorId), []);
 
     const controls = useMemo(() => {
         const settings = data?.settings?.();
@@ -76,7 +79,8 @@ export function VehicleOverlay({ data }) {
                         {vehicles.map((vehicle, vehicleIndex) => {
                             const vehicleName = getVehicleName(vehicle, vehicleIndex);
                             const isExpanded = expandedVehicles[vehicleIndex] ?? true;
-                            const isVehicleSelected = selectedVehicleIndex === vehicleIndex;
+                            const actorId = planActorId(vehicle, vehicleIndex);
+                            const isVehicleSelected = selectedActorId === actorId;
                             const devices = vehicle.devices ?? [];
 
                             return (
@@ -98,7 +102,7 @@ export function VehicleOverlay({ data }) {
                                                     ? "border-sky-400/80 bg-sky-500/20 text-zinc-100"
                                                     : "border-zinc-700/80 bg-zinc-900/85 text-zinc-100 hover:bg-zinc-800/90"
                                             }`}
-                                            onClick={() => setSelectedVehicleIndex(vehicleIndex)}
+                                            onClick={() => setPlanSelection(actorId)}
                                         >
                                             {vehicleName}
                                             <span className="ml-2 text-[11px] text-zinc-400">({devices.length})</span>
@@ -129,7 +133,7 @@ export function VehicleOverlay({ data }) {
                                                         data-selected={selected || undefined}
                                                         aria-label={`${device.name}, ${deviceEnabled ? "enabled" : "disabled"}`}
                                                         onClick={() => {
-                                                            setSelectedVehicleIndex(vehicleIndex);
+                                                            setPlanSelection(actorId);
                                                             const isSameOpen =
                                                                 selectedDeviceRef?.vehicleIndex === vehicleIndex &&
                                                                 selectedDeviceRef?.deviceIndex === deviceIndex &&

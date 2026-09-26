@@ -17,6 +17,7 @@ import {
     IconStack2 as FaLayerGroup,
     IconCircle as FaCircle,
     IconCamera as FaCamera,
+    IconView360 as FaView360,
 } from "@tabler/icons-react";
 import { FlyoutPanel } from "./ui/FlyoutPanel";
 import { MenuButton } from "./ui/MenuButton";
@@ -39,6 +40,8 @@ export function SimulationMenu({
     sensorPanelVisible = true,
     onSensorPanelVisibleChange,
     onOpenReplay,
+    viewMode = "3d",
+    onViewModeChange,
 }) {
     const [openPanel, setOpenPanel] = useState(null);
     const [toggles, setToggles] = useState({
@@ -316,6 +319,15 @@ export function SimulationMenu({
                             ariaLabel="Reset"
                         >
                             <FaStop className="h-3 w-3" />
+                        </MenuButton>
+                        <MenuButton
+                            iconOnly
+                            active={viewMode === "map"}
+                            onClick={() => onViewModeChange?.(viewMode === "map" ? "3d" : "map")}
+                            title={viewMode === "map" ? "Switch to 3D view" : "Switch to map view"}
+                            ariaLabel={viewMode === "map" ? "Switch to 3D view" : "Switch to map view"}
+                        >
+                            {viewMode === "map" ? <FaView360 className="h-3 w-3" /> : <BiWorld className="h-3 w-3" />}
                         </MenuButton>
                     </div>
 

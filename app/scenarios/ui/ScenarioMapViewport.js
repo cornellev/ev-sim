@@ -39,6 +39,10 @@ export default function ScenarioMapViewport({
     children,
     className = "",
     fitPoints = null,
+    followCenter = null,
+    followEpoch = 0,
+    onNavigate,
+    fill = false,
 }) {
     const containerRef = useRef(null);
     const gestureRef = useRef(null);
@@ -49,8 +53,17 @@ export default function ScenarioMapViewport({
         [document, fitPoints, size],
     );
     const [viewportOverride, setViewportOverride] = useState(null);
+    const [detached, setDetached] = useState(false);
+    const [followLock, setFollowLock] = useState(followEpoch);
+    if (followLock !== followEpoch) {
+        setFollowLock(followEpoch);
+        setDetached(false);
+    }
     const [draggingId, setDraggingId] = useState(null);
-    const viewport = viewportOverride?.document === document ? viewportOverride.viewport : fittedViewport;
+    const baseViewport = viewportOverride?.document === document ? viewportOverride.viewport : fittedViewport;
+    const viewport = followCenter && !detached
+        ? { ...baseViewport, centerX: followCenter.x, centerZ: followCenter.z }
+        : baseViewport;
     const updateViewport = useCallback((updater) => setViewportOverride((current) => {
         const currentViewport = current?.document === document ? current.viewport : fittedViewport;
         return { document, viewport: updater(currentViewport) };
@@ -202,11 +215,18 @@ export default function ScenarioMapViewport({
         if (gesture.kind === "pending-place" && totalDistance < PAN_THRESHOLD_PX) return;
         gesture.kind = "pan";
         gesture.moved = true;
+        if (!gesture.detachedNotified && totalDistance >= PAN_THRESHOLD_PX) {
+            gesture.detachedNotified = true;
+            setDetached(true);
+            onNavigate?.();
+        }
         const deltaX = event.clientX - gesture.lastX;
         const deltaY = event.clientY - gesture.lastY;
         gesture.lastX = event.clientX;
         gesture.lastY = event.clientY;
-        updateViewport((current) => panMapViewport(current, deltaX, deltaY));
+        const next = panMapViewport(gesture.viewport ?? viewport, deltaX, deltaY);
+        gesture.viewport = next;
+        updateViewport(() => next);
     };
 
     const end = (event) => {
@@ -262,6 +282,7 @@ export default function ScenarioMapViewport({
             viewport={viewport}
             documentSnapshot={document}
             className={`${styles.scenarioMapViewport} ${className}`.trim()}
+            style={fill ? { height: "100%", minHeight: 0 } : undefined}
             ariaLabel={ariaLabel}
             data-interaction={interaction}
             data-map-center={`${viewport.centerX.toFixed(3)},${viewport.centerZ.toFixed(3)}`}
@@ -273,11 +294,15 @@ export default function ScenarioMapViewport({
             onPointerCancel={cancel}
             onLostPointerCapture={cancel}
             hud={(
-                <div className={styles.scenarioMapHud} data-map-control onPointerDown={(event) => event.stopPropagation()}>
+                <div className={styles.scenarioMapHud} data-map-control data-map-hud onPointerDown={(event) => event.stopPropagation()}>
                     <div>
                         <button type="button" aria-label="Zoom out" onClick={() => zoomAtCenter(0.8)}><IconMinus size={14} /></button>
                         <button type="button" aria-label="Zoom in" onClick={() => zoomAtCenter(1.25)}><IconPlus size={14} /></button>
-                        <button type="button" aria-label="Fit map to environment" onClick={() => setViewportOverride({ document, viewport: fitted() })}><IconFocus2 size={14} /></button>
+                        <button type="button" aria-label="Fit map to environment" onClick={() => {
+                            setDetached(true);
+                            onNavigate?.();
+                            setViewportOverride({ document, viewport: fitted() });
+                        }}><IconFocus2 size={14} /></button>
                     </div>
                     <span>{viewport.zoom.toFixed(2)}× · Drag to pan · Scroll to zoom</span>
                 </div>

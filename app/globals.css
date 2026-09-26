@@ -867,6 +867,11 @@ button,
   transform: scale(0.98);
 }
 
+/* The map paints inside #overlay (z-20). Lift the switcher above that overlay only while the map is open. */
+html[data-sim-view="map"] .sf-canvas-workspace-button {
+  z-index: calc(var(--layer-inspector) + 1);
+}
+
 .sf-perspective-transport {
   position: fixed;
   left: 50%;

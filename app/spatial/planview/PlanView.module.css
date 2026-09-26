@@ -1,0 +1,58 @@
+.host {
+    position: absolute;
+    inset: 0;
+    z-index: 15;
+    pointer-events: none;
+    min-height: 0;
+    background: #09090b;
+}
+
+.toolbar {
+    position: absolute;
+    top: 12px;
+    left: 320px;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid rgb(255 255 255 / 0.08);
+    border-radius: 6px;
+    background: rgb(24 26 27 / 0.94);
+    padding: 6px;
+    pointer-events: auto;
+}
+
+.layers {
+    position: absolute;
+    top: 56px;
+    left: 320px;
+    z-index: 3;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(140px, 1fr));
+    gap: 4px 16px;
+    border: 1px solid rgb(255 255 255 / 0.08);
+    border-radius: 6px;
+    background: rgb(24 26 27 / 0.96);
+    padding: 10px 12px;
+    pointer-events: auto;
+}
+
+.layerToggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: #e4e4e7;
+    font-size: 12px;
+}
+
+.map {
+    position: absolute;
+    inset: 0;
+    min-height: 0;
+    height: auto;
+    pointer-events: auto;
+}
+
+.host [data-map-hud] {
+    bottom: 76px;
+}
