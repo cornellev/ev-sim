@@ -9,7 +9,7 @@ explicitly during capability validation.
 
 ## Host preparation
 
-Provision Node 22.14 or newer, Python 3.10–3.13, Chromium, Vulkan/EGL tools,
+Provision Node `>=22.22.2 <23`, Python 3.10–3.13, Chromium, Vulkan/EGL tools,
 and the JetPack/L4T graphics stack. Run the supervisor as a dedicated non-root
 user. Give that user only the required render/video device groups, commonly
 `render` and `video`; do not solve device access by running the service as

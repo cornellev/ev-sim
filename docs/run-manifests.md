@@ -92,6 +92,15 @@ queue ingestion boundaries. A byte-oriented verifier can check an external
 serialization remains unchanged, while v11 uses JCS. See
 [Visual Layer Contracts](visual-layer.md) for the support table and byte rules.
 
+Marketplace transfer does not extend the run contracts. A marketplace run
+template carries the existing `cev-sim.run-bundle@1`; an exact run package
+carries the existing `cev-sim.run-package@1`. Marketplace release metadata,
+source identity, signed-catalog tracks, installed membership, and installation
+receipts are stored separately. They do not enter run manifests, resolved
+bundles, `resolvedHash`, `simulationSemanticHash`, `episodeHash`,
+`trajectoryHash`, `worldHash`, or run-package archive identity. Importers keep
+using the existing exact-byte verification and deterministic collision rules.
+
 VIS-02 dispatches exact camera render provider ID/version. Omitted selections
 alias only to `canonical-analytic@1` during resolution. VIS-12b makes
 `pbr-mesh@1` resolution-capable for immutable export and integrity-only

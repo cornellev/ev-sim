@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cev-sim.dev/schemas/marketplace/v1/advisory.schema.json",
+  "type": "object",
+  "required": ["kind", "version", "advisoryId", "publisherId", "issuedAt", "affected", "severity", "rationale", "remediation", "action"],
+  "properties": {
+    "kind": { "const": "cev-sim.marketplace-advisory" },
+    "version": { "const": 1 },
+    "advisoryId": { "$ref": "common.schema.json#/$defs/marketplaceId" },
+    "publisherId": { "$ref": "common.schema.json#/$defs/marketplaceId" },
+    "issuedAt": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "affected": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["itemId", "releaseVersion"],
+            "properties": {
+              "itemId": { "$ref": "common.schema.json#/$defs/marketplaceId" },
+              "releaseVersion": { "$ref": "common.schema.json#/$defs/releaseVersion" }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": ["artifactSha256"],
+            "properties": { "artifactSha256": { "$ref": "common.schema.json#/$defs/sha256" } },
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "severity": { "enum": ["low", "moderate", "high", "critical"] },
+    "rationale": { "type": "string", "minLength": 1, "maxLength": 16384 },
+    "remediation": { "type": "string", "minLength": 1, "maxLength": 16384 },
+    "action": { "enum": ["warn", "yank", "block"] }
+  },
+  "additionalProperties": false
+}

@@ -500,6 +500,17 @@ compared with the committed characterization.
 
 ## Decision log
 
+### 2026-09-26 — MKT-01 raises the repository Node baseline without changing headless identity
+
+The separate marketplace program pins development and CI to Node 22.22.2 and
+declares the supported Node range as `>=22.22.2 <23` so the maintained
+`tuf-js` client can be used in later trust milestones. The staged headless npm
+package and release manifest copy that range from the root package. Marketplace
+dependencies remain outside the staged headless dependency allowlist, and
+MKT-01 adds no headless protocol, manifest, bundle, package, simulation, or
+episode fields. The outstanding PR-12 hosted, soak, x64 NVIDIA, and Jetson
+ARM64 acceptance evidence remains outstanding.
+
 ### 2026-09-23 — Saved-environment camera clips (not PR 13)
 
 Maintenance replaces the fixed-corridor-only job with camera clips over any

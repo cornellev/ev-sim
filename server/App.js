@@ -12,6 +12,9 @@ const handle = app.getRequestHandler();
 app.prepare().then(async () => {
     const server = express();
 
+    const { resolveMarketplaceConfig } = await import('./marketplace/MarketplaceConfig.js');
+    server.locals.marketplaceConfig = resolveMarketplaceConfig(process.env);
+
     // Storage API: persists environment edits, scripts, and bindings to disk.
     // The storage modules are ESM, so load them dynamically from this CommonJS file.
     const { StorageService } = await import('./storage/StorageService.js');

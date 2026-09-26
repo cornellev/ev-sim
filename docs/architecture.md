@@ -516,6 +516,37 @@ USTAR verification, and journaled authoring-store import. VIS-13b activates
 protocol 1.4 package admission for configured Unix supervisors, CLI execution,
 and Python while keeping TCP distribution and non-browser PBR execution unavailable.
 
+## Marketplace and private registry
+
+The `MKT-*` program adds a local Marketplace control plane and a separately
+hosted private-LAN registry. Browser code talks only to the local simulator
+backend. The backend will eventually talk only to explicitly configured and
+trusted registry origins and will own TUF verification, caching, credentials,
+artifact validation, and installation transactions.
+
+```mermaid
+flowchart LR
+  Browser[Browser workspace] --> Backend[Local simulator backend]
+  Backend --> Registry[Configured registry]
+  Backend --> Cache[Verified metadata and artifact cache]
+  Registry --> Tuf[TUF metadata and signed catalog targets]
+  Registry --> Cas[Immutable digest-addressed artifacts]
+```
+
+The standalone registry is a catalog and delivery service over existing
+plugin, vehicle, run-bundle, and run-package contracts. It is not a simulator
+and never executes package code. Marketplace items, releases, source records,
+installed membership, and receipts are provenance and operations data. They
+remain separate from environment documents, run manifests, resolved bundles,
+plugin packages, vehicle bundles, simulation state, and all existing semantic
+hash projections.
+
+MKT-01 freezes the JSON contract layer under `schemas/marketplace/v1/` and
+`server/marketplace/`. `CEV_SIM_MARKETPLACE_ENABLED` is parsed at server
+startup but defaults to false and mounts no routes or services. Registry
+storage, TUF refresh, network access, installation, and UI remain assigned to
+later milestones in [Marketplace roadmap](marketplace-plan.md).
+
 ## External Integration
 
 cev-sim does not embed ROS. `app/3d/managers/ClientManager.js` creates a browser client from `app/client/Client.js`, syncs message definitions from the external orchestrator Types API, then connects to the orchestrator WebSocket.

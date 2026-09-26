@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cev-sim.dev/schemas/marketplace/v1/release.schema.json",
+  "type": "object",
+  "required": ["kind", "version", "itemId", "releaseVersion", "contentKind", "publisherId", "licenseExpression", "changelog", "artifact", "compatibility", "capabilities", "dependencies"],
+  "properties": {
+    "kind": { "const": "cev-sim.marketplace-release" },
+    "version": { "const": 1 },
+    "itemId": { "$ref": "common.schema.json#/$defs/marketplaceId" },
+    "releaseVersion": { "$ref": "common.schema.json#/$defs/releaseVersion" },
+    "contentKind": { "$ref": "common.schema.json#/$defs/contentKind" },
+    "publisherId": { "$ref": "common.schema.json#/$defs/marketplaceId" },
+    "licenseExpression": { "type": "string", "format": "spdx-expression", "maxLength": 1024 },
+    "changelog": { "type": "string", "maxLength": 262144 },
+    "artifact": { "$ref": "common.schema.json#/$defs/artifactDescriptor" },
+    "compatibility": { "$ref": "common.schema.json#/$defs/compatibility" },
+    "capabilities": { "type": "array", "uniqueItems": true, "items": { "type": "string", "format": "plugin-capability" } },
+    "dependencies": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/exactReleaseRef" } }
+  },
+  "additionalProperties": false
+}

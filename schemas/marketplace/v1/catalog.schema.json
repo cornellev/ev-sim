@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cev-sim.dev/schemas/marketplace/v1/catalog.schema.json",
+  "type": "object",
+  "required": ["kind", "version", "registryId", "revision", "generatedAt", "items", "releases", "tracks", "yanks", "advisories"],
+  "properties": {
+    "kind": { "const": "cev-sim.marketplace-catalog" },
+    "version": { "const": 1 },
+    "registryId": { "$ref": "common.schema.json#/$defs/uuid" },
+    "revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "generatedAt": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "items": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/itemSummary" } },
+    "releases": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/releaseSummary" } },
+    "tracks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["itemId", "track", "releaseVersion"],
+        "properties": {
+          "itemId": { "$ref": "common.schema.json#/$defs/marketplaceId" },
+          "track": { "enum": ["stable", "beta"] },
+          "releaseVersion": { "$ref": "common.schema.json#/$defs/releaseVersion" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "yanks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["release", "reason", "yankedAt"],
+        "properties": {
+          "release": { "$ref": "common.schema.json#/$defs/exactReleaseRef" },
+          "reason": { "type": "string", "minLength": 1, "maxLength": 4096 },
+          "yankedAt": { "$ref": "common.schema.json#/$defs/timestamp" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "advisories": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["advisoryId", "target"],
+        "properties": {
+          "advisoryId": { "$ref": "common.schema.json#/$defs/marketplaceId" },
+          "target": { "$ref": "common.schema.json#/$defs/targetDescriptor" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

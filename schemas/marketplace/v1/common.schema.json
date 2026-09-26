@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cev-sim.dev/schemas/marketplace/v1/common.schema.json",
+  "$defs": {
+    "marketplaceId": { "type": "string", "format": "marketplace-id" },
+    "releaseVersion": { "type": "string", "format": "release-version" },
+    "sha256": { "type": "string", "format": "sha256" },
+    "uuid": { "type": "string", "format": "uuid-lower" },
+    "timestamp": { "type": "string", "format": "canonical-timestamp" },
+    "contentKind": {
+      "enum": ["plugin", "vehicle", "run-template", "run-package", "environment", "asset-pack", "collection"]
+    },
+    "artifactDescriptor": {
+      "type": "object",
+      "required": ["mediaType", "sha256", "sizeBytes"],
+      "properties": {
+        "mediaType": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "sizeBytes": { "type": "integer", "minimum": 0, "maximum": 53687091200 }
+      },
+      "additionalProperties": false
+    },
+    "exactReleaseRef": {
+      "type": "object",
+      "required": ["itemId", "releaseVersion", "artifactSha256"],
+      "properties": {
+        "itemId": { "$ref": "#/$defs/marketplaceId" },
+        "releaseVersion": { "$ref": "#/$defs/releaseVersion" },
+        "artifactSha256": { "$ref": "#/$defs/sha256" }
+      },
+      "additionalProperties": false
+    },
+    "targetDescriptor": {
+      "type": "object",
+      "required": ["path", "sha256", "sizeBytes"],
+      "properties": {
+        "path": { "type": "string", "format": "target-path" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "sizeBytes": { "type": "integer", "minimum": 0, "maximum": 53687091200 }
+      },
+      "additionalProperties": false
+    },
+    "compatibility": {
+      "type": "object",
+      "required": ["cevSim", "contracts", "platforms", "architectures", "runtimes", "backends", "features"],
+      "properties": {
+        "cevSim": { "type": "string", "format": "semver-range" },
+        "contracts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["kind", "versions"],
+            "properties": {
+              "kind": { "type": "string", "minLength": 1, "maxLength": 255 },
+              "versions": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "platforms": { "type": "array", "uniqueItems": true, "items": { "enum": ["linux", "darwin", "win32"] } },
+        "architectures": { "type": "array", "uniqueItems": true, "items": { "enum": ["x64", "arm64"] } },
+        "runtimes": { "type": "array", "uniqueItems": true, "items": { "enum": ["browser", "headless"] } },
+        "backends": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["kind", "id", "version"],
+            "properties": {
+              "kind": { "type": "string", "minLength": 1, "maxLength": 255 },
+              "id": { "type": "string", "minLength": 1, "maxLength": 255 },
+              "version": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+            },
+            "additionalProperties": false
+          }
+        },
+        "features": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 255 } }
+      },
+      "additionalProperties": false
+    },
+    "link": {
+      "type": "object",
+      "required": ["label", "url"],
+      "properties": {
+        "label": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "url": { "type": "string", "format": "absolute-url", "maxLength": 2048 }
+      },
+      "additionalProperties": false
+    },
+    "preview": {
+      "type": "object",
+      "required": ["mediaType", "sha256", "sizeBytes", "alt"],
+      "properties": {
+        "mediaType": { "enum": ["image/jpeg", "image/png", "image/webp"] },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "sizeBytes": { "type": "integer", "minimum": 0, "maximum": 8388608 },
+        "alt": { "type": "string", "minLength": 1, "maxLength": 512 }
+      },
+      "additionalProperties": false
+    },
+    "itemSummary": {
+      "type": "object",
+      "required": ["itemId", "publisherId", "contentKind", "displayName", "summary", "categories", "tags", "target"],
+      "properties": {
+        "itemId": { "$ref": "#/$defs/marketplaceId" },
+        "publisherId": { "$ref": "#/$defs/marketplaceId" },
+        "contentKind": { "$ref": "#/$defs/contentKind" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "categories": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$" } },
+        "tags": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$" } },
+        "target": { "$ref": "#/$defs/targetDescriptor" }
+      },
+      "additionalProperties": false
+    },
+    "releaseSummary": {
+      "type": "object",
+      "required": ["itemId", "releaseVersion", "contentKind", "publisherId", "licenseExpression", "artifact", "compatibility", "capabilities", "dependencies", "releaseHash", "target"],
+      "properties": {
+        "itemId": { "$ref": "#/$defs/marketplaceId" },
+        "releaseVersion": { "$ref": "#/$defs/releaseVersion" },
+        "contentKind": { "$ref": "#/$defs/contentKind" },
+        "publisherId": { "$ref": "#/$defs/marketplaceId" },
+        "licenseExpression": { "type": "string", "format": "spdx-expression", "maxLength": 1024 },
+        "artifact": { "$ref": "#/$defs/artifactDescriptor" },
+        "compatibility": { "$ref": "#/$defs/compatibility" },
+        "capabilities": { "type": "array", "uniqueItems": true, "items": { "type": "string", "format": "plugin-capability" } },
+        "dependencies": { "type": "array", "items": { "$ref": "#/$defs/exactReleaseRef" } },
+        "releaseHash": { "$ref": "#/$defs/sha256" },
+        "target": { "$ref": "#/$defs/targetDescriptor" }
+      },
+      "additionalProperties": false
+    },
+    "localMapping": {
+      "type": "object",
+      "required": ["resourceKind", "sourceId", "localId", "hashes"],
+      "properties": {
+        "resourceKind": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "sourceId": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "sourceRevision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "localId": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "localRevision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "hashes": {
+          "type": "object",
+          "propertyNames": { "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+          "additionalProperties": { "$ref": "#/$defs/sha256" }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

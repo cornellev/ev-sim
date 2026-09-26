@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.22.2 <23"
+  },
   "bin": {
     "cev-sim": "bin/cev-sim.js",
     "cev-sim-plugin": "bin/cev-sim-plugin.js"
@@ -13,6 +16,7 @@
     "start": "node server/App.js",
     "lint": "eslint",
     "test": "node --experimental-default-type=module --test tests/*.test.js",
+    "test:marketplace": "node --experimental-default-type=module --test tests/marketplace-*.test.js",
     "test:headless": "node --experimental-default-type=module --test tests/headless-*.test.js",
     "test:lidar": "node --experimental-default-type=module --test tests/lidar-*.test.js tests/headless-lidar.test.js",
     "test:gpu-sensors": "node --experimental-default-type=module --test tests/gpu-sensors.test.js",
@@ -63,6 +67,7 @@
     "@takram/three-geospatial-effects": "^0.6.4",
     "3d-tiles-renderer": "^0.4.28",
     "acorn": "8.15.0",
+    "ajv": "8.20.0",
     "express": "^5.2.1",
     "gltf-validator": "2.0.0-dev.3.10",
     "leaflet": "^1.9.4",
@@ -74,8 +79,10 @@
     "react-dom": "19.2.3",
     "semver": "7.7.3",
     "sharp": "^0.35.4",
+    "spdx-expression-parse": "4.0.0",
     "three": "^0.182.0",
     "three-mesh-bvh": "^0.9.8",
+    "tuf-js": "6.0.0",
     "uplot": "^1.6.32",
     "vmath": "^1.4.8",
     "ws": "^8.21.3",

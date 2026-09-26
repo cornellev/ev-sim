@@ -13,6 +13,7 @@ This folder is the contributor guide for cev-sim. Start here when you need to ru
 - Environment editor program (agents): [Environment Editor Implementation Plan](environment-editor-plan.md) — object registry and options contracts, the schema-v4 authoring overlay, and the presentation/command seams for the unified workspace.
 - Visual scripting work: [Scripting Overview](scripting/README.md), then [Scripting Architecture](scripting/architecture.md) and [Extension Guide](scripting/extension-guide.md).
 - Simulator plugin program (agents): [Simulator Plugin Roadmap](plugin-plan.md) and the package-author [Plugin API](plugin-api.md).
+- Marketplace program (agents): [Integrated Marketplace and Private LAN Registry Roadmap](marketplace-plan.md).
 - Running scripts on live data: [Script Bindings](script-bindings.md) (topics, fixed updates, signals, timers).
 - Agent tooling: [MCP Server](mcp.md) — environment, scripting, binding, logging, and replay tools for AI agents. Portable skill + MCP config: root `plugin.json` / `mcp.json` and [`skills/cev-sim/`](../skills/cev-sim/).
 - Autonomy platform roadmap (agents): [Autonomy platform gap analysis and action plan](autonomy-platform-gap-analysis.md) — full-stack whiteboard vs cev-sim gaps, dataflow-first priorities, and step-by-step simulator work.

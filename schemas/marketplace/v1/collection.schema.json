@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cev-sim.dev/schemas/marketplace/v1/collection.schema.json",
+  "type": "object",
+  "required": ["kind", "version", "members"],
+  "properties": {
+    "kind": { "const": "cev-sim.marketplace-collection" },
+    "version": { "const": 1 },
+    "members": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["release"],
+        "properties": {
+          "release": { "$ref": "common.schema.json#/$defs/exactReleaseRef" },
+          "group": { "type": "string", "minLength": 1, "maxLength": 256 }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

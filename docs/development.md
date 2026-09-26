@@ -1,5 +1,9 @@
 # Development
 
+Development and CI pin Node 22.22.2 through `.nvmrc`. Supported repository and
+staged-runtime versions are `>=22.22.2 <23`; npm enforces this range through
+the root package engine contract.
+
 This repo is a Next.js application with ES modules in the app code and Node's built-in test runner for runtime tests.
 
 ## Commands

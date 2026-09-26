@@ -1,0 +1,177 @@
+{
+  "item": {
+    "kind": "cev-sim.marketplace-item",
+    "version": 1,
+    "itemId": "com.example.control-pack",
+    "publisherId": "com.example.publisher",
+    "contentKind": "plugin",
+    "displayName": "Control Pack",
+    "summary": "Deterministic controller examples.",
+    "description": "# Control Pack\n\nA reviewed plugin package.",
+    "categories": ["controls"],
+    "tags": ["example", "plugin"],
+    "links": [{ "label": "Documentation", "url": "https://example.com/control-pack" }],
+    "previews": [{
+      "mediaType": "image/png",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "sizeBytes": 1024,
+      "alt": "Control Pack preview"
+    }]
+  },
+  "release": {
+    "kind": "cev-sim.marketplace-release",
+    "version": 1,
+    "itemId": "com.example.control-pack",
+    "releaseVersion": "1.2.3",
+    "contentKind": "plugin",
+    "publisherId": "com.example.publisher",
+    "licenseExpression": "Apache-2.0",
+    "changelog": "Adds a deterministic controller.",
+    "artifact": {
+      "mediaType": "application/vnd.cev-sim.plugin-package+json",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "sizeBytes": 4096
+    },
+    "compatibility": {
+      "cevSim": ">=0.1.0 <0.2.0",
+      "contracts": [{ "kind": "cev-sim.plugin-package", "versions": [1] }],
+      "platforms": [],
+      "architectures": [],
+      "runtimes": ["browser", "headless"],
+      "backends": [],
+      "features": []
+    },
+    "capabilities": ["world.read"],
+    "dependencies": []
+  },
+  "catalog": {
+    "kind": "cev-sim.marketplace-catalog",
+    "version": 1,
+    "registryId": "123e4567-e89b-12d3-a456-426614174000",
+    "revision": 1,
+    "generatedAt": "2026-09-26T12:00:00.000Z",
+    "items": [{
+      "itemId": "com.example.control-pack",
+      "publisherId": "com.example.publisher",
+      "contentKind": "plugin",
+      "displayName": "Control Pack",
+      "summary": "Deterministic controller examples.",
+      "categories": ["controls"],
+      "tags": ["example", "plugin"],
+      "target": {
+        "path": "items/com.example.control-pack.json",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "sizeBytes": 2048
+      }
+    }],
+    "releases": [{
+      "itemId": "com.example.control-pack",
+      "releaseVersion": "1.2.3",
+      "contentKind": "plugin",
+      "publisherId": "com.example.publisher",
+      "licenseExpression": "Apache-2.0",
+      "artifact": {
+        "mediaType": "application/vnd.cev-sim.plugin-package+json",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "sizeBytes": 4096
+      },
+      "compatibility": {
+        "cevSim": ">=0.1.0 <0.2.0",
+        "contracts": [{ "kind": "cev-sim.plugin-package", "versions": [1] }],
+        "platforms": [],
+        "architectures": [],
+        "runtimes": ["browser", "headless"],
+        "backends": [],
+        "features": []
+      },
+      "capabilities": ["world.read"],
+      "dependencies": [],
+      "releaseHash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "target": {
+        "path": "releases/com.example.control-pack/1.2.3.dsse.json",
+        "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "sizeBytes": 4096
+      }
+    }],
+    "tracks": [{ "itemId": "com.example.control-pack", "track": "stable", "releaseVersion": "1.2.3" }],
+    "yanks": [],
+    "advisories": []
+  },
+  "advisory": {
+    "kind": "cev-sim.marketplace-advisory",
+    "version": 1,
+    "advisoryId": "com.example.advisory-2026-001",
+    "publisherId": "com.example.publisher",
+    "issuedAt": "2026-09-26T12:00:00.000Z",
+    "affected": [{ "artifactSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }],
+    "severity": "moderate",
+    "rationale": "The example requires review.",
+    "remediation": "Install the next signed release.",
+    "action": "warn"
+  },
+  "collection": {
+    "kind": "cev-sim.marketplace-collection",
+    "version": 1,
+    "members": [{
+      "release": {
+        "itemId": "com.example.control-pack",
+        "releaseVersion": "1.2.3",
+        "artifactSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "group": "Controllers"
+    }]
+  },
+  "sources": {
+    "kind": "cev-sim.marketplace-sources",
+    "version": 1,
+    "revision": 0,
+    "sources": [{
+      "sourceId": "123e4567-e89b-12d3-a456-426614174001",
+      "registryId": "123e4567-e89b-12d3-a456-426614174000",
+      "name": "Example Registry",
+      "baseUrl": "https://registry.example.com/",
+      "trustedRootFingerprint": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "enabled": true,
+      "priority": 10,
+      "credentialRef": null
+    }]
+  },
+  "installed": {
+    "kind": "cev-sim.marketplace-installed",
+    "version": 1,
+    "revision": 0,
+    "installations": [{
+      "sourceId": "123e4567-e89b-12d3-a456-426614174001",
+      "registryId": "123e4567-e89b-12d3-a456-426614174000",
+      "release": {
+        "itemId": "com.example.control-pack",
+        "releaseVersion": "1.2.3",
+        "artifactSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "receiptHashes": ["1111111111111111111111111111111111111111111111111111111111111111"],
+      "status": "installed"
+    }]
+  },
+  "installReceipt": {
+    "kind": "cev-sim.marketplace-install-receipt",
+    "version": 1,
+    "sourceId": "123e4567-e89b-12d3-a456-426614174001",
+    "registryId": "123e4567-e89b-12d3-a456-426614174000",
+    "release": {
+      "itemId": "com.example.control-pack",
+      "releaseVersion": "1.2.3",
+      "artifactSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "releaseHash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "installedAt": "2026-09-26T12:30:00.000Z",
+    "dependencyLock": [],
+    "mappings": [{
+      "resourceKind": "plugin-package",
+      "sourceId": "com.example.control-pack",
+      "localId": "com.example.control-pack",
+      "hashes": {
+        "packageHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    }]
+  }
+}

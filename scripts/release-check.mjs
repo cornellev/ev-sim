@@ -36,7 +36,7 @@ function parseChecksums(source) {
     return records;
 }
 
-async function checkDistribution(directory, expectedVersion) {
+async function checkDistribution(directory, expectedVersion, expectedNodeRange) {
     const root = path.resolve(directory);
     const manifest = assertReport(
         JSON.parse(await fs.readFile(path.join(root, "release-manifest.json"), "utf8")),
@@ -46,6 +46,10 @@ async function checkDistribution(directory, expectedVersion) {
         || manifest.packages?.npm !== expectedVersion
         || manifest.packages?.python !== expectedVersion) {
         throw new Error("Release-manifest package versions do not match the source authorities.");
+    }
+    if (!Array.isArray(manifest.platforms) || manifest.platforms.length === 0
+        || manifest.platforms.some((entry) => entry.node !== expectedNodeRange)) {
+        throw new Error("Release-manifest Node ranges do not match the root package engine contract.");
     }
     if (manifest.protocol?.maximum?.major !== HEADLESS_PROTOCOL.major
         || manifest.protocol?.maximum?.minor !== HEADLESS_PROTOCOL.minor) {
@@ -95,6 +99,9 @@ async function main() {
         throw new Error(`Coordinated package versions differ: ${JSON.stringify(versions)}.`);
     }
     if (rootPackage.private !== true) throw new Error("The browser application root package must remain private.");
+    if (rootPackage.engines?.node !== ">=22.22.2 <23") {
+        throw new Error("The repository Node engine contract must be >=22.22.2 <23.");
+    }
     if (rootPackage.license !== "Apache-2.0" || !/license\s*=\s*"Apache-2.0"/.test(pyproject)) {
         throw new Error("JavaScript and Python package metadata must use Apache-2.0.");
     }
@@ -117,7 +124,9 @@ async function main() {
     if (JSON.stringify(actual) !== JSON.stringify(expected)) {
         throw new Error("The PR 1 headless characterization fixture changed.");
     }
-    const manifest = options.dist ? await checkDistribution(options.dist, rootPackage.version) : null;
+    const manifest = options.dist
+        ? await checkDistribution(options.dist, rootPackage.version, rootPackage.engines.node)
+        : null;
     process.stdout.write(`${JSON.stringify({ ok: true, versions, protocol: HEADLESS_PROTOCOL, distribution: manifest })}\n`);
 }
 

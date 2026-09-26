@@ -9,6 +9,7 @@ from pathlib import Path
 
 import numpy as np
 
+from cev_sim.clip.check import depth_statistics, sha256_bytes, sha256_file
 from cev_sim.config import (
     GPU_SENSOR_CAPABILITY,
     GPU_SENSOR_CONFIG_HASH,
@@ -31,7 +32,6 @@ from .contract import (
     ClipError,
     clip_directory_name,
 )
-from cev_sim.clip.check import depth_statistics, sha256_bytes, sha256_file
 from .video import assert_video_contract, probe_video
 
 

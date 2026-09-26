@@ -18,7 +18,8 @@ BRANCH="${EV_SIM_BRANCH:-main}"
 INSTALL_DIR="${EV_SIM_DIR:-}"
 SKIP_NPM=0
 START_DEV=0
-MIN_NODE_MAJOR=20
+REQUIRED_NODE_VERSION="22.22.2"
+SUPPORTED_NODE_MAJOR=22
 
 # ── colors ──────────────────────────────────────────────────────────────────
 if [[ -t 1 ]] && [[ "${NO_COLOR:-}" == "" ]] && [[ "${TERM:-}" != "dumb" ]]; then
@@ -97,8 +98,15 @@ EOF
 # ── helpers ─────────────────────────────────────────────────────────────────
 have() { command -v "$1" >/dev/null 2>&1; }
 
-node_major() {
-  node -p "process.versions.node.split('.')[0]" 2>/dev/null || echo 0
+node_version_supported() {
+  node -e '
+    const [major, minor, patch] = process.versions.node.split(".").map(Number);
+    const [requiredMajor, requiredMinor, requiredPatch] = process.argv[2].split(".").map(Number);
+    const supportedMajor = Number(process.argv[1]);
+    process.exit(major === supportedMajor
+      && (minor > requiredMinor || (minor === requiredMinor && patch >= requiredPatch))
+      && major === requiredMajor ? 0 : 1);
+  ' "$SUPPORTED_NODE_MAJOR" "$REQUIRED_NODE_VERSION" >/dev/null 2>&1
 }
 
 spinner_pid=""
@@ -158,13 +166,12 @@ fi
 
 if have node; then
   NODE_V="$(node -v 2>/dev/null || true)"
-  MAJOR="$(node_major)"
-  if [[ "$MAJOR" -lt "$MIN_NODE_MAJOR" ]]; then
-    fail "Node.js ${MIN_NODE_MAJOR}+ required (found ${NODE_V}). Get it at https://nodejs.org"
+  if ! node_version_supported; then
+    fail "Node.js >=22.22.2 <23 required (found ${NODE_V}); development uses ${REQUIRED_NODE_VERSION}. Get it at https://nodejs.org"
   fi
   ok "node ${NODE_V}"
 else
-  fail "Node.js ${MIN_NODE_MAJOR}+ is required. Get it at https://nodejs.org then re-run."
+  fail "Node.js >=22.22.2 <23 is required; development uses ${REQUIRED_NODE_VERSION}. Get it at https://nodejs.org then re-run."
 fi
 
 if have npm; then

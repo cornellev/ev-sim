@@ -5,6 +5,8 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
+import { parse } from "acorn";
+
 import { HEADLESS_PROTOCOL } from "../server/headless/HeadlessProtocol.js";
 import { RELEASE_MANIFEST_KIND, createReport } from "../server/headless/ReleaseReports.js";
 import {
@@ -68,6 +70,33 @@ async function javascriptFiles(directory) {
     return files;
 }
 
+function moduleSpecifiers(source) {
+    const program = parse(source, {
+        ecmaVersion: "latest",
+        sourceType: "module",
+        allowHashBang: true,
+    });
+    const specifiers = [];
+    const pending = [program];
+    while (pending.length > 0) {
+        const node = pending.pop();
+        if (!node || typeof node !== "object") continue;
+        if ((node.type === "ImportDeclaration"
+                || node.type === "ExportNamedDeclaration"
+                || node.type === "ExportAllDeclaration")
+            && typeof node.source?.value === "string") {
+            specifiers.push(node.source.value);
+        } else if (node.type === "ImportExpression" && typeof node.source?.value === "string") {
+            specifiers.push(node.source.value);
+        }
+        for (const value of Object.values(node)) {
+            if (Array.isArray(value)) pending.push(...value);
+            else if (value && typeof value === "object") pending.push(value);
+        }
+    }
+    return specifiers;
+}
+
 async function requiredJavascriptFiles() {
     const queue = [
         ...(await Promise.all(JAVASCRIPT_ROOTS.map(javascriptFiles))).flat(),
@@ -79,10 +108,9 @@ async function requiredJavascriptFiles() {
         if (files.has(relative)) continue;
         files.add(relative);
         const source = await fs.readFile(path.join(REPOSITORY_ROOT, relative), "utf8");
-        const imports = source.matchAll(/(?:from\s*|import\s*\(|import\s*)["'`]([^"'`]+)["'`]/g);
-        for (const match of imports) {
-            if (!match[1].startsWith(".")) continue;
-            let dependency = path.normalize(path.join(path.dirname(relative), match[1]));
+        for (const specifier of moduleSpecifiers(source)) {
+            if (!specifier.startsWith(".")) continue;
+            let dependency = path.normalize(path.join(path.dirname(relative), specifier));
             if (!path.extname(dependency)) dependency += ".js";
             if (!dependency.endsWith(".js")) continue;
             await fs.access(path.join(REPOSITORY_ROOT, dependency));
@@ -123,7 +151,7 @@ function packageMetadata(rootPackage) {
         type: "module",
         license: "Apache-2.0",
         repository: { type: "git", url: "git+https://github.com/cornellev/ev-sim.git" },
-        engines: { node: ">=22.14" },
+        engines: { node: rootPackage.engines.node },
         os: ["darwin", "linux"],
         cpu: ["x64", "arm64"],
         bin: { "cev-sim": "bin/cev-sim.js", "cev-sim-plugin": "bin/cev-sim-plugin.js" },
@@ -268,8 +296,8 @@ async function main() {
                 sflogVersion: 1,
             },
             platforms: [
-                { os: "linux", architectures: ["x64", "arm64"], node: ">=22.14", python: ">=3.10,<3.14" },
-                { os: "macos", architectures: ["x64", "arm64"], node: ">=22.14", python: ">=3.10,<3.14" },
+                { os: "linux", architectures: ["x64", "arm64"], node: rootPackage.engines.node, python: ">=3.10,<3.14" },
+                { os: "macos", architectures: ["x64", "arm64"], node: rootPackage.engines.node, python: ">=3.10,<3.14" },
             ],
             provenance: processProvenance(),
             artifacts,

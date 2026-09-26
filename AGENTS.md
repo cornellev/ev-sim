@@ -81,6 +81,27 @@ plugins until the plugin roadmap versions and admits them explicitly.
 Update the progress and decision log in `docs/plugin-plan.md` whenever a PLG
 PR changes a contract, hash, acceptance criterion, or milestone status.
 
+## Marketplace roadmap
+
+Before changing marketplace contracts, registry code, source trust, catalog
+storage, artifact delivery, installation, receipts, or marketplace UI, read:
+
+1. [`docs/marketplace-plan.md`](docs/marketplace-plan.md)
+2. [`docs/plugin-plan.md`](docs/plugin-plan.md)
+3. [`docs/run-manifests.md`](docs/run-manifests.md)
+4. [`docs/architecture.md`](docs/architecture.md)
+
+This is a separate `MKT-*` program. It is not headless PR 13 or a PLG, ED, or
+VIS milestone. Existing artifact formats remain authoritative. Marketplace
+metadata, installed state, and receipts are nonsemantic and must not enter
+`worldHash`, `resolvedHash`, `simulationSemanticHash`, `episodeHash`, package
+hashes, or run-package identity.
+
+Update the progress and decision log in `docs/marketplace-plan.md` whenever an
+MKT PR changes a schema, trust rule, hash, acceptance criterion, or milestone
+status. Update another roadmap only when that roadmap's own contract or
+acceptance evidence actually changes.
+
 ## Architectural invariants
 
 - JavaScript remains the single authoritative simulator implementation.

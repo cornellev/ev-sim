@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cev-sim.dev/schemas/marketplace/v1/install-receipt.schema.json",
+  "type": "object",
+  "required": ["kind", "version", "sourceId", "registryId", "release", "releaseHash", "installedAt", "dependencyLock", "mappings"],
+  "properties": {
+    "kind": { "const": "cev-sim.marketplace-install-receipt" },
+    "version": { "const": 1 },
+    "sourceId": { "$ref": "common.schema.json#/$defs/uuid" },
+    "registryId": { "$ref": "common.schema.json#/$defs/uuid" },
+    "release": { "$ref": "common.schema.json#/$defs/exactReleaseRef" },
+    "releaseHash": { "$ref": "common.schema.json#/$defs/sha256" },
+    "installedAt": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "dependencyLock": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/exactReleaseRef" } },
+    "mappings": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/localMapping" } }
+  },
+  "additionalProperties": false
+}

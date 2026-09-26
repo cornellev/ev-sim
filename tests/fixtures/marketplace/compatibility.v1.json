@@ -1,0 +1,19 @@
+{
+  "baselineCommit": "7a463e7",
+  "plugin": {
+    "packageHash": "f9e2255bed1adcdadbe7a3fa9cb75ee6644fc791c07acd9734bd4d43f8ea52d9",
+    "runtimeHash": "f29ebbc784e41f926b0aba3a8de763262be2b0e8181b63031dc4b7a9107657c7",
+    "resolvedHash": "bec3cb24c73ec6fae65d2377611ad78f0152e83f23543e59fa6a4a7e419a07b8",
+    "simulationSemanticHash": "8fa5b9fa937fa1a6dfc342237e9320ffe84097df3cdfdaea069ad79153ad793c",
+    "episodeHash": "b14dfdfee0b493e4119110f6f172b45959378544a3a10f0cf55fbc25fc9f40bc",
+    "worldHash": "d358aef1dc46de1f1d2f15e679a93fc0d9812e92d419f407d4fe30d399fcfa5f"
+  },
+  "vehicle": {
+    "id": "mkt-vector-vehicle",
+    "name": "MKT Vector Vehicle",
+    "description": "Frozen MKT-01 compatibility input",
+    "assetName": "model.glb",
+    "assetUtf8": "mkt-01-vehicle-model",
+    "bundleHash": "e44e29973a958058b1726855fca84c06c444033222dbb29238a72ae9d1a60c7a"
+  }
+}

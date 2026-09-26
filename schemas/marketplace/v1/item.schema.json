@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cev-sim.dev/schemas/marketplace/v1/item.schema.json",
+  "type": "object",
+  "required": ["kind", "version", "itemId", "publisherId", "contentKind", "displayName", "summary", "description", "categories", "tags", "links", "previews"],
+  "properties": {
+    "kind": { "const": "cev-sim.marketplace-item" },
+    "version": { "const": 1 },
+    "itemId": { "$ref": "common.schema.json#/$defs/marketplaceId" },
+    "publisherId": { "$ref": "common.schema.json#/$defs/marketplaceId" },
+    "contentKind": { "$ref": "common.schema.json#/$defs/contentKind" },
+    "displayName": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "summary": { "type": "string", "minLength": 1, "maxLength": 1024 },
+    "description": { "type": "string", "maxLength": 262144 },
+    "categories": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$" } },
+    "tags": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$" } },
+    "links": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/link" } },
+    "previews": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/preview" } }
+  },
+  "additionalProperties": false
+}

@@ -22,7 +22,9 @@
 
 ### Prerequisites
 
-You need Node.js 20 or later - download it from [nodejs.org](https://nodejs.org/en/download/).
+You need Node.js `>=22.22.2 <23`; development and CI use 22.22.2. Download it
+from [nodejs.org](https://nodejs.org/en/download/) or use the repository
+`.nvmrc`.
 
 ### Install
 

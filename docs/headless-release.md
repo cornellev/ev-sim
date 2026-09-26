@@ -138,7 +138,7 @@ GitHub OIDC and provenance, not long-lived tokens.
 
 | Component | Candidate version | Compatibility |
 | --- | --- | --- |
-| npm CLI/worker | `cev-sim@0.1.0` | Node `>=22.14`; Linux/macOS x64/ARM64 |
+| npm CLI/worker | `cev-sim@0.1.0` | Node `>=22.22.2 <23`; Linux/macOS x64/ARM64 |
 | Python adapter | `cev-sim==0.1.0` | Python `>=3.10,<3.14`; pure Python wheel and sdist |
 | Headless protocol | `1.4` | Server accepts historical JSON clients through `1.4`; package admission requires configured Unix protocol `1.4` |
 | Run manifest / bundle | `9` / `1` | Unchanged by PR 12 |
