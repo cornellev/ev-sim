@@ -42,7 +42,7 @@ test("MKT-01 publishes and validates all eight versioned documents", () => {
 });
 
 test("MKT-01 marketplace errors preserve public codes and redact internal causes", () => {
-    assert.equal(new Set(Object.values(MARKETPLACE_ERROR_CODES)).size, 15);
+    assert.equal(new Set(Object.values(MARKETPLACE_ERROR_CODES)).size, 17);
     const error = marketplaceError("DOCUMENT_INVALID", "Public failure.", {
         path: "$.release",
         cause: new Error("credential=secret"),

@@ -152,7 +152,7 @@ async function verifyNpm(root, tarball) {
     await checked(process.execPath, [
         "--input-type=module",
         "-e",
-        "await Promise.all(['cev-sim', 'cev-sim/protocol', 'cev-sim/supervisor', 'cev-sim/reports'].map((name) => import(name)));",
+        "await Promise.all(['cev-sim', 'cev-sim/protocol', 'cev-sim/supervisor', 'cev-sim/reports', 'cev-sim/marketplace/client'].map((name) => import(name)));",
     ], { cwd: project });
     const bundle = await createStateBundle({
         triggers: [{

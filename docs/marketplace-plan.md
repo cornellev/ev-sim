@@ -13,7 +13,7 @@ hosted private-LAN registry. It is not headless PR 13 and does not extend the
 | MKT-02: shared artifact/archive verification | Complete | Local acceptance passed; hosted CI pending | Unmerged |
 | MKT-03: registry CAS and atomic storage | Complete | Local acceptance passed; hosted CI pending | Unmerged |
 | MKT-04: TUF repository and read API | Complete | Local acceptance passed; hosted CI pending | Unmerged |
-| MKT-05: simulator trust client and cache | Not started | Not run | Unmerged |
+| MKT-05: simulator trust client and cache | Complete | Local acceptance passed; hosted CI pending | Unmerged |
 | MKT-06: read-only Marketplace workspace | Not started | Not run | Unmerged |
 | MKT-07: plans, jobs, transactions, receipts | Not started | Not run | Unmerged |
 | MKT-08: plugin lifecycle | Not started | Not run | Unmerged |
@@ -275,6 +275,44 @@ network access, creates marketplace storage, or changes browser workspaces.
 - [x] WP-10: document layout, key custody, backup exclusions, publication,
   recovery, loopback operation, internal/public visibility, milestone
   boundaries, and acceptance evidence.
+
+## MKT-05 work packages
+
+- [x] WP-00: begin from clean MKT-04 commit `a1a6c64`; record the 47/47
+  marketplace baseline; preserve canonical marketplace fixtures,
+  plugin/vehicle/run-package hashes, and headless characterization; keep UI,
+  previews, artifacts, installation, receipts, DSSE, advisory policy, and
+  secure LAN hosting outside MKT-05.
+- [x] WP-01: export the pure canonical metadata, role/meta, root-contract, and
+  delegation-contract verifiers from `TufMetadata.js`; retain MKT-04 behavior;
+  add client limits, health states, local-document validators, and public
+  source error codes without changing `sources.schema.json`.
+- [x] WP-02: add the revisioned serialized `MarketplaceSourceStore`, immutable
+  owner-only `MarketplaceCredentialStore`, bootstrap trust storage, optimistic
+  revisions, deterministic ordering, duplicate origin/registry rejection, and
+  fail-closed orphan/hostile-node recovery.
+- [x] WP-03: add `MarketplaceFixedOriginFetcher` and trust preview with strict
+  canonical discovery, exact bootstrap-root fingerprinting, self-signature and
+  registry binding, manual redirects, origin/path confinement, write-only
+  bearer handling, and repeated add-time confirmation.
+- [x] WP-04: add online `tuf-js@6.0.0` refresh, continuous root capture,
+  complete role verification, exact catalog/item/release/advisory target sets,
+  eager canonical target download, full summary cross-checks, immutable
+  snapshots, and atomic current-pointer publication.
+- [x] WP-05: add one-time-per-operation expiry evaluation, deterministic health
+  precedence, sanitized refresh outcomes, reverified cached reads, exact
+  offline reads with `fresh: false`, and `requireFresh` expiry enforcement.
+- [x] WP-06: add per-source serialization and shutdown cancellation in
+  `MarketplaceService`; mount the 32 KiB no-store, redacted source API only in
+  the enabled `server/App.js` branch; preserve fully inert disabled startup.
+- [x] WP-07: add focused source-store, trust-client, cache, and API suites over
+  the real `MarketplaceRegistryHttpServer`, including concurrency, modes,
+  confirmation, fixed origins, redirects, root rotation, eager/offline/expired
+  reads, publication faults, request immutability, and credential redaction.
+- [x] WP-08: finish operator/client and architecture documentation, stage the
+  client modules and document in the headless distribution, run complete local
+  acceptance, record immutable fixture checks, and retain hosted CI as the
+  final pre-merge evidence requirement.
 
 ## Milestones and gates
 
@@ -610,7 +648,65 @@ keeps publisher DSSE in MKT-13 and advisory policy in MKT-14. No PLG, ED, VIS,
 headless, or run-manifest contract or acceptance evidence changed, so no other
 roadmap was updated.
 
+## MKT-05 evidence ledger
+
+Implementation began on 2026-09-27 from clean MKT-04 commit `a1a6c64`. The
+pre-change `npm run test:marketplace` baseline passed 47/47. Canonical
+marketplace fixtures, `sources.schema.json`, plugin/vehicle/run-package
+identities, and the headless characterization fixture were unchanged.
+
+Final local evidence on 2026-09-27 used the checksum-verified Node 22.22.2
+runtime on macOS arm64:
+
+- `npm run test:marketplace`: 55/55 passed. The eight MKT-05 tests cover
+  revision races, deterministic ordering, mode-0700/0600 storage, immutable
+  credentials, hostile nodes, exact trust confirmation, fixed-origin and
+  redirect rejection, bearer confinement, eager populated caching, offline
+  reads, expiry boundaries, health precedence, publication faults, root v1 to
+  v3 rotation, strict API fields, optimistic conflicts, and response/log/cache
+  credential redaction.
+- `npm run lint`: passed with zero errors and the pre-existing `MapSurface.js`
+  `assetEpoch` hook warning.
+- `npm test`: 1,793 tests; 1,787 passed, six declared skips, zero failures.
+- `npm run build`: passed.
+- `npm run fixtures:headless`: passed and regenerated no characterization
+  diff. Marketplace fixtures and `sources.schema.json` also have no diff.
+- Source and staged `npm run release:check` passed.
+- `npm run dist:headless -- --output <temporary>` and
+  `npm run dist:verify -- --dist <temporary>` passed. Clean-install
+  verification imported `cev-sim/marketplace/client` and retained the MKT-04
+  installed registry smoke test.
+- Final staged artifact hashes were npm
+  `2f0a4bdb6ad553da0302f067f49cdaabb7a5b8bf1ecf013d6b929bc351e922eb`,
+  wheel `d6cbd24d1f81d257121ba08e57f102577069aebf9cfb133ace6eea9bfec25542`,
+  and source distribution
+  `14fc78b89d39e2b8772efb35b3f79bfdd0d876a19f38b5a639b4650ab850fd9b`.
+- `git diff --check`: passed.
+
+Hosted CI has no run or link because the implementation is not committed or
+pushed. MKT-05 remains unmerged until that evidence exists. MKT-05 adds no UI,
+preview proxy, artifact download, installation, receipt, publisher DSSE,
+advisory policy, or secure LAN hosting. No PLG, ED, VIS, headless, or
+run-manifest contract or acceptance evidence changed, so no other roadmap was
+updated.
+
 ## Decision log
+
+### 2026-09-27 — Commit trust before refresh and cache the complete signed catalog
+
+Source creation repeats discovery and exact bootstrap-root verification, then
+commits the immutable trust root and revisioned source without network refresh.
+The originally confirmed root fingerprint remains pinned through valid TUF
+root rotation. Origin and trust identity are immutable; changing either
+requires source removal and re-addition.
+
+Each explicit refresh downloads and verifies the catalog plus every signed
+item and release document before replacing `current.json`. A partial refresh
+never becomes visible. Exact documents already in a verified snapshot remain
+readable offline after signed metadata expiry with `fresh: false`, while fresh
+resolution fails with `METADATA_EXPIRED`. Credentials, source/health state,
+cache manifests, and signed marketplace documents remain operational and do
+not enter simulator or package identity.
 
 ### 2026-09-27 — Keep MKT-04 distribution distinct from publisher and advisory policy
 

@@ -543,9 +543,9 @@ hash projections.
 
 MKT-01 freezes the JSON contract layer under `schemas/marketplace/v1/` and
 `server/marketplace/`. `CEV_SIM_MARKETPLACE_ENABLED` is parsed at server
-startup but defaults to false and mounts no routes or services. Registry
-installation, simulator trust, and UI remain assigned to later milestones in
-[Marketplace roadmap](marketplace-plan.md).
+startup and defaults to false. In the disabled state it mounts no marketplace
+routes or services and creates no marketplace state. Registry installation and
+UI remain assigned to later milestones in [Marketplace roadmap](marketplace-plan.md).
 
 MKT-02 adds the Node-only `server/artifacts/` transport layer.
 `ArtifactVerification.js` owns bounded streaming hashes, exclusive mode-0600
@@ -599,6 +599,20 @@ transaction journals, and writer state are operational metadata and remain
 outside every simulator, world, episode, resolved-run, plugin, vehicle, and
 run-package hash authority. See [Marketplace registry operations](marketplace-registry.md)
 for layout, key custody, publication, read API, and recovery operations.
+
+MKT-05 adds the simulator-side client under `server/marketplace/client/`.
+`MarketplaceSourceStore` owns the revisioned `sources.json` visibility point;
+`MarketplaceCredentialStore` keeps immutable owner-only bearer files separate
+from source records; `MarketplaceTrustClient` combines the fixed-origin
+transport with `tuf-js`; and `MarketplaceVerifiedCache` publishes complete
+immutable signed-document snapshots through one atomic `current.json` pointer.
+`MarketplaceService` serializes refreshes per source, derives deterministic
+health, preserves exact verified documents for offline reads, and aborts
+outbound work during shutdown. When the feature flag is enabled,
+`server/routes/marketplaceRouter.js` exposes only source preview, revisioned
+source management, and explicit refresh under `/api/marketplace`. Browser code
+does not contact registries, startup does not auto-refresh, and MKT-05 performs
+no artifact download or installation. See [Marketplace trust client](marketplace-client.md).
 
 ## External Integration
 

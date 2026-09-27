@@ -41,6 +41,15 @@ app.prepare().then(async () => {
         // The ED-02 env-var opt-out was retired in ED-03; `environmentSchemaVersion: 3`
         // remains a test-only StorageService option.
     });
+    let marketplaceService = null;
+    let createMarketplaceRouter = null;
+    if (server.locals.marketplaceConfig.enabled) {
+        const marketplaceServiceModule = await import('./marketplace/client/MarketplaceService.js');
+        const marketplaceRouterModule = await import('./routes/marketplaceRouter.js');
+        marketplaceService = await marketplaceServiceModule.MarketplaceService.open(storageService.dataDir);
+        createMarketplaceRouter = marketplaceRouterModule.createMarketplaceRouter;
+        server.locals.marketplaceService = marketplaceService;
+    }
     const logService = new LogService(process.env.CEV_SIM_LOGS_DIR, {
         maxImportBytes: process.env.CEV_SIM_MAX_LOG_IMPORT_BYTES
             ? Number(process.env.CEV_SIM_MAX_LOG_IMPORT_BYTES)
@@ -79,6 +88,7 @@ app.prepare().then(async () => {
     server.use(['/api', '/mcp'], createRequestSecurityMiddleware(httpSecurity));
     const jsonParser = express.json({ limit: process.env.CEV_SIM_JSON_LIMIT || '8mb' });
     const headlessJsonParser = express.json({ limit: process.env.CEV_SIM_HEADLESS_JSON_LIMIT || '1mb' });
+    if (marketplaceService) server.use('/api/marketplace', createMarketplaceRouter(marketplaceService));
     server.use('/api/logs', createLogRouter(logService));
     mountStorageApi(server, storageService, { jsonParser });
     server.use('/api/scripting', jsonParser, createScriptingRouter(storageService));
@@ -119,6 +129,7 @@ app.prepare().then(async () => {
         if (shuttingDown) return;
         shuttingDown = true;
         httpServer.close();
+        await marketplaceService?.close();
         await headlessExperimentService.close();
     };
     process.once('SIGTERM', shutdown);

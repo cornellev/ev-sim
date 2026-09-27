@@ -56,7 +56,12 @@ import {
     tufExpiry,
     tufMetaFile,
     tufTargetFile,
+    verifyCanonicalTufMetadata,
+    verifyTufDelegationContract,
     verifyTufDelegate,
+    verifyTufMetadataContract,
+    verifyTufMetaFile,
+    verifyTufRootContract,
 } from "./TufMetadata.js";
 import {
     ensurePrivateKey,
@@ -232,78 +237,6 @@ function metadataVersions(state) {
 
 function sameStringSet(actual, expected) {
     return actual.length === expected.length && [...actual].sort().every((value, index) => value === [...expected].sort()[index]);
-}
-
-function verifyCanonicalMetadata(entry, label) {
-    if (!Buffer.from(entry.bytes).equals(canonicalTufBytes(entry.metadata))) {
-        throw signature(`TUF ${label} metadata is not canonically serialized.`);
-    }
-}
-
-function verifyMetadataContract(metadata, expectedType, label) {
-    const signed = metadata.toJSON().signed;
-    if (signed._type !== expectedType || signed.spec_version !== "1.0.31") {
-        throw signature(`TUF ${label} type or specification version is invalid.`);
-    }
-}
-
-function verifyMetaFile(meta, bytes, label) {
-    try {
-        meta.verify(bytes);
-    } catch (error) {
-        throw signature(`TUF ${label} length or hash is invalid.`, error);
-    }
-}
-
-function verifyRootContract(root) {
-    const signed = root.toJSON().signed;
-    if (signed.spec_version !== "1.0.31" || signed.consistent_snapshot !== true
-        || signed["x-cev-sim"]?.repositoryVersion !== 1) {
-        throw signature("TUF root repository contract is invalid.");
-    }
-    for (const role of [TUF_ROLES.ROOT, TUF_ROLES.TARGETS, TUF_ROLES.SNAPSHOT, TUF_ROLES.TIMESTAMP]) {
-        const definition = signed.roles?.[role];
-        if (definition?.threshold !== 1 || !Array.isArray(definition.keyids) || definition.keyids.length < 1) {
-            throw signature(`TUF root role ${role} is invalid.`);
-        }
-    }
-    if (!sameStringSet(signed.roles.root.keyids, signed.roles.targets.keyids)
-        || signed.roles.snapshot.keyids.length !== 1 || signed.roles.timestamp.keyids.length !== 1) {
-        throw signature("TUF root and top-level targets must share offline keys, with one snapshot and timestamp key.");
-    }
-    const referencedKeys = new Set(Object.values(signed.roles).flatMap((definition) => definition.keyids));
-    if (referencedKeys.size !== signed.roles.root.keyids.length + 2) {
-        throw signature("TUF offline root, snapshot, and timestamp keys must be distinct.");
-    }
-    if (!sameStringSet(Object.keys(signed.keys ?? {}), [...referencedKeys])) {
-        throw signature("TUF root contains unused or missing keys.");
-    }
-    for (const key of Object.values(signed.keys ?? {})) {
-        if (key.keytype !== "ed25519" || key.scheme !== "ed25519" || !/^[a-f0-9]{64}$/u.test(key.keyval?.public ?? "")) {
-            throw signature("TUF root contains a non-Ed25519 key.");
-        }
-    }
-}
-
-function verifyDelegationContract(targets) {
-    const signed = targets.toJSON().signed;
-    if (Object.keys(signed.targets ?? {}).length !== 0) throw signature("Top-level TUF targets role must not contain targets.");
-    const roles = signed.delegations?.roles ?? [];
-    if (!sameStringSet(roles.map((role) => role.name), TUF_DELEGATED_ROLES)) {
-        throw signature("Top-level TUF targets delegation set is invalid.");
-    }
-    const referenced = [];
-    for (const roleName of TUF_DELEGATED_ROLES) {
-        const role = roles.find((entry) => entry.name === roleName);
-        if (role.threshold !== 1 || role.terminating !== true || role.keyids.length !== 1
-            || !sameStringSet(role.paths ?? [], TUF_DELEGATION_PATHS[roleName])) {
-            throw signature(`TUF ${roleName} delegation contract is invalid.`);
-        }
-        referenced.push(...role.keyids);
-    }
-    if (!sameStringSet(Object.keys(signed.delegations?.keys ?? {}), referenced)) {
-        throw signature("Top-level TUF targets contains unused or missing delegated keys.");
-    }
 }
 
 async function verifyReferencedBlob(paths, descriptor) {
@@ -668,8 +601,8 @@ export class TufRepository {
         let trusted;
         for (let version = 1; version <= latestVersion; version += 1) {
             const current = await readMetadata(this.paths, TUF_ROLES.ROOT, version);
-            verifyCanonicalMetadata(current, `${version}.root.json`);
-            verifyRootContract(current.metadata);
+            verifyCanonicalTufMetadata(current, `${version}.root.json`);
+            verifyTufRootContract(current.metadata);
             if (version === 1) verifyTufDelegate(current.metadata, TUF_ROLES.ROOT, current.metadata);
             else {
                 verifyTufDelegate(trusted.metadata, TUF_ROLES.ROOT, current.metadata);
@@ -680,8 +613,8 @@ export class TufRepository {
         }
         assertTufNotExpired(trusted.metadata, now);
         const state = await this.readPublishedState();
-        verifyCanonicalMetadata(state.timestamp, "timestamp.json");
-        verifyMetadataContract(state.timestamp.metadata, MetadataKind.Timestamp, "timestamp.json");
+        verifyCanonicalTufMetadata(state.timestamp, "timestamp.json");
+        verifyTufMetadataContract(state.timestamp.metadata, MetadataKind.Timestamp, "timestamp.json");
         verifyTufDelegate(trusted.metadata, TUF_ROLES.TIMESTAMP, state.timestamp.metadata);
         assertTufNotExpired(state.timestamp.metadata, now);
         const histories = await metadataHistory(this.paths);
@@ -708,16 +641,16 @@ export class TufRepository {
             });
             const history = { bytes: historyBytes, metadata: parseTufMetadata(historyBytes, MetadataKind.Timestamp) };
             if (history.metadata.signed.version !== version) throw recovery("TUF timestamp history filename has the wrong version.");
-            verifyCanonicalMetadata(history, `${version}.timestamp.json`);
-            verifyMetadataContract(history.metadata, MetadataKind.Timestamp, `${version}.timestamp.json`);
+            verifyCanonicalTufMetadata(history, `${version}.timestamp.json`);
+            verifyTufMetadataContract(history.metadata, MetadataKind.Timestamp, `${version}.timestamp.json`);
             verifyTufDelegate(trusted.metadata, TUF_ROLES.TIMESTAMP, history.metadata);
             if (version === state.timestamp.metadata.signed.version && !Buffer.from(historyBytes).equals(state.timestamp.bytes)) {
                 throw recovery("Published timestamp alias does not match its immutable history entry.");
             }
         }
-        verifyMetaFile(state.timestamp.metadata.signed.snapshotMeta, state.snapshot.bytes, "snapshot.json");
-        verifyCanonicalMetadata(state.snapshot, `${state.snapshot.metadata.signed.version}.snapshot.json`);
-        verifyMetadataContract(state.snapshot.metadata, MetadataKind.Snapshot, "snapshot.json");
+        verifyTufMetaFile(state.timestamp.metadata.signed.snapshotMeta, state.snapshot.bytes, "snapshot.json");
+        verifyCanonicalTufMetadata(state.snapshot, `${state.snapshot.metadata.signed.version}.snapshot.json`);
+        verifyTufMetadataContract(state.snapshot.metadata, MetadataKind.Snapshot, "snapshot.json");
         verifyTufDelegate(trusted.metadata, TUF_ROLES.SNAPSHOT, state.snapshot.metadata);
         assertTufNotExpired(state.snapshot.metadata, now);
         const expectedSnapshotFiles = [TUF_ROLES.TARGETS, ...TUF_DELEGATED_ROLES].map((role) => `${role}.json`);
@@ -725,13 +658,13 @@ export class TufRepository {
             throw signature("TUF snapshot metadata set is invalid.");
         }
         for (const [role, entry] of Object.entries(state.roles)) {
-            verifyMetaFile(state.snapshot.metadata.signed.meta[`${role}.json`], entry.bytes, `${role}.json`);
-            verifyCanonicalMetadata(entry, `${entry.metadata.signed.version}.${role}.json`);
-            verifyMetadataContract(entry.metadata, MetadataKind.Targets, `${role}.json`);
+            verifyTufMetaFile(state.snapshot.metadata.signed.meta[`${role}.json`], entry.bytes, `${role}.json`);
+            verifyCanonicalTufMetadata(entry, `${entry.metadata.signed.version}.${role}.json`);
+            verifyTufMetadataContract(entry.metadata, MetadataKind.Targets, `${role}.json`);
             verifyTufDelegate(role === TUF_ROLES.TARGETS ? trusted.metadata : state.roles.targets.metadata, role, entry.metadata);
             assertTufNotExpired(entry.metadata, now);
         }
-        verifyDelegationContract(state.roles.targets.metadata);
+        verifyTufDelegationContract(state.roles.targets.metadata);
         if (Object.keys(state.roles.advisories.metadata.signed.targets).length !== 0) {
             throw signature("MKT-04 advisory delegation must be empty.");
         }

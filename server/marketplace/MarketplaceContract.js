@@ -37,6 +37,22 @@ export const MARKETPLACE_TRACKS = Object.freeze(["stable", "beta"]);
 export const MARKETPLACE_ADVISORY_ACTIONS = Object.freeze(["warn", "yank", "block"]);
 export const MARKETPLACE_ADVISORY_SEVERITIES = Object.freeze(["low", "moderate", "high", "critical"]);
 
+export const MARKETPLACE_SOURCE_HEALTH = Object.freeze({
+    DISABLED: "disabled",
+    UNTRUSTED: "untrusted",
+    EXPIRED: "expired",
+    OFFLINE: "offline",
+    STALE: "stale",
+    READY: "ready",
+});
+
+export const MARKETPLACE_CLIENT_LIMITS = Object.freeze({
+    credentialBytes: 8 * 1024,
+    discoveryBytes: 64 * 1024,
+    rootBytes: 512_000,
+    requestTimeoutMs: 15_000,
+});
+
 export const MARKETPLACE_LIMITS = Object.freeze({
     jsonBytes: 8 * 1024 ** 2,
     catalogBytes: 64 * 1024 ** 2,
