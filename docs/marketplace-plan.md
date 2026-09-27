@@ -10,7 +10,7 @@ hosted private-LAN registry. It is not headless PR 13 and does not extend the
 | Milestone | Implementation | Verification | Merge status |
 | --- | --- | --- | --- |
 | MKT-01: contracts and runtime baseline | Complete | Local acceptance passed; hosted CI pending | Unmerged |
-| MKT-02: shared artifact/archive verification | Not started | Not run | Unmerged |
+| MKT-02: shared artifact/archive verification | Complete | Local acceptance passed; hosted CI pending | Unmerged |
 | MKT-03: registry CAS and atomic storage | Not started | Not run | Unmerged |
 | MKT-04: TUF repository and read API | Not started | Not run | Unmerged |
 | MKT-05: simulator trust client and cache | Not started | Not run | Unmerged |
@@ -156,9 +156,12 @@ hashes.
 
 ## Portable archive limits
 
-MKT-02 will generalize the existing strict run-package USTAR implementation;
+MKT-02 generalizes the existing strict run-package USTAR implementation;
 MKT-10 will activate environment and asset packages. Existing run-package
-limits and bytes remain unchanged.
+limits and bytes remain unchanged. `server/artifacts/DeterministicArchive.js`
+owns transport-only canonical USTAR framing and verification, while each
+content profile continues to own entry order, semantic validation, and its
+narrower limits.
 
 The future environment/asset profile uses a 50 GiB archive ceiling, 100,000
 entries, an 8 MiB manifest ceiling, and an individual-entry ceiling of
@@ -185,6 +188,26 @@ The feature flag accepts empty/`0`/`false` as disabled and `1`/`true` as
 enabled. Invalid values fail startup. It requires a restart and remains false
 by default through MKT-15. In MKT-01 neither state mounts routes, performs
 network access, creates marketplace storage, or changes browser workspaces.
+
+## MKT-02 work packages
+
+- [x] WP-01: freeze exact run-package bytes in the golden fixture and retain
+  every MKT-01 compatibility identity.
+- [x] WP-02: add bounded hashing, exclusive staging, path validation, deadline,
+  cancellation, fsync, cleanup, and abandoned-operation recovery primitives.
+- [x] WP-03: extract the deterministic streaming USTAR reader/writer with
+  canonical-header, hostile-input, limit, and bounded-memory enforcement.
+- [x] WP-04: rebase run-package encode, stream, verify, admission staging, and
+  recovery paths without changing bytes, result shapes, or public errors.
+- [x] WP-05: extract pure vehicle-bundle hash and verification before any CAS
+  or authoring write.
+- [x] WP-06: register read-only plugin, vehicle, run-template, and run-package
+  artifact adapters; mutation operations remain deterministically unsupported.
+- [x] WP-07: add hostile archive, stream/staging fault, adapter, regression, and
+  greater-than-2-GiB lazy-stream coverage.
+- [x] WP-08: document the transport and adapter boundaries and record local
+  source/build/distribution evidence. Hosted CI and merge evidence remain
+  pending on an MKT-02 commit.
 
 ## Milestones and gates
 
@@ -395,7 +418,65 @@ pushed. It remains the verification item required before merge. The hosted,
 soak, x64 NVIDIA, and Jetson ARM64 obligations already outstanding from
 headless PR 12 remain outstanding and are not MKT-01 completion claims.
 
+## MKT-02 evidence ledger
+
+The pre-refactor focused baseline was 46/46 passing with the frozen 4,096-byte
+run-package archive hash
+`04e463b71fdf65034bb56af55fec58240c4236141a679085609e68ffe5877c7d`.
+Final local evidence ran on 2026-09-26 from an uncommitted working tree based
+on `5afe17e521c8b2bf8ff5884513fe1c15342d4679`, macOS 15.6 arm64. Source
+tests used the host Node 22.14.0/npm 11.4.1; distribution acceptance used the
+pinned Node 22.22.2/npm 10.9.7 runtime:
+
+- `tests/artifact-verification.test.js`,
+  `tests/deterministic-archive.test.js`, and
+  `tests/marketplace-artifact-adapters.test.js`: 15/15 passed. The lazy
+  2,147,483,649-byte entry stayed below the test ceilings of 256 MiB RSS growth
+  and 128 MiB array-buffer growth.
+- The focused run-package, admission, plugin store, plugin sensor, vehicle,
+  run-manifest, marketplace compatibility, artifact, archive, and adapter
+  selection passed after preserving the existing short-write error mapping.
+- `npm run test:marketplace`: 23/23 passed.
+- `npm run lint`: passed with zero errors and the existing `MapSurface.js`
+  `assetEpoch` hook warning.
+- `npm test`: 1,746 tests; 1,740 passed, six declared skips, zero failures.
+- `npm run build`: passed.
+- `npm run release:check`: passed for source metadata.
+- Under Node 22.22.2, `npm run dist:headless -- --output <temporary>`,
+  `npm run release:check -- --dist <temporary>`, and
+  `npm run dist:verify -- --dist <temporary>` passed. The staged npm archive
+  contains `ArtifactVerification.js`, `DeterministicArchive.js`, and
+  `VehicleBundle.js` under `server/artifacts/`.
+- Final staged artifact hashes were npm
+  `aed4d3a75890ce5154819051671bb539a6cd20fce1c5ca04a7c4d0159ce56791`,
+  wheel `ab9b4fd091e702168b50b7b25ea6cda88d96c820b57620acca5d26d49ae8b2c6`,
+  and source distribution
+  `02518e1a6b9c707779887ff11ba3b64060a1bd1b847fd30a00b7e34fdea7cc56`.
+- Plugin, vehicle-bundle, resolved-run, simulation-semantic, episode, world,
+  package-manifest, and archive compatibility vectors remain unchanged. The
+  exact 4,096 archive bytes are now stored in the golden fixture as base64.
+
+Hosted CI has no run or link because this implementation is not committed or
+pushed. MKT-02 remains unmerged until that evidence exists. No PLG, ED, VIS, or
+headless contract or acceptance evidence changed, so no other roadmap was
+updated.
+
 ## Decision log
+
+### 2026-09-26 — Separate archive transport verification from artifact semantics
+
+`server/artifacts` is a Node-only transport layer. It owns bounded streaming,
+operation-owned staging, path safety, canonical USTAR bytes, and structural
+archive rejection. Run-package entry order, manifest closure, and narrower
+manifest/bundle/asset ceilings remain owned by the run-package profile.
+Vehicle-bundle verification is pure and completes before existing CAS or
+authoring commits.
+
+Artifact adapters inspect existing authoritative formats without establishing
+authenticity, rights, compatibility, dependency eligibility, or permission to
+install. Their `plan`, `commit`, and `createReceipt` methods fail before any
+mutation; MKT-07 owns their future transactional implementation. Marketplace
+metadata and inspections remain outside every simulation and package hash.
 
 ### 2026-09-26 — Record MKT-01 contracts and runtime baseline
 

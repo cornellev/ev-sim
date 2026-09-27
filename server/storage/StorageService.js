@@ -106,6 +106,10 @@ import {
 import { Semaphore, createMutex } from "./visual-assets/semaphore.js";
 import { fsyncDir, maybeFault, writeExclusiveFile } from "./visual-assets/atomicFs.js";
 import { computeSimulationSemanticHash } from "../../app/simulation/kernel/SimulationHashes.js";
+import {
+    computeVehicleBundleHash,
+    verifyVehicleBundle,
+} from "../artifacts/VehicleBundle.js";
 import { createWorldResource } from "../../app/simulation/world/WorldDescription.js";
 import { createLidarGeometryResource } from "../../app/simulation/lidar/LidarGeometry.js";
 import { createRenderSceneResource } from "../../app/simulation/render/RenderScene.js";
@@ -2646,57 +2650,27 @@ export class StorageService {
             assets,
             ...(pluginPackages.length > 0 ? { pluginPackages } : {}),
         };
-        bundle.bundleHash = semanticHash(vehicleBundleHashSource(bundle));
+        bundle.bundleHash = computeVehicleBundleHash(bundle);
         return bundle;
     }
 
     async importVehicleBundle(bundle = {}) {
-        if (bundle.kind !== VEHICLE_BUNDLE_KIND || Number(bundle.version) !== VEHICLE_BUNDLE_VERSION) {
-            throw new Error(`Unsupported vehicle bundle; expected ${VEHICLE_BUNDLE_KIND} version ${VEHICLE_BUNDLE_VERSION}.`);
-        }
-        const assets = bundle.assets && typeof bundle.assets === "object" ? bundle.assets : {};
-        if (bundle.bundleHash && semanticHash(vehicleBundleHashSource({
-            manifest: bundle.manifest,
-            assets,
-            ...(Array.isArray(bundle.pluginPackages) ? { pluginPackages: bundle.pluginPackages } : {}),
-        })) !== bundle.bundleHash) {
-            throw new Error("Vehicle bundle hash is invalid.");
-        }
-        const locks = normalizeVehiclePluginLocks(bundle.manifest?.pluginLocks) ?? [];
-        const embedded = Array.isArray(bundle.pluginPackages) ? bundle.pluginPackages : [];
-        const verifiedById = new Map();
-        for (const resource of embedded) {
-            const verified = verifyPluginPackage(resource);
-            if (verifiedById.has(verified.document.id)) {
-                throw new Error(`Vehicle bundle contains duplicate plugin package "${verified.document.id}".`);
-            }
-            verifiedById.set(verified.document.id, verified);
-        }
-        for (const lock of locks) {
-            const verified = verifiedById.get(lock.pluginId);
-            if (!verified) {
-                throw new Error(`Vehicle bundle is missing embedded plugin package "${lock.pluginId}".`);
-            }
-            verifyVehiclePluginLockAgainstPackage(lock, verified, "pluginLocks");
-        }
-        const sensorRegistry = createSensorDefinitionRegistry([...verifiedById.values()]);
-        const incoming = normalizeVehicleManifest(bundle.manifest, { sensorRegistry });
-        const validation = validateVehicleManifest(incoming, { sensorRegistry });
-        if (!validation.ok) throw vehicleValidationError(validation.issues);
-        for (const verified of [...verifiedById.values()].sort((left, right) => (
-            comparePluginText(left.document.id, right.document.id)
-        ))) {
+        const verifiedBundle = verifyVehicleBundle(bundle);
+        const assets = verifiedBundle.decodedAssets;
+        const incoming = verifiedBundle.manifest;
+        for (const verified of verifiedBundle.verifiedPluginPackages) {
             await this.plugins.putPackage(verified.resource);
         }
         if (await this.getVehicleManifest(incoming.id)) {
-            const suffix = semanticHash({ manifest: incoming, assets }).slice(0, 8);
+            const encodedAssets = Object.fromEntries(Object.entries(assets).map(([name, bytes]) => [name, bytes.toString("base64")]));
+            const suffix = semanticHash({ manifest: incoming, assets: encodedAssets }).slice(0, 8);
             incoming.id = `${incoming.id}-${suffix}`;
         }
         let created = null;
         try {
             created = await this.createVehicleManifest(incoming);
-            for (const [fileName, base64] of Object.entries(assets)) {
-                await this.putVehicleAsset(created.id, fileName, Buffer.from(String(base64), "base64"));
+            for (const [fileName, bytes] of Object.entries(assets)) {
+                await this.putVehicleAsset(created.id, fileName, bytes);
             }
             return created;
         } catch (error) {
@@ -3822,19 +3796,6 @@ function experimentBaselineValidationError(issues) {
 function headlessQueueValidationError(issues) {
     const detail = issues.map((issue) => `${issue.path || "queue"}: ${issue.message}`).join("; ");
     return new Error(`Headless experiment queue validation failed: ${detail}`);
-}
-
-function vehicleBundleHashSource(bundle = {}) {
-    const source = {
-        manifest: bundle.manifest,
-        assets: bundle.assets,
-    };
-    if (!Array.isArray(bundle.pluginPackages)) return source;
-    const pluginPackages = [...bundle.pluginPackages].sort((left, right) => comparePluginText(
-        verifyPluginPackage(left).document.id,
-        verifyPluginPackage(right).document.id,
-    ));
-    return { ...source, pluginPackages };
 }
 
 function vehicleValidationError(issues) {

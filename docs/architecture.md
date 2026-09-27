@@ -547,6 +547,25 @@ startup but defaults to false and mounts no routes or services. Registry
 storage, TUF refresh, network access, installation, and UI remain assigned to
 later milestones in [Marketplace roadmap](marketplace-plan.md).
 
+MKT-02 adds the Node-only `server/artifacts/` transport layer.
+`ArtifactVerification.js` owns bounded streaming hashes, exclusive mode-0600
+staging, deadlines/cancellation, safe archive names, fsync, and abandoned
+operation recovery. `DeterministicArchive.js` owns the canonical uncompressed
+USTAR codec and structural verification. It preserves caller entry order and
+does not interpret manifests or content identities. `VisualAssetPack.js`
+retains the run-package profile's manifest/bundle/asset ordering, limits,
+closure, rights, and public error contract while delegating transport framing.
+`VehicleBundle.js` performs pure bundle/package/lock/manifest/asset
+verification before `StorageService` writes plugin CAS or authoring state.
+
+`server/marketplace/ArtifactAdapters.js` is a read-only boundary over the
+existing plugin-package, vehicle-bundle, run-bundle, and run-package
+authorities. Inspections are serializable identity summaries. Validation only
+binds the adapter contract and marketplace media/content kind to the signed
+artifact digest and byte size. It does not authenticate a release, evaluate
+rights or compatibility, import code, install content, or grant execution.
+Planning, commit, and receipt operations remain unavailable until MKT-07.
+
 ## External Integration
 
 cev-sim does not embed ROS. `app/3d/managers/ClientManager.js` creates a browser client from `app/client/Client.js`, syncs message definitions from the external orchestrator Types API, then connects to the orchestrator WebSocket.

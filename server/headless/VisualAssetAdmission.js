@@ -6,6 +6,7 @@ import { Readable } from "node:stream";
 import { finished } from "node:stream/promises";
 
 import { canonicalExactStringify } from "../../app/simulation/visual/VisualLayer.js";
+import { stageArtifactStream } from "../artifacts/ArtifactVerification.js";
 import { RUN_PACKAGE_ERROR_CODES, VISUAL_ASSET_ERROR_CODES, visualAssetError } from "../storage/StorageErrors.js";
 import { VisualAssetStore } from "../storage/VisualAssetStore.js";
 import { createMutex } from "../storage/visual-assets/semaphore.js";
@@ -793,44 +794,29 @@ export async function stageRunPackage(packagePath, inboxDir, { signal, limits = 
     const destination = path.join(inboxDir, `${stagingId}.run-package`);
     const source = await openRegularFile(packagePath);
     if (!source) throw visualAssetError(RUN_PACKAGE_ERROR_CODES.INVALID, "Run package was not found.");
-    let output = null;
     let published = false;
-    const hasher = createHash("sha256");
     const deadline = Date.now() + limits.verificationTimeoutMs;
-    let received = 0;
-    const check = () => {
-        signal?.throwIfAborted();
-        if (Date.now() >= deadline) throw visualAssetError(RUN_PACKAGE_ERROR_CODES.TIMEOUT, "Package staging exceeded its time budget.");
-        if (received > limits.archiveBytes) throw visualAssetError(RUN_PACKAGE_ERROR_CODES.TOO_LARGE, "Package staging exceeds the archive-byte ceiling.");
-    };
     try {
-        received = source.stat.size;
-        check();
-        received = 0;
-        output = await fs.open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
-        for await (const chunk of source.handle.createReadStream({ autoClose: false, signal })) {
-            received += chunk.length;
-            check();
-            hasher.update(chunk);
-            let offset = 0;
-            while (offset < chunk.length) {
-                check();
-                const written = await output.write(chunk, offset, chunk.length - offset);
-                if (written.bytesWritten <= 0) throw visualAssetError(RUN_PACKAGE_ERROR_CODES.IO, "Package staging write made no progress.");
-                offset += written.bytesWritten;
-            }
+        if (source.stat.size > limits.archiveBytes) {
+            throw visualAssetError(RUN_PACKAGE_ERROR_CODES.TOO_LARGE, "Package staging exceeds the archive-byte ceiling.");
         }
-        await output.sync();
-        check();
-        await output.close();
-        output = null;
+        const staged = await stageArtifactStream(source.handle.createReadStream({ autoClose: false, signal }), {
+            destination: temporary,
+            expectedBytes: source.stat.size,
+            maxBytes: limits.archiveBytes,
+            maxChunkBytes: limits.bundleBytes,
+            deadline,
+            signal,
+        });
         await fs.rename(temporary, destination);
         await fsyncDir(inboxDir);
         published = true;
-        return { stagingId, archiveHash: hasher.digest("hex"), path: destination };
+        return { stagingId, archiveHash: staged.sha256, path: destination };
+    } catch (error) {
+        if (signal?.aborted) signal.throwIfAborted();
+        throw mapRunPackageError(error);
     } finally {
         await source.handle.close().catch(() => {});
-        await output?.close().catch(() => {});
         if (!published) {
             await Promise.all([
                 fs.rm(temporary, { force: true }),

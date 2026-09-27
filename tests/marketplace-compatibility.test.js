@@ -51,4 +51,5 @@ test("MKT-01 preserves run-package manifest and archive vectors", () => {
     assert.equal(hashRunPackageManifest(encoded.manifest), runPackage.withAsset.packageManifestHash);
     assert.equal(encoded.archiveHash, runPackage.withAsset.archiveHash);
     assert.equal(encoded.bytes.length, runPackage.withAsset.archiveBytes);
+    assert.deepEqual(encoded.bytes, Buffer.from(runPackage.withAsset.archiveBase64, "base64"));
 });

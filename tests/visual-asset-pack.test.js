@@ -104,6 +104,7 @@ test("G-PACKAGE golden manifest JCS and archive hashes are frozen", () => {
     assert.equal(encoded.packageManifestHash, golden.withAsset.packageManifestHash);
     assert.equal(encoded.archiveHash, golden.withAsset.archiveHash);
     assert.equal(encoded.bytes.length, golden.withAsset.archiveBytes);
+    assert.deepEqual(encoded.bytes, Buffer.from(golden.withAsset.archiveBase64, "base64"));
     assert.equal(empty.packageManifestHash, golden.empty.packageManifestHash);
     assert.equal(empty.archiveHash, golden.empty.archiveHash);
     assert.equal(empty.bytes.length, golden.empty.archiveBytes);
@@ -124,6 +125,7 @@ test("G-PACKAGE streaming encoding and fragmented verification preserve frozen b
     for await (const chunk of streamed.stream) chunks.push(chunk);
     const completed = await streamed.completion;
     assert.deepEqual(Buffer.concat(chunks), expected.bytes);
+    assert.deepEqual(Buffer.concat(chunks), Buffer.from(golden.withAsset.archiveBase64, "base64"));
     assert.equal(completed.archiveHash, expected.archiveHash);
 
     const abandoned = createRunPackageStream({ bundleBytes, assets });
