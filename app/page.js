@@ -35,6 +35,7 @@ import {
     useWorkspaceNavigation,
 } from './ui';
 import { usePerspectiveViewActive } from './3d/camera/perspectiveViewBridge';
+import RevisionNotice from './revision/RevisionNoticeDialog';
 
 export default function Home() {
     return (
@@ -412,6 +413,7 @@ function HomeContent() {
         }
         </div>
         <DesktopRequired />
+        <RevisionNotice />
         </div>
     );
 }

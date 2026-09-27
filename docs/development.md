@@ -30,6 +30,10 @@ npm test
 
 Test files are grouped by area: `visual-script-runtime.test.js`, `editor-core.test.js`, `editor-map-mode.test.js`, `earth-import-mode.test.js`, `bake-*.test.js`, and `storage-service.test.js`.
 
+## Revision check
+
+`server/App.js` pins the git commit the process started on. `GET /api/revision` fetches the remote default branch at most once every five minutes and reports whether that running commit is behind or diverged from the tip. The browser opens a dialog when this process is missing that commit. Pull the tip and restart `npm run dev` or `npm run start`. `CEV_SIM_REVISION_CHECK=0` turns the check off.
+
 ## Storage backend
 
 Environment edits, scripts, and bindings are persisted on the server rather than in the browser. The backend is deliberately simple - no database, just JSON files with an in-memory cache:

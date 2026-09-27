@@ -97,6 +97,12 @@ app.prepare().then(async () => {
     }));
     server.use('/mcp', jsonParser, createMcpRouter(storageService, logService, headlessExperimentService));
 
+    const { RemoteRevisionProbe } = await import('./revision/RemoteRevisionProbe.js');
+    const { createRevisionRouter } = await import('./routes/revisionRouter.js');
+    const revisionProbe = new RemoteRevisionProbe({ repoRoot: REPOSITORY_ROOT });
+    await revisionProbe.start();
+    server.use('/api/revision', createRevisionRouter(revisionProbe));
+
     server.all(/(.*)/, (req, res) => {
         return handle(req, res);
     });
