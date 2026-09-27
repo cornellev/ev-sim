@@ -4,6 +4,7 @@ import {
     assertMarketplaceId,
     assertReleaseVersion,
     assertSha256,
+    assertTargetPath,
 } from "../MarketplaceFormats.js";
 
 export const REGISTRY_DIRECTORY_MODE = 0o700;
@@ -27,6 +28,11 @@ export function registryPaths(root) {
         catalogRevisions: path.join(resolvedRoot, "catalog", "revisions"),
         transactions: path.join(resolvedRoot, "transactions"),
         uploadStaging: path.join(resolvedRoot, "staging", "uploads"),
+        tuf: path.join(resolvedRoot, "tuf"),
+        tufMetadata: path.join(resolvedRoot, "tuf", "metadata"),
+        tufTargets: path.join(resolvedRoot, "tuf", "targets"),
+        tufOnlineKeys: path.join(resolvedRoot, "tuf", "keys", "online"),
+        tufTransactions: path.join(resolvedRoot, "tuf", "transactions"),
     });
 }
 
@@ -59,6 +65,33 @@ export function blobRecordPath(digest) {
     return `blob-records/sha256/${digest}.json`;
 }
 
+export function tufCatalogTargetPath() {
+    return "catalog/catalog.json";
+}
+
+export function tufItemTargetPath(itemId) {
+    assertMarketplaceId(itemId, "itemId");
+    return `items/${itemId}.json`;
+}
+
+export function tufReleaseTargetPath(itemId, releaseVersion) {
+    assertMarketplaceId(itemId, "itemId");
+    assertReleaseVersion(releaseVersion, "releaseVersion");
+    return `releases/${itemId}/${releaseVersion}.json`;
+}
+
+export function tufAdvisoryTargetPath(advisoryId) {
+    assertMarketplaceId(advisoryId, "advisoryId");
+    return `advisories/${advisoryId}.json`;
+}
+
+export function tufConsistentTargetPath(targetPath, sha256) {
+    assertTargetPath(targetPath, "targetPath");
+    assertSha256(sha256, "sha256");
+    const parsed = path.posix.parse(targetPath);
+    return path.posix.join(parsed.dir, `${sha256}.${parsed.base}`);
+}
+
 export function resolveRegistryPath(paths, relativePath) {
     const destination = path.resolve(paths.root, relativePath);
     if (destination === paths.root || !destination.startsWith(`${paths.root}${path.sep}`)) {
@@ -67,7 +100,7 @@ export function resolveRegistryPath(paths, relativePath) {
     return destination;
 }
 
-export function requiredRegistryDirectories(paths) {
+export function requiredRegistryCoreDirectories(paths) {
     return [
         paths.blobs,
         paths.blobRecords,
@@ -76,5 +109,15 @@ export function requiredRegistryDirectories(paths) {
         paths.catalogRevisions,
         paths.transactions,
         paths.uploadStaging,
+    ];
+}
+
+export function requiredRegistryDirectories(paths) {
+    return [
+        ...requiredRegistryCoreDirectories(paths),
+        paths.tufMetadata,
+        paths.tufTargets,
+        paths.tufOnlineKeys,
+        paths.tufTransactions,
     ];
 }

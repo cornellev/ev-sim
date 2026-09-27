@@ -19,6 +19,7 @@ import {
 import { DEFAULT_STAGING_GRACE_MS } from "./registry/RegistryLayout.js";
 import { MarketplaceRegistryService } from "./registry/RegistryService.js";
 import { MarketplaceRegistryStore } from "./registry/RegistryStore.js";
+import { MarketplaceRegistryHttpServer } from "./registry/RegistryHttpServer.js";
 
 export const REGISTRY_CLI_EXIT = Object.freeze({
     OK: 0,
@@ -32,6 +33,7 @@ export const REGISTRY_CLI_EXIT = Object.freeze({
 
 const VALUE_OPTIONS = new Set([
     "root", "registry-id", "file", "content-kind", "media-type", "track", "kind", "grace-hours",
+    "offline-root-key", "current-root-key", "new-root-key", "host", "port",
 ]);
 const FLAG_OPTIONS = new Set(["dry-run"]);
 
@@ -43,7 +45,7 @@ export function registryCliHelp() {
         "  cev-sim mkt <command>",
         "",
         "Commands:",
-        "  init --root DIR [--registry-id UUID]",
+        "  init --root DIR --offline-root-key FILE [--registry-id UUID]",
         "  validate item --file FILE",
         "  validate release --file FILE",
         "  validate artifact --content-kind KIND --file FILE",
@@ -55,6 +57,9 @@ export function registryCliHelp() {
         "  list --root DIR --kind items|releases|blobs",
         "  verify --root DIR",
         "  gc --root DIR --dry-run [--grace-hours N]",
+        "  tuf refresh --root DIR",
+        "  tuf rotate-root --root DIR --current-root-key FILE --new-root-key FILE",
+        "  serve --root DIR [--host 127.0.0.1|::1] [--port 8080]",
     ].join("\n");
 }
 
@@ -153,12 +158,15 @@ async function withStore(root, options, operation) {
     }
 }
 
-async function execute(parsed, signal) {
+async function execute(parsed, signal, { stdout }) {
     const { command, positional, options } = parsed;
     if (command === "init") {
         if (positional.length !== 0) throw usage("init does not accept positional arguments.");
-        exactOptions(options, ["root"], ["registry-id"]);
-        const registry = await MarketplaceRegistryStore.initialize(options.root, { registryId: options["registry-id"] ?? null });
+        exactOptions(options, ["root", "offline-root-key"], ["registry-id"]);
+        const registry = await MarketplaceRegistryStore.initialize(options.root, {
+            registryId: options["registry-id"] ?? null,
+            offlineRootKeyPath: options["offline-root-key"],
+        });
         await withStore(options.root, {}, async () => {});
         return { ok: true, command: "init", registry };
     }
@@ -263,6 +271,52 @@ async function execute(parsed, signal) {
             ...await service.planGarbageCollection({ graceMs: hours * 3_600_000 }),
         }));
     }
+    if (command === "tuf") {
+        if (positional.length !== 1) throw usage("tuf requires exactly one operation: refresh or rotate-root.");
+        if (positional[0] === "refresh") {
+            exactOptions(options, ["root"]);
+            return withStore(options.root, {}, async (store) => {
+                if (!store.tufRepository) throw marketplaceError(MARKETPLACE_ERROR_CODES.CONFIG_INVALID, "Registry has no TUF repository.");
+                const result = await store.mutate(async () => store.tufRepository.refresh(await store.readCatalog()));
+                return { ok: true, command: "tuf", operation: "refresh", ...result };
+            });
+        }
+        if (positional[0] === "rotate-root") {
+            exactOptions(options, ["root", "current-root-key", "new-root-key"]);
+            return withStore(options.root, {}, async (store) => {
+                if (!store.tufRepository) throw marketplaceError(MARKETPLACE_ERROR_CODES.CONFIG_INVALID, "Registry has no TUF repository.");
+                const result = await store.mutate(() => store.tufRepository.rotateRoot({
+                    currentRootKeyPath: options["current-root-key"],
+                    newRootKeyPath: options["new-root-key"],
+                }));
+                return { ok: true, command: "tuf", operation: "rotate-root", ...result };
+            });
+        }
+        throw usage(`Unknown tuf operation ${JSON.stringify(positional[0])}.`);
+    }
+    if (command === "serve") {
+        if (positional.length !== 0) throw usage("serve does not accept positional arguments.");
+        exactOptions(options, ["root"], ["host", "port"]);
+        const port = options.port === undefined ? 8080 : Number(options.port);
+        if (!Number.isSafeInteger(port) || port < 0 || port > 65535) throw usage("--port must be an integer from 0 through 65535.");
+        const server = await MarketplaceRegistryHttpServer.open(options.root);
+        try {
+            const address = await server.listen({ host: options.host ?? "127.0.0.1", port });
+            jsonLine(stdout, {
+                ok: true,
+                command: "serve",
+                registryId: server.reader.registry.registryId,
+                address: { host: address.address, port: address.port },
+            });
+            await new Promise((resolve) => {
+                if (signal.aborted) resolve();
+                else signal.addEventListener("abort", resolve, { once: true });
+            });
+            return null;
+        } finally {
+            await server.close();
+        }
+    }
     throw usage(`Unknown marketplace command ${JSON.stringify(command)}.`);
 }
 
@@ -279,9 +333,11 @@ export async function main(argv = process.argv.slice(2), io = {}) {
             jsonLine(stdout, { ok: true, command: "help", help: registryCliHelp() });
             return REGISTRY_CLI_EXIT.OK;
         }
-        const result = await execute(parsed, abortController.signal);
-        abortController.signal.throwIfAborted();
-        jsonLine(stdout, result);
+        const result = await execute(parsed, abortController.signal, { stdout });
+        if (result !== null) {
+            abortController.signal.throwIfAborted();
+            jsonLine(stdout, result);
+        }
         return REGISTRY_CLI_EXIT.OK;
     } catch (error) {
         const exitCode = errorExit(error, abortController.signal);

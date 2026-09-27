@@ -12,7 +12,7 @@ hosted private-LAN registry. It is not headless PR 13 and does not extend the
 | MKT-01: contracts and runtime baseline | Complete | Local acceptance passed; hosted CI pending | Unmerged |
 | MKT-02: shared artifact/archive verification | Complete | Local acceptance passed; hosted CI pending | Unmerged |
 | MKT-03: registry CAS and atomic storage | Complete | Local acceptance passed; hosted CI pending | Unmerged |
-| MKT-04: TUF repository and read API | Not started | Not run | Unmerged |
+| MKT-04: TUF repository and read API | Complete | Local acceptance passed; hosted CI pending | Unmerged |
 | MKT-05: simulator trust client and cache | Not started | Not run | Unmerged |
 | MKT-06: read-only Marketplace workspace | Not started | Not run | Unmerged |
 | MKT-07: plans, jobs, transactions, receipts | Not started | Not run | Unmerged |
@@ -237,6 +237,44 @@ network access, creates marketplace storage, or changes browser workspaces.
   verification, GC, CLI parity, distribution, and no-listener tests plus
   operator and architecture documentation. Final command evidence is recorded
   below after acceptance completes.
+
+## MKT-04 work packages
+
+- [x] WP-00: preserve the clean MKT-03 contract and 37-test marketplace
+  baseline; keep the simulator feature flag dormant and `server/App.js`
+  outside the listener graph.
+- [x] WP-01: pin `@tufjs/models@5.0.0` and
+  `@tufjs/canonical-json@2.0.0`, retain `tuf-js@6.0.0`, package all three in
+  the headless distribution, add TUF layout helpers, Ed25519 key primitives,
+  and strict discovery/journal documents.
+- [x] WP-02: add external offline-key enforcement, owner-only online keys,
+  atomic TUF bootstrap/upgrade, TUF 1.0.31 root extension, terminating
+  delegations, consistent targets, and the empty advisory role.
+- [x] WP-03: add target projection, delegated-role versioning, exact signed-byte
+  TUF journals, timestamp-last publication, catalog/TUF serialized commits,
+  and forward recovery at every durable boundary.
+- [x] WP-04: verify continuous root history, old/new root signatures,
+  expirations, registry binding, all role signatures and metadata descriptors,
+  canonical delegated targets, exact target sets, and referenced CAS bytes;
+  refresh increments all online roles.
+- [x] WP-05: add journaled two-root overlap rotation, new-key top-level targets,
+  final new-only root publication, retained numbered roots, and automatic
+  completion after faults before or after the timestamp switch.
+- [x] WP-06: add the lock-free `MarketplaceRegistryReader`, timestamp-chain
+  alias resolution, stable verification retries, referenced file-handle reads,
+  strict metadata/target visibility, and reconciliation-aware readiness.
+- [x] WP-07: add the standalone loopback-only `node:http` server with strict raw
+  paths, exact MIME/length/ETag/nosniff/cache headers, no CORS, conditionals,
+  bounded single ranges, streaming, timeouts, and stable JSON errors.
+- [x] WP-08: extend all CLI aliases with init key custody, refresh, rotation,
+  serve, one-record startup, clean signals, and installed-distribution TUF and
+  loopback smoke verification.
+- [x] WP-09: add key/bootstrap/upgrade, publication and rotation recovery,
+  expiry/signature/tamper, `tuf-js`, conditional/range/path/header, loopback
+  binding, lifecycle, and concurrent timestamp-visibility tests.
+- [x] WP-10: document layout, key custody, backup exclusions, publication,
+  recovery, loopback operation, internal/public visibility, milestone
+  boundaries, and acceptance evidence.
 
 ## Milestones and gates
 
@@ -531,7 +569,63 @@ pushed. MKT-03 remains unmerged until that evidence exists. No PLG, ED, VIS,
 headless, or run-manifest contract or acceptance evidence changed, so no other
 roadmap was updated.
 
+## MKT-04 evidence ledger
+
+Implementation began on 2026-09-27 from clean MKT-03 commit `d4e2970`. The
+pre-change `npm run test:marketplace` baseline passed 37/37. MKT-04 did not
+change `server/App.js`, the dormant marketplace feature flag, marketplace
+canonical vectors, plugin/vehicle/run-package identities, or headless
+characterization inputs.
+
+Final local evidence on 2026-09-27:
+
+- `npm run test:marketplace`: 47/47 passed. Coverage includes external-key
+  custody and modes, populated MKT-03 upgrade, TUF bootstrap/refresh, signed
+  rollback and expiry rejection, exact target/CAS verification, publication
+  and root-rotation fault recovery, `tuf-js` root update/refresh/download,
+  strict paths and headers, byte ranges and conditionals, loopback bind
+  rejection, process signals, and concurrent old/new timestamp visibility.
+- `npm run lint`: passed with zero errors.
+- `npm test`: 1,785 tests; 1,779 passed, six declared skips, zero failures.
+- `npm run build`: passed after a clean `.next` production build.
+- `npm run fixtures:headless`: passed with no characterization diff.
+- Source `npm run release:check`: passed.
+- Under checksum-verified Node 22.22.2/npm 10.9.7,
+  `npm run dist:headless -- --output <temporary>`,
+  `npm run release:check -- --dist <temporary>`, and
+  `npm run dist:verify -- --dist <temporary>` passed. Clean-install
+  verification initialized and refreshed TUF, verified the repository, started
+  the installed loopback server on an ephemeral port, fetched discovery,
+  catalog, and bootstrap root, and terminated it cleanly.
+- Final staged artifact hashes were npm
+  `b002642620bcdfed7bac1b4e150fd23b32c1660175841d7d352e6245979b9628`,
+  wheel `6d4294e8bb89a13438084056bf923aa0c441d0e8bfe05502feb659a58b1cd34d`,
+  and source distribution
+  `bf186fb300b6ef0189356ba19141d2d84417a75abfa210a9c09566269213640b`.
+- `git diff --check`: passed.
+
+Hosted CI has no run or link because the implementation is not committed or
+pushed. MKT-04 remains unmerged until that evidence exists. MKT-04 intentionally
+keeps publisher DSSE in MKT-13 and advisory policy in MKT-14. No PLG, ED, VIS,
+headless, or run-manifest contract or acceptance evidence changed, so no other
+roadmap was updated.
+
 ## Decision log
+
+### 2026-09-27 — Keep MKT-04 distribution distinct from publisher and advisory policy
+
+MKT-04 signs and distributes the existing canonical release JSON bytes as TUF
+targets. It does not introduce a partial publisher envelope: Ed25519 DSSE,
+publisher authorization, authentication, and secure LAN hosting remain one
+coherent MKT-13 boundary. The terminating advisory delegation is initialized,
+signed, and verifiable but empty; advisory admission, yank/block policy, and
+client enforcement remain MKT-14.
+
+`catalog/current.json` remains the internal authoring switch established by
+MKT-03. Public readers resolve only through the atomic TUF `timestamp.json`
+switch. Marketplace registry and TUF state remain nonsemantic and do not enter
+world, resolved-run, simulation, episode, trajectory, plugin, vehicle,
+run-bundle, or run-package identity.
 
 ### 2026-09-27 — Keep MKT-03 offline with one catalog visibility point
 
@@ -543,7 +637,8 @@ records.
 
 CAS bytes, blob records, and canonical item/release targets are immutable.
 Catalog revision snapshots are append-only, while the atomic replacement of
-`catalog/current.json` is the only visibility point. Recovery completes a
+`catalog/current.json` is the only MKT-03 internal visibility point. MKT-04
+later adds the distinct public `timestamp.json` switch. Recovery completes a
 durable transaction forward only when current bytes match its base; it cleans
 an already completed transaction only when current bytes match its target.
 All other states retain evidence and return `RECOVERY_REQUIRED`. GC is

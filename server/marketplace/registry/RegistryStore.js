@@ -23,7 +23,7 @@ import {
     DEFAULT_STAGING_GRACE_MS,
     catalogRevisionPath,
     registryPaths,
-    requiredRegistryDirectories,
+    requiredRegistryCoreDirectories,
     resolveRegistryPath,
 } from "./RegistryLayout.js";
 import {
@@ -35,6 +35,8 @@ import {
 } from "./RegistryFs.js";
 import { recoverCatalogTransactions } from "./RegistryTransaction.js";
 import { RegistryWriterLock } from "./RegistryWriterLock.js";
+import { TufRepository } from "./TufRepository.js";
+import { ensurePrivateKey } from "./TufKeys.js";
 
 async function readRegistry(paths) {
     const bytes = await readRegularBytes(paths.registry);
@@ -56,7 +58,7 @@ async function readCatalogFile(filePath) {
 
 async function validateLayout(paths) {
     await requireDirectory(paths.root);
-    for (const directory of requiredRegistryDirectories(paths)) await requireDirectory(directory);
+    for (const directory of requiredRegistryCoreDirectories(paths)) await requireDirectory(directory);
     const registry = await readRegistry(paths);
     const catalog = await readCatalogFile(paths.catalogCurrent);
     if (catalog.registryId !== registry.registryId) {
@@ -69,7 +71,7 @@ async function buildInitialRegistry(root, registryId, now) {
     const paths = registryPaths(root);
     await fs.mkdir(paths.root, { mode: REGISTRY_DIRECTORY_MODE });
     await fs.chmod(paths.root, REGISTRY_DIRECTORY_MODE);
-    for (const directory of requiredRegistryDirectories(paths)) await ensureDirectoryWithin(paths.root, directory);
+    for (const directory of requiredRegistryCoreDirectories(paths)) await ensureDirectoryWithin(paths.root, directory);
     const registry = createRegistryDocument(registryId, now);
     const catalog = createEmptyCatalog(registryId, now);
     const catalogData = catalogBytesAndHash(catalog);
@@ -87,14 +89,19 @@ export class MarketplaceRegistryStore {
     #closed = false;
     #queue = Promise.resolve();
 
-    constructor(paths, registry, writerLock, options = {}) {
+    constructor(paths, registry, writerLock, options = {}, tufRepository = null) {
         this.paths = paths;
         this.registry = registry;
         this.options = Object.freeze({ ...options });
+        this.tufRepository = tufRepository;
         this.#writerLock = writerLock;
     }
 
-    static async initialize(root, { registryId = null, now = () => new Date() } = {}) {
+    static async initialize(root, {
+        registryId = null,
+        offlineRootKeyPath = null,
+        now = () => new Date(),
+    } = {}) {
         const paths = registryPaths(root);
         const existing = await lstatOrNull(paths.root);
         if (existing) {
@@ -107,6 +114,16 @@ export class MarketplaceRegistryStore {
                 if (registryId !== null && validated.registry.registryId !== registryId) {
                     throw marketplaceError(MARKETPLACE_ERROR_CODES.CONFLICT, "Existing registry ID differs from the requested registry ID.");
                 }
+                if (offlineRootKeyPath) {
+                    const writerLock = await RegistryWriterLock.acquire(paths, { now });
+                    try {
+                        await recoverCatalogTransactions(paths);
+                        const current = await validateLayout(paths);
+                        await TufRepository.initialize(paths, current.registry, { offlineRootKeyPath, now });
+                    } finally {
+                        await writerLock.close();
+                    }
+                }
                 return validated.registry;
             }
         }
@@ -115,11 +132,17 @@ export class MarketplaceRegistryStore {
         await requireDirectory(parent);
         const temporary = path.join(parent, `.${path.basename(paths.root)}.initialize-${randomUUID()}`);
         try {
+            if (offlineRootKeyPath) await ensurePrivateKey(offlineRootKeyPath, { registryRoot: paths.root });
             await buildInitialRegistry(temporary, registryId ?? randomUUID(), now);
+            if (offlineRootKeyPath) {
+                const temporaryPaths = registryPaths(temporary);
+                await TufRepository.initialize(temporaryPaths, await readRegistry(temporaryPaths), { offlineRootKeyPath, now });
+            }
             if (existing) await fs.rmdir(paths.root);
             await fs.rename(temporary, paths.root);
             await fsyncDir(parent);
-            return await readRegistry(paths);
+            const registry = await readRegistry(paths);
+            return registry;
         } catch (error) {
             await fs.rm(temporary, { recursive: true, force: true }).catch(() => {});
             throw error;
@@ -130,12 +153,19 @@ export class MarketplaceRegistryStore {
         const paths = registryPaths(root);
         const { registry } = await validateLayout(paths);
         const writerLock = await RegistryWriterLock.acquire(paths, { now: options.now });
-        const store = new MarketplaceRegistryStore(paths, registry, writerLock, options);
+        let store = null;
         try {
+            await recoverCatalogTransactions(paths, { faults: options.recoveryFaults });
+            const tufRepository = await TufRepository.open(paths, registry, {
+                now: options.now ?? (() => new Date()),
+                faults: options.tufFaults,
+            });
+            store = new MarketplaceRegistryStore(paths, registry, writerLock, options, tufRepository);
             await store.recover();
             return store;
         } catch (error) {
-            await store.close();
+            if (store) await store.close();
+            else await writerLock.close();
             throw error;
         }
     }
@@ -163,7 +193,17 @@ export class MarketplaceRegistryStore {
                 ttlMs: this.options.stagingGraceMs ?? DEFAULT_STAGING_GRACE_MS,
                 now: this.options.now,
             }),
+            tuf: await this.tufRepository?.recover() ?? null,
         }));
+    }
+
+    async commitCatalogMutation(prepared, targetCatalog) {
+        const { commitCatalogTransaction } = await import("./RegistryTransaction.js");
+        const result = await commitCatalogTransaction(this.paths, prepared);
+        const tuf = this.tufRepository
+            ? await this.tufRepository.publishCatalog(targetCatalog, { operation: prepared.journal.operation })
+            : null;
+        return { catalog: result, tuf };
     }
 
     mutate(operation) {

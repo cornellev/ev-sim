@@ -144,6 +144,8 @@ function packageMetadata(rootPackage) {
         "@grpc/grpc-js",
         "@grpc/proto-loader",
         "@noble/hashes",
+        "@tufjs/canonical-json",
+        "@tufjs/models",
         "acorn",
         "ajv",
         "semver",
@@ -151,6 +153,7 @@ function packageMetadata(rootPackage) {
         "spdx-expression-parse",
         "three",
         "three-mesh-bvh",
+        "tuf-js",
     ].map((name) => [name, rootPackage.dependencies[name]]));
     return {
         name: rootPackage.name,

@@ -36,10 +36,11 @@ async function waitForPath(target, timeoutMs = 5_000) {
     throw new Error(`Timed out waiting for ${target}`);
 }
 
-test("MKT-03 cev-sim-marketplace, cev-mkt, and cev-sim mkt use one parser and identical behavior", async (t) => {
+test("MKT-04 cev-sim-marketplace, cev-mkt, and cev-sim mkt use one parser and identical behavior", async (t) => {
     const parent = await fs.mkdtemp(path.join(os.tmpdir(), "cev-mkt-cli-"));
     t.after(() => fs.rm(parent, { recursive: true, force: true }));
     const registry = path.join(parent, "registry");
+    const offlineRootKey = path.join(parent, "offline-root.pem");
     const standalone = "server/marketplace/cev-mkt.js";
     const umbrella = "bin/cev-sim.js";
     const helps = await Promise.all([
@@ -50,7 +51,7 @@ test("MKT-03 cev-sim-marketplace, cev-mkt, and cev-sim mkt use one parser and id
     assert.ok(helps.every((entry) => entry.exitCode === 0 && entry.stdout === helps[0].stdout && entry.stderr === ""));
     assert.match(helps[0].stdout, /cev-sim-marketplace.*cev-mkt.*cev-sim mkt/su);
 
-    const initialized = await run(standalone, ["init", "--root", registry]);
+    const initialized = await run(standalone, ["init", "--root", registry, "--offline-root-key", offlineRootKey]);
     assert.equal(initialized.exitCode, 0);
     const command = ["list", "--root", registry, "--kind", "items"];
     const listed = [
@@ -69,11 +70,12 @@ test("MKT-03 cev-sim-marketplace, cev-mkt, and cev-sim mkt use one parser and id
         && entry.stdout === invalid[0].stdout && entry.stderr === invalid[0].stderr));
 });
 
-test("MKT-03 CLI emits one redacted JSON failure and requires literal --dry-run", async (t) => {
+test("MKT-04 CLI emits one redacted JSON failure and requires literal --dry-run", async (t) => {
     const parent = await fs.mkdtemp(path.join(os.tmpdir(), "cev-mkt-cli-errors-"));
     t.after(() => fs.rm(parent, { recursive: true, force: true }));
     const registry = path.join(parent, "registry");
-    await run("server/marketplace/cev-mkt.js", ["init", "--root", registry]);
+    const offlineRootKey = path.join(parent, "offline-root.pem");
+    await run("server/marketplace/cev-mkt.js", ["init", "--root", registry, "--offline-root-key", offlineRootKey]);
     const failed = await run("server/marketplace/cev-mkt.js", ["gc", "--root", registry]);
     assert.equal(failed.exitCode, 2);
     assert.equal(failed.stdout, "");
@@ -86,12 +88,13 @@ test("MKT-03 CLI emits one redacted JSON failure and requires literal --dry-run"
     assert.doesNotMatch(failed.stderr, /stack|cause|credential/u);
 });
 
-test("MKT-03 CLI aborts streaming and releases writer ownership on SIGINT", async (t) => {
+test("MKT-04 CLI aborts streaming and releases writer ownership on SIGINT", async (t) => {
     const parent = await fs.mkdtemp(path.join(os.tmpdir(), "cev-mkt-cli-signal-"));
     t.after(() => fs.rm(parent, { recursive: true, force: true }));
     const registry = path.join(parent, "registry");
+    const offlineRootKey = path.join(parent, "offline-root.pem");
     const artifact = path.join(parent, "large.plugin.json");
-    await run("server/marketplace/cev-mkt.js", ["init", "--root", registry]);
+    await run("server/marketplace/cev-mkt.js", ["init", "--root", registry, "--offline-root-key", offlineRootKey]);
     await fs.writeFile(artifact, Buffer.alloc(1));
     await fs.truncate(artifact, 256 * 1024 * 1024);
     const child = spawn(process.execPath, [
@@ -114,4 +117,57 @@ test("MKT-03 CLI aborts streaming and releases writer ownership on SIGINT", asyn
     assert.equal(JSON.parse(stderr).ok, false);
     await assert.rejects(fs.access(path.join(registry, ".writer-lock")));
     assert.deepEqual(await fs.readdir(path.join(registry, "staging", "uploads")), []);
+});
+
+test("MKT-04 CLI refreshes, rotates, and runs one quiet loopback process", async (t) => {
+    const parent = await fs.mkdtemp(path.join(os.tmpdir(), "cev-mkt-cli-serve-"));
+    t.after(() => fs.rm(parent, { recursive: true, force: true }));
+    const registry = path.join(parent, "registry");
+    const currentRootKey = path.join(parent, "current-root.pem");
+    const newRootKey = path.join(parent, "new-root.pem");
+    const executable = "server/marketplace/cev-mkt.js";
+    assert.equal((await run(executable, ["init", "--root", registry, "--offline-root-key", currentRootKey])).exitCode, 0);
+    const refreshed = await run(executable, ["tuf", "refresh", "--root", registry]);
+    assert.equal(refreshed.exitCode, 0);
+    assert.equal(JSON.parse(refreshed.stdout).timestampVersion, 2);
+    const rotated = await run(executable, [
+        "tuf", "rotate-root", "--root", registry,
+        "--current-root-key", currentRootKey, "--new-root-key", newRootKey,
+    ]);
+    assert.equal(rotated.exitCode, 0);
+    assert.equal(JSON.parse(rotated.stdout).rootVersion, 3);
+    const verified = await run(executable, ["verify", "--root", registry]);
+    assert.equal(JSON.parse(verified.stdout).tuf.rootVersion, 3);
+
+    const rejected = await run(executable, ["serve", "--root", registry, "--host", "0.0.0.0", "--port", "0"]);
+    assert.notEqual(rejected.exitCode, 0);
+    const child = spawn(process.execPath, [
+        "--experimental-default-type=module", executable,
+        "serve", "--root", registry, "--port", "0",
+    ], { cwd: repositoryRoot, stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
+    const startup = await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error("Timed out waiting for marketplace server startup.")), 5_000);
+        child.once("error", reject);
+        child.stdout.on("data", (chunk) => {
+            stdout += chunk;
+            const newline = stdout.indexOf("\n");
+            if (newline < 0) return;
+            clearTimeout(timeout);
+            resolve(JSON.parse(stdout.slice(0, newline)));
+        });
+    });
+    const response = await fetch(`http://127.0.0.1:${startup.address.port}/.well-known/cev-sim-marketplace`);
+    assert.equal(response.status, 200);
+    child.kill("SIGTERM");
+    const exitCode = await new Promise((resolve, reject) => {
+        child.once("error", reject);
+        child.once("close", resolve);
+    });
+    assert.equal(exitCode, 0);
+    assert.equal(stderr, "");
+    assert.equal(stdout.trim().split("\n").length, 1);
 });

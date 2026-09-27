@@ -67,6 +67,8 @@
     "@takram/three-clouds": "^0.7.6",
     "@takram/three-geospatial": "^0.9.1",
     "@takram/three-geospatial-effects": "^0.6.4",
+    "@tufjs/canonical-json": "2.0.0",
+    "@tufjs/models": "5.0.0",
     "3d-tiles-renderer": "^0.4.28",
     "acorn": "8.15.0",
     "ajv": "8.20.0",

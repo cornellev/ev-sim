@@ -3,6 +3,7 @@ import { canonicalRunBundleStringify } from "../server/headless/RunBundle.js";
 
 import { promises as fs } from "node:fs";
 import { createHash } from "node:crypto";
+import { spawn } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
 
@@ -28,6 +29,50 @@ async function checked(command, args, options = {}) {
     const result = await run(command, args, options);
     if (result.code !== 0) throw new Error(`${command} ${args.join(" ")} failed: ${result.stderr || result.stdout}`);
     return result;
+}
+
+async function verifyMarketplaceServer(executable, registryRoot, cwd) {
+    const child = spawn(executable, ["serve", "--root", registryRoot, "--port", "0"], {
+        cwd,
+        stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
+    const exitPromise = new Promise((resolve, reject) => {
+        child.once("error", reject);
+        child.once("close", (code, signal) => resolve({ code, signal }));
+    });
+    const startup = await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error("Installed marketplace server did not start.")), 10_000);
+        child.once("close", (code) => reject(new Error(`Installed marketplace server exited before startup (${code}).`)));
+        child.stdout.on("data", (chunk) => {
+            stdout += chunk;
+            const newline = stdout.indexOf("\n");
+            if (newline < 0) return;
+            clearTimeout(timeout);
+            try { resolve(JSON.parse(stdout.slice(0, newline))); } catch (error) { reject(error); }
+        });
+    });
+    try {
+        const origin = `http://127.0.0.1:${startup.address.port}`;
+        const discoveryResponse = await fetch(`${origin}/.well-known/cev-sim-marketplace`);
+        const discovery = await discoveryResponse.json();
+        if (!discoveryResponse.ok || discovery.registryId !== startup.registryId) throw new Error("Installed marketplace discovery endpoint failed.");
+        for (const route of ["/v1/catalog", discovery.tuf.bootstrapRootPath]) {
+            const response = await fetch(`${origin}${route}`);
+            if (!response.ok || response.headers.get("x-content-type-options") !== "nosniff") {
+                throw new Error(`Installed marketplace route ${route} failed.`);
+            }
+        }
+    } finally {
+        child.kill("SIGTERM");
+    }
+    const exit = await exitPromise;
+    if (exit.code !== 0 || stderr !== "" || stdout.trim().split("\n").length !== 1) {
+        throw new Error(`Installed marketplace server did not terminate cleanly: ${stderr}`);
+    }
 }
 
 async function sha256(file) {
@@ -69,7 +114,10 @@ async function verifyNpm(root, tarball) {
     const installedPackage = JSON.parse(
         await fs.readFile(path.join(project, "node_modules/cev-sim/package.json"), "utf8"),
     );
-    for (const name of ["acorn", "ajv", "semver", "sharp", "spdx-expression-parse"]) {
+    for (const name of [
+        "@tufjs/canonical-json", "@tufjs/models", "acorn", "ajv", "semver", "sharp",
+        "spdx-expression-parse", "tuf-js",
+    ]) {
         if (!installedPackage.dependencies?.[name]) {
             throw new Error(`Headless npm package must depend on ${name} for plugin verification.`);
         }
@@ -88,7 +136,11 @@ async function verifyNpm(root, tarball) {
         throw new Error("Installed marketplace CLI aliases do not have identical help behavior.");
     }
     const registryRoot = path.join(project, "marketplace-registry");
-    await checked(marketplaceCli, ["init", "--root", registryRoot], { cwd: project });
+    const offlineRootKey = path.join(project, "marketplace-offline-root.pem");
+    await checked(marketplaceCli, ["init", "--root", registryRoot, "--offline-root-key", offlineRootKey], { cwd: project });
+    await checked(marketplaceCli, ["tuf", "refresh", "--root", registryRoot], { cwd: project });
+    await checked(marketplaceCli, ["verify", "--root", registryRoot], { cwd: project });
+    await verifyMarketplaceServer(marketplaceCli, registryRoot, project);
     const marketplaceLists = [
         await checked(marketplaceCli, ["list", "--root", registryRoot, "--kind", "items"], { cwd: project }),
         await checked(marketplaceAlias, ["list", "--root", registryRoot, "--kind", "items"], { cwd: project }),

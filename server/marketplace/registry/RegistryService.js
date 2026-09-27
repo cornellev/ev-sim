@@ -53,7 +53,7 @@ import {
     verifyRegularFile,
     writeExclusiveDurable,
 } from "./RegistryFs.js";
-import { commitCatalogTransaction, prepareCatalogTransaction } from "./RegistryTransaction.js";
+import { prepareCatalogTransaction } from "./RegistryTransaction.js";
 import { inspectPreviewBytes } from "./PreviewMedia.js";
 
 function conflict(message) {
@@ -378,7 +378,7 @@ export class MarketplaceRegistryService {
                 writes: [{ destinationPath: relativePath, bytes }],
                 faults: this.faults,
             });
-            await commitCatalogTransaction(this.store.paths, prepared);
+            await this.store.commitCatalogMutation(prepared, next);
             return Object.freeze({ itemId: item.itemId, itemHash, revision: next.revision, created: !existingSummary });
         });
     }
@@ -440,7 +440,7 @@ export class MarketplaceRegistryService {
                 writes,
                 faults: this.faults,
             });
-            await commitCatalogTransaction(this.store.paths, prepared);
+            await this.store.commitCatalogMutation(prepared, next);
             return Object.freeze({
                 itemId: release.itemId,
                 releaseVersion: release.releaseVersion,
@@ -600,11 +600,16 @@ export class MarketplaceRegistryService {
         for (const digest of blobNames) if (!recordDigests.has(digest)) throw recovery("CAS blob is missing its record.", digest);
         const pendingTransactions = await fs.readdir(this.store.paths.transactions);
         if (pendingTransactions.length > 0) throw recovery("Registry contains pending transactions after recovery.");
+        const tuf = this.store.tufRepository ? await this.store.tufRepository.verify() : null;
+        if (tuf && (tuf.catalogRevision !== catalog.revision || tuf.catalogSha256 !== currentData.sha256)) {
+            throw recovery("Published TUF catalog is not reconciled with catalog/current.json.");
+        }
         return Object.freeze({
             ok: true,
             registryId: this.store.registry.registryId,
             revision: catalog.revision,
             counts: { items: catalog.items.length, releases: catalog.releases.length, blobs: records.length },
+            ...(tuf ? { tuf } : {}),
         });
     }
 

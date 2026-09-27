@@ -135,11 +135,17 @@ test("MKT-03 verification reconstructs targets and dry-run GC never deletes unre
     await assert.doesNotReject(fs.access(resolveRegistryPath(registryPaths(root), blobPath(orphan.descriptor.sha256))));
 });
 
-test("MKT-03 registry import graph contains no HTTP listener", async () => {
+test("MKT-04 keeps the standalone loopback listener out of the application server import graph", async () => {
     const root = new URL("../server/marketplace/", import.meta.url);
     const files = await fs.readdir(root, { recursive: true });
     for (const file of files.filter((entry) => entry.endsWith(".js"))) {
         const source = await fs.readFile(new URL(file, root), "utf8");
-        assert.doesNotMatch(source, /node:http|createServer\s*\(|\.listen\s*\(/u, file);
+        if (file === "registry/RegistryHttpServer.js" || file === "RegistryCli.js") {
+            assert.match(source, /node:http|createServer\s*\(|\.listen\s*\(/u, file);
+        } else {
+            assert.doesNotMatch(source, /node:http|createServer\s*\(|\.listen\s*\(/u, file);
+        }
     }
+    const application = await fs.readFile(new URL("../server/App.js", import.meta.url), "utf8");
+    assert.doesNotMatch(application, /RegistryHttpServer|MarketplaceRegistryReader|cev-sim-marketplace|cev-mkt/u);
 });

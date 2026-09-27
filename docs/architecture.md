@@ -544,8 +544,8 @@ hash projections.
 MKT-01 freezes the JSON contract layer under `schemas/marketplace/v1/` and
 `server/marketplace/`. `CEV_SIM_MARKETPLACE_ENABLED` is parsed at server
 startup but defaults to false and mounts no routes or services. Registry
-storage, TUF refresh, network access, installation, and UI remain assigned to
-later milestones in [Marketplace roadmap](marketplace-plan.md).
+installation, simulator trust, and UI remain assigned to later milestones in
+[Marketplace roadmap](marketplace-plan.md).
 
 MKT-02 adds the Node-only `server/artifacts/` transport layer.
 `ArtifactVerification.js` owns bounded streaming hashes, exclusive mode-0600
@@ -573,16 +573,32 @@ exclusive writer lifetime, recovery, and the serialized mutation queue.
 item/release admission, listing, verification, and dry-run GC planning.
 `RegistryTransaction.js` stages complete mutations and publishes immutable
 targets and revision snapshots before atomically replacing
-`catalog/current.json`, the registry's only catalog visibility point.
+`catalog/current.json`, the registry's internal authoring visibility point.
 
-The registry exposes only administrative CLI entry points:
+MKT-04 adds `TufRepository.js` and `TufTransaction.js`. Canonical catalog,
+item, and raw release JSON are consistent-snapshot TUF targets; the advisory
+delegation is present but empty. TUF publication journals exact signed bytes,
+publishes immutable targets and versioned metadata, and atomically replaces
+`tuf/metadata/timestamp.json` as the only public visibility point. Root
+rotation publishes a two-key overlap root and a final new-only root while
+retaining continuous numbered history. Publisher DSSE remains owned by
+MKT-13, and advisory admission/enforcement remains owned by MKT-14.
+
+`MarketplaceRegistryReader` resolves all public aliases through the published
+timestamp/snapshot/delegation chain without acquiring `.writer-lock`.
+`MarketplaceRegistryHttpServer` is a standalone `node:http` loopback service;
+it is reachable only through the registry CLI and is not imported or mounted
+by `server/App.js`. It serves strict discovery, catalog, item, release, blob,
+TUF, health, and readiness reads. `catalog/current.json` is consulted only for
+readiness reconciliation, never to resolve a public alias.
+
+The registry exposes administrative and loopback-service CLI entry points:
 `cev-sim-marketplace`, `cev-mkt`, and `cev-sim mkt`. They share
-`RegistryCli.js`; MKT-03 contains no network listener. CAS, catalog, blob
-records, transaction journals, and writer state are operational metadata and
-remain outside every simulator, world, episode, resolved-run, plugin, vehicle,
-and run-package hash authority. See
-[Offline marketplace registry](marketplace-registry.md) for layout and recovery
-operations.
+`RegistryCli.js`. CAS, catalog, TUF metadata, source keys, blob records,
+transaction journals, and writer state are operational metadata and remain
+outside every simulator, world, episode, resolved-run, plugin, vehicle, and
+run-package hash authority. See [Marketplace registry operations](marketplace-registry.md)
+for layout, key custody, publication, read API, and recovery operations.
 
 ## External Integration
 

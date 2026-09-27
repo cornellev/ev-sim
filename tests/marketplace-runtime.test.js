@@ -11,6 +11,8 @@ test("MKT-01 runtime and dependency declarations are pinned consistently", async
     assert.equal((await readFile(new URL(".npmrc", root), "utf8")).trim(), "engine-strict=true");
     assert.equal(packageDocument.dependencies.ajv, "8.20.0");
     assert.equal(packageDocument.dependencies["spdx-expression-parse"], "4.0.0");
+    assert.equal(packageDocument.dependencies["@tufjs/models"], "5.0.0");
+    assert.equal(packageDocument.dependencies["@tufjs/canonical-json"], "2.0.0");
     assert.equal(packageDocument.dependencies["tuf-js"], "6.0.0");
     for (const workflow of ["ci.yml", "headless-nightly.yml", "headless-hardware.yml", "internal-candidate.yml"]) {
         const source = await readFile(new URL(`.github/workflows/${workflow}`, root), "utf8");
