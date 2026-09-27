@@ -11,7 +11,7 @@ hosted private-LAN registry. It is not headless PR 13 and does not extend the
 | --- | --- | --- | --- |
 | MKT-01: contracts and runtime baseline | Complete | Local acceptance passed; hosted CI pending | Unmerged |
 | MKT-02: shared artifact/archive verification | Complete | Local acceptance passed; hosted CI pending | Unmerged |
-| MKT-03: registry CAS and atomic storage | Not started | Not run | Unmerged |
+| MKT-03: registry CAS and atomic storage | Complete | Local acceptance passed; hosted CI pending | Unmerged |
 | MKT-04: TUF repository and read API | Not started | Not run | Unmerged |
 | MKT-05: simulator trust client and cache | Not started | Not run | Unmerged |
 | MKT-06: read-only Marketplace workspace | Not started | Not run | Unmerged |
@@ -208,6 +208,35 @@ network access, creates marketplace storage, or changes browser workspaces.
 - [x] WP-08: document the transport and adapter boundaries and record local
   source/build/distribution evidence. Hosted CI and merge evidence remain
   pending on an MKT-02 commit.
+
+## MKT-03 work packages
+
+- [x] WP-00: begin from the clean MKT-02 commit and confirm marketplace schemas,
+  package identities, simulation hashes, and the dormant feature flag remain
+  outside the registry change.
+- [x] WP-01: add normalized registry paths, strict internal documents, canonical
+  catalog projections, UTF-8 ordering, and revision-1 empty initialization.
+- [x] WP-02: add atomic sibling-directory initialization, owner-only modes,
+  hostile-node checks, exclusive writer ownership, guarded stale-owner
+  recovery, and token-checked release.
+- [x] WP-03: add operation-owned staging, adapter-backed artifact admission,
+  immutable CAS/blob records, deterministic concurrent deduplication, and
+  exact PNG/JPEG/WebP validation.
+- [x] WP-04: add durable catalog journals, immutable target/revision
+  publication, one atomic current-catalog visibility point, forward recovery,
+  and fault hooks at every boundary.
+- [x] WP-05: add presentation-only item updates, preview binding, exact
+  dependency checks, stored-inspection validation, immutable release tuples,
+  idempotent retries, and transactional track moves.
+- [x] WP-06: add deterministic listing, full registry verification, expired
+  staging recovery, and planning-only rooted GC with no CAS deletion.
+- [x] WP-07: add the shared `cev-sim-marketplace`, `cev-mkt`, and `cev-sim mkt`
+  CLI, signal cleanup, structured results/errors, distribution files,
+  dependencies, bins, and installed-tarball parity checks.
+- [x] WP-08: add storage, ownership, CAS, recovery, preview, immutability,
+  verification, GC, CLI parity, distribution, and no-listener tests plus
+  operator and architecture documentation. Final command evidence is recorded
+  below after acceptance completes.
 
 ## Milestones and gates
 
@@ -461,7 +490,65 @@ pushed. MKT-02 remains unmerged until that evidence exists. No PLG, ED, VIS, or
 headless contract or acceptance evidence changed, so no other roadmap was
 updated.
 
+## MKT-03 evidence ledger
+
+Implementation began on 2026-09-27 from clean commit `5996a0f` after the
+separate MKT-02 commit `471cdc5`. The host is macOS arm64 with Node 22.14.0 and
+npm 11.4.1; final release/distribution acceptance must also run under the
+pinned Node 22.22.2 runtime. Before implementation, the MKT-02 artifact,
+archive, and adapter selection passed 15/15.
+
+Final local evidence on 2026-09-27:
+
+- The MKT-02 artifact/archive/adapter suites plus all
+  `marketplace-registry-*` suites passed 29/29. Coverage includes concurrent
+  deduplication, every journal boundary, stale/live ownership, hostile nodes,
+  immutable releases, exact dependencies, CAS corruption, preview formats,
+  historical verification, dry-run GC, signal cleanup, CLI parity, plugin
+  nonexecution, and the no-listener import graph.
+- `npm run test:marketplace`: 37/37 passed.
+- `npm run lint`: passed with zero errors and the existing `MapSurface.js`
+  `assetEpoch` hook warning.
+- `npm test`: 1,775 tests; 1,769 passed, six declared skips, zero failures.
+- `npm run build` and source `npm run release:check`: passed.
+- `npm run fixtures:headless` regenerated the characterization fixture with no
+  diff; no simulator or package identity authority changed.
+- Under checksum-verified Node 22.22.2/npm 10.9.7,
+  `npm run dist:headless -- --output <temporary>`,
+  `npm run release:check -- --dist <temporary>`, and
+  `npm run dist:verify -- --dist <temporary>` passed. Clean-install smoke tests
+  exercised identical `cev-sim-marketplace`, `cev-mkt`, and `cev-sim mkt`
+  behavior from the npm archive.
+- Final staged artifact hashes were npm
+  `f22f19909081f9b341ab3f69d0a3f709cc2de07cd55b908f5b53ad05df60c142`,
+  wheel `6d5835bd8fdbbb7f0d0744dcba850fdd1a3763c97c479a65e890d19bab6a4cb6`,
+  and source distribution
+  `99ff3a9bacb2fa9eb13a57e28d414135b8e78221d25aeb7eb331fac520ab752f`.
+- `git diff --check`: passed.
+
+Hosted CI has no run or link because the implementation is not committed or
+pushed. MKT-03 remains unmerged until that evidence exists. No PLG, ED, VIS,
+headless, or run-manifest contract or acceptance evidence changed, so no other
+roadmap was updated.
+
 ## Decision log
+
+### 2026-09-27 — Keep MKT-03 offline with one catalog visibility point
+
+MKT-03 introduces no listener. `cev-sim-marketplace`, `cev-mkt`, and
+`cev-sim mkt` are equivalent administrative entry points over one parser and
+implementation. The registry owns one exclusive writer for the complete
+command lifetime and fails closed on ambiguous cross-host or malformed owner
+records.
+
+CAS bytes, blob records, and canonical item/release targets are immutable.
+Catalog revision snapshots are append-only, while the atomic replacement of
+`catalog/current.json` is the only visibility point. Recovery completes a
+durable transaction forward only when current bytes match its base; it cleans
+an already completed transaction only when current bytes match its target.
+All other states retain evidence and return `RECOVERY_REQUIRED`. GC is
+planning-only until MKT-15. Registry records and catalog revisions remain
+nonsemantic and do not change simulator or package identities.
 
 ### 2026-09-26 — Separate archive transport verification from artifact semantics
 

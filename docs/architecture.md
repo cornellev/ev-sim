@@ -566,6 +566,24 @@ artifact digest and byte size. It does not authenticate a release, evaluate
 rights or compatibility, import code, install content, or grant execution.
 Planning, commit, and receipt operations remain unavailable until MKT-07.
 
+MKT-03 adds the offline filesystem registry under
+`server/marketplace/registry/`. `MarketplaceRegistryStore` owns initialization,
+exclusive writer lifetime, recovery, and the serialized mutation queue.
+`MarketplaceRegistryService` owns artifact/preview CAS admission, canonical
+item/release admission, listing, verification, and dry-run GC planning.
+`RegistryTransaction.js` stages complete mutations and publishes immutable
+targets and revision snapshots before atomically replacing
+`catalog/current.json`, the registry's only catalog visibility point.
+
+The registry exposes only administrative CLI entry points:
+`cev-sim-marketplace`, `cev-mkt`, and `cev-sim mkt`. They share
+`RegistryCli.js`; MKT-03 contains no network listener. CAS, catalog, blob
+records, transaction journals, and writer state are operational metadata and
+remain outside every simulator, world, episode, resolved-run, plugin, vehicle,
+and run-package hash authority. See
+[Offline marketplace registry](marketplace-registry.md) for layout and recovery
+operations.
+
 ## External Integration
 
 cev-sim does not embed ROS. `app/3d/managers/ClientManager.js` creates a browser client from `app/client/Client.js`, syncs message definitions from the external orchestrator Types API, then connects to the orchestrator WebSocket.

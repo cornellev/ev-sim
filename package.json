@@ -8,7 +8,9 @@
   },
   "bin": {
     "cev-sim": "bin/cev-sim.js",
-    "cev-sim-plugin": "bin/cev-sim-plugin.js"
+    "cev-sim-plugin": "bin/cev-sim-plugin.js",
+    "cev-mkt": "server/marketplace/cev-mkt.js",
+    "cev-sim-marketplace": "server/marketplace/cev-mkt.js"
   },
   "scripts": {
     "dev": "node server/App.js",

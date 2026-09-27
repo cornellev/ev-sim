@@ -1,6 +1,9 @@
 #!/usr/bin/env -S node --experimental-default-type=module
 
-import("../server/headless/Cli.js")
+const marketplace = process.argv[2] === "mkt";
+if (marketplace) process.argv.splice(2, 1);
+
+import(marketplace ? "../server/marketplace/RegistryCli.js" : "../server/headless/Cli.js")
     .then(async ({ main }) => {
         process.exitCode = await main();
     })

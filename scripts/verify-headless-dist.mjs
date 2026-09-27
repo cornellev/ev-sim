@@ -69,7 +69,7 @@ async function verifyNpm(root, tarball) {
     const installedPackage = JSON.parse(
         await fs.readFile(path.join(project, "node_modules/cev-sim/package.json"), "utf8"),
     );
-    for (const name of ["acorn", "semver"]) {
+    for (const name of ["acorn", "ajv", "semver", "sharp", "spdx-expression-parse"]) {
         if (!installedPackage.dependencies?.[name]) {
             throw new Error(`Headless npm package must depend on ${name} for plugin verification.`);
         }
@@ -77,6 +77,26 @@ async function verifyNpm(root, tarball) {
     const executable = path.join(project, "node_modules/.bin/cev-sim");
     const help = await checked(executable, ["--help"], { cwd: project });
     if (!help.stdout.includes("cev-sim supervisor")) throw new Error("Installed npm CLI did not expose headless commands.");
+    const marketplaceCli = path.join(project, "node_modules/.bin/cev-sim-marketplace");
+    const marketplaceAlias = path.join(project, "node_modules/.bin/cev-mkt");
+    const marketplaceHelp = await Promise.all([
+        checked(marketplaceCli, ["--help"], { cwd: project }),
+        checked(marketplaceAlias, ["--help"], { cwd: project }),
+        checked(executable, ["mkt", "--help"], { cwd: project }),
+    ]);
+    if (!marketplaceHelp.every((result) => result.stdout === marketplaceHelp[0].stdout && result.stderr === marketplaceHelp[0].stderr)) {
+        throw new Error("Installed marketplace CLI aliases do not have identical help behavior.");
+    }
+    const registryRoot = path.join(project, "marketplace-registry");
+    await checked(marketplaceCli, ["init", "--root", registryRoot], { cwd: project });
+    const marketplaceLists = [
+        await checked(marketplaceCli, ["list", "--root", registryRoot, "--kind", "items"], { cwd: project }),
+        await checked(marketplaceAlias, ["list", "--root", registryRoot, "--kind", "items"], { cwd: project }),
+        await checked(executable, ["mkt", "list", "--root", registryRoot, "--kind", "items"], { cwd: project }),
+    ];
+    if (!marketplaceLists.every((result) => result.stdout === marketplaceLists[0].stdout && result.stderr === marketplaceLists[0].stderr)) {
+        throw new Error("Installed marketplace CLI aliases do not have identical command behavior.");
+    }
     await checked(process.execPath, [
         "--input-type=module",
         "-e",
