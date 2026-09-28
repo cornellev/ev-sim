@@ -15,7 +15,7 @@ hosted private-LAN registry. It is not headless PR 13 and does not extend the
 | MKT-04: TUF repository and read API | Complete | Local acceptance passed; hosted CI pending | Unmerged |
 | MKT-05: simulator trust client and cache | Complete | Local acceptance passed; hosted CI pending | Unmerged |
 | MKT-06: read-only Marketplace workspace | Implemented; acceptance pending | MKT-focused gates pass; repository-wide UI/a11y has unrelated failures | Unmerged |
-| MKT-07: plans, jobs, transactions, receipts | Not started | Not run | Unmerged |
+| MKT-07: plans, jobs, transactions, receipts | Complete; acceptance pending | Core local gates pass; repository-wide UI/a11y has unrelated failures | Unmerged |
 | MKT-08: plugin lifecycle | Not started | Not run | Unmerged |
 | MKT-09: vehicle and run lifecycle | Not started | Not run | Unmerged |
 | MKT-10: environment/asset export contracts | Not started | Not run | Unmerged |
@@ -353,6 +353,49 @@ network access, creates marketplace storage, or changes browser workspaces.
 - [x] WP-10: document read semantics, signer terminology, preview confinement,
   offline behavior, browser/backend/registry boundaries, milestone decisions,
   and factual acceptance evidence.
+
+## MKT-07 work packages
+
+- [x] WP-00: begin from clean MKT-06 commit `61d8205`; record the 60/60
+  marketplace baseline and freeze `installed.schema.json`
+  (`274e7b72f65a1df6b220eb1508fac635935765834254455cc1eb33cc2e765e10`),
+  `install-receipt.schema.json`
+  (`af1a8db03f31b1ea21d858235f872e0480c39c8a7c4bb39fb348bdfcf3056557`),
+  the MKT-01 compatibility fixture
+  (`6904056555062d7267bc0cf749081558e0e1ca5724401e7f0c9bfaeb813c4ae7`),
+  and headless characterization
+  (`60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`).
+- [x] WP-01: add private installation layout, exact canonical local-document
+  validators, owner-only modes, hostile-node checks, and pinned-snapshot reads.
+- [x] WP-02: add normalized host profiles, deterministic compatibility issues,
+  exact same-snapshot dependency resolution, yanked warnings, and injectable
+  pre-download policy blocking.
+- [x] WP-03: persist timestamp-free, content-addressed metadata preflights and
+  deterministic finalized lifecycle plans with installed and host preconditions.
+- [x] WP-04: add confined streaming blob downloads, verified artifact CAS
+  reuse, concurrent immutable publication, mismatch quarantine, cancellation,
+  and deletion of incomplete streams.
+- [x] WP-05: make the adapter lifecycle contract explicit while leaving all
+  four production adapters read-only; exercise planning, commit, and receipts
+  only through an injected test adapter that never executes plugin source.
+- [x] WP-06: add revisioned installed membership and immutable canonical
+  receipts with exact dependency locks, mappings, reinstall history, and
+  content-preserving removal.
+- [x] WP-07: add serialized journaled install/removal transactions, adapter
+  idempotency by transaction ID, installed-ledger-last visibility, startup
+  roll-forward, and fail-closed ambiguous-state handling.
+- [x] WP-08: add durable revisioned jobs, precommit cancellation, restart
+  resumption, final confirmation, revisioned SSE, terminal close, and shutdown
+  behavior that never cancels a durable commit.
+- [x] WP-09: compose recovery after headless supervisor initialization, expose
+  the coordinator API, derive eligibility from the live host profile, and map
+  precondition, conflict, and recovery errors without internal disclosure.
+- [x] WP-10: add the two-stage browser dialog and exact Installed view while
+  retaining disabled production actions until MKT-08/09 lifecycle adapters.
+- [ ] WP-11: complete and record the full local acceptance matrix and hosted
+  CI evidence. Focused dependency, compatibility, artifact, installed-store,
+  job, API/SSE, transaction-boundary, adapter, offline-reuse, removal, and
+  restart-recovery tests pass locally.
 
 ## Milestones and gates
 
@@ -784,7 +827,83 @@ receipt, installed-state, publisher DSSE, advisory, or automatic-refresh
 behavior. No PLG, ED, VIS, headless, or run-manifest contract or acceptance
 evidence changed, so no other roadmap was updated.
 
+## MKT-07 evidence ledger
+
+Implementation began on 2026-09-28 from clean MKT-06 commit `61d8205`. The
+pre-change `npm run test:marketplace` baseline passed 60/60. The frozen public
+installed and receipt schemas, MKT-01 compatibility fixture, and headless
+characterization fixture retain the hashes recorded in WP-00 and have no diff.
+
+Local evidence on 2026-09-28 on macOS arm64:
+
+- `npm run test:marketplace`: 78/78 passed. Coverage includes exact dependency
+  resolution and compatibility, blocked-before-download policy, verified CAS
+  reuse and quarantine, immutable receipts, reinstall history, source/job
+  conflicts, rights denial, SSE revision ordering and reconnect, concurrent
+  commits, journal fault injection, and repeated startup recovery.
+- `npx playwright test tests/ui/marketplace.spec.js --workers=1`: 2/2 passed,
+  including the Marketplace keyboard/Axe case and 1280x720 containment.
+- `npm run lint`: passed with zero errors and the pre-existing `MapSurface.js`
+  `assetEpoch` hook warning.
+- `npm test`: 1,816 tests; 1,810 passed, six declared skips, zero failures.
+- `npm run build`, `npm run fixtures:headless`, and source
+  `npm run release:check`: passed. Fixture regeneration produced no frozen
+  contract or characterization diff.
+- `npm run dist:headless -- --output <temporary>` passed. Under Node 22.22.2,
+  `npm run dist:verify -- --dist <temporary>` passed against the staged output.
+  Final staged artifact hashes were npm
+  `8dee236ff9826ffbc338c5d36274da5e1ada95d7f885bf4fce857d5ed14a3f96`,
+  wheel `c9d13dac98dd088130aa6a741fdb9fdf60dccff21b52bca9b1c4211ef99359b6`,
+  and source distribution
+  `6917828591b434f055c4e22ccdbc8899e9c980c1d5a3b953a7e8e2bff6cc3367`.
+- `git diff --check` passed.
+
+Repository-wide browser acceptance is not marked passed. The five-worker
+`npm run test:ui` run encountered nine failures in Control Commands, Candidate
+Outputs, Environment Editor, Environment Assets, Environment Creation, and
+road authoring. It was stopped after 11 minutes with five passes, four
+interrupted tests, and 57 tests not run. The failures were workspace-opening,
+3D-loading, or existing editor assertions outside the MKT-07 files; the
+Marketplace suite passed serially.
+
+`npm run test:a11y` completed 8/12. The Marketplace case timed out while
+opening the workspace under five-worker contention but passed in the required
+single-worker Marketplace run. Two Environment Editor cases timed out during
+workspace startup, and the all-workspaces sweep reported existing serious Axe
+violations in Replay (`aria-prohibited-attr`) and Logs (`color-contrast`).
+
+Hosted CI has no run or link because the implementation is not committed or
+pushed. MKT-07 remains unmerged and acceptance-pending until the repository-wide
+browser gates and hosted evidence are green. No PLG, ED, VIS, headless, or
+run-manifest contract or acceptance evidence changed, so no other roadmap was
+updated.
+
 ## Decision log
+
+### 2026-09-28 — Separate verified preparation from explicit local commit
+
+MKT-07 uses two immutable decisions. A metadata preflight pins one verified
+source snapshot, its exact dependency DAG, compatibility verdicts, artifact
+bytes, installed revision, and host-profile hash without a timestamp in the
+hashed document. A cancellable job then obtains and inspects exact artifacts
+and persists a finalized plan. No adapter or installed-state mutation occurs
+until the caller confirms that exact final-plan hash and job revision.
+
+The durable transaction journal is written only after the source, release
+hashes, policy, host profile, installed revision, and adapter plan are checked
+again. Receipts and idempotent dependency-first adapter commits publish before
+the atomic `installed.json` replacement. The job's `complete` snapshot is
+durable before journal cleanup. Startup rolls a journal forward when the
+installed ledger matches its recorded base or target and otherwise returns
+`RECOVERY_REQUIRED` without fabricating cancellation or failure.
+
+MKT-07 supplies coordinator infrastructure only. Plugin, vehicle,
+run-template, and run-package production adapters still expose no lifecycle
+operations; MKT-08/09 own them. Installed membership, plans, jobs, receipts,
+artifact records, and quarantine remain operational and do not enter any
+simulator, environment, package, run, or episode hash. Publisher DSSE remains
+MKT-13, advisory ingestion remains MKT-14, and resumable downloads, quotas,
+and garbage collection remain MKT-15.
 
 ### 2026-09-27 — Keep MKT-06 reads reverified, read-only, and source-specific
 

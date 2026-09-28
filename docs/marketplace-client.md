@@ -44,6 +44,14 @@ cache/<sourceId>/snapshots/<snapshotId>/
   targets/items/<itemId>.json
   targets/releases/<itemId>/<releaseVersion>.json
 cache/<sourceId>/staging/<operationId>/
+installed.json
+plans/sha256/<planHash>.json
+jobs/<jobId>/{snapshot.json,work/}
+artifacts/sha256/<artifactSha256>
+artifact-records/sha256/<artifactSha256>.json
+quarantine/<quarantineId>/{artifact,record.json}
+receipts/sha256/<receiptHash>.json
+transactions/<transactionId>/{journal.json,writes/}
 ```
 
 Directories use mode `0700`; files use mode `0600`. Credential documents are
@@ -83,11 +91,13 @@ snapshot remains readable after expiry with `fresh: false`. `requireFresh:
 true` returns `METADATA_EXPIRED`; an absent item or release cannot be resolved
 from expired metadata. There is no unsigned age threshold.
 
-## Read-only discovery
+## Discovery and coordinator status
 
-MKT-06 adds a read model over the currently visible verified snapshots. `GET
-/api/marketplace/status` identifies the enabled workspace as `read-only` with
-`canInstall: false`. `GET /api/marketplace/discover` accepts only `q`,
+MKT-06 adds a read model over the currently visible verified snapshots. MKT-07
+changes `GET /api/marketplace/status` to `mode: coordinator`; `canInstall` is
+true only when the configured adapter registry has a complete lifecycle. The
+four production adapters remain unavailable in MKT-07, so normal builds still
+return `canInstall: false`. `GET /api/marketplace/discover` accepts only `q`,
 `track`, `contentKind`, `sourceId`, `publisherId`, `license`, `offset`, and
 `limit`. Stable is the default exact signed track; beta must be selected
 explicitly. Search covers display name, summary, item ID, declared publisher
@@ -99,7 +109,9 @@ root. Missing snapshots remain visible as unavailable sources. A corrupted,
 untrusted, or locally unrecoverable snapshot fails the complete read instead
 of disappearing from results. Offline and expired verified entries remain
 browsable with `fresh: false` and their source health. The read model does not
-evaluate compatibility or infer installation membership.
+infer installation membership. Release detail now evaluates the selected
+release against the live host profile and returns `eligibility` with lifecycle
+availability, compatibility, ordered issues, and warnings.
 
 `GET /api/marketplace/items/:sourceId/:itemId` returns the complete verified
 item and selected release, exact tracks, releases, yanks, health, and an
@@ -133,9 +145,15 @@ The browser probes the enabled-only status route before exposing Marketplace
 navigation. Discover, Installed, and Sources are explicit workspace tabs.
 Descriptions and changelogs use pinned CommonMark rendering with raw HTML and
 images suppressed; only HTTP(S) links are admitted and external links use
-`noopener noreferrer`. Compatibility is presented only as declared
-requirements. Every content action is disabled with an MKT-07 explanation,
-and Installed states plainly that no marketplace ledger or receipt exists.
+`noopener noreferrer`. Compatibility shows both declared requirements and the
+backend eligibility verdict. Content actions remain disabled when the
+production lifecycle is unavailable and name the owning MKT-08/09 boundary.
+Eligible adapters use a two-stage dialog: immutable metadata/DAG/size review,
+cancellable download/inspection progress, final rights/conflicts/mappings
+review, and an explicit exact-plan commit. Commit and recovery cannot be
+dismissed or cancelled. Installed shows exact release/source/registry/digest
+identity, dependency locks, mappings, receipt history, status, and
+membership-only removal.
 
 Source mutations use the current source revision. A conflict reloads current
 state and requires review instead of replaying the mutation. Add Source
@@ -143,6 +161,39 @@ separates trust creation from refresh, displays the complete bootstrap
 fingerprint and registry limits, and requires exact fingerprint entry. Bearer
 tokens remain only in transient password-field component state and are cleared
 on success, cancellation, or unmount.
+
+## Installation coordinator
+
+The installation API is:
+
+- `POST /install-plans`, then `POST /install-jobs`;
+- `GET /install-jobs/:jobId` and revisioned `job` SSE events from
+  `/install-jobs/:jobId/events`;
+- explicit `/commit` and precommit `/cancel` job mutations;
+- `GET /installed`, `GET /receipts/:receiptHash`, and exact installed
+  membership `DELETE`.
+
+Preflights contain no creation timestamp in hashed bytes. They pin the source,
+registry, trusted root, immutable snapshot, catalog revision/hash, root release,
+complete dependency-first DAG, release hashes, artifact descriptors,
+compatibility, capabilities, warnings, installed revision, and host-profile
+hash. Jobs persist every revision before notification and use phases `queued`,
+`download`, `verify`, `plan`, `awaiting-confirmation`, `commit`, `recover`,
+`failed`, `cancelled`, and `complete`. SSE event IDs are job revisions and a
+reconnect receives the current persisted snapshot first.
+
+Artifact bytes stream only from the exact configured-origin
+`/v1/blobs/sha256/<digest>` path. Complete bounded digest or adapter failures
+enter redacted quarantine; oversized or incomplete staging is deleted.
+Verified CAS bytes may be reused offline. Downloaded but uninstalled bytes and
+historical receipts remain for MKT-15 garbage collection.
+
+The transaction journal fixes one install timestamp, exact receipt bytes, the
+installed-ledger base/target hashes, final plan, and adapter commit set. Receipt
+publication and dependency-first idempotent adapter commits precede atomic
+installed-ledger replacement. Job completion precedes journal cleanup. Startup
+replays base or target states and fails with `RECOVERY_REQUIRED` for every
+other ledger state.
 
 ## Operations
 
@@ -154,8 +205,12 @@ on success, cancellation, or unmount.
 - Rotate credentials through `PATCH /sources/:sourceId`; omit `credential` to
   preserve it, send `null` to clear it, or send a bearer object to replace it.
 - Remove and re-add a source to change its origin or trust identity.
+- A source with a nonterminal installation job cannot be removed.
+- Cancel only before commit. Once a durable journal exists, let recovery roll
+  forward; do not delete transaction state manually.
 
-Marketplace source, trust, health, credential, and cache documents are local
+Marketplace source, trust, health, credential, cache, installation, receipt,
+artifact-record, quarantine, job, and transaction documents are local
 operational state. They do not enter `worldHash`, `resolvedHash`,
 `simulationSemanticHash`, `episodeHash`, `trajectoryHash`, package hashes, or
 run-package identity.

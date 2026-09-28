@@ -13,14 +13,22 @@ import {
 
 import {
     addMarketplaceSource,
+    cancelMarketplaceInstallJob,
+    commitMarketplaceInstallJob,
+    createMarketplaceInstallPlan,
     getMarketplaceItem,
+    getMarketplaceReceipt,
+    listMarketplaceInstalled,
     listMarketplaceSources,
     MarketplaceApiError,
     marketplaceApiErrorMessage,
     previewMarketplaceSource,
     refreshMarketplaceSource,
+    removeMarketplaceInstalled,
     removeMarketplaceSource,
     searchMarketplace,
+    startMarketplaceInstallJob,
+    subscribeMarketplaceInstallJob,
     updateMarketplaceSource,
 } from "../MarketplaceClient.js";
 import {
@@ -92,12 +100,19 @@ function MetadataField({ label, children }) {
     return <div><dt>{label}</dt><dd>{children ?? "—"}</dd></div>;
 }
 
-function Compatibility({ compatibility }) {
+function Compatibility({ compatibility, eligibility }) {
     const list = (values) => values?.length ? values.join(", ") : "Any";
     return (
         <section className={styles.detailSection} aria-labelledby="marketplace-compatibility-heading">
             <h3 id="marketplace-compatibility-heading">Declared requirements</h3>
-            <p className={styles.muted}>These are publisher-declared constraints, not an installation eligibility verdict.</p>
+            {eligibility ? <StatusMessage
+                tone={eligibility.canInstall ? "success" : "warning"}
+                title={eligibility.canInstall ? "Eligible on this host" : "Not currently installable"}
+            >
+                {eligibility.issues.length
+                    ? eligibility.issues.map((issue) => `${issue.code}: ${issue.path}`).join(" · ")
+                    : "All host compatibility requirements are satisfied."}
+            </StatusMessage> : null}
             <MetadataList>
                 <MetadataField label="cev-sim">{compatibility?.cevSim}</MetadataField>
                 <MetadataField label="Platforms">{list(compatibility?.platforms)}</MetadataField>
@@ -115,7 +130,110 @@ function Compatibility({ compatibility }) {
     );
 }
 
-function ReleaseDetail({ detail, loading, error, onRetry, releaseVersion, onReleaseVersion }) {
+const PRECOMMIT_PHASES = new Set(["queued", "download", "verify", "plan", "awaiting-confirmation"]);
+
+function lifecycleMilestone(contentKind) {
+    if (contentKind === "plugin") return "MKT-08 owns plugin activation.";
+    if (["vehicle", "run-template", "run-package"].includes(contentKind)) return "MKT-09 owns this content lifecycle.";
+    return "A production lifecycle adapter has not been assigned for this content kind.";
+}
+
+function InstallDialog({ target, onClose, onInstalled }) {
+    const [plan, setPlan] = useState(null);
+    const [view, setView] = useState(null);
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState(null);
+    const jobId = view?.job.jobId ?? null;
+    const phase = view?.job.phase ?? null;
+
+    useEffect(() => {
+        if (!target) return undefined;
+        const controller = new AbortController();
+        setPlan(null);
+        setView(null);
+        setError(null);
+        setBusy(true);
+        createMarketplaceInstallPlan({
+            sourceId: target.source.sourceId,
+            itemId: target.item.itemId,
+            releaseVersion: target.selectedRelease.releaseVersion,
+        }, { signal: controller.signal }).then(setPlan).catch((caught) => {
+            if (caught.name !== "AbortError") setError(marketplaceApiErrorMessage(caught));
+        }).finally(() => setBusy(false));
+        return () => controller.abort();
+    }, [target]);
+
+    useEffect(() => {
+        if (!jobId) return undefined;
+        return subscribeMarketplaceInstallJob(jobId, {
+            onJob: (next) => {
+                setView(next);
+                if (next.job.phase === "complete") onInstalled?.();
+            },
+            onError: () => {},
+        });
+    }, [jobId, onInstalled]);
+
+    if (!target) return null;
+    const start = async () => {
+        setBusy(true); setError(null);
+        try { setView(await startMarketplaceInstallJob(plan.planHash)); }
+        catch (caught) { setError(marketplaceApiErrorMessage(caught)); }
+        finally { setBusy(false); }
+    };
+    const cancel = async () => {
+        const recoverBeforeCommit = view?.job.phase === "recover" && view?.job.finalPlanHash === null;
+        if (!view || (!PRECOMMIT_PHASES.has(view.job.phase) && !recoverBeforeCommit)) { onClose(); return; }
+        setBusy(true); setError(null);
+        try {
+            setView(await cancelMarketplaceInstallJob(view.job.jobId, view.job.revision));
+            onClose();
+        } catch (caught) { setError(marketplaceApiErrorMessage(caught)); }
+        finally { setBusy(false); }
+    };
+    const commit = async () => {
+        setBusy(true); setError(null);
+        try {
+            setView(await commitMarketplaceInstallJob(view.job.jobId, view.job.revision, view.job.finalPlanHash));
+        } catch (caught) { setError(marketplaceApiErrorMessage(caught)); }
+        finally { setBusy(false); }
+    };
+    const precommitRecovery = phase === "recover" && view?.job.finalPlanHash === null;
+    const cancellable = PRECOMMIT_PHASES.has(phase) || precommitRecovery;
+    const locked = phase === "commit" || (phase === "recover" && !precommitRecovery);
+    const finalPlan = view?.finalPlan;
+    const progress = view?.job.progress;
+    let footer;
+    if (!view) footer = <><Button onClick={onClose}>Cancel</Button><Button variant="primary" loading={busy} disabled={!plan} onClick={start}>Download and inspect</Button></>;
+    else if (cancellable && phase !== "awaiting-confirmation") footer = <Button variant="danger" loading={busy} onClick={cancel}>Cancel installation</Button>;
+    else if (phase === "awaiting-confirmation") footer = <><Button loading={busy} onClick={cancel}>Cancel</Button><Button variant="primary" loading={busy} disabled={!finalPlan?.committable} onClick={commit}>Commit installation</Button></>;
+    else footer = <Button disabled={locked} onClick={onClose}>Close</Button>;
+    return (
+        <DialogSurface
+            open
+            onOpenChange={(open) => { if (!open && !locked) { if (view && cancellable) cancel(); else onClose(); } }}
+            title={`Install ${target.item.displayName}`}
+            description="Review verified metadata first. No local content changes occur until the explicit commit step."
+            className={styles.installDialog}
+            footer={footer}
+        >
+            <div className={styles.srOnly} role="status" aria-live="polite">{phase ? `Installation phase ${phase}` : busy ? "Preparing installation metadata" : "Installation metadata ready"}</div>
+            {error && <StatusMessage tone="danger" title="Installation failed">{error}</StatusMessage>}
+            {!plan ? <AsyncState status={error ? "error" : "loading"} title={error ? "Could not create preflight" : "Preparing verified metadata"} detail={error} /> : (
+                <div className={styles.installFlow}>
+                    <section><h3>1. Verified metadata</h3><MetadataList><MetadataField label="Plan hash">{plan.planHash}</MetadataField><MetadataField label="Registry">{plan.preflight.source.registryId}</MetadataField><MetadataField label="Snapshot">{plan.preflight.source.snapshotId}</MetadataField><MetadataField label="Download">{formatBytes(plan.preflight.totalDownloadBytes)}</MetadataField><MetadataField label="Host profile">{plan.preflight.hostProfileHash}</MetadataField></MetadataList><ul className={styles.plainList}>{plan.preflight.releases.map((entry) => <li key={`${entry.release.itemId}:${entry.release.releaseVersion}`}>{entry.release.itemId}@{entry.release.releaseVersion}<small>{entry.release.artifact.sha256}</small></li>)}</ul></section>
+                    {view && <section><h3>2. Download and inspection</h3><p className={styles.muted}>{phase}</p><progress max={Math.max(1, progress.bytesTotal)} value={progress.bytesComplete} aria-label="Installation download progress" /><p className={styles.muted}>{progress.artifactsComplete}/{progress.artifactsTotal} artifacts · {formatBytes(progress.bytesComplete)} / {formatBytes(progress.bytesTotal)}</p></section>}
+                    {finalPlan && <section><h3>3. Rights, conflicts, and mappings</h3>{finalPlan.blockingIssues.length ? <StatusMessage tone="danger" title="Commit is blocked">{finalPlan.blockingIssues.join(" · ")}</StatusMessage> : <StatusMessage tone="success" title="Ready for explicit commit">No blocking rights or mapping conflicts were reported.</StatusMessage>}{finalPlan.releases.map((entry) => <article className={styles.planRelease} key={`${entry.release.itemId}:${entry.release.releaseVersion}`}><strong>{entry.release.itemId}@{entry.release.releaseVersion}</strong><MetadataList><MetadataField label="Adapter">{entry.adapterId}</MetadataField><MetadataField label="Required rights">{entry.rights.length ? JSON.stringify(entry.rights) : "None"}</MetadataField><MetadataField label="Conflicts">{entry.conflicts.length ? JSON.stringify(entry.conflicts) : "None"}</MetadataField><MetadataField label="Local mappings">{entry.mappings.length ? JSON.stringify(entry.mappings) : "None"}</MetadataField></MetadataList></article>)}</section>}
+                    {phase === "complete" && <StatusMessage tone="success" title="Installation complete">Installed membership and immutable receipts are now visible.</StatusMessage>}
+                    {phase === "recover" && <StatusMessage tone="warning" title={precommitRecovery ? "Resuming installation" : "Recovering durable commit"}>{precommitRecovery ? "Verified cached artifacts will be reused; cancellation remains available." : "The commit journal is being rolled forward. Closing is disabled."}</StatusMessage>}
+                    {phase === "failed" && <StatusMessage tone="danger" title={view.job.error?.code}>{view.job.error?.message}</StatusMessage>}
+                </div>
+            )}
+        </DialogSurface>
+    );
+}
+
+function ReleaseDetail({ detail, loading, error, onRetry, releaseVersion, onReleaseVersion, onInstall }) {
     if (loading) return <div className={styles.centerState}><AsyncState title="Loading release" /></div>;
     if (error) return <div className={styles.centerState}><AsyncState status="error" title="Could not load release" detail={error} onRetry={onRetry} /></div>;
     if (!detail) return <div className={styles.centerState}><AsyncState status="empty" title="Select an item" detail="Choose a verified catalog item to inspect its release." /></div>;
@@ -147,9 +265,11 @@ function ReleaseDetail({ detail, loading, error, onRetry, releaseVersion, onRele
                         {detail.releases.map((entry) => <option key={entry.releaseVersion} value={entry.releaseVersion}>{entry.releaseVersion}</option>)}
                     </NativeSelect>
                 </Field>
-                <Button disabled aria-describedby="marketplace-install-disabled">{actionLabel}</Button>
+                <Button disabled={!detail.eligibility?.canInstall} aria-describedby="marketplace-install-disabled" onClick={() => onInstall(detail)}>{actionLabel}</Button>
             </div>
-            <p id="marketplace-install-disabled" className={styles.muted}>Installation and import actions become available in MKT-07.</p>
+            <p id="marketplace-install-disabled" className={styles.muted}>{detail.eligibility?.lifecycleAvailable
+                ? detail.eligibility.compatible ? "A verified preflight is required before download." : "This release does not satisfy the current host profile."
+                : lifecycleMilestone(item.contentKind)}</p>
             {isYanked && <StatusMessage tone="danger" title="This exact release is yanked">{detail.yanks.find((entry) => entry.release.releaseVersion === release.releaseVersion)?.reason}</StatusMessage>}
             <MetadataList>
                 <MetadataField label="Declared publisher">{release.publisherId}</MetadataField>
@@ -162,7 +282,7 @@ function ReleaseDetail({ detail, loading, error, onRetry, releaseVersion, onRele
             {item.description && <section className={styles.detailSection}><h3>Description</h3><SafeMarketplaceMarkdown className={styles.markdown}>{item.description}</SafeMarketplaceMarkdown></section>}
             {release.changelog && <section className={styles.detailSection}><h3>Release notes</h3><SafeMarketplaceMarkdown className={styles.markdown}>{release.changelog}</SafeMarketplaceMarkdown></section>}
             {item.links?.length ? <section className={styles.detailSection}><h3>Links</h3><ul className={styles.plainList}>{item.links.map((link) => <li key={`${link.label}:${link.url}`}><a href={link.url} target="_blank" rel="noopener noreferrer">{link.label}</a></li>)}</ul></section> : null}
-            <Compatibility compatibility={release.compatibility} />
+            <Compatibility compatibility={release.compatibility} eligibility={detail.eligibility} />
             <section className={styles.detailSection}>
                 <h3>Capabilities</h3>
                 {release.capabilities.length ? <ul className={styles.plainList}>{release.capabilities.map((value) => <li key={value}>{value}</li>)}</ul> : <p className={styles.muted}>None declared.</p>}
@@ -197,6 +317,7 @@ function DiscoverTab() {
     const [detail, setDetail] = useState(null);
     const [detailStatus, setDetailStatus] = useState("idle");
     const [detailError, setDetailError] = useState(null);
+    const [installTarget, setInstallTarget] = useState(null);
     const load = useCallback(() => {
         const controller = new AbortController();
         setStatus("loading");
@@ -282,7 +403,8 @@ function DiscoverTab() {
                 )}
                 {viewResult.page.total > viewResult.page.limit && <footer className={styles.pagination}><Button size="compact" disabled={query.offset === 0} onClick={() => setQuery((current) => ({ ...current, offset: Math.max(0, current.offset - current.limit) }))}>Previous</Button><span>{query.offset + 1}–{Math.min(query.offset + query.limit, viewResult.page.total)}</span><Button size="compact" disabled={query.offset + query.limit >= viewResult.page.total} onClick={() => setQuery((current) => ({ ...current, offset: current.offset + current.limit }))}>Next</Button></footer>}
             </section>
-            <ReleaseDetail detail={detail} loading={detailStatus === "loading"} error={detailError} onRetry={() => loadDetail()} releaseVersion={selected?.release.releaseVersion} onReleaseVersion={selectRelease} />
+            <ReleaseDetail detail={detail} loading={detailStatus === "loading"} error={detailError} onRetry={() => loadDetail()} releaseVersion={selected?.release.releaseVersion} onReleaseVersion={selectRelease} onInstall={setInstallTarget} />
+            <InstallDialog target={installTarget} onClose={() => setInstallTarget(null)} />
         </div>
     );
 }
@@ -460,7 +582,51 @@ function SourcesTab() {
 }
 
 function InstalledTab() {
-    return <div className={styles.emptyHero}><IconCloudOff size={30} aria-hidden="true" /><h2>No Marketplace installation ledger yet</h2><p>MKT-06 is read-only. Exact installed membership, receipts, dependency locks, mappings, and removal begin with the MKT-07 transaction coordinator.</p></div>;
+    const [snapshot, setSnapshot] = useState(null);
+    const [receipts, setReceipts] = useState({});
+    const [error, setError] = useState(null);
+    const [removing, setRemoving] = useState(null);
+    const load = useCallback(async () => {
+        try {
+            const installed = await listMarketplaceInstalled();
+            const hashes = [...new Set(installed.installations.flatMap((entry) => entry.receiptHashes))];
+            const documents = await Promise.all(hashes.map(async (hash) => [hash, await getMarketplaceReceipt(hash)]));
+            setSnapshot(installed);
+            setReceipts(Object.fromEntries(documents));
+            setError(null);
+        } catch (caught) {
+            setError(marketplaceApiErrorMessage(caught));
+        }
+    }, []);
+    useEffect(() => {
+        const timer = setTimeout(() => { load(); }, 0);
+        return () => clearTimeout(timer);
+    }, [load]);
+    const remove = async () => {
+        const target = removing;
+        try {
+            await removeMarketplaceInstalled({ sourceId: target.sourceId, ...target.release }, snapshot.revision);
+            setRemoving(null);
+            await load();
+        } catch (caught) { setError(marketplaceApiErrorMessage(caught)); }
+    };
+    if (!snapshot && !error) return <AsyncState title="Loading installed releases" />;
+    if (!snapshot) return <AsyncState status="error" title="Could not load installed releases" detail={error} onRetry={load} />;
+    if (!snapshot.installations.length) return <div className={styles.emptyHero}><IconCloudOff size={30} aria-hidden="true" /><h2>No installed Marketplace releases</h2><p>Verified artifacts may be downloaded only through an eligible lifecycle adapter. Installed membership appears here after explicit commit.</p></div>;
+    return (
+        <div className={styles.sources}>
+            <header className={styles.sourcesHeader}><div><h2>Installed releases</h2><p>Ledger revision {snapshot.revision}. Removal unpins membership without deleting local content or receipts.</p></div><Button size="compact" onClick={load}><IconRefresh size={14} aria-hidden="true" /> Refresh</Button></header>
+            {error && <StatusMessage tone="danger" title="Installed ledger operation failed">{error}</StatusMessage>}
+            <div className={styles.sourceGrid}>{snapshot.installations.map((installation) => {
+                const latestHash = installation.receiptHashes.at(-1);
+                const receipt = receipts[latestHash];
+                return <article className={styles.sourceCard} key={`${installation.sourceId}:${installation.release.itemId}:${installation.release.releaseVersion}:${installation.release.artifactSha256}`}><header><div><h2>{installation.release.itemId}@{installation.release.releaseVersion}</h2><p>{installation.release.artifactSha256}</p></div><span className={styles.health} data-tone={installation.status === "installed" ? "success" : "warning"}>{installation.status}</span></header><MetadataList><MetadataField label="Source ID">{installation.sourceId}</MetadataField><MetadataField label="Registry ID">{installation.registryId}</MetadataField><MetadataField label="Dependency lock">{receipt?.dependencyLock.length ? receipt.dependencyLock.map((entry) => `${entry.itemId}@${entry.releaseVersion}`).join(", ") : "None"}</MetadataField><MetadataField label="Local mappings">{receipt?.mappings.length ? JSON.stringify(receipt.mappings) : "None"}</MetadataField><MetadataField label="Receipt history">{installation.receiptHashes.join(", ")}</MetadataField><MetadataField label="Installed at">{formatDate(receipt?.installedAt)}</MetadataField></MetadataList><div className={styles.sourceActions}><Button variant="danger" size="compact" onClick={() => setRemoving(installation)}>Remove membership</Button></div></article>;
+            })}</div>
+            <DialogSurface open={Boolean(removing)} onOpenChange={(open) => !open && setRemoving(null)} title="Remove Marketplace membership" description="This unpins the exact release. Adapter-owned content, authored edits, cached artifacts, and immutable receipts are retained." footer={<><Button onClick={() => setRemoving(null)}>Cancel</Button><Button variant="danger" onClick={remove}>Remove membership</Button></>}>
+                <StatusMessage tone="warning" title={removing ? `${removing.release.itemId}@${removing.release.releaseVersion}` : "Exact release"}>Dependencies are not removed recursively.</StatusMessage>
+            </DialogSurface>
+        </div>
+    );
 }
 
 export default function MarketplaceWorkspace({ onOpenWorkspace }) {

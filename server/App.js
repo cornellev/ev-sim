@@ -24,6 +24,7 @@ app.prepare().then(async () => {
     const { LogService } = await import('./logging/LogService.js');
     const { createLogRouter } = await import('./routes/logRouter.js');
     const { HeadlessExperimentService } = await import('./headless/HeadlessExperimentService.js');
+    const { HEADLESS_PROTOCOL } = await import('./headless/HeadlessProtocol.js');
     const { readSupervisorConfigFromEnv } = await import('./headless/SupervisorConfig.js');
     const { createHeadlessRouter } = await import('./routes/headlessRouter.js');
     const { CosmosClipJob } = await import('./headless/CosmosClipJob.js');
@@ -42,13 +43,16 @@ app.prepare().then(async () => {
         // remains a test-only StorageService option.
     });
     let marketplaceService = null;
+    let MarketplaceService = null;
     let createMarketplaceRouter = null;
+    let createMarketplaceHostProfile = null;
     if (server.locals.marketplaceConfig.enabled) {
         const marketplaceServiceModule = await import('./marketplace/client/MarketplaceService.js');
         const marketplaceRouterModule = await import('./routes/marketplaceRouter.js');
-        marketplaceService = await marketplaceServiceModule.MarketplaceService.open(storageService.dataDir);
+        const marketplaceCompatibilityModule = await import('./marketplace/client/MarketplaceCompatibility.js');
+        MarketplaceService = marketplaceServiceModule.MarketplaceService;
         createMarketplaceRouter = marketplaceRouterModule.createMarketplaceRouter;
-        server.locals.marketplaceService = marketplaceService;
+        createMarketplaceHostProfile = marketplaceCompatibilityModule.createMarketplaceHostProfile;
     }
     const logService = new LogService(process.env.CEV_SIM_LOGS_DIR, {
         maxImportBytes: process.env.CEV_SIM_MAX_LOG_IMPORT_BYTES
@@ -67,6 +71,16 @@ app.prepare().then(async () => {
         supervisorConfig,
     });
     await headlessExperimentService.initialize();
+    if (MarketplaceService) {
+        marketplaceService = await MarketplaceService.open(storageService.dataDir, {
+            hostProfileProvider: async () => createMarketplaceHostProfile({
+                supervisorCapabilities: await headlessExperimentService.supervisor.getCapabilities({
+                    clientProtocol: HEADLESS_PROTOCOL,
+                }),
+            }),
+        });
+        server.locals.marketplaceService = marketplaceService;
+    }
     const cosmosClipJob = new CosmosClipJob({
         artifactRoot: headlessExperimentService.artifactRoot,
         renderer: headlessExperimentService.supervisor.config.renderer,

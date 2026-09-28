@@ -88,7 +88,9 @@ function HomeContent() {
     useEffect(() => {
         const controller = new AbortController();
         getMarketplaceStatus({ signal: controller.signal })
-            .then((status) => setMarketplaceAvailable(status?.mode === "read-only" && status.canInstall === false))
+            .then((status) => setMarketplaceAvailable(Boolean(
+                status && typeof status.mode === "string" && typeof status.canInstall === "boolean",
+            )))
             .catch((error) => {
                 if (error.name !== "AbortError") console.warn("Could not probe Marketplace availability:", error);
                 setMarketplaceAvailable(false);

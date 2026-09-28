@@ -456,6 +456,40 @@
     width: min(680px, calc(100vw - 32px));
 }
 
+.installDialog {
+    width: min(760px, calc(100vw - 32px));
+    max-height: calc(100vh - 32px);
+}
+
+.installFlow {
+    display: grid;
+    gap: 22px;
+}
+
+.installFlow h3 {
+    margin: 0;
+    color: var(--slate-fg);
+    font-size: 13px;
+}
+
+.installFlow progress {
+    width: 100%;
+    margin-top: 12px;
+    accent-color: var(--market-accent);
+}
+
+.planRelease {
+    margin-top: 10px;
+    border: 1px solid var(--market-line);
+    border-radius: var(--radius);
+    padding: 12px;
+}
+
+.planRelease > strong {
+    color: var(--slate-fg);
+    font-size: 11px;
+}
+
 .trustPreview {
     margin-top: 20px;
     border-top: 1px solid var(--market-line);

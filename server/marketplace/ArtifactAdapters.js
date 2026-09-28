@@ -15,12 +15,8 @@ import { MARKETPLACE_ERROR_CODES, marketplaceError } from "./MarketplaceErrors.j
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 const JSON_ARTIFACT_LIMIT = 64 * 1024 * 1024;
-const CAPABILITIES = Object.freeze({
-    inspect: true,
-    validate: true,
-    plan: false,
-    commit: false,
-    createReceipt: false,
+const READ_ONLY_CAPABILITIES = Object.freeze({
+    inspect: true, validate: true, plan: false, commit: false, createReceipt: false,
 });
 
 export class ArtifactOperationUnsupportedError extends Error {
@@ -140,23 +136,30 @@ function validateRelease(adapter, inspection, release) {
     return inspection;
 }
 
-function adapterDefinition({ id, contentKind, inspect }) {
+export function defineArtifactAdapter({ id, contentKind, inspect, plan = null, commit = null, createReceipt = null }) {
     const contract = Object.freeze({ ...MARKETPLACE_ARTIFACTS[contentKind] });
+    const lifecycle = [plan, commit, createReceipt].every((operation) => typeof operation === "function");
+    if ([plan, commit, createReceipt].some(Boolean) && !lifecycle) {
+        throw new TypeError(`Artifact adapter ${id} must implement plan, commit, and createReceipt together.`);
+    }
+    const capabilities = lifecycle ? Object.freeze({
+        inspect: true, validate: true, plan: true, commit: true, createReceipt: true,
+    }) : READ_ONLY_CAPABILITIES;
     const adapter = {
         id,
         contentKind,
         contract,
-        capabilities: CAPABILITIES,
+        capabilities,
         inspect: (handle, context = {}) => inspect(adapter, handle, context),
         validate: (inspection, release) => validateRelease(adapter, inspection, release),
-        plan: () => unsupported(id, "plan"),
-        commit: () => unsupported(id, "commit"),
-        createReceipt: () => unsupported(id, "createReceipt"),
+        plan: lifecycle ? (input) => plan(adapter, input) : () => unsupported(id, "plan"),
+        commit: lifecycle ? (input) => commit(adapter, input) : () => unsupported(id, "commit"),
+        createReceipt: lifecycle ? (input) => createReceipt(adapter, input) : () => unsupported(id, "createReceipt"),
     };
     return Object.freeze(adapter);
 }
 
-export const pluginArtifactAdapter = adapterDefinition({
+export const pluginArtifactAdapter = defineArtifactAdapter({
     id: "plugin@1",
     contentKind: "plugin",
     async inspect(adapter, rawHandle) {
@@ -174,7 +177,7 @@ export const pluginArtifactAdapter = adapterDefinition({
     },
 });
 
-export const vehicleArtifactAdapter = adapterDefinition({
+export const vehicleArtifactAdapter = defineArtifactAdapter({
     id: "vehicle@1",
     contentKind: "vehicle",
     async inspect(adapter, rawHandle) {
@@ -196,7 +199,7 @@ export const vehicleArtifactAdapter = adapterDefinition({
     },
 });
 
-export const runTemplateArtifactAdapter = adapterDefinition({
+export const runTemplateArtifactAdapter = defineArtifactAdapter({
     id: "run-template@1",
     contentKind: "run-template",
     async inspect(adapter, rawHandle) {
@@ -214,7 +217,7 @@ export const runTemplateArtifactAdapter = adapterDefinition({
     },
 });
 
-export const runPackageArtifactAdapter = adapterDefinition({
+export const runPackageArtifactAdapter = defineArtifactAdapter({
     id: "run-package@1",
     contentKind: "run-package",
     async inspect(adapter, rawHandle, context) {
@@ -289,6 +292,22 @@ export class ArtifactAdapterRegistry {
             throw new ArtifactOperationUnsupportedError(adapter.id, operation);
         }
         return adapter[operation].bind(adapter);
+    }
+
+    hasLifecycle(contentKind = null) {
+        if (contentKind !== null) {
+            const adapter = this.#adapters.get(contentKind);
+            return Boolean(adapter && adapter.capabilities.plan && adapter.capabilities.commit && adapter.capabilities.createReceipt);
+        }
+        return [...this.#adapters.values()].some((adapter) => (
+            adapter.capabilities.plan && adapter.capabilities.commit && adapter.capabilities.createReceipt
+        ));
+    }
+
+    requireLifecycle(contentKind) {
+        const adapter = this.get(contentKind);
+        for (const operation of ["plan", "commit", "createReceipt"]) this.requireOperation(contentKind, operation);
+        return adapter;
     }
 }
 

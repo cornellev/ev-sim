@@ -24,6 +24,15 @@ import {
     verifyTufRootContract,
 } from "../registry/TufMetadata.js";
 import { inspectPreviewBytes } from "../registry/PreviewMedia.js";
+import { artifactAdapterRegistry } from "../ArtifactAdapters.js";
+import { MarketplaceArtifactDownloader } from "./MarketplaceArtifactDownloader.js";
+import { MarketplaceArtifactStore } from "./MarketplaceArtifactStore.js";
+import { createMarketplaceHostProfile, evaluateMarketplaceCompatibility } from "./MarketplaceCompatibility.js";
+import { MarketplaceInstalledStore } from "./MarketplaceInstalledStore.js";
+import { MarketplaceInstallJobManager } from "./MarketplaceInstallJobManager.js";
+import { MarketplaceInstallPlanner } from "./MarketplaceInstallPlanner.js";
+import { MarketplaceReceiptStore } from "./MarketplaceReceiptStore.js";
+import { MarketplaceTransactionCoordinator } from "./MarketplaceTransactionCoordinator.js";
 import {
     assertHealthDocument,
     createEmptyHealth,
@@ -93,31 +102,108 @@ export class MarketplaceService {
     #controllers = new Set();
     #closed = false;
 
-    constructor({ paths, sourceStore, credentialStore, cache, trustClient, now }) {
+    constructor({
+        paths,
+        sourceStore,
+        credentialStore,
+        cache,
+        trustClient,
+        installedStore,
+        receiptStore,
+        artifactStore,
+        planner,
+        transactionCoordinator,
+        jobManager,
+        adapterRegistry,
+        hostProfileProvider,
+        now,
+    }) {
         this.paths = paths;
         this.sourceStore = sourceStore;
         this.credentialStore = credentialStore;
         this.cache = cache;
         this.trustClient = trustClient;
+        this.installedStore = installedStore;
+        this.receiptStore = receiptStore;
+        this.artifactStore = artifactStore;
+        this.planner = planner;
+        this.transactionCoordinator = transactionCoordinator;
+        this.jobManager = jobManager;
+        this.adapterRegistry = adapterRegistry;
+        this.hostProfileProvider = hostProfileProvider;
         this.now = now;
     }
 
-    static async open(dataDir, { fetchImpl = globalThis.fetch, now = () => new Date(), cacheFault = null } = {}) {
+    static async open(dataDir, {
+        fetchImpl = globalThis.fetch,
+        now = () => new Date(),
+        cacheFault = null,
+        transactionFault = null,
+        jobFault = null,
+        adapterRegistry = artifactAdapterRegistry,
+        hostProfileProvider = async () => createMarketplaceHostProfile(),
+        releasePolicy,
+    } = {}) {
         const sourceStore = await MarketplaceSourceStore.open(dataDir);
         const credentialStore = await MarketplaceCredentialStore.open(dataDir);
         const cache = await MarketplaceVerifiedCache.open(dataDir, { now, fault: cacheFault });
+        const installedStore = await MarketplaceInstalledStore.open(dataDir);
+        const receiptStore = await MarketplaceReceiptStore.open(dataDir);
+        const artifactStore = await MarketplaceArtifactStore.open(dataDir, { now });
+        const planner = await MarketplaceInstallPlanner.create(dataDir, {
+            sourceStore,
+            cache,
+            installedStore,
+            artifactStore,
+            adapterRegistry,
+            hostProfileProvider,
+            ...(releasePolicy ? { releasePolicy } : {}),
+        });
+        const transactionCoordinator = await MarketplaceTransactionCoordinator.create(dataDir, {
+            planner,
+            installedStore,
+            receiptStore,
+            artifactStore,
+            adapterRegistry,
+            now,
+            fault: transactionFault,
+        });
+        const downloader = new MarketplaceArtifactDownloader({
+            artifactStore,
+            credentialStore,
+            fetchImpl,
+        });
+        const jobManager = await MarketplaceInstallJobManager.create(dataDir, {
+            planner,
+            downloader,
+            coordinator: transactionCoordinator,
+            sourceStore,
+            now,
+            fault: jobFault,
+        });
         const service = new MarketplaceService({
             paths: marketplaceClientPaths(dataDir),
             sourceStore,
             credentialStore,
             cache,
             trustClient: new MarketplaceTrustClient({ fetchImpl, now }),
+            installedStore,
+            receiptStore,
+            artifactStore,
+            planner,
+            transactionCoordinator,
+            jobManager,
+            adapterRegistry,
+            hostProfileProvider,
             now,
         });
         const snapshot = sourceStore.snapshot();
         await credentialStore.recover(snapshot.sources.flatMap((source) => source.credentialRef ? [source.credentialRef] : []));
         await cache.recover(snapshot.sources.map((source) => source.sourceId));
         await service.#recoverOperationalState(snapshot.sources);
+        await planner.recover();
+        const recoveredTransactions = await transactionCoordinator.recoverPending();
+        await jobManager.recover(recoveredTransactions);
         return service;
     }
 
@@ -323,6 +409,9 @@ export class MarketplaceService {
         assertCanonicalUuid(sourceId, "sourceId");
         return this.#serializeSource(sourceId, async () => {
             this.#assertOpen();
+            if (await this.jobManager.hasNonterminalSource(sourceId)) {
+                throw marketplaceError(MARKETPLACE_ERROR_CODES.CONFLICT, "Marketplace source has a nonterminal installation job.");
+            }
             const result = await this.sourceStore.remove(sourceId, expectedRevision);
             const cleanup = await Promise.allSettled([
                 this.credentialStore.remove(result.removed.credentialRef),
@@ -507,6 +596,29 @@ export class MarketplaceService {
             .map((entry) => [entry.track, entry.releaseVersion]));
         const yanks = current.catalog.yanks.filter((entry) => entry.release.itemId === itemId);
         const health = await this.#health(source);
+        const hostProfile = await this.hostProfileProvider();
+        const compatibility = evaluateMarketplaceCompatibility(selectedRelease.compatibility, hostProfile);
+        const lifecycleAvailable = this.adapterRegistry.hasLifecycle(selectedRelease.contentKind);
+        const issues = [
+            ...compatibility.issues,
+            ...(!lifecycleAvailable ? [{
+                path: "contentKind",
+                code: "LIFECYCLE_UNAVAILABLE",
+                required: selectedRelease.contentKind,
+                actual: null,
+            }] : []),
+        ];
+        const selectedExactKey = `${selectedRelease.itemId}\u0000${selectedRelease.releaseVersion}\u0000${selectedRelease.artifact.sha256}`;
+        const warnings = yanks.some((entry) => (
+            `${entry.release.itemId}\u0000${entry.release.releaseVersion}\u0000${entry.release.artifactSha256}` === selectedExactKey
+        )) ? [`Exact release ${selectedRelease.itemId}@${selectedRelease.releaseVersion} is yanked.`] : [];
+        const eligibility = Object.freeze({
+            lifecycleAvailable,
+            compatible: compatibility.compatible,
+            canInstall: lifecycleAvailable && compatibility.compatible,
+            issues: Object.freeze(issues),
+            warnings: Object.freeze(warnings),
+        });
         return Object.freeze({
             source: publicSource(source, health),
             item,
@@ -517,8 +629,74 @@ export class MarketplaceService {
             yanks: Object.freeze(yanks),
             verification: current.verification,
             fresh: current.fresh && health.status === MARKETPLACE_SOURCE_HEALTH.READY,
-            canInstall: false,
+            eligibility,
+            canInstall: eligibility.canInstall,
         });
+    }
+
+    status() {
+        this.#assertOpen();
+        return Object.freeze({ mode: "coordinator", canInstall: this.adapterRegistry.hasLifecycle() });
+    }
+
+    async createInstallPlan(input) {
+        this.#assertOpen();
+        const result = await this.planner.createPreflight(input);
+        return Object.freeze({
+            planHash: result.planHash,
+            createdAt: this.now().toISOString(),
+            preflight: result.plan,
+        });
+    }
+
+    async #jobView(job) {
+        return Object.freeze({
+            job,
+            finalPlan: job.finalPlanHash ? await this.planner.readFinalPlan(job.finalPlanHash) : null,
+        });
+    }
+
+    async startInstallJob(planHash) {
+        this.#assertOpen();
+        return this.#jobView(await this.jobManager.start(planHash));
+    }
+
+    async getInstallJob(jobId) {
+        this.#assertOpen();
+        return this.#jobView(await this.jobManager.snapshot(jobId));
+    }
+
+    subscribeInstallJob(jobId, listener, options = {}) {
+        this.#assertOpen();
+        let sequence = Promise.resolve();
+        return this.jobManager.subscribe(jobId, (job) => {
+            sequence = sequence.then(async () => listener(await this.#jobView(job))).catch(() => {});
+        }, options);
+    }
+
+    async confirmInstallJob(jobId, input) {
+        this.#assertOpen();
+        return this.#jobView(await this.jobManager.confirmCommit(jobId, input));
+    }
+
+    async cancelInstallJob(jobId, expectedRevision) {
+        this.#assertOpen();
+        return this.#jobView(await this.jobManager.cancel(jobId, expectedRevision));
+    }
+
+    async listInstalled() {
+        this.#assertOpen();
+        return this.installedStore.snapshot();
+    }
+
+    async readReceipt(receiptHash) {
+        this.#assertOpen();
+        return this.receiptStore.read(receiptHash);
+    }
+
+    async removeInstalled(request) {
+        this.#assertOpen();
+        return this.transactionCoordinator.removeMembership(request);
     }
 
     async readVerifiedPreview(sourceId, itemId, digest) {
@@ -563,6 +741,9 @@ export class MarketplaceService {
         if (this.#closed) return;
         this.#closed = true;
         for (const controller of this.#controllers) controller.abort();
+        await this.jobManager.close();
+        await this.transactionCoordinator.close();
+        await this.installedStore.close();
         await Promise.allSettled(this.#sourceQueues.values());
     }
 }

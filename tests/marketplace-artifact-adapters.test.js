@@ -13,6 +13,7 @@ import {
     ArtifactOperationUnsupportedError,
     MARKETPLACE_ARTIFACT_ADAPTERS,
     artifactAdapterRegistry,
+    defineArtifactAdapter,
 } from "../server/marketplace/ArtifactAdapters.js";
 import { MARKETPLACE_ARTIFACTS } from "../server/marketplace/MarketplaceContract.js";
 import { computeVehicleBundleHash } from "../server/artifacts/VehicleBundle.js";
@@ -183,4 +184,13 @@ test("MKT-02 registry rejects duplicate kinds and exposes deterministic unsuppor
         );
         assert.throws(() => artifactAdapterRegistry.get("plugin")[operation](), ArtifactOperationUnsupportedError);
     }
+    assert.equal(artifactAdapterRegistry.hasLifecycle(), false);
+    assert.equal(artifactAdapterRegistry.hasLifecycle("plugin"), false);
+    assert.throws(() => artifactAdapterRegistry.requireLifecycle("plugin"), ArtifactOperationUnsupportedError);
+    assert.throws(() => defineArtifactAdapter({
+        id: "partial@1",
+        contentKind: "plugin",
+        inspect() {},
+        plan() {},
+    }), /plan, commit, and createReceipt together/u);
 });

@@ -4,6 +4,7 @@ import { DownloadHTTPError } from "tuf-js/dist/error.js";
 import { MARKETPLACE_CLIENT_LIMITS } from "../MarketplaceContract.js";
 import { MARKETPLACE_ERROR_CODES, marketplaceError } from "../MarketplaceErrors.js";
 import { assertSourceUrl } from "../MarketplaceFormats.js";
+import { assertSha256 } from "../MarketplaceFormats.js";
 
 const DISCOVERY_PATH = "/.well-known/cev-sim-marketplace";
 const METADATA_PATH = /^\/tuf\/metadata\/(?:timestamp|[1-9][0-9]*\.(?:root|snapshot|targets|catalog|items|releases|advisories))\.json$/u;
@@ -98,6 +99,13 @@ export class MarketplaceFixedOriginFetcher extends BaseFetcher {
             throw new DownloadHTTPError("Marketplace registry request failed.", response.status);
         }
         return response.body;
+    }
+
+    async fetchBlob(digest) {
+        assertSha256(digest, "artifactSha256");
+        const pathName = `/v1/blobs/sha256/${digest}`;
+        this.allowPath(pathName);
+        return this.fetch(this.url(pathName));
     }
 
     async downloadBytes(rawUrl, maxLength) {

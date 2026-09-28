@@ -138,7 +138,11 @@ export class MarketplaceVerifiedCache {
         if (!await lstatOrNull(currentPath)) return null;
         const pointer = await readCanonical(currentPath, assertCachePointer, 16 * 1024);
         if (pointer.sourceId !== source.sourceId) throw recovery("Marketplace cache pointer has the wrong source ID.", currentPath);
-        const snapshot = snapshotPaths(this.paths, source.sourceId, pointer.snapshotId);
+        return this.readSnapshot(source, pointer.snapshotId, { requireFresh });
+    }
+
+    async readSnapshot(source, snapshotId, { requireFresh = false } = {}) {
+        const snapshot = snapshotPaths(this.paths, source.sourceId, snapshotId);
         const manifest = await readCanonical(snapshot.manifest, assertCacheManifest);
         if (manifest.sourceId !== source.sourceId || manifest.registryId !== source.registryId
             || manifest.trustedRootFingerprint !== source.trustedRootFingerprint) {

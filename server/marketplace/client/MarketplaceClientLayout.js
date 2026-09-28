@@ -69,6 +69,14 @@ export function marketplaceClientPaths(dataDir) {
         trust: path.join(root, "trust"),
         health: path.join(root, "health"),
         cache: path.join(root, "cache"),
+        installed: path.join(root, "installed.json"),
+        plans: path.join(root, "plans", "sha256"),
+        jobs: path.join(root, "jobs"),
+        artifacts: path.join(root, "artifacts", "sha256"),
+        artifactRecords: path.join(root, "artifact-records", "sha256"),
+        quarantine: path.join(root, "quarantine"),
+        receipts: path.join(root, "receipts", "sha256"),
+        transactions: path.join(root, "transactions"),
     });
 }
 

@@ -10,6 +10,10 @@ import { MarketplaceService } from "../server/marketplace/client/MarketplaceServ
 import { blobPath, registryPaths, resolveRegistryPath } from "../server/marketplace/registry/RegistryLayout.js";
 import { createMarketplaceRouter } from "../server/routes/marketplaceRouter.js";
 import { createPopulatedClientRegistry } from "./helpers/marketplaceClientRegistry.js";
+import {
+    configureMarketplaceSource,
+    createTestLifecycleRegistry,
+} from "./helpers/marketplaceInstallLifecycle.js";
 
 async function listen(app) {
     return new Promise((resolve, reject) => {
@@ -50,6 +54,28 @@ async function readOperationalText(root) {
         else if (entry.isFile()) chunks.push(await fs.readFile(entryPath, "utf8"));
     }
     return chunks.join("\n");
+}
+
+async function collectJobEvents(url, onView = async () => {}) {
+    const response = await fetch(url, { headers: { accept: "text/event-stream" } });
+    assert.equal(response.status, 200);
+    const events = [];
+    let buffered = "";
+    for await (const chunk of response.body) {
+        buffered += Buffer.from(chunk).toString("utf8");
+        while (buffered.includes("\n\n")) {
+            const boundary = buffered.indexOf("\n\n");
+            const block = buffered.slice(0, boundary);
+            buffered = buffered.slice(boundary + 2);
+            if (!block.includes("event: job")) continue;
+            const id = Number(/^id: ([0-9]+)$/mu.exec(block)?.[1]);
+            const data = /^data: (.+)$/mu.exec(block)?.[1];
+            const view = JSON.parse(data);
+            events.push({ id, view });
+            await onView(view);
+        }
+    }
+    return events;
 }
 
 test("MKT-06 read and source APIs enforce verification, confinement, revisions, no-store, and redaction", async (t) => {
@@ -123,7 +149,7 @@ test("MKT-06 read and source APIs enforce verification, confinement, revisions, 
     assert.equal(refreshed.status, 200, JSON.stringify(refreshed.body));
 
     const status = await request(origin, "/api/marketplace/status");
-    assert.deepEqual(status.body, { mode: "read-only", canInstall: false });
+    assert.deepEqual(status.body, { mode: "coordinator", canInstall: false });
     const discover = await request(origin, "/api/marketplace/discover?q=controller&track=stable&limit=1");
     assert.equal(discover.status, 200, JSON.stringify(discover.body));
     assert.equal(discover.cacheControl, "no-store");
@@ -148,6 +174,31 @@ test("MKT-06 read and source APIs enforce verification, confinement, revisions, 
     assert.equal(detail.body.verification.role, "releases");
     assert.equal(detail.body.verification.roleKeyIds.length, 1);
     assert.equal(detail.body.canInstall, false);
+    assert.deepEqual(detail.body.eligibility, {
+        lifecycleAvailable: false,
+        compatible: true,
+        canInstall: false,
+        issues: [{ path: "contentKind", code: "LIFECYCLE_UNAVAILABLE", required: "plugin", actual: null }],
+        warnings: [],
+    });
+    const installPlan = await request(origin, "/api/marketplace/install-plans", {
+        method: "POST",
+        body: {
+            sourceId: added.body.source.sourceId,
+            itemId: registry.release.itemId,
+            releaseVersion: registry.release.releaseVersion,
+        },
+    });
+    assert.equal(installPlan.status, 201, JSON.stringify(installPlan.body));
+    assert.equal(installPlan.body.preflight.source.snapshotId, refreshed.body.snapshotId);
+    assert.equal(installPlan.body.preflight.totalDownloadBytes, registry.release.artifact.sizeBytes);
+    const unavailableJob = await request(origin, "/api/marketplace/install-jobs", {
+        method: "POST",
+        body: { planHash: installPlan.body.planHash },
+    });
+    assert.equal(unavailableJob.status, 412);
+    assert.equal(unavailableJob.body.error.code, "INCOMPATIBLE");
+    assert.deepEqual((await request(origin, "/api/marketplace/installed")).body.installations, []);
 
     const previewPath = `${itemPath}/previews/${registry.preview.sha256}`;
     const previewResponse = await rawRequest(origin, previewPath);
@@ -208,4 +259,54 @@ test("MKT-06 read and source APIs enforce verification, confinement, revisions, 
     assert.equal(removed.status, 200);
     assert.equal(removed.body.revision, 3);
     assert.deepEqual((await request(origin, "/api/marketplace/sources")).body, { revision: 3, sources: [] });
+});
+
+test("MKT-07 job API streams persisted revisions, reconnects, and blocks source removal during installation", async (t) => {
+    const parent = await fs.mkdtemp(path.join(os.tmpdir(), "cev-mkt-job-api-"));
+    t.after(() => fs.rm(parent, { recursive: true, force: true }));
+    const registry = await createPopulatedClientRegistry(parent);
+    t.after(() => registry.server.close());
+    const service = await MarketplaceService.open(path.join(parent, "client"), {
+        adapterRegistry: createTestLifecycleRegistry([]),
+    });
+    t.after(() => service.close());
+    const sourceId = await configureMarketplaceSource(service, registry);
+    const app = express();
+    app.use("/api/marketplace", createMarketplaceRouter(service, { logger: { error() {} } }));
+    const server = await listen(app);
+    t.after(() => new Promise((resolve) => server.close(resolve)));
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    const plan = await request(origin, "/api/marketplace/install-plans", {
+        method: "POST",
+        body: { sourceId, itemId: registry.release.itemId, releaseVersion: registry.release.releaseVersion },
+    });
+    const started = await request(origin, "/api/marketplace/install-jobs", {
+        method: "POST",
+        body: { planHash: plan.body.planHash },
+    });
+    assert.equal(started.status, 202);
+    let confirmed = false;
+    const events = await collectJobEvents(
+        `${origin}/api/marketplace/install-jobs/${started.body.job.jobId}/events`,
+        async (view) => {
+            if (view.job.phase !== "awaiting-confirmation" || confirmed) return;
+            confirmed = true;
+            const blockedRemoval = await request(origin, `/api/marketplace/sources/${sourceId}?expectedRevision=1`, { method: "DELETE" });
+            assert.equal(blockedRemoval.status, 409);
+            const commit = await request(origin, `/api/marketplace/install-jobs/${view.job.jobId}/commit`, {
+                method: "POST",
+                body: { expectedRevision: view.job.revision, finalPlanHash: view.job.finalPlanHash },
+            });
+            assert.equal(commit.status, 202, JSON.stringify(commit.body));
+        },
+    );
+    assert.equal(events.at(-1).view.job.phase, "complete");
+    assert.deepEqual(events.map((event) => event.id), events.map((event) => event.view.job.revision));
+    assert.equal(new Set(events.map((event) => event.id)).size, events.length);
+    assert.ok(events.every((event, index) => index === 0 || event.id > events[index - 1].id));
+    const reconnect = await collectJobEvents(
+        `${origin}/api/marketplace/install-jobs/${started.body.job.jobId}/events`,
+    );
+    assert.equal(reconnect.length, 1);
+    assert.equal(reconnect[0].view.job.phase, "complete");
 });

@@ -23,10 +23,12 @@ test("MKT-01 marketplace startup seam is frozen and disabled by default", () => 
     assert.notEqual(resolveMarketplaceConfig({}), resolveMarketplaceConfig({}));
 });
 
-test("MKT-05 server startup constructs and mounts the client only inside the enabled branch", async () => {
+test("MKT-07 server startup constructs Marketplace after supervisor initialization and mounts it only when enabled", async () => {
     const source = await readFile(new URL("../server/App.js", import.meta.url), "utf8");
     assert.match(source, /loadEnvConfig[\s\S]+resolveMarketplaceConfig[\s\S]+server\.locals\.marketplaceConfig/);
-    assert.match(source, /if \(server\.locals\.marketplaceConfig\.enabled\)[\s\S]+MarketplaceService\.open\(storageService\.dataDir\)/);
+    assert.match(source, /if \(server\.locals\.marketplaceConfig\.enabled\)[\s\S]+marketplaceServiceModule\.MarketplaceService/);
+    assert.ok(source.indexOf("await headlessExperimentService.initialize()") < source.indexOf("MarketplaceService.open(storageService.dataDir"));
+    assert.match(source, /hostProfileProvider:[\s\S]+supervisor\.getCapabilities/);
     assert.match(source, /if \(marketplaceService\) server\.use\('\/api\/marketplace'/);
     assert.match(source, /await marketplaceService\?\.close\(\)/);
 });

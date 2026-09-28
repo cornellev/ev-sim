@@ -97,3 +97,62 @@ export function refreshMarketplaceSource(sourceId, expectedRevision, { signal } 
         signal,
     });
 }
+
+export function createMarketplaceInstallPlan(input, { signal } = {}) {
+    return requestJson("/api/marketplace/install-plans", { method: "POST", body: input, signal });
+}
+
+export function startMarketplaceInstallJob(planHash, { signal } = {}) {
+    return requestJson("/api/marketplace/install-jobs", { method: "POST", body: { planHash }, signal });
+}
+
+export function getMarketplaceInstallJob(jobId, { signal } = {}) {
+    return requestJson(`/api/marketplace/install-jobs/${encodeURIComponent(jobId)}`, { signal });
+}
+
+export function subscribeMarketplaceInstallJob(jobId, { onJob, onError } = {}) {
+    const events = new EventSource(`/api/marketplace/install-jobs/${encodeURIComponent(jobId)}/events`);
+    const receive = (event) => {
+        try {
+            onJob?.(JSON.parse(event.data));
+        } catch (error) {
+            onError?.(error);
+        }
+    };
+    events.addEventListener("job", receive);
+    events.addEventListener("error", (event) => {
+        if (events.readyState !== EventSource.CLOSED) onError?.(event);
+    });
+    return () => events.close();
+}
+
+export function commitMarketplaceInstallJob(jobId, expectedRevision, finalPlanHash, { signal } = {}) {
+    return requestJson(`/api/marketplace/install-jobs/${encodeURIComponent(jobId)}/commit`, {
+        method: "POST",
+        body: { expectedRevision, finalPlanHash },
+        signal,
+    });
+}
+
+export function cancelMarketplaceInstallJob(jobId, expectedRevision, { signal } = {}) {
+    return requestJson(`/api/marketplace/install-jobs/${encodeURIComponent(jobId)}/cancel`, {
+        method: "POST",
+        body: { expectedRevision },
+        signal,
+    });
+}
+
+export function listMarketplaceInstalled({ signal } = {}) {
+    return requestJson("/api/marketplace/installed", { signal });
+}
+
+export function getMarketplaceReceipt(receiptHash, { signal } = {}) {
+    return requestJson(`/api/marketplace/receipts/${encodeURIComponent(receiptHash)}`, { signal });
+}
+
+export function removeMarketplaceInstalled(release, expectedRevision, { signal } = {}) {
+    const query = new URLSearchParams({ expectedRevision: String(expectedRevision) });
+    const segments = [release.sourceId, release.itemId, release.releaseVersion, release.artifactSha256]
+        .map((value) => encodeURIComponent(value));
+    return requestJson(`/api/marketplace/installed/${segments.join("/")}?${query}`, { method: "DELETE", signal });
+}

@@ -558,13 +558,16 @@ closure, rights, and public error contract while delegating transport framing.
 `VehicleBundle.js` performs pure bundle/package/lock/manifest/asset
 verification before `StorageService` writes plugin CAS or authoring state.
 
-`server/marketplace/ArtifactAdapters.js` is a read-only boundary over the
+`server/marketplace/ArtifactAdapters.js` is a structural boundary over the
 existing plugin-package, vehicle-bundle, run-bundle, and run-package
 authorities. Inspections are serializable identity summaries. Validation only
 binds the adapter contract and marketplace media/content kind to the signed
 artifact digest and byte size. It does not authenticate a release, evaluate
 rights or compatibility, import code, install content, or grant execution.
-Planning, commit, and receipt operations remain unavailable until MKT-07.
+MKT-07 defines optional deterministic `plan`, idempotent `commit`, and
+`createReceipt` lifecycle operations, but the four production adapters remain
+read-only until MKT-08/09. Only injected tests provide a complete lifecycle in
+MKT-07.
 
 MKT-03 adds the offline filesystem registry under
 `server/marketplace/registry/`. `MarketplaceRegistryStore` owns initialization,
@@ -624,12 +627,25 @@ preview blob path. Preview bytes are rechecked against the verified descriptor
 and raster inspector before being returned and are not persisted.
 
 `app/marketplace/` is a presentation and source-management client over that
-local API. It cannot contact registry origins, download artifacts, install or
-import content, create receipts, evaluate compatibility, or create installed
-state. `publisherId` is shown as a declared publisher; the displayed signer
+local API. It cannot contact registry origins. MKT-07 adds host eligibility,
+immutable preflight/final plans, cancellable durable jobs, revisioned SSE,
+verified artifact CAS/quarantine, installed membership, immutable receipts,
+and journaled install/removal transactions. `installed.json` is the final
+transaction visibility point; job completion is durable before journal
+cleanup. The browser can request these operations only through the backend and
+cannot activate production content in MKT-07. `publisherId` is shown as a
+declared publisher; the displayed signer
 keys belong to the registry's TUF `releases` distribution role. Marketplace
 navigation exists only after the enabled status probe succeeds, so disabled
 startup still constructs no marketplace service or storage.
+
+Marketplace startup follows headless supervisor initialization so the host
+profile is derived lazily from live supervisor capabilities. Transaction
+recovery completes before `/api/marketplace` is mounted. Plans, jobs,
+transactions, installed state, receipts, artifact records, quarantine, and
+source metadata remain outside all world, resolved-run, simulation, episode,
+trajectory, plugin-package, vehicle-bundle, run-bundle, and run-package hash
+authorities.
 
 ## External Integration
 
