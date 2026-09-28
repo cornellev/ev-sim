@@ -136,7 +136,7 @@ export function createMarketplaceRouter(service, {
             if (view.job.revision <= lastRevision) return;
             lastRevision = view.job.revision;
             response.write(`id: ${view.job.revision}\nevent: job\ndata: ${JSON.stringify(view)}\n\n`);
-            if (["failed", "cancelled", "complete"].includes(view.job.phase)) setImmediate(close);
+            if (["failed", "cancelled", "complete", "needs-attention"].includes(view.job.phase)) setImmediate(close);
         };
         send(initial);
         if (closed || response.writableEnded) return;
@@ -162,6 +162,21 @@ export function createMarketplaceRouter(service, {
     router.post("/install-jobs/:jobId/cancel", handler(async (request, response) => {
         const body = exactBody(request.body, ["expectedRevision"]);
         response.json(await service.cancelInstallJob(request.params.jobId, bodyRevision(body.expectedRevision)));
+    }));
+
+    router.post("/install-jobs/:jobId/resume", handler(async (request, response) => {
+        const body = exactBody(request.body, ["expectedRevision"]);
+        response.status(202).json(await service.resumeInstallJob(request.params.jobId, bodyRevision(body.expectedRevision)));
+    }));
+
+    router.post("/install-jobs/:jobId/replan", handler(async (request, response) => {
+        const body = exactBody(request.body, ["expectedRevision"]);
+        response.status(202).json(await service.replanInstallJob(request.params.jobId, bodyRevision(body.expectedRevision)));
+    }));
+
+    router.get("/install-jobs/:jobId/operations", handler(async (request, response) => {
+        const query = exactQuery(request, ["offset", "limit", "status"]);
+        response.json(await service.listInstallJobOperations(request.params.jobId, query));
     }));
 
     router.get("/installed", handler(async (request, response) => {

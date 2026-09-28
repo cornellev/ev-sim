@@ -24,9 +24,11 @@ import {
     marketplaceApiErrorMessage,
     previewMarketplaceSource,
     refreshMarketplaceSource,
+    replanMarketplaceInstallJob,
     removeMarketplaceInstalled,
     removeMarketplaceSource,
     searchMarketplace,
+    resumeMarketplaceInstallJob,
     startMarketplaceInstallJob,
     subscribeMarketplaceInstallJob,
     updateMarketplaceSource,
@@ -113,6 +115,11 @@ function Compatibility({ compatibility, eligibility }) {
                     ? eligibility.issues.map((issue) => `${issue.code}: ${issue.path}`).join(" · ")
                     : "All host compatibility requirements are satisfied."}
             </StatusMessage> : null}
+            {eligibility?.downloadable && <MetadataList>
+                <MetadataField label="Downloadable">{eligibility.downloadable.status}</MetadataField>
+                <MetadataField label="Importable">{eligibility.importable.status}</MetadataField>
+                <MetadataField label="Executable">{eligibility.executable.status}</MetadataField>
+            </MetadataList>}
             <MetadataList>
                 <MetadataField label="cev-sim">{compatibility?.cevSim}</MetadataField>
                 <MetadataField label="Platforms">{list(compatibility?.platforms)}</MetadataField>
@@ -178,11 +185,31 @@ function GenericPlanReview({ entry }) {
     );
 }
 
+function AssetPackagePlanReview({ entry }) {
+    const plan = entry.adapterPlan;
+    return <>
+        <MetadataList>
+            <MetadataField label="Roots">{plan.package.roots.map((root) => `${root.assetId}@${root.revision}`).join(", ")}</MetadataField>
+            <MetadataField label="Closure">{plan.package.assetCount} assets · {plan.package.revisionCount} revisions · {plan.package.useCount} uses · {plan.package.blobCount} blobs</MetadataField>
+            <MetadataField label="Preparation hash">{plan.preparationHash}</MetadataField>
+            <MetadataField label="Operations">{plan.operations.length}</MetadataField>
+            <MetadataField label="Required rights">{entry.rights.length
+                ? entry.rights.map((right) => `${right.sourceId}:${right.right} (${right.allowed ? "allowed" : "denied"})`).join(", ")
+                : "None"}</MetadataField>
+            <MetadataField label="Conflicts">{entry.conflicts.length ? entry.conflicts.join(", ") : "None"}</MetadataField>
+        </MetadataList>
+        <ul className={styles.plainList}>{plan.revisionMappings.map((mapping) => <li key={`${mapping.sourceAssetId}:${mapping.sourceRevision}`}>
+            {mapping.sourceAssetId}@{mapping.sourceRevision} → {mapping.localAssetId}@{mapping.localRevision}
+        </li>)}</ul>
+    </>;
+}
+
 function InstallDialog({ target, onClose, onInstalled }) {
     const [plan, setPlan] = useState(null);
     const [view, setView] = useState(null);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState(null);
+    const [streamGeneration, setStreamGeneration] = useState(0);
     const jobId = view?.job.jobId ?? null;
     const phase = view?.job.phase ?? null;
 
@@ -212,7 +239,7 @@ function InstallDialog({ target, onClose, onInstalled }) {
             },
             onError: () => {},
         });
-    }, [jobId, onInstalled]);
+    }, [jobId, onInstalled, streamGeneration]);
 
     if (!target) return null;
     const start = async () => {
@@ -238,6 +265,24 @@ function InstallDialog({ target, onClose, onInstalled }) {
         } catch (caught) { setError(marketplaceApiErrorMessage(caught)); }
         finally { setBusy(false); }
     };
+    const resume = async () => {
+        setBusy(true); setError(null);
+        try {
+            setView(await resumeMarketplaceInstallJob(view.job.jobId, view.job.revision));
+            setStreamGeneration((generation) => generation + 1);
+        }
+        catch (caught) { setError(marketplaceApiErrorMessage(caught)); }
+        finally { setBusy(false); }
+    };
+    const replan = async () => {
+        setBusy(true); setError(null);
+        try {
+            setView(await replanMarketplaceInstallJob(view.job.jobId, view.job.revision));
+            setStreamGeneration((generation) => generation + 1);
+        }
+        catch (caught) { setError(marketplaceApiErrorMessage(caught)); }
+        finally { setBusy(false); }
+    };
     const precommitRecovery = phase === "recover" && view?.job.finalPlanHash === null;
     const cancellable = PRECOMMIT_PHASES.has(phase) || precommitRecovery;
     const locked = phase === "commit" || (phase === "recover" && !precommitRecovery);
@@ -248,6 +293,7 @@ function InstallDialog({ target, onClose, onInstalled }) {
     if (!view) footer = <><Button onClick={onClose}>Cancel</Button><Button variant="primary" loading={busy} disabled={!plan} onClick={start}>Download and inspect</Button></>;
     else if (cancellable && phase !== "awaiting-confirmation") footer = <Button variant="danger" loading={busy} onClick={cancel}>Cancel installation</Button>;
     else if (phase === "awaiting-confirmation") footer = <><Button loading={busy} onClick={cancel}>Cancel</Button><Button variant="primary" loading={busy} disabled={!finalPlan?.committable} onClick={commit}>Commit installation</Button></>;
+    else if (phase === "needs-attention") footer = <><Button loading={busy} onClick={onClose}>Close</Button><Button loading={busy} onClick={replan}>Replan</Button><Button variant="primary" loading={busy} onClick={resume}>Resume</Button></>;
     else footer = <Button disabled={locked} onClick={onClose}>Close</Button>;
     return (
         <DialogSurface
@@ -263,12 +309,13 @@ function InstallDialog({ target, onClose, onInstalled }) {
             {!plan ? <AsyncState status={error ? "error" : "loading"} title={error ? "Could not create preflight" : "Preparing verified metadata"} detail={error} /> : (
                 <div className={styles.installFlow}>
                     <section><h3>1. Verified metadata</h3><MetadataList><MetadataField label="Plan hash">{plan.planHash}</MetadataField><MetadataField label="Registry">{plan.preflight.source.registryId}</MetadataField><MetadataField label="Snapshot">{plan.preflight.source.snapshotId}</MetadataField><MetadataField label="Download">{formatBytes(plan.preflight.totalDownloadBytes)}</MetadataField><MetadataField label="Host profile">{plan.preflight.hostProfileHash}</MetadataField></MetadataList><ul className={styles.plainList}>{plan.preflight.releases.map((entry) => <li key={`${entry.release.itemId}:${entry.release.releaseVersion}`}>{entry.release.itemId}@{entry.release.releaseVersion}<small>{entry.release.artifact.sha256}</small></li>)}</ul></section>
-                    {view && <section><h3>2. Download and inspection</h3><p className={styles.muted}>{phase}</p><progress max={Math.max(1, progress.bytesTotal)} value={progress.bytesComplete} aria-label="Installation download progress" /><p className={styles.muted}>{progress.artifactsComplete}/{progress.artifactsTotal} artifacts · {formatBytes(progress.bytesComplete)} / {formatBytes(progress.bytesTotal)}</p></section>}
-                    {finalPlan && <section><h3>3. Review local changes</h3>{finalPlan.blockingIssues.length ? <StatusMessage tone="danger" title="Commit is blocked">{finalPlan.blockingIssues.join(" · ")}</StatusMessage> : <StatusMessage tone="success" title="Ready for explicit commit">No blocking rights or mapping conflicts were reported.</StatusMessage>}{finalPlan.releases.map((entry) => <article className={styles.planRelease} key={`${entry.release.itemId}:${entry.release.releaseVersion}`}><strong>{entry.release.itemId}@{entry.release.releaseVersion}</strong>{entry.adapterId === "plugin@1" ? <PluginPlanReview entry={entry} /> : <GenericPlanReview entry={entry} />}</article>)}</section>}
+                    {view && <section><h3>2. Download and inspection</h3><p className={styles.muted}>{phase}</p><progress max={Math.max(1, progress.bytesTotal)} value={progress.bytesComplete} aria-label="Installation download progress" /><p className={styles.muted}>{progress.artifactsComplete}/{progress.artifactsTotal} artifacts · {formatBytes(progress.bytesComplete)} / {formatBytes(progress.bytesTotal)}</p>{(progress.totalOperations ?? progress.operationsTotal ?? 0) > 0 && <><progress max={progress.totalOperations ?? progress.operationsTotal} value={progress.completedOperations ?? progress.operationsComplete} aria-label="Installation operation progress" /><p className={styles.muted}>{progress.completedOperations ?? progress.operationsComplete}/{progress.totalOperations ?? progress.operationsTotal} durable operations</p></>}</section>}
+                    {finalPlan && <section><h3>3. Review local changes</h3>{finalPlan.blockingIssues.length ? <StatusMessage tone="danger" title="Commit is blocked">{finalPlan.blockingIssues.join(" · ")}</StatusMessage> : <StatusMessage tone="success" title="Ready for explicit commit">No blocking rights or mapping conflicts were reported.</StatusMessage>}{finalPlan.releases.map((entry) => <article className={styles.planRelease} key={`${entry.release.itemId}:${entry.release.releaseVersion}`}><strong>{entry.release.itemId}@{entry.release.releaseVersion}</strong>{entry.adapterId === "plugin@1" ? <PluginPlanReview entry={entry} /> : entry.adapterId === "asset-pack@1" ? <AssetPackagePlanReview entry={entry} /> : <GenericPlanReview entry={entry} />}</article>)}</section>}
                     {phase === "complete" && <StatusMessage tone="success" title="Installation complete">{completedPlugin
                         ? `${completedPlugin.pluginId}@${completedPlugin.version} (${completedPlugin.packageHash}) was added to the Plugin Library.`
                         : "Installed membership and immutable receipts are now visible."}</StatusMessage>}
                     {phase === "recover" && <StatusMessage tone="warning" title={precommitRecovery ? "Resuming installation" : "Recovering durable commit"}>{precommitRecovery ? "Verified cached artifacts will be reused; cancellation remains available." : "The commit journal is being rolled forward. Closing is disabled."}</StatusMessage>}
+                    {phase === "needs-attention" && <StatusMessage tone="warning" title="Import needs attention">Completed authoring operations remain rooted. Resume verifies them and continues; replan is required after a conflicting local edit.</StatusMessage>}
                     {phase === "failed" && <StatusMessage tone="danger" title={view.job.error?.code}>{view.job.error?.message}</StatusMessage>}
                 </div>
             )}
@@ -311,7 +358,7 @@ function ReleaseDetail({ detail, loading, error, onRetry, releaseVersion, onRele
                 <Button disabled={!detail.eligibility?.canInstall} aria-describedby="marketplace-install-disabled" onClick={() => onInstall(detail)}>{actionLabel}</Button>
             </div>
             <p id="marketplace-install-disabled" className={styles.muted}>{detail.eligibility?.lifecycleAvailable
-                ? detail.eligibility.compatible ? "A verified preflight is required before download." : "This release does not satisfy the current host profile."
+                ? detail.eligibility.canInstall ? "A verified preflight is required before download." : "This release is not eligible for the requested lifecycle."
                 : lifecycleMilestone(item.contentKind)}</p>
             {isYanked && <StatusMessage tone="danger" title="This exact release is yanked">{detail.yanks.find((entry) => entry.release.releaseVersion === release.releaseVersion)?.reason}</StatusMessage>}
             <MetadataList>

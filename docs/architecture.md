@@ -659,6 +659,29 @@ startup replays both steps idempotently. Manual and other Marketplace owners
 survive, and last-owner removal changes visibility without deleting CAS or
 runtime bytes.
 
+MKT-09 injects `StorageService.editorAssets` and `StorageService.visualAssets`
+into the stateful asset-package adapter. `AssetPackage.js` owns deterministic
+USTAR framing over exact editor revision, visual-use, and blob closure;
+`AssetPackageImportPlanner.js` owns source closure hashes, deterministic local
+mapping, child-first prepared compilation, and receipt evidence. Preparation is
+durable below the install job and addressed by `preparationHash`, never by an
+absolute path in a plan.
+
+The marketplace transaction journal freezes an ordered operation list before
+the first authoring mutation. Dependency-first visual-use operations publish
+through `VisualAssetStore`; asset-DAG revision operations publish through the
+same serialized `EditorAssetStore.publishRevision()` lane used by normal
+authoring. That lane acquires durable visual roots before catalog visibility.
+Per-operation completion markers contain verified result identity and root
+generation, so recovery can continue without undoing completed content. The
+installed ledger remains the final release-level visibility write.
+
+Asset import ends at editor/visual storage. It neither changes the environment
+document nor invokes `CommandBus` or `SceneProjector`. Marketplace provenance,
+prepared data, installed state, receipts, imported roots, and local mapping are
+nonsemantic; `worldHash` changes only after a separate canonical environment
+edit places or updates an asset.
+
 ## External Integration
 
 cev-sim does not embed ROS. `app/3d/managers/ClientManager.js` creates a browser client from `app/client/Client.js`, syncs message definitions from the external orchestrator Types API, then connects to the orchestrator WebSocket.

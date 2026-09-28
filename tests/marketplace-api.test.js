@@ -178,6 +178,9 @@ test("MKT-06 read and source APIs enforce verification, confinement, revisions, 
     assert.deepEqual(detail.body.eligibility, {
         lifecycleAvailable: true,
         compatible: true,
+        downloadable: { status: "eligible", issues: [] },
+        importable: { status: "eligible", issues: [] },
+        executable: { status: "eligible", issues: [] },
         canInstall: true,
         issues: [],
         warnings: [],
@@ -199,6 +202,17 @@ test("MKT-06 read and source APIs enforce verification, confinement, revisions, 
     });
     assert.equal(installJob.status, 202, JSON.stringify(installJob.body));
     const ready = await waitForInstallJob(service, installJob.body.job.jobId, "awaiting-confirmation");
+    const operations = await request(origin, `/api/marketplace/install-jobs/${ready.job.jobId}/operations?offset=0&limit=10`);
+    assert.equal(operations.status, 200);
+    assert.deepEqual(operations.body, { total: 0, offset: 0, limit: 10, entries: [] });
+    const prematureResume = await request(origin, `/api/marketplace/install-jobs/${ready.job.jobId}/resume`, {
+        method: "POST", body: { expectedRevision: ready.job.revision },
+    });
+    assert.equal(prematureResume.status, 409);
+    const prematureReplan = await request(origin, `/api/marketplace/install-jobs/${ready.job.jobId}/replan`, {
+        method: "POST", body: { expectedRevision: ready.job.revision },
+    });
+    assert.equal(prematureReplan.status, 409);
     await service.cancelInstallJob(ready.job.jobId, ready.job.revision);
     assert.deepEqual((await request(origin, "/api/marketplace/installed")).body.installations, []);
 

@@ -317,6 +317,46 @@ export function collectAssetDefinitionDependencies(definition) {
         .sort((a, b) => a.partId.localeCompare(b.partId));
 }
 
+export function collectAssetRevisionReferences(definition) {
+    const normalized = normalizeAssetDefinition(definition);
+    const references = [
+        ...normalized.parts
+            .filter((part) => part.content.kind === "asset-reference")
+            .map((part) => ({ assetId: part.content.assetId, revision: part.content.revision })),
+        ...[...normalized.lidarProxies, ...normalized.collisionProxies]
+            .flatMap((proxy) => proxy.generated?.sourceRevisions ?? [])
+            .map((entry) => ({ assetId: entry.assetId, revision: entry.revision })),
+    ];
+    return [...new Map(references.map((entry) => [`${entry.assetId}\u0000${entry.revision}`, entry])).values()]
+        .sort((left, right) => left.assetId.localeCompare(right.assetId) || left.revision - right.revision);
+}
+
+export function rewriteAssetDefinitionReferences(definition, revisionMapping) {
+    const normalized = normalizeAssetDefinition(definition);
+    const resolve = (assetId, revision) => {
+        const key = `${assetId}@${revision}`;
+        const mapped = revisionMapping instanceof Map ? revisionMapping.get(key) : revisionMapping?.[key];
+        if (!mapped || typeof mapped.localAssetId !== "string" || !Number.isInteger(mapped.localRevision)) {
+            throw new TypeError(`Asset revision mapping for ${key} is missing.`);
+        }
+        return { assetId: mapped.localAssetId, revision: mapped.localRevision };
+    };
+    normalized.parts = normalized.parts.map((part) => part.content.kind === "asset-reference"
+        ? { ...part, content: { kind: "asset-reference", ...resolve(part.content.assetId, part.content.revision) } }
+        : part);
+    const rewriteProxy = (proxy) => proxy.generated ? {
+        ...proxy,
+        generated: {
+            ...proxy.generated,
+            sourceRevisions: proxy.generated.sourceRevisions.map((entry) => resolve(entry.assetId, entry.revision))
+                .sort((left, right) => left.assetId.localeCompare(right.assetId) || left.revision - right.revision),
+        },
+    } : proxy;
+    normalized.lidarProxies = normalized.lidarProxies.map(rewriteProxy);
+    normalized.collisionProxies = normalized.collisionProxies.map(rewriteProxy);
+    return normalizeAssetDefinition(normalized);
+}
+
 export function hashAssetDefinition(definition) {
     const rawIssues = validateAssetDefinition(definition);
     if (rawIssues.some((entry) => entry.severity === "error")) throw Object.assign(new TypeError(rawIssues[0].message), { issues: rawIssues });

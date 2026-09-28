@@ -42,7 +42,7 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
 - Core assumption: **Google approval, Google-derived assets, Gaussian
   splatting, and a model service are unavailable.**
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-09-24 — lane paint and Takram clouds in the color pass; worldHash unchanged**.
+- Last updated: **2026-09-28 — MKT-09 portable asset closure, derivative rights, and durable roots; visual identity unchanged**.
 - Implemented evidence: VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a,
   VIS-06b, VIS-07, VIS-08, VIS-09, VIS-10a, VIS-10b, VIS-11, VIS-12b,
   VIS-13a, VIS-13b, VIS-14, and VIS-16a acceptance evidence is recorded in the
@@ -2019,6 +2019,22 @@ by this plan revision.
   context to build the entire program.
 
 ## Decision log
+
+### 2026-09-28 — Marketplace asset packages preserve visual authority and roots
+
+MKT-09 exports the complete reachable visual-use and blob closure for selected
+editor revisions only after `export` rights and exact published bytes validate.
+Import does not install source policy: every package source ID must already have
+destination upload rights, and identity-remapped v2 output additionally requires
+derivative rights. Planning and commit both evaluate current policy;
+`visual-source-registry.json` is never mutated.
+
+Source uses publish dependency-first. Recompiled local appearance uses preserve
+their complete source provenance and are rooted by the existing editor revision
+publication path before the editor catalog becomes visible. Marketplace
+membership removal never deletes those uses, blobs, or roots. Package metadata
+and receipt provenance remain outside visual recipes, visual-layer hashes,
+world identity, and run identity; this is not a VIS milestone.
 
 ### 2026-09-06 — Record the VIS program
 

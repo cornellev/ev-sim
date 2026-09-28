@@ -170,7 +170,7 @@ test("MKT-07 rolls a durable journal forward after restart and completes the own
         expectedRevision: ready.job.revision,
         finalPlanHash: ready.job.finalPlanHash,
     });
-    await waitForInstallJob(first, ready.job.jobId, "recover");
+    await waitForInstallJob(first, ready.job.jobId, "needs-attention");
     await first.close();
 
     const recovered = await MarketplaceService.open(dataDir, { adapterRegistry: createTestLifecycleRegistry(commits) });
@@ -178,6 +178,45 @@ test("MKT-07 rolls a durable journal forward after restart and completes the own
     const completed = await waitForInstallJob(recovered, ready.job.jobId, "complete");
     assert.equal(completed.job.receiptHashes.length, 1);
     assert.equal((await recovered.listInstalled()).revision, 1);
+    assert.equal(commits.length, 1);
+});
+
+test("MKT-09 resumes a needs-attention job from verified operation completions", async (t) => {
+    const parent = await fs.mkdtemp(path.join(os.tmpdir(), "cev-mkt-resume-"));
+    t.after(() => fs.rm(parent, { recursive: true, force: true }));
+    const registry = await createPopulatedClientRegistry(parent);
+    t.after(() => registry.server.close());
+    const commits = [];
+    let faulted = false;
+    const service = await MarketplaceService.open(path.join(parent, "client"), {
+        adapterRegistry: createTestLifecycleRegistry(commits),
+        transactionFault: async (stage) => {
+            if (stage === "after-adapter-operation" && !faulted) {
+                faulted = true;
+                throw new Error("injected operation-boundary failure");
+            }
+        },
+    });
+    t.after(() => service.close());
+    const sourceId = await configureMarketplaceSource(service, registry);
+    const plan = await service.createInstallPlan({
+        sourceId,
+        itemId: registry.release.itemId,
+        releaseVersion: registry.release.releaseVersion,
+    });
+    const started = await service.startInstallJob(plan.planHash);
+    const ready = await waitForInstallJob(service, started.job.jobId, "awaiting-confirmation");
+    await service.confirmInstallJob(ready.job.jobId, {
+        expectedRevision: ready.job.revision,
+        finalPlanHash: ready.job.finalPlanHash,
+    });
+    const attention = await waitForInstallJob(service, ready.job.jobId, "needs-attention");
+    const operations = await service.listInstallJobOperations(ready.job.jobId, { status: "complete" });
+    assert.equal(operations.total, 1);
+    assert.equal(attention.job.progress.completedOperations, 0);
+    await service.resumeInstallJob(attention.job.jobId, attention.job.revision);
+    const complete = await waitForInstallJob(service, attention.job.jobId, "complete");
+    assert.equal(complete.job.progress.completedOperations, complete.job.progress.totalOperations);
     assert.equal(commits.length, 1);
 });
 

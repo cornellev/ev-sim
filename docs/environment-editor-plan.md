@@ -76,7 +76,7 @@ ED PR changes a contract, hash, gate, or milestone status.
   proxies are set up; LiDAR authoring supports generated meshes and editable
   primitives.
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-09-19 — security boundaries and CommandBus hydration**.
+- Last updated: **2026-09-28 — MKT-09 imported revisions use contiguous local histories without environment mutation**.
 
 ## Normative contracts
 
@@ -1001,6 +1001,22 @@ Record in the ledger: focused-suite pass counts, `npm run lint` result,
   `6ca2ece3d5266822a2ceabba72e5f7dd9514789e76757e86f6aedd2730ab9a6a`.
 
 ## Decision log
+
+### 2026-09-28 — Marketplace import publishes assets, not environment edits
+
+MKT-09 maps each selected source asset history to one deterministic local asset
+ID and contiguous revisions `1..N`. It may reuse only a complete content-identical
+history; it never appends to a partial or unrelated user-authored history.
+Imported revisions enter the same serialized `EditorAssetStore` publication
+lane and root-before-catalog sequence as ordinary authoring. New groups start at
+`folderId: null` and `archived: false`; source folder, archive, thumbnail, and
+publication authority are not applied locally.
+
+Import does not load or mutate an environment, dispatch a `CommandBus` command,
+call `SceneProjector`, place an instance, or update an existing instance pin.
+Therefore schema v4, legacy geometry domains, environment persistence, and
+`worldHash` are unchanged until a user separately authors an environment edit.
+This is an MKT milestone, not an ED milestone.
 
 ### 2026-09-19 — Runtime hydration enters through CommandBus
 

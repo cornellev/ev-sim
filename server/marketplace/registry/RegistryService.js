@@ -11,6 +11,8 @@ import {
     MARKETPLACE_ARTIFACTS,
     MARKETPLACE_KINDS,
     MARKETPLACE_LIMITS,
+    ASSET_PACKAGE_LIMITS,
+    artifactByteLimitFor,
 } from "../MarketplaceContract.js";
 import {
     assertMarketplaceCatalog,
@@ -250,12 +252,16 @@ export class MarketplaceRegistryService {
     }) {
         const contract = MARKETPLACE_ARTIFACTS[contentKind];
         if (!contract) throw marketplaceError(MARKETPLACE_ERROR_CODES.DOCUMENT_INVALID, "Unknown marketplace content kind.");
+        const maxBytes = artifactByteLimitFor(contentKind);
+        if (sizeBytes !== undefined && sizeBytes > maxBytes) {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.LIMIT_EXCEEDED, `${contentKind} artifact exceeds its ${maxBytes}-byte limit.`);
+        }
         const temporary = this.store?.paths.uploadStaging ?? await fs.mkdtemp(path.join(os.tmpdir(), "cev-mkt-validate-"));
         const standalone = !this.store;
         const area = await createOperationArea(temporary, "validate-artifact");
         try {
             const staged = await stageInput(input, area, {
-                maxBytes: MARKETPLACE_LIMITS.artifactBytes,
+                maxBytes,
                 expectedBytes: sizeBytes,
                 expectedSha256: sha256,
                 signal,
@@ -265,7 +271,11 @@ export class MarketplaceRegistryService {
                 mediaType: contract.mediaType,
                 sha256: staged.sha256,
                 sizeBytes: staged.sizeBytes,
-            }, { signal, stagingRoot: path.join(area.dir, "inspection") });
+            }, {
+                signal,
+                stagingRoot: path.join(area.dir, "inspection"),
+                ...(contentKind === "asset-pack" ? { limits: ASSET_PACKAGE_LIMITS } : {}),
+            });
             return Object.freeze({ descriptor: descriptor(blobRecordForArtifact(contentKind, staged, inspection)), inspection });
         } finally {
             await cleanArea(area);
@@ -278,10 +288,14 @@ export class MarketplaceRegistryService {
         const { contentKind, sha256, sizeBytes, signal } = options;
         const contract = MARKETPLACE_ARTIFACTS[contentKind];
         if (!contract) throw marketplaceError(MARKETPLACE_ERROR_CODES.DOCUMENT_INVALID, "Unknown marketplace content kind.");
+        const maxBytes = artifactByteLimitFor(contentKind);
+        if (sizeBytes !== undefined && sizeBytes > maxBytes) {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.LIMIT_EXCEEDED, `${contentKind} artifact exceeds its ${maxBytes}-byte limit.`);
+        }
         const area = await createOperationArea(this.store.paths.uploadStaging, "admit-artifact");
         try {
             const staged = await stageInput(input, area, {
-                maxBytes: MARKETPLACE_LIMITS.artifactBytes,
+                maxBytes,
                 expectedBytes: sizeBytes,
                 expectedSha256: sha256,
                 signal,
@@ -291,7 +305,11 @@ export class MarketplaceRegistryService {
                 mediaType: contract.mediaType,
                 sha256: staged.sha256,
                 sizeBytes: staged.sizeBytes,
-            }, { signal, stagingRoot: path.join(area.dir, "inspection") });
+            }, {
+                signal,
+                stagingRoot: path.join(area.dir, "inspection"),
+                ...(contentKind === "asset-pack" ? { limits: ASSET_PACKAGE_LIMITS } : {}),
+            });
             const record = blobRecordForArtifact(contentKind, staged, inspection);
             const created = await this.store.mutate(() => publishBlob(this.store.paths, staged, record));
             return Object.freeze({ descriptor: descriptor(record), inspection, created });

@@ -144,7 +144,7 @@ export class MarketplaceInstallJobManager {
         this.#assertOpen();
         assertSha256(planHash, "planHash");
         const preflight = await this.planner.readPreflight(planHash);
-        if (preflight.releases.some((entry) => !entry.compatibility.compatible)) {
+        if (preflight.releases.some((entry) => !entry.compatibility.compatible && entry.release.contentKind !== "asset-pack")) {
             throw marketplaceError(MARKETPLACE_ERROR_CODES.INCOMPATIBLE, "Marketplace release dependency graph is incompatible with this host.");
         }
         for (const entry of preflight.releases) {
@@ -176,6 +176,9 @@ export class MarketplaceInstallJobManager {
                 bytesTotal: preflight.totalDownloadBytes,
                 bytesComplete: 0,
                 currentDigest: null,
+                totalOperations: 0,
+                completedOperations: 0,
+                currentOperation: null,
             },
             error: null,
             receiptHashes: [],
@@ -251,11 +254,20 @@ export class MarketplaceInstallJobManager {
             }
             await this.#update(jobId, (current) => TERMINAL_PHASES.has(current.phase) ? null : ({ phase: "verify" }));
             await this.#update(jobId, (current) => TERMINAL_PHASES.has(current.phase) ? null : ({ phase: "plan" }));
-            const finalized = await this.planner.createFinalPlan(job.planHash, { signal: controller.signal });
+            const finalized = await this.planner.createFinalPlan(job.planHash, {
+                signal: controller.signal,
+                workDirectory: work,
+            });
             await this.#update(jobId, (current) => TERMINAL_PHASES.has(current.phase) ? null : ({
                 phase: "awaiting-confirmation",
                 finalPlanHash: finalized.planHash,
                 error: null,
+                progress: {
+                    ...current.progress,
+                    totalOperations: finalized.plan.releases.reduce((total, entry) => total + (entry.adapterPlan.operations?.length ?? 1), 0),
+                    completedOperations: 0,
+                    currentOperation: null,
+                },
             }));
         } catch (error) {
             await this.#finishPrecommitError(jobId, error);
@@ -294,14 +306,19 @@ export class MarketplaceInstallJobManager {
         try {
             const job = await this.#read(jobId);
             const finalPlan = await this.planner.readFinalPlan(job.finalPlanHash);
-            const result = await this.coordinator.install(job, finalPlan);
+            const result = await this.coordinator.install(job, finalPlan, {
+                onOperation: (progress) => this.#update(jobId, (current) => ({
+                    progress: { ...current.progress, ...progress },
+                })),
+            });
+            await this.#resetWork(jobId);
             await this.#complete(jobId, result);
             await this.coordinator.finish(result.transactionId);
         } catch (error) {
             await this.#update(jobId, (current) => {
                 if (current.phase === "complete") return null;
                 if (error?.marketplaceTransactionDurable) {
-                    return { phase: "recover", error: sanitizedError(error) };
+                    return { phase: "needs-attention", error: sanitizedError(error), progress: { ...current.progress, currentOperation: null } };
                 }
                 return { phase: "failed", error: sanitizedError(error) };
             }).catch(() => {});
@@ -313,7 +330,12 @@ export class MarketplaceInstallJobManager {
             phase: "complete",
             receiptHashes: [...result.receiptHashes].sort(compareUtf8),
             error: null,
-            progress: { ...current.progress, currentDigest: null },
+            progress: {
+                ...current.progress,
+                currentDigest: null,
+                completedOperations: current.progress.totalOperations ?? current.progress.operationsTotal ?? 0,
+                currentOperation: null,
+            },
         }));
         await this.fault?.("after-job-complete", { job });
     }
@@ -329,7 +351,60 @@ export class MarketplaceInstallJobManager {
             return { phase: "cancelled", error: null, progress: { ...current.progress, currentDigest: null } };
         });
         this.#controllers.get(jobId)?.abort();
+        await this.#resetWork(jobId);
         return job;
+    }
+
+    async #resetWork(jobId) {
+        const work = jobPaths(this.paths, jobId).work;
+        await fs.rm(work, { recursive: true, force: true });
+        await ensureDirectory(work);
+    }
+
+    async resume(jobId, expectedRevision) {
+        this.#assertOpen();
+        const job = await this.#update(jobId, (current) => {
+            if (current.revision !== expectedRevision) throw conflict("Marketplace installation job revision is stale.");
+            if (current.phase !== "needs-attention" || !current.finalPlanHash) {
+                throw conflict("Marketplace installation job does not require resumable attention.");
+            }
+            return { phase: "recover", error: null, progress: { ...current.progress, currentOperation: null } };
+        });
+        this.#launch(() => this.#runCommit(jobId));
+        return job;
+    }
+
+    async replan(jobId, expectedRevision) {
+        this.#assertOpen();
+        const current = await this.#read(jobId);
+        if (current.revision !== expectedRevision) throw conflict("Marketplace installation job revision is stale.");
+        if (current.phase !== "needs-attention" || !current.finalPlanHash) {
+            throw conflict("Marketplace installation job does not require replanning.");
+        }
+        await this.coordinator.abandonJob(jobId);
+        const finalized = await this.planner.createFinalPlan(current.planHash, {
+            workDirectory: jobPaths(this.paths, jobId).work,
+        });
+        return this.#update(jobId, (job) => {
+            if (job.revision !== expectedRevision || job.phase !== "needs-attention") throw conflict("Marketplace installation job changed during replanning.");
+            return {
+                phase: "awaiting-confirmation",
+                finalPlanHash: finalized.planHash,
+                error: null,
+                progress: {
+                    ...job.progress,
+                    totalOperations: finalized.plan.releases.reduce((total, entry) => total + (entry.adapterPlan.operations?.length ?? 1), 0),
+                    completedOperations: 0,
+                    currentOperation: null,
+                },
+            };
+        });
+    }
+
+    async listOperations(jobId) {
+        this.#assertOpen();
+        await this.#read(jobId);
+        return this.coordinator.listJobOperations(jobId);
     }
 
     async recover(transactionResults = []) {
@@ -348,11 +423,12 @@ export class MarketplaceInstallJobManager {
             const job = await this.#read(entry.name);
             const result = completed.get(job.jobId);
             if (result) {
+                await this.#resetWork(job.jobId);
                 if (job.phase !== "complete") await this.#complete(job.jobId, result);
                 await this.coordinator.finish(result.transactionId);
                 continue;
             }
-            if (TERMINAL_PHASES.has(job.phase) || job.phase === "awaiting-confirmation") continue;
+            if (TERMINAL_PHASES.has(job.phase) || ["awaiting-confirmation", "needs-attention"].includes(job.phase)) continue;
             if (["commit", "recover"].includes(job.phase) && job.finalPlanHash) {
                 await this.#update(job.jobId, () => ({ phase: "recover" }));
                 this.#launch(() => this.#runCommit(job.jobId));

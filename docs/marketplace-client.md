@@ -47,11 +47,12 @@ cache/<sourceId>/staging/<operationId>/
 installed.json
 plans/sha256/<planHash>.json
 jobs/<jobId>/{snapshot.json,work/}
+jobs/<jobId>/work/asset-packages/<preparationHash>/{preparation.json,generated/}
 artifacts/sha256/<artifactSha256>
 artifact-records/sha256/<artifactSha256>.json
 quarantine/<quarantineId>/{artifact,record.json}
 receipts/sha256/<receiptHash>.json
-transactions/<transactionId>/{journal.json,writes/}
+transactions/<transactionId>/{journal.json,writes/,completions/<operationId>.json}
 ```
 
 Directories use mode `0700`; files use mode `0600`. Credential documents are
@@ -175,6 +176,9 @@ The installation API is:
 - `GET /install-jobs/:jobId` and revisioned `job` SSE events from
   `/install-jobs/:jobId/events`;
 - explicit `/commit` and precommit `/cancel` job mutations;
+- post-commit `POST /install-jobs/:jobId/resume`,
+  `POST /install-jobs/:jobId/replan`, and paginated/status-filtered
+  `GET /install-jobs/:jobId/operations`;
 - `GET /installed`, `GET /receipts/:receiptHash`, and exact installed
   membership `DELETE`.
 
@@ -184,8 +188,10 @@ complete dependency-first DAG, release hashes, artifact descriptors,
 compatibility, capabilities, warnings, installed revision, and host-profile
 hash. Jobs persist every revision before notification and use phases `queued`,
 `download`, `verify`, `plan`, `awaiting-confirmation`, `commit`, `recover`,
-`failed`, `cancelled`, and `complete`. SSE event IDs are job revisions and a
-reconnect receives the current persisted snapshot first.
+`needs-attention`, `failed`, `cancelled`, and `complete`. Progress includes
+`currentOperation`, `completedOperations`, and `totalOperations`. SSE event IDs
+are job revisions and a reconnect receives the current persisted snapshot
+first. A stream may close at `needs-attention`; Resume establishes a new stream.
 
 Artifact bytes stream only from the exact configured-origin
 `/v1/blobs/sha256/<digest>` path. Complete bounded digest or adapter failures
@@ -194,11 +200,46 @@ Verified CAS bytes may be reused offline. Downloaded but uninstalled bytes and
 historical receipts remain for MKT-15 garbage collection.
 
 The transaction journal fixes one install timestamp, exact receipt bytes, the
-installed-ledger base/target hashes, final plan, and adapter commit set. Receipt
-publication and dependency-first idempotent adapter commits precede atomic
-installed-ledger replacement. Job completion precedes journal cleanup. Startup
-replays base or target states and fails with `RECOVERY_REQUIRED` for every
-other ledger state.
+installed-ledger base/target hashes, final plan, and complete ordered adapter
+operation set before authoring starts. Each operation has a hash-derived ID and
+a strict durable completion marker. Recovery skips it only after the adapter
+verifies the current result. Receipt publication and dependency-first
+idempotent operations precede atomic installed-ledger replacement. Job
+completion precedes journal cleanup. Startup replays base or target states and
+fails with `RECOVERY_REQUIRED` for every other ledger state. Live failures after
+the journal is durable enter `needs-attention`; cancellation remains precommit
+only.
+
+## Asset-package lifecycle
+
+`asset-pack` details expose independent eligibility decisions. Downloadable
+covers verified metadata/cache state and the declared 8 GiB ceiling. Importable
+is `requires-inspection` until strict archive, closure, rights, and mapping
+planning succeeds. Executable is always `not-applicable`; host execution
+compatibility never blocks authoring-content download or import. `canInstall`
+remains the compatibility projection for existing clients.
+
+`POST /api/storage/editor-assets/packages/export` accepts exact
+`{roots:[{assetId,revision}]}` and streams deterministic
+`cev-sim.asset-package@1` USTAR. Export takes one serialized editor-store
+snapshot, traverses pinned child/generated-proxy revisions and all visual-use
+dependencies, verifies export rights and bytes, and emits no success response
+until closure validation completes.
+
+Import final plans show requested roots, asset/use/blob counts, source-to-local
+revision mappings, required upload/derivative rights, conflicts,
+`preparationHash`, and the ordered operation count. Sparse selected source
+revisions map contiguously to `1..N`; local IDs start at
+`<sourceId>-mkt-<12 hex>` and extend four digest characters on occupied,
+nonidentical history. Prepared v2 output rewrites child and generated-proxy
+pins, compiles child-first, and records local content, model-use, metric, and
+geometry hashes in the frozen receipt mapping shape.
+
+Visual uses publish dependency-first, followed by editor revisions in asset-DAG
+order. Rights are rechecked for every affected operation. Resume verifies
+completion markers and roots; Replan uses cached artifact/preparation state and
+never rolls back completed authoring. Removing installed membership does not
+delete imported editor revisions, visual uses, blobs, or roots.
 
 ## Plugin lifecycle and ownership
 
@@ -244,8 +285,8 @@ metadata cache have been deleted.
   preserve it, send `null` to clear it, or send a bearer object to replace it.
 - Remove and re-add a source to change its origin or trust identity.
 - A source with a nonterminal installation job cannot be removed.
-- Cancel only before commit. Once a durable journal exists, let recovery roll
-  forward; do not delete transaction state manually.
+- Cancel only before commit. Use Resume or Replan for `needs-attention`; do not
+  delete transaction state manually.
 
 Marketplace source, trust, health, credential, cache, installation, receipt,
 artifact-record, quarantine, job, and transaction documents are local

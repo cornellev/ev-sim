@@ -75,6 +75,8 @@ app.prepare().then(async () => {
         const { storageEvents } = await import('./mcp/events.js');
         marketplaceService = await MarketplaceService.open(storageService.dataDir, {
             pluginStore: storageService.plugins,
+            editorAssetStore: storageService.editorAssets,
+            visualAssetStore: storageService.visualAssets,
             publishPluginLibraryChange: async ({ pluginId, action, packageHash, revision }) => {
                 storageEvents.publish({
                     domain: 'plugin',

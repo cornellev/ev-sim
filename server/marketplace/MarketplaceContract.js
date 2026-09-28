@@ -68,6 +68,23 @@ export const FUTURE_MARKETPLACE_ARCHIVE_LIMITS = Object.freeze({
     entryBytes: 8_589_934_591,
 });
 
+export const ASSET_PACKAGE_LIMITS = Object.freeze({
+    archiveBytes: 8 * 1024 ** 3,
+    blobBytes: 1024 ** 3,
+    recordBytes: 32 * 1024 ** 2,
+    manifestBytes: 4 * 1024 ** 2,
+    payloadEntries: 16_384,
+    entries: 16_385,
+    graphDepth: 64,
+    temporaryBytes: 8 * 1024 ** 3,
+    inodes: 16_385,
+    verificationTimeoutMs: 60_000,
+});
+
+export function artifactByteLimitFor(contentKind) {
+    return contentKind === "asset-pack" ? ASSET_PACKAGE_LIMITS.archiveBytes : MARKETPLACE_LIMITS.artifactBytes;
+}
+
 export function artifactContractFor(contentKind) {
     return MARKETPLACE_ARTIFACTS[contentKind] ?? null;
 }

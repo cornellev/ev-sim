@@ -13,6 +13,7 @@ import {
 } from "../MarketplaceContracts.js";
 import { MARKETPLACE_ERROR_CODES, marketplaceError } from "../MarketplaceErrors.js";
 import { assertCanonicalUuid, assertMarketplaceId, assertReleaseVersion, assertSha256 } from "../MarketplaceFormats.js";
+import { canonicalMarketplaceBytes, hashMarketplaceBytes, parseMarketplaceJsonBytes } from "../MarketplaceJson.js";
 import {
     ensureDirectory,
     lstatOrNull,
@@ -32,6 +33,7 @@ import {
 
 const JOURNAL_FILE = "journal.json";
 const WRITES_DIRECTORY = "writes";
+const COMPLETIONS_DIRECTORY = "completions";
 const INSTALLED_WRITE = "installed.json";
 
 function transactionPaths(paths, transactionId) {
@@ -42,7 +44,17 @@ function transactionPaths(paths, transactionId) {
         journal: path.join(root, JOURNAL_FILE),
         writes: path.join(root, WRITES_DIRECTORY),
         installed: path.join(root, WRITES_DIRECTORY, INSTALLED_WRITE),
+        completions: path.join(root, COMPLETIONS_DIRECTORY),
     });
+}
+
+function operationCompletionPath(paths, operationId) {
+    assertSha256(operationId, "operationId");
+    return path.join(paths.completions, `${operationId}.json`);
+}
+
+function operationHash(operation) {
+    return hashMarketplaceBytes(canonicalMarketplaceBytes(operation));
 }
 
 function receiptWrite(paths, receiptHash) {
@@ -116,7 +128,8 @@ export class MarketplaceTransactionCoordinator {
     }
 
     async prepareInstall(job, finalPlan) {
-        const validated = await this.planner.revalidateFinalPlan(job.finalPlanHash);
+        const workDirectory = path.join(this.paths.jobs, job.jobId, "work");
+        const validated = await this.planner.revalidateFinalPlan(job.finalPlanHash, { workDirectory });
         if (validated.preflightHash !== finalPlan.preflightHash) {
             throw marketplaceError(MARKETPLACE_ERROR_CODES.CONFLICT, "Final marketplace plan changed before transaction preparation.");
         }
@@ -193,10 +206,30 @@ export class MarketplaceTransactionCoordinator {
         const paths = transactionPaths(this.paths, transactionId);
         await ensureDirectory(paths.root);
         await ensureDirectory(paths.writes);
+        await ensureDirectory(paths.completions);
         await writeExclusiveDurable(paths.installed, marketplaceDocumentBytes(target));
         for (const receipt of receipts) {
             await writeExclusiveDurable(receiptWrite(paths, receipt.hash), marketplaceDocumentBytes(receipt.document));
         }
+        const adapterOperations = additions.flatMap((addition) => {
+            const entry = validated.releases.find((candidate) => exactKey(candidate.release) === exactKey(addition.release));
+            const operations = entry.adapterPlan.operations?.length ? entry.adapterPlan.operations : [{
+                operationId: hashMarketplaceBytes(canonicalMarketplaceBytes({
+                    adapterId: entry.adapterId,
+                    release: exactRef(entry.release),
+                    kind: "commit-adapter",
+                })),
+                kind: "commit-adapter",
+            }];
+            return operations.map((operation) => ({
+                operationId: operation.operationId,
+                operationHash: operationHash(operation),
+                adapterId: entry.adapterId,
+                itemId: addition.release.itemId,
+                releaseVersion: addition.release.releaseVersion,
+                artifactSha256: addition.release.artifactSha256,
+            }));
+        });
         const journal = assertInstallTransaction({
             kind: MARKETPLACE_INSTALL_KINDS.transaction,
             version: MARKETPLACE_INSTALL_DOCUMENT_VERSION,
@@ -216,6 +249,7 @@ export class MarketplaceTransactionCoordinator {
                     artifactSha256: addition.release.artifactSha256,
                 };
             }),
+            adapterOperations,
         });
         await writeExclusiveDurable(paths.journal, installDocumentBytes(journal, assertInstallTransaction));
         try {
@@ -240,6 +274,30 @@ export class MarketplaceTransactionCoordinator {
         return Object.freeze({ journal, paths, target, finalPlan, preflight });
     }
 
+    async #preparedTransactionForJob(job) {
+        const matches = [];
+        for (const entry of (await fs.readdir(this.paths.transactions, { withFileTypes: true }))
+            .sort((left, right) => compareUtf8(left.name, right.name))) {
+            if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+            const paths = transactionPaths(this.paths, entry.name);
+            if (!await lstatOrNull(paths.journal)) continue;
+            const bytes = await readRegularBytes(paths.journal, { maxBytes: 1024 * 1024 });
+            const journal = parseInstallDocument(bytes, assertInstallTransaction);
+            if (journal.transactionId !== entry.name
+                || !Buffer.from(bytes).equals(Buffer.from(installDocumentBytes(journal, assertInstallTransaction)))) {
+                throw recovery("Marketplace transaction journal identity is invalid.");
+            }
+            if (journal.jobId === job.jobId) matches.push({ journal, paths });
+        }
+        if (matches.length > 1) throw recovery("Marketplace job has multiple active transactions.");
+        if (!matches.length) return null;
+        const [{ journal, paths }] = matches;
+        if (journal.operation !== "install" || journal.finalPlanHash !== job.finalPlanHash) {
+            throw recovery("Marketplace job transaction does not match its finalized plan.");
+        }
+        return this.#readPrepared(journal, paths);
+    }
+
     async #publishReceipts(prepared) {
         for (const [index, receiptHash] of prepared.journal.receiptHashes.entries()) {
             const bytes = await readRegularBytes(receiptWrite(prepared.paths, receiptHash), { maxBytes: 16 * 1024 * 1024 });
@@ -250,9 +308,27 @@ export class MarketplaceTransactionCoordinator {
         }
     }
 
+    async #readCompletion(prepared, transactionOperation) {
+        const filePath = operationCompletionPath(prepared.paths, transactionOperation.operationId);
+        if (!await lstatOrNull(filePath)) return null;
+        const bytes = await readRegularBytes(filePath, { maxBytes: 4 * 1024 * 1024 });
+        const { document } = parseMarketplaceJsonBytes(bytes);
+        const keys = Object.keys(document).sort(compareUtf8);
+        if (keys.join("\u0000") !== "kind\u0000operationHash\u0000operationId\u0000result\u0000transactionId\u0000version"
+            || document.kind !== "cev-sim.marketplace-operation-completion" || document.version !== 1
+            || document.transactionId !== prepared.journal.transactionId
+            || document.operationId !== transactionOperation.operationId
+            || document.operationHash !== transactionOperation.operationHash
+            || !Buffer.from(bytes).equals(Buffer.from(canonicalMarketplaceBytes(document)))) {
+            throw recovery("Marketplace operation completion marker is invalid.");
+        }
+        return document;
+    }
+
     async #commitAdapters(prepared) {
         if (!prepared.finalPlan) return;
         const commits = new Map(prepared.journal.adapterCommits.map((entry) => [exactKey(entry), entry]));
+        const transactionOperations = prepared.journal.adapterOperations ?? [];
         let index = 0;
         for (const entry of prepared.finalPlan.releases) {
             if (!commits.has(exactKey(entry.release))) continue;
@@ -260,16 +336,72 @@ export class MarketplaceTransactionCoordinator {
             if (adapter.id !== entry.adapterId) throw recovery("Marketplace transaction adapter identity changed.");
             const artifactHandle = await this.artifactStore.get(entry.release.artifact);
             if (!artifactHandle) throw recovery("Marketplace transaction artifact is unavailable.");
-            await adapter.commit({
-                release: entry.release,
-                inspection: entry.inspection,
-                adapterPlan: entry.adapterPlan,
-                artifactHandle,
-                transactionId: prepared.journal.transactionId,
-                context: Object.freeze({ source: prepared.preflight.source }),
-            });
-            await this.fault?.("after-adapter-commit", { journal: prepared.journal, adapterId: adapter.id, index });
-            index += 1;
+            if (prepared.journal.adapterOperations === undefined) {
+                await adapter.commit({
+                    release: entry.release,
+                    inspection: entry.inspection,
+                    adapterPlan: entry.adapterPlan,
+                    artifactHandle,
+                    transactionId: prepared.journal.transactionId,
+                    context: Object.freeze({ source: prepared.preflight.source }),
+                });
+                await this.fault?.("after-adapter-commit", { journal: prepared.journal, adapterId: adapter.id, index });
+                index += 1;
+                continue;
+            }
+            const operations = entry.adapterPlan.operations?.length ? entry.adapterPlan.operations : [{
+                operationId: transactionOperations.find((candidate) => exactKey(candidate) === exactKey(entry.release))?.operationId,
+                kind: "commit-adapter",
+            }];
+            for (const operation of operations) {
+                const transactionOperation = transactionOperations.find((candidate) => candidate.operationId === operation.operationId);
+                if (!transactionOperation || transactionOperation.adapterId !== adapter.id
+                    || transactionOperation.operationHash !== operationHash(operation)) {
+                    throw recovery("Marketplace transaction operation changed after journaling.");
+                }
+                const input = {
+                    release: entry.release,
+                    inspection: entry.inspection,
+                    adapterPlan: entry.adapterPlan,
+                    artifactHandle,
+                    operation,
+                    transactionId: prepared.journal.transactionId,
+                    context: Object.freeze({
+                        source: prepared.preflight.source,
+                        workDirectory: path.join(this.paths.jobs, prepared.journal.jobId, "work"),
+                    }),
+                };
+                await prepared.onOperation?.({
+                    currentOperation: operation.operationId,
+                    completedOperations: index,
+                    totalOperations: transactionOperations.length,
+                });
+                const completion = await this.#readCompletion(prepared, transactionOperation);
+                const result = completion
+                    ? await adapter.recover({ ...input, completion: completion.result })
+                    : await adapter.commit(input);
+                if (!completion) {
+                    const document = {
+                        kind: "cev-sim.marketplace-operation-completion",
+                        version: 1,
+                        transactionId: prepared.journal.transactionId,
+                        operationId: operation.operationId,
+                        operationHash: transactionOperation.operationHash,
+                        result: result ?? {},
+                    };
+                    await writeExclusiveDurable(operationCompletionPath(prepared.paths, operation.operationId), canonicalMarketplaceBytes(document));
+                }
+                await this.fault?.("after-adapter-operation", {
+                    journal: prepared.journal, adapterId: adapter.id, operationId: operation.operationId, index,
+                });
+                await this.fault?.("after-adapter-commit", { journal: prepared.journal, adapterId: adapter.id, index });
+                index += 1;
+                await prepared.onOperation?.({
+                    currentOperation: null,
+                    completedOperations: index,
+                    totalOperations: transactionOperations.length,
+                });
+            }
         }
     }
 
@@ -337,12 +469,13 @@ export class MarketplaceTransactionCoordinator {
         return operation;
     }
 
-    install(job, finalPlan) {
+    install(job, finalPlan, { onOperation = null } = {}) {
         const operation = this.#queue.catch(() => {}).then(async () => {
             let prepared = null;
             try {
-                prepared = await this.prepareInstall(job, finalPlan);
-                return await this.#apply(prepared);
+                prepared = await this.#preparedTransactionForJob(job)
+                    ?? await this.prepareInstall(job, finalPlan);
+                return await this.#apply(Object.freeze({ ...prepared, onOperation }));
             } catch (error) {
                 if (prepared) error.marketplaceTransactionDurable = true;
                 throw error;
@@ -376,7 +509,8 @@ export class MarketplaceTransactionCoordinator {
                 await removeDirectoryDurable(paths.root);
                 continue;
             }
-            if (children.sort().join("\u0000") !== `${JOURNAL_FILE}\u0000${WRITES_DIRECTORY}`) {
+            const childNames = children.sort().join("\u0000");
+            if (![`${JOURNAL_FILE}\u0000${WRITES_DIRECTORY}`, `${COMPLETIONS_DIRECTORY}\u0000${JOURNAL_FILE}\u0000${WRITES_DIRECTORY}`].includes(childNames)) {
                 throw recovery("Marketplace transaction directory is ambiguous.");
             }
             const bytes = await readRegularBytes(paths.journal, { maxBytes: 1024 * 1024 });
@@ -384,6 +518,16 @@ export class MarketplaceTransactionCoordinator {
             if (journal.transactionId !== entry.name
                 || !Buffer.from(bytes).equals(Buffer.from(installDocumentBytes(journal, assertInstallTransaction)))) {
                 throw recovery("Marketplace transaction journal identity is invalid.");
+            }
+            if (journal.adapterOperations !== undefined) {
+                if (!children.includes(COMPLETIONS_DIRECTORY)) throw recovery("Marketplace transaction completion store is missing.");
+                const operationIds = new Set(journal.adapterOperations.map((operation) => operation.operationId));
+                for (const completion of await fs.readdir(paths.completions, { withFileTypes: true })) {
+                    if (completion.isSymbolicLink() || !completion.isFile() || !/^[a-f0-9]{64}\.json$/u.test(completion.name)
+                        || !operationIds.has(completion.name.slice(0, -5))) {
+                        throw recovery("Marketplace transaction completion store is ambiguous.");
+                    }
+                }
             }
             const expectedWrites = [
                 INSTALLED_WRITE,
@@ -489,6 +633,46 @@ export class MarketplaceTransactionCoordinator {
         await writeExclusiveDurable(paths.journal, installDocumentBytes(journal, assertInstallTransaction));
         await this.fault?.("after-journal", { journal });
         return this.commit(Object.freeze({ journal, paths, base, target, finalPlan: null, preflight: null }));
+    }
+
+    async listJobOperations(jobId) {
+        assertCanonicalUuid(jobId, "jobId");
+        const operations = [];
+        for (const entry of (await fs.readdir(this.paths.transactions, { withFileTypes: true })).sort((left, right) => compareUtf8(left.name, right.name))) {
+            if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+            const paths = transactionPaths(this.paths, entry.name);
+            if (!await lstatOrNull(paths.journal)) continue;
+            const journal = parseInstallDocument(await readRegularBytes(paths.journal, { maxBytes: 1024 * 1024 }), assertInstallTransaction);
+            if (journal.jobId !== jobId) continue;
+            for (const operation of journal.adapterOperations ?? []) {
+                operations.push(Object.freeze({
+                    ...operation,
+                    transactionId: journal.transactionId,
+                    status: await lstatOrNull(operationCompletionPath(paths, operation.operationId)) ? "complete" : "pending",
+                }));
+            }
+        }
+        return Object.freeze(operations);
+    }
+
+    abandonJob(jobId) {
+        assertCanonicalUuid(jobId, "jobId");
+        const operation = this.#queue.catch(() => {}).then(async () => {
+            const current = await this.installedStore.snapshot();
+            for (const entry of await fs.readdir(this.paths.transactions, { withFileTypes: true })) {
+                if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+                const paths = transactionPaths(this.paths, entry.name);
+                if (!await lstatOrNull(paths.journal)) continue;
+                const journal = parseInstallDocument(await readRegularBytes(paths.journal, { maxBytes: 1024 * 1024 }), assertInstallTransaction);
+                if (journal.jobId !== jobId) continue;
+                if (installedDocumentHash(current) !== journal.installedBase.sha256) {
+                    throw marketplaceError(MARKETPLACE_ERROR_CODES.CONFLICT, "Marketplace transaction already changed installed membership and cannot be replanned.");
+                }
+                await removeDirectoryDurable(paths.root);
+            }
+        });
+        this.#queue = operation.catch(() => {});
+        return operation;
     }
 
     async close() {

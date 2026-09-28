@@ -17,9 +17,9 @@ hosted private-LAN registry. It is not headless PR 13 and does not extend the
 | MKT-06: read-only Marketplace workspace | Implemented; acceptance pending | MKT-focused gates pass; repository-wide UI/a11y has unrelated failures | Unmerged |
 | MKT-07: plans, jobs, transactions, receipts | Complete; acceptance pending | Core local gates pass; repository-wide UI/a11y has unrelated failures | Unmerged |
 | MKT-08: plugin lifecycle | Complete; acceptance pending | Core local and serial Marketplace gates pass; repository-wide UI/a11y has unrelated failures | Unmerged |
-| MKT-09: vehicle and run lifecycle | Not started | Not run | Unmerged |
-| MKT-10: environment/asset export contracts | Not started | Not run | Unmerged |
-| MKT-11: environment/asset import lifecycle | Not started | Not run | Unmerged |
+| MKT-09: asset-package export, import, and revision mapping | Complete; acceptance pending | Core local gates pass; repository-wide a11y has unrelated workspace timeouts; hosted CI pending | Unmerged |
+| MKT-10: vehicle and run lifecycle | Not started | Not run | Unmerged |
+| MKT-11: environment-package lifecycle | Not started | Not run | Unmerged |
 | MKT-12: collections | Not started | Not run | Unmerged |
 | MKT-13: publishers, authentication, secure LAN | Not started | Not run | Unmerged |
 | MKT-14: LAN discovery, updates, advisories | Not started | Not run | Unmerged |
@@ -99,7 +99,7 @@ release that was not previously verified.
 | Malicious registry or compromised publisher | Explicit root fingerprint trust, publisher DSSE, strict schemas, exact digests | MKT-01, MKT-04, MKT-05, MKT-13 |
 | Rollback, freeze, or metadata mix-and-match | Monotonic catalog revision and TUF root/timestamp/snapshot/delegation verification | MKT-04, MKT-05 |
 | Tampered or substituted artifact | Signed release descriptor plus exact byte size and SHA-256 | MKT-01, MKT-02, MKT-03 |
-| Hostile archive | Frozen USTAR profile, streaming limits, traversal/link/header rejection | MKT-02, MKT-10 |
+| Hostile archive | Frozen USTAR profile, streaming limits, traversal/link/header rejection | MKT-02, MKT-09 |
 | Backend used as SSRF proxy | Configured-origin allowlist, fixed paths, no cross-origin redirects | MKT-05 |
 | Credential disclosure | Separate owner-only store, write-only requests, redacted errors/logs/snapshots | MKT-05, MKT-13, MKT-15 |
 | Unsafe preview or description | Bounded raster media only; CommonMark without raw HTML | MKT-03, MKT-06 |
@@ -158,17 +158,18 @@ hashes.
 ## Portable archive limits
 
 MKT-02 generalizes the existing strict run-package USTAR implementation;
-MKT-10 will activate environment and asset packages. Existing run-package
-limits and bytes remain unchanged. `server/artifacts/DeterministicArchive.js`
+MKT-09 activates asset packages; environment packages remain deferred to
+MKT-11. Existing run-package limits and bytes remain unchanged.
+`server/artifacts/DeterministicArchive.js`
 owns transport-only canonical USTAR framing and verification, while each
 content profile continues to own entry order, semantic validation, and its
 narrower limits.
 
-The future environment/asset profile uses a 50 GiB archive ceiling, 100,000
-entries, an 8 MiB manifest ceiling, and an individual-entry ceiling of
-8,589,934,591 bytes. The earlier 10 GiB entry proposal cannot be represented by
-the frozen USTAR 11-digit octal size field and is replaced by that exact USTAR
-ceiling. No base-256 or PAX extension is admitted.
+The asset-package profile uses an 8 GiB archive ceiling, a 1 GiB binary-blob
+ceiling, a 32 MiB authoring-record ceiling, a 4 MiB manifest ceiling, 16,384
+payload entries, and dependency depth 64. The future environment profile
+retains its separate 50 GiB/100,000-entry proposal. No base-256 or PAX
+extension is admitted.
 
 ## MKT-01 work packages
 
@@ -412,8 +413,8 @@ network access, creates marketplace storage, or changes browser workspaces.
 - [x] WP-03: add the production plugin lifecycle adapter with deterministic
   owner-aware planning, exact receipt mappings, verified commit, no source
   evaluation, no runtime grants, and visible-membership-only storage events.
-- [x] WP-04: compose the production plugin adapter with the three read-only
-  MKT-09 adapters, share `StorageService.plugins`, and migrate ownership before
+- [x] WP-04: compose the production plugin adapter with the remaining read-only
+  vehicle/run adapters, share `StorageService.plugins`, and migrate ownership before
   Marketplace transaction recovery.
 - [x] WP-05: journal immutable adapter-removal plans, publish installed-ledger
   removal first, remove only the exact Marketplace owner, and replay both new
@@ -512,7 +513,28 @@ Gate: install never executes source or grants capabilities; existing
 browser, direct-headless, and correctly resolved managed plugin execution
 remain unchanged.
 
-### MKT-09 — Vehicle, run-template, and exact-run lifecycle
+### MKT-09 — Asset-package export, import, and revision mapping
+
+Implement `cev-sim.asset-package@1` as deterministic uncompressed USTAR over
+editor-asset revision records and their exact visual-use/blob closure. Export
+uses one serialized editor-store snapshot and export-right validation. Import
+performs strict inspection, source-only closure hashing, deterministic local ID
+allocation, contiguous local revision mapping, child-first v2 recompilation,
+upload/derivative-right validation, durable prepared output, and one journaled
+authoring operation per use and revision.
+
+The archive order is `manifest.json`, digest-sorted `records/sha256/<digest>`,
+then digest-sorted `blobs/sha256/<digest>`. Manifest and record bytes are exact
+JCS with no trailing newline. Installed membership and provenance removal never
+delete imported uses, editor revisions, or their durable roots.
+
+Gate: repeated exports are byte-identical; missing, extra, corrupt, cyclic, or
+over-depth closure data fails before authoring; identical initial stores produce
+identical plans; geometry and metric behavior survive remapping; post-commit
+failure pauses in `needs-attention` and resumes operation-by-operation without
+rollback or overwrite.
+
+### MKT-10 — Vehicle, run-template, and exact-run lifecycle
 
 Wire existing vehicle/run-bundle/run-package importers. Embedded vehicle
 plugins enter CAS without library membership. Templates become editable local
@@ -521,23 +543,15 @@ configs; exact packages remain immutable.
 Gate: artifact hashes and exact reproduction remain stable; collision mappings
 are deterministic; unsupported backends fail rather than substitute.
 
-### MKT-10 — Environment and asset export contracts
+### MKT-11 — Environment-package lifecycle
 
-Implement environment/asset package formats, closure traversal, deterministic
-streaming export, rights preflight, validators, and publisher inspection.
+Implement the separately versioned environment package export/import contract,
+including canonical environment persistence and the existing `CommandBus` and
+`SceneProjector` boundaries. It must not be inferred from MKT-09 asset import.
 
-Gate: unchanged exports are byte-identical; missing dependencies/rights fail
-before creation; credentials, local paths, and source authority cannot enter.
-
-### MKT-11 — Environment and asset import lifecycle
-
-Plan and commit deterministic ID reuse/remapping, rewrite transitive refs,
-recompute through canonical paths, rebind visual descriptors, invalidate stale
-correspondence, enforce local rights, and recover transactions.
-
-Gate: round trips render and remain editable through `CommandBus` and
-`SceneProjector`; carried rights cannot grant authority; world identity changes
-only with canonical world content.
+Gate: round trips remain editable through `CommandBus` and `SceneProjector`;
+carried rights cannot grant authority; world identity changes only with
+canonical world content.
 
 ### MKT-12 — Collections and multi-release plans
 
@@ -978,7 +992,95 @@ run-manifest contract or acceptance evidence changed; `plugin-plan.md` is the
 only additional roadmap updated because PluginStore persistence and removal
 semantics changed.
 
+## MKT-09 work packages
+
+- [x] WP-00: land the staged MKT-08 plugin lifecycle separately as commit
+  `77be533` and remap MKT-09 to the asset-package milestone without claiming
+  vehicle/run or environment-package completion.
+- [x] WP-01: add the frozen 8 GiB asset-package profile and separate
+  downloadable/importable/executable eligibility while retaining `canInstall`.
+- [x] WP-02: implement exact JCS manifest/record bytes and deterministic
+  manifest-first, digest-sorted, uncompressed USTAR export and strict inspection.
+- [x] WP-03: add serialized editor revision-closure snapshots, recursive asset
+  and visual closure traversal, export-right checks, and the streaming editor API.
+- [x] WP-04: verify exact reachable closure, record/blob identity, asset/use DAGs,
+  cycles, canonical order, and depth 64 before authoring.
+- [x] WP-05: derive source-only closure hashes, deterministic suffix-extending
+  local IDs, contiguous local revisions, publication IDs, receipt reuse, and
+  content-identical occupied-history reuse.
+- [x] WP-06: rewrite child and generated-proxy pins, compile v2 revisions
+  child-first in durable preparation, and preserve metric/geometry behavior.
+- [x] WP-07: journal hash-derived adapter operations and strict completion
+  markers; verify each result on replay; retain legacy journals as one operation.
+- [x] WP-08: store provenance-rich editor-revision mappings in the frozen receipt
+  schema and retain imported revisions, uses, and roots when membership is removed.
+- [x] WP-09: expose operation pagination plus `needs-attention`, Resume, and
+  Replan in the job API and Marketplace workspace.
+- [x] WP-10: update the marketplace, architecture, visual, and editor contracts.
+- [ ] WP-11: complete the repository-wide build, fixture, release, browser, and
+  accessibility gates and record hosted CI/merge evidence.
+
+Frozen baseline evidence on 2026-09-28 remains exact:
+
+- installed schema: `274e7b72f65a1df6b220eb1508fac635935765834254455cc1eb33cc2e765e10`
+- receipt schema: `af1a8db03f31b1ea21d858235f872e0480c39c8a7c4bb39fb348bdfcf3056557`
+- compatibility fixture: `6904056555062d7267bc0cf749081558e0e1ca5724401e7f0c9bfaeb813c4ae7`
+- headless characterization: `60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`
+
+Local evidence on 2026-09-28:
+
+- `npm run test:marketplace` passed 88/88, including deterministic export,
+  limit rejection, v1 import, sparse-to-contiguous mapping, occupied-ID prefix
+  extension, v2 nested-reference rewrite, child-first prepared compilation,
+  metric/geometry preservation, and existing transaction recovery.
+- `npm test` passed 1,823 tests with six declared skips and zero failures.
+- `npm run lint` completed with zero errors and the pre-existing `MapSurface.js`
+  `assetEpoch` hook warning.
+- `npm run build`, `npm run fixtures:headless`,
+  `npm run fixtures:environment-editor`, and `npm run release:check` passed.
+  Fixture regeneration changed no frozen fixture or schema bytes.
+- `npx playwright test tests/ui/marketplace.spec.js --workers=1` passed 4/4,
+  including keyboard and Axe coverage at the configured desktop viewport.
+- `npm run test:a11y` passed 4/12 and timed out in eight workspace-opening or
+  Axe-evaluation flows under the five-worker repository-wide run. It reported
+  no accessibility-rule violation; the Marketplace case passes in the serial
+  Marketplace suite above. The repository-wide accessibility gate remains open.
+- `git diff --check` passed.
+
+Hosted CI and merge evidence remain pending, so WP-11 and the milestone merge
+gate remain open.
+
 ## Decision log
+
+### 2026-09-28 — Import assets as durable authoring content, not environment state
+
+MKT-09 packages immutable editor revision records plus the complete reachable
+visual-use/blob closure. Source folder placement, archived state, thumbnails,
+publication authority, and nondeterministic timestamps are not package metadata.
+Foreign publication identifiers survive only inside hashed source records. New
+local publication IDs bind registry, configured source, release, artifact,
+source revision, and local revision.
+
+Import planning assigns every source asset group one deterministic local ID and
+maps its selected sparse history to local revisions `1..N`. Rewritten identity
+is compiled child-first before confirmation. The final plan names only a
+preparation hash; generated GLBs, use records, normalized semantic summaries,
+and digest evidence remain in the job's durable work area. Rights are checked
+during planning and again by each affected operation. Source policy is read but
+`visual-source-registry.json` is never modified.
+
+The transaction journal freezes all adapter operations before the first
+authoring write and records one strict completion marker per operation. Replay
+accepts a marker only after the adapter verifies the current use, revision,
+content hash, and root. A live failure after durability begins enters
+`needs-attention`; Resume continues idempotently and Replan never rolls back or
+overwrites completed authoring. Installed membership remains the final
+release-level write. Removing membership or provenance does not delete authored
+assets, uses, or roots.
+
+Asset import only populates storage. It does not mutate an environment document,
+invoke `CommandBus`, call `SceneProjector`, or affect `worldHash` until a user
+separately places or updates the imported asset.
 
 ### 2026-09-28 — Keep plugin installation, ownership, and execution separate
 
@@ -1000,7 +1102,7 @@ source or cache. Manual and other Marketplace owners survive.
 
 Registry admission uses the read-only plugin adapter and rejects signed release
 metadata that disagrees with `plugin.json` as `DOCUMENT_INVALID`. Vehicle,
-run-template, and run-package lifecycle adapters remain MKT-09. Marketplace
+run-template, and run-package lifecycle adapters remain MKT-10. Marketplace
 state and ownership remain outside every package, run, simulation, episode,
 and trajectory identity. Existing authorized browser, direct headless, and
 managed plugin execution is unchanged.
@@ -1127,9 +1229,10 @@ without changing any legacy serializer. Development/CI pin Node 22.22.2 while
 the supported range permits later Node 22 patch releases only. The marketplace
 startup flag remains dormant and defaults off.
 
-### 2026-09-26 — Correct future USTAR per-entry limit
+### 2026-09-26 — Correct the future environment USTAR per-entry limit
 
-The future environment/asset package per-entry limit is 8,589,934,591 bytes,
+The future environment-package per-entry limit is 8,589,934,591 bytes,
 the maximum canonical 11-octal-digit USTAR size. The total 50 GiB archive limit
 is unchanged. This decision does not alter existing run-package limits or
-bytes; implementation belongs to MKT-02 and MKT-10.
+bytes. Asset packages instead use the narrower MKT-09 profile; environment
+implementation belongs to MKT-11.

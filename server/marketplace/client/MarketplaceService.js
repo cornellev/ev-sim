@@ -4,7 +4,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 
 import { PluginStore } from "../../storage/PluginStore.js";
-import { MARKETPLACE_LIMITS, MARKETPLACE_SOURCE_HEALTH } from "../MarketplaceContract.js";
+import { MARKETPLACE_LIMITS, MARKETPLACE_SOURCE_HEALTH, artifactByteLimitFor } from "../MarketplaceContract.js";
 import { MARKETPLACE_ERROR_CODES, MarketplaceError, marketplaceError } from "../MarketplaceErrors.js";
 import { assertCanonicalUuid, assertMarketplaceId, assertSha256 } from "../MarketplaceFormats.js";
 import { hashMarketplaceBytes } from "../MarketplaceJson.js";
@@ -143,21 +143,26 @@ export class MarketplaceService {
         jobFault = null,
         adapterRegistry = null,
         pluginStore = null,
+        editorAssetStore = null,
+        visualAssetStore = null,
         publishPluginLibraryChange = null,
         hostProfileProvider = async () => createMarketplaceHostProfile(),
         releasePolicy,
     } = {}) {
         const resolvedPluginStore = pluginStore ?? new PluginStore(dataDir);
-        const resolvedAdapterRegistry = adapterRegistry ?? createMarketplaceClientArtifactRegistry({
-            pluginStore: resolvedPluginStore,
-            publishLibraryChange: publishPluginLibraryChange,
-        });
         await resolvedPluginStore.ensureOwnershipMigration();
         const sourceStore = await MarketplaceSourceStore.open(dataDir);
         const credentialStore = await MarketplaceCredentialStore.open(dataDir);
         const cache = await MarketplaceVerifiedCache.open(dataDir, { now, fault: cacheFault });
         const installedStore = await MarketplaceInstalledStore.open(dataDir);
         const receiptStore = await MarketplaceReceiptStore.open(dataDir);
+        const resolvedAdapterRegistry = adapterRegistry ?? createMarketplaceClientArtifactRegistry({
+            pluginStore: resolvedPluginStore,
+            publishLibraryChange: publishPluginLibraryChange,
+            editorAssetStore,
+            visualAssetStore,
+            receiptStore,
+        });
         const artifactStore = await MarketplaceArtifactStore.open(dataDir, { now });
         const planner = await MarketplaceInstallPlanner.create(dataDir, {
             sourceStore,
@@ -608,15 +613,21 @@ export class MarketplaceService {
         const hostProfile = await this.hostProfileProvider();
         const compatibility = evaluateMarketplaceCompatibility(selectedRelease.compatibility, hostProfile);
         const lifecycleAvailable = this.adapterRegistry.hasLifecycle(selectedRelease.contentKind);
-        const issues = [
-            ...compatibility.issues,
-            ...(!lifecycleAvailable ? [{
+        const lifecycleIssues = !lifecycleAvailable ? [{
                 path: "contentKind",
                 code: "LIFECYCLE_UNAVAILABLE",
                 required: selectedRelease.contentKind,
                 actual: null,
-            }] : []),
-        ];
+            }] : [];
+        const sizeAllowed = selectedRelease.artifact.sizeBytes <= artifactByteLimitFor(selectedRelease.contentKind);
+        const downloadIssues = sizeAllowed ? [] : [{
+            path: "artifact.sizeBytes",
+            code: "ARTIFACT_LIMIT_EXCEEDED",
+            required: artifactByteLimitFor(selectedRelease.contentKind),
+            actual: selectedRelease.artifact.sizeBytes,
+        }];
+        const authoringOnly = selectedRelease.contentKind === "asset-pack";
+        const issues = [...downloadIssues, ...lifecycleIssues, ...(authoringOnly ? [] : compatibility.issues)];
         const selectedExactKey = `${selectedRelease.itemId}\u0000${selectedRelease.releaseVersion}\u0000${selectedRelease.artifact.sha256}`;
         const warnings = yanks.some((entry) => (
             `${entry.release.itemId}\u0000${entry.release.releaseVersion}\u0000${entry.release.artifactSha256}` === selectedExactKey
@@ -624,7 +635,19 @@ export class MarketplaceService {
         const eligibility = Object.freeze({
             lifecycleAvailable,
             compatible: compatibility.compatible,
-            canInstall: lifecycleAvailable && compatibility.compatible,
+            downloadable: Object.freeze({
+                status: sizeAllowed ? "eligible" : "blocked",
+                issues: Object.freeze(downloadIssues),
+            }),
+            importable: Object.freeze({
+                status: lifecycleAvailable ? (authoringOnly ? "requires-inspection" : "eligible") : "blocked",
+                issues: Object.freeze(lifecycleIssues),
+            }),
+            executable: Object.freeze({
+                status: authoringOnly ? "not-applicable" : (compatibility.compatible ? "eligible" : "blocked"),
+                issues: Object.freeze(authoringOnly ? [] : compatibility.issues),
+            }),
+            canInstall: sizeAllowed && lifecycleAvailable && (authoringOnly || compatibility.compatible),
             issues: Object.freeze(issues),
             warnings: Object.freeze(warnings),
         });
@@ -691,6 +714,31 @@ export class MarketplaceService {
     async cancelInstallJob(jobId, expectedRevision) {
         this.#assertOpen();
         return this.#jobView(await this.jobManager.cancel(jobId, expectedRevision));
+    }
+
+    async resumeInstallJob(jobId, expectedRevision) {
+        this.#assertOpen();
+        return this.#jobView(await this.jobManager.resume(jobId, expectedRevision));
+    }
+
+    async replanInstallJob(jobId, expectedRevision) {
+        this.#assertOpen();
+        return this.#jobView(await this.jobManager.replan(jobId, expectedRevision));
+    }
+
+    async listInstallJobOperations(jobId, { offset = "0", limit = "100", status = null } = {}) {
+        this.#assertOpen();
+        const parsedOffset = Number(offset);
+        const parsedLimit = Number(limit);
+        if (!Number.isSafeInteger(parsedOffset) || parsedOffset < 0 || !Number.isSafeInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 500) {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.DOCUMENT_INVALID, "Operation pagination is invalid.");
+        }
+        if (status !== null && !["pending", "complete"].includes(status)) {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.DOCUMENT_INVALID, "Operation status filter is invalid.");
+        }
+        const operations = await this.jobManager.listOperations(jobId);
+        const filtered = status ? operations.filter((entry) => entry.status === status) : operations;
+        return Object.freeze({ total: filtered.length, offset: parsedOffset, limit: parsedLimit, entries: Object.freeze(filtered.slice(parsedOffset, parsedOffset + parsedLimit)) });
     }
 
     async listInstalled() {

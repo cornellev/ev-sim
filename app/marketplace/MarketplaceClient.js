@@ -142,6 +142,28 @@ export function cancelMarketplaceInstallJob(jobId, expectedRevision, { signal } 
     });
 }
 
+export function resumeMarketplaceInstallJob(jobId, expectedRevision, { signal } = {}) {
+    return requestJson(`/api/marketplace/install-jobs/${encodeURIComponent(jobId)}/resume`, {
+        method: "POST",
+        body: { expectedRevision },
+        signal,
+    });
+}
+
+export function replanMarketplaceInstallJob(jobId, expectedRevision, { signal } = {}) {
+    return requestJson(`/api/marketplace/install-jobs/${encodeURIComponent(jobId)}/replan`, {
+        method: "POST",
+        body: { expectedRevision },
+        signal,
+    });
+}
+
+export function listMarketplaceInstallJobOperations(jobId, { offset = 0, limit = 100, status = null, signal } = {}) {
+    const query = new URLSearchParams({ offset: String(offset), limit: String(limit) });
+    if (status) query.set("status", status);
+    return requestJson(`/api/marketplace/install-jobs/${encodeURIComponent(jobId)}/operations?${query}`, { signal });
+}
+
 export function listMarketplaceInstalled({ signal } = {}) {
     return requestJson("/api/marketplace/installed", { signal });
 }

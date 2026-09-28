@@ -63,7 +63,7 @@ test("MKT-07 recovery is idempotent after every durable transaction visibility b
                 expectedRevision: ready.job.revision,
                 finalPlanHash: ready.job.finalPlanHash,
             });
-            await waitForInstallJob(first, ready.job.jobId, boundary === "after-cleanup" ? "complete" : "recover");
+            await waitForInstallJob(first, ready.job.jobId, boundary === "after-cleanup" ? "complete" : "needs-attention");
             await first.close();
 
             const recovered = await MarketplaceService.open(dataDir, {

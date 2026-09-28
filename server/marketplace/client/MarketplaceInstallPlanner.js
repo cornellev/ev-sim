@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { compareUtf8 } from "../../../app/math/compareUtf8.js";
 import { hashMarketplaceRelease } from "../MarketplaceContracts.js";
+import { artifactByteLimitFor } from "../MarketplaceContract.js";
 import { MARKETPLACE_ERROR_CODES, marketplaceError } from "../MarketplaceErrors.js";
 import { assertCanonicalUuid, assertMarketplaceId, assertReleaseVersion, assertSha256 } from "../MarketplaceFormats.js";
 import {
@@ -139,6 +140,12 @@ export class MarketplaceInstallPlanner {
             releases: current.documents.releases,
             releasePolicy: this.releasePolicy,
         });
+        for (const release of resolved.releases) {
+            const limit = artifactByteLimitFor(release.contentKind);
+            if (release.artifact.sizeBytes > limit) {
+                throw marketplaceError(MARKETPLACE_ERROR_CODES.LIMIT_EXCEEDED, `Marketplace ${release.contentKind} artifact exceeds its ${limit}-byte limit.`);
+            }
+        }
         const hostProfile = await this.hostProfileProvider();
         const hostProfileHash = hashMarketplaceHostProfile(hostProfile);
         const installed = await this.installedStore.snapshot();
@@ -224,7 +231,7 @@ export class MarketplaceInstallPlanner {
         return document;
     }
 
-    async createFinalPlan(preflightHash, { signal = null } = {}) {
+    async createFinalPlan(preflightHash, { signal = null, workDirectory = null } = {}) {
         const preflight = await this.readPreflight(preflightHash);
         const source = this.sourceStore.get(preflight.source.sourceId);
         if (!source || source.registryId !== preflight.source.registryId
@@ -252,7 +259,7 @@ export class MarketplaceInstallPlanner {
                 throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Pinned marketplace release identity changed.");
             }
             const compatibility = evaluateMarketplaceCompatibility(release.compatibility, hostProfile);
-            if (!compatibility.compatible) {
+            if (!compatibility.compatible && release.contentKind !== "asset-pack") {
                 throw marketplaceError(MARKETPLACE_ERROR_CODES.INCOMPATIBLE, `Marketplace release ${release.itemId}@${release.releaseVersion} is incompatible with this host.`);
             }
             const policy = this.releasePolicy(release) ?? {};
@@ -267,6 +274,8 @@ export class MarketplaceInstallPlanner {
                 installed,
                 hostProfile,
                 source: preflight.source,
+                workDirectory,
+                stagingRoot: workDirectory ? path.join(workDirectory, "inspection") : undefined,
             });
             let inspection;
             try {
@@ -314,9 +323,9 @@ export class MarketplaceInstallPlanner {
         }, assertInstallFinalPlan);
     }
 
-    async revalidateFinalPlan(finalPlanHash) {
+    async revalidateFinalPlan(finalPlanHash, { workDirectory = null } = {}) {
         const expected = await this.readFinalPlan(finalPlanHash);
-        const current = await this.createFinalPlan(expected.preflightHash);
+        const current = await this.createFinalPlan(expected.preflightHash, { workDirectory });
         if (current.planHash !== finalPlanHash) {
             throw marketplaceError(MARKETPLACE_ERROR_CODES.CONFLICT, "Marketplace installation plan changed before commit.");
         }

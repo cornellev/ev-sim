@@ -277,6 +277,28 @@ export class VisualAssetStore {
         }
     }
 
+    async openPublishedStream(digest, { expectedSize } = {}) {
+        await this.initialize();
+        const identity = await hashRegularFile(this._casPath(digest));
+        if (!identity || identity.digest !== digest || (expectedSize != null && identity.size !== expectedSize)) {
+            throw visualAssetError(VISUAL_ASSET_ERROR_CODES.CORRUPT, `Published visual asset ${digest} is missing or corrupt.`);
+        }
+        const opened = await openRegularFile(this._casPath(digest));
+        if (!opened) throw visualAssetError(VISUAL_ASSET_ERROR_CODES.CORRUPT, `Published visual asset ${digest} is missing.`);
+        return opened.handle.createReadStream({ autoClose: true });
+    }
+
+    async evaluateSourceRights({ sourceIds = [], operations = VISUAL_ASSET_UPLOAD_OPERATIONS } = {}) {
+        await this.initialize();
+        const registry = await this.registry.policyMap();
+        return evaluateVisualSourcePolicy({
+            sourceIds: [...new Set(sourceIds)].sort(),
+            operations,
+            registry,
+            atTime: this.now(),
+        });
+    }
+
     async getValidation(useHash, { optional = false } = {}) {
         await this.initialize();
         return this._readValidation(useHash, { optional });

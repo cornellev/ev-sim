@@ -1,5 +1,6 @@
 import express from "express";
 
+import { exportAssetPackage } from "../marketplace/AssetPackage.js";
 import { jsonHandler } from "./jsonHandler.js";
 
 export function createEditorAssetRouter(service) {
@@ -14,6 +15,31 @@ export function createEditorAssetRouter(service) {
     router.get("/", handle(async (req) => store().list(req.query ?? {})));
     router.get("/capabilities", handle(async () => service.getEditorAssetCapabilities()));
     router.post("/", handle(async (req) => store().publishRevision(req.body ?? {}, req.body?.expectedRevision)));
+
+    router.post("/packages/export", async (req, res, next) => {
+        try {
+            const exported = await exportAssetPackage({
+                editorAssetStore: store(),
+                visualAssetStore: service.visualAssets,
+                roots: req.body?.roots,
+                signal: req.signal,
+            });
+            res.status(200).set({
+                "Cache-Control": "no-store",
+                "Content-Type": "application/vnd.cev-sim.asset-package+tar",
+                "Content-Disposition": "attachment; filename=cev-sim-assets.tar",
+                "X-Content-Type-Options": "nosniff",
+            });
+            exported.stream.on("error", (error) => {
+                if (!res.destroyed) res.destroy(error);
+            });
+            exported.stream.pipe(res);
+            await exported.completion;
+        } catch (error) {
+            if (res.headersSent) res.destroy(error);
+            else next(error);
+        }
+    });
 
     router.get("/folders", handle(async () => {
         const catalog = await store().list({ archived: true });

@@ -1,11 +1,16 @@
 import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import semver from "semver";
 
 import { compareUtf8 } from "../../app/math/compareUtf8.js";
+import {
+    hashEditorAssetRevisionContent,
+} from "../../app/editor-assets/EditorAssetContract.js";
 import { verifyPluginPackage } from "../../app/plugin/PluginPackage.js";
+import { VISUAL_ASSET_UPLOAD_OPERATIONS, hashVisualAssetUse, normalizeVisualAssetUse } from "../../app/simulation/visual/VisualLayer.js";
 import { verifyRunBundleBytes } from "../headless/RunBundle.js";
 import { verifyRunPackageArchive } from "../headless/VisualAssetPack.js";
 import {
@@ -13,7 +18,19 @@ import {
     parsePortablePluginFile,
 } from "../plugins/PortablePluginFile.js";
 import { openRegularFile } from "../storage/visual-assets/atomicFs.js";
+import { EDITOR_ASSET_ERROR_CODES } from "../storage/StorageErrors.js";
 import { verifyVehicleBundle } from "../artifacts/VehicleBundle.js";
+import {
+    ASSET_PACKAGE_BLOB_PREFIX,
+    inspectAssetPackage,
+    prepareAssetPackage,
+    readAssetPackagePreparation,
+    readPreparedJsonRecord,
+} from "./AssetPackage.js";
+import {
+    planAssetPackageImport,
+    readPreparedAssetRevision,
+} from "./AssetPackageImportPlanner.js";
 import { MARKETPLACE_ARTIFACTS, MARKETPLACE_LIMITS } from "./MarketplaceContract.js";
 import { MARKETPLACE_ERROR_CODES, marketplaceError } from "./MarketplaceErrors.js";
 
@@ -174,6 +191,7 @@ export function defineArtifactAdapter({
     validateInspection = null,
     plan = null,
     commit = null,
+    recover = null,
     createReceipt = null,
     planRemoval = null,
     remove = null,
@@ -196,6 +214,7 @@ export function defineArtifactAdapter({
         validate: true,
         plan: lifecycle,
         commit: lifecycle,
+        recover: lifecycle,
         createReceipt: lifecycle,
         planRemoval: removalLifecycle,
         remove: removalLifecycle,
@@ -213,6 +232,7 @@ export function defineArtifactAdapter({
         },
         plan: lifecycle ? (input) => plan(adapter, input) : () => unsupported(id, "plan"),
         commit: lifecycle ? (input) => commit(adapter, input) : () => unsupported(id, "commit"),
+        recover: lifecycle ? (input) => (recover ? recover(adapter, input) : commit(adapter, input)) : () => unsupported(id, "recover"),
         createReceipt: lifecycle ? (input) => createReceipt(adapter, input) : () => unsupported(id, "createReceipt"),
         planRemoval: removalLifecycle ? (input) => planRemoval(adapter, input) : () => unsupported(id, "planRemoval"),
         remove: removalLifecycle ? (input) => remove(adapter, input) : () => unsupported(id, "remove"),
@@ -322,6 +342,11 @@ export function createPluginLifecycleAdapter({ pluginStore, publishLibraryChange
                 mappings: [pluginMapping(identity)],
                 warnings: [],
                 blockingIssues: [],
+                operations: [{
+                    operationId: createHash("sha256").update(`plugin\u0000${release.artifact.sha256}`).digest("hex"),
+                    kind: "publish-plugin-package",
+                    packageHash: identity.packageHash,
+                }],
             };
         },
         async commit(adapter, { release, inspection, adapterPlan, artifactHandle }) {
@@ -355,6 +380,9 @@ export function createPluginLifecycleAdapter({ pluginStore, publishLibraryChange
         },
         async createReceipt(_adapter, { adapterPlan }) {
             return { mappings: adapterPlan.mappings };
+        },
+        async recover(adapter, input) {
+            return adapter.commit(input);
         },
         async planRemoval(_adapter, { receipt, installation }) {
             const mapping = receipt.mappings.find((entry) => entry.resourceKind === "plugin-package");
@@ -470,11 +498,208 @@ export const runPackageArtifactAdapter = defineArtifactAdapter({
     },
 });
 
+async function inspectAssetPackageArtifact(adapter, rawHandle, context) {
+    const { normalized: handle, opened } = await openHandle(rawHandle, adapter.contract);
+    await opened.handle.close();
+    const inspection = await inspectAssetPackage({
+        archivePath: handle.path,
+        stagingRoot: context.stagingRoot,
+        limits: context.limits,
+        signal: context.signal,
+    });
+    if (inspection.archiveSha256 !== handle.sha256 || inspection.archiveSizeBytes !== handle.sizeBytes) {
+        throw marketplaceError(MARKETPLACE_ERROR_CODES.ARTIFACT_HASH_MISMATCH, "Asset-package archive identity does not match its descriptor.");
+    }
+    return baseInspection(adapter, handle, inspection);
+}
+
+export const assetPackageArtifactAdapter = defineArtifactAdapter({
+    id: "asset-pack@1",
+    contentKind: "asset-pack",
+    inspect: inspectAssetPackageArtifact,
+});
+
+export function createAssetPackageLifecycleAdapter({
+    editorAssetStore, visualAssetStore, receiptStore,
+} = {}) {
+    if (!editorAssetStore || !visualAssetStore || !receiptStore) {
+        throw new TypeError("Asset-package lifecycle adapter requires editor, visual, and receipt stores.");
+    }
+    return defineArtifactAdapter({
+        id: "asset-pack@1",
+        contentKind: "asset-pack",
+        inspect: inspectAssetPackageArtifact,
+        receiptResourceKinds: ["editor-asset-revision"],
+        async plan(_adapter, { release, artifactHandle, context }) {
+            if (!context.workDirectory) throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Asset-package planning requires durable job work storage.");
+            const prepared = await prepareAssetPackage({
+                archivePath: artifactHandle.path,
+                workDirectory: context.workDirectory,
+                signal: context.signal,
+            });
+            if (prepared.verified.archiveSha256 !== artifactHandle.sha256) {
+                throw marketplaceError(MARKETPLACE_ERROR_CODES.ARTIFACT_HASH_MISMATCH, "Prepared asset package changed after inspection.");
+            }
+            const planned = await planAssetPackageImport({
+                verified: prepared.verified,
+                editorAssetStore,
+                visualAssetStore,
+                receiptStore,
+                release,
+                context,
+                preparationHash: prepared.preparationHash,
+                preparation: prepared,
+            });
+            return {
+                package: {
+                    archiveSha256: prepared.verified.archiveSha256,
+                    manifestSha256: prepared.verified.manifestSha256,
+                    roots: prepared.verified.manifest.roots,
+                    assetCount: prepared.verified.manifest.assets.length,
+                    revisionCount: prepared.verified.revisions.size,
+                    useCount: prepared.verified.uses.size,
+                    blobCount: prepared.verified.manifest.blobs.length,
+                },
+                ...planned,
+            };
+        },
+        async commit(_adapter, { operation, adapterPlan, context }) {
+            if (!operation || !adapterPlan.operations.some((entry) => entry.operationId === operation.operationId)) {
+                throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Asset-package transaction operation is not in the final plan.");
+            }
+            const preparation = await readAssetPackagePreparation({
+                workDirectory: context.workDirectory,
+                preparationHash: adapterPlan.preparationHash,
+                archiveSha256: adapterPlan.package.archiveSha256,
+            });
+            if (operation.kind === "publish-visual-use") {
+                const use = normalizeVisualAssetUse(await readPreparedJsonRecord(preparation, operation.recordSha256));
+                if (hashVisualAssetUse(use) !== operation.useHash || use.asset.sha256 !== operation.blobSha256) {
+                    throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Prepared visual-use operation identity changed.");
+                }
+                const rights = await visualAssetStore.evaluateSourceRights({
+                    sourceIds: use.sourceIds,
+                    operations: VISUAL_ASSET_UPLOAD_OPERATIONS,
+                });
+                if (!rights.allowed) throw marketplaceError(MARKETPLACE_ERROR_CODES.RIGHTS_DENIED, "Visual source rights changed before asset import.");
+                const blob = preparation.entry(`${ASSET_PACKAGE_BLOB_PREFIX}${operation.blobSha256}`);
+                const upload = await visualAssetStore.createUpload(use);
+                await visualAssetStore.writeUploadContent(upload.id, createReadStream(blob.path), { contentLength: blob.sizeBytes });
+                return { kind: operation.kind, useHash: operation.useHash };
+            }
+            if (operation.kind === "publish-editor-asset-revision") {
+                const preparedRevision = await readPreparedAssetRevision({
+                    workDirectory: context.workDirectory,
+                    preparationHash: adapterPlan.preparationHash,
+                    preparedRevisionHash: operation.preparedRevisionHash,
+                });
+                if (preparedRevision.sourceAssetId !== operation.sourceAssetId
+                    || preparedRevision.sourceRevision !== operation.sourceRevision
+                    || preparedRevision.localAssetId !== operation.localAssetId
+                    || preparedRevision.localRevision !== operation.localRevision
+                    || preparedRevision.hashes.localContent !== operation.localContentHash) {
+                    throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Prepared editor-asset revision identity changed.");
+                }
+                const rights = await visualAssetStore.evaluateSourceRights({
+                    sourceIds: preparedRevision.requiredSourceIds,
+                    operations: [
+                        ...VISUAL_ASSET_UPLOAD_OPERATIONS,
+                        ...(preparedRevision.draft.definition ? ["derivatives"] : []),
+                    ],
+                });
+                if (!rights.allowed) throw marketplaceError(MARKETPLACE_ERROR_CODES.RIGHTS_DENIED, "Visual source rights changed before asset publication.");
+                const replay = await editorAssetStore.findPublication(operation.publicationId);
+                if (replay) {
+                    if (replay.revision.assetId !== operation.localAssetId || replay.revision.revision !== operation.localRevision) {
+                        throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Imported asset publication replay has a different identity.");
+                    }
+                    if (hashEditorAssetRevisionContent(replay.revision) !== operation.localContentHash) {
+                        throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Imported asset publication replay has different content.");
+                    }
+                    const root = await visualAssetStore.getRoot(`editor-asset:${operation.localAssetId}:revision:${operation.localRevision}`);
+                    return {
+                        kind: operation.kind, assetId: operation.localAssetId, revision: operation.localRevision,
+                        localContentHash: operation.localContentHash, modelUseHash: replay.revision.modelUseHash,
+                        rootGeneration: root?.generation ?? null,
+                    };
+                }
+                let existing = null;
+                try {
+                    existing = await editorAssetStore.getRevision(operation.localAssetId, operation.localRevision);
+                } catch (error) {
+                    if (error.code !== EDITOR_ASSET_ERROR_CODES.NOT_FOUND) throw error;
+                }
+                if (existing) {
+                    if (hashEditorAssetRevisionContent(existing) !== operation.localContentHash) {
+                        throw marketplaceError(MARKETPLACE_ERROR_CODES.CONFLICT, "Local editor-asset history changed after import planning.");
+                    }
+                    const root = await visualAssetStore.getRoot(`editor-asset:${operation.localAssetId}:revision:${operation.localRevision}`);
+                    if (root?.useHash !== existing.modelUseHash) {
+                        throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Content-identical editor-asset history has no intact root.");
+                    }
+                    return {
+                        kind: operation.kind, assetId: operation.localAssetId, revision: operation.localRevision,
+                        localContentHash: operation.localContentHash, modelUseHash: existing.modelUseHash,
+                        rootGeneration: root.generation,
+                    };
+                }
+                const snapshot = await editorAssetStore.list({ archived: true });
+                const result = await editorAssetStore.publishImportedRevision(preparedRevision.draft, snapshot.catalogRevision);
+                if (result.revision.assetId !== operation.localAssetId || result.revision.revision !== operation.localRevision
+                    || hashEditorAssetRevisionContent(result.revision) !== operation.localContentHash) {
+                    throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Imported editor-asset revision committed at an unexpected identity.");
+                }
+                const root = await visualAssetStore.getRoot(`editor-asset:${operation.localAssetId}:revision:${operation.localRevision}`);
+                if (root?.useHash !== result.revision.modelUseHash) {
+                    throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Imported editor-asset revision root is missing after publication.");
+                }
+                return {
+                    kind: operation.kind, assetId: operation.localAssetId, revision: operation.localRevision,
+                    localContentHash: operation.localContentHash, modelUseHash: result.revision.modelUseHash,
+                    rootGeneration: root.generation,
+                };
+            }
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, `Unknown asset-package operation ${operation.kind}.`);
+        },
+        async recover(adapter, input) {
+            const { operation } = input;
+            if (operation.kind === "publish-visual-use") {
+                const use = await visualAssetStore.getUse(operation.useHash, { optional: true });
+                if (use && hashVisualAssetUse(use) === operation.useHash) {
+                    await visualAssetStore.readPublishedBytes(use.asset.sha256, { expectedSize: use.asset.sizeBytes });
+                    return { kind: operation.kind, useHash: operation.useHash };
+                }
+            } else if (operation.kind === "publish-editor-asset-revision") {
+                let revision = null;
+                try {
+                    revision = await editorAssetStore.getRevision(operation.localAssetId, operation.localRevision);
+                } catch (error) {
+                    if (error.code !== EDITOR_ASSET_ERROR_CODES.NOT_FOUND) throw error;
+                }
+                const root = revision ? await visualAssetStore.getRoot(`editor-asset:${operation.localAssetId}:revision:${operation.localRevision}`) : null;
+                if (revision && hashEditorAssetRevisionContent(revision) === operation.localContentHash
+                    && root?.useHash === revision.modelUseHash) {
+                    return {
+                        kind: operation.kind, assetId: operation.localAssetId, revision: operation.localRevision,
+                        localContentHash: operation.localContentHash, modelUseHash: revision.modelUseHash,
+                        rootGeneration: root.generation,
+                    };
+                }
+            }
+            return adapter.commit(input);
+        },
+        async createReceipt(_adapter, { adapterPlan }) {
+            return { mappings: adapterPlan.mappings };
+        },
+    });
+}
+
 export const MARKETPLACE_ARTIFACT_ADAPTERS = Object.freeze([
     pluginArtifactAdapter,
     vehicleArtifactAdapter,
     runTemplateArtifactAdapter,
     runPackageArtifactAdapter,
+    assetPackageArtifactAdapter,
 ]);
 
 export class ArtifactAdapterRegistry {
@@ -564,5 +789,8 @@ export function createMarketplaceClientArtifactRegistry(options) {
         vehicleArtifactAdapter,
         runTemplateArtifactAdapter,
         runPackageArtifactAdapter,
+        options?.editorAssetStore && options?.visualAssetStore && options?.receiptStore
+            ? createAssetPackageLifecycleAdapter(options)
+            : assetPackageArtifactAdapter,
     ]);
 }

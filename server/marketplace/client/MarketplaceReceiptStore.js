@@ -94,6 +94,31 @@ export class MarketplaceReceiptStore {
         return Object.freeze(matches.map((entry) => entry.hash));
     }
 
+    async findMappings({
+        registryId, marketplaceSourceId, itemId, releaseVersion = null,
+        artifactSha256 = null, resourceKind = null,
+    } = {}) {
+        const found = [];
+        for (const entry of await fs.readdir(this.paths.receipts, { withFileTypes: true })) {
+            if (entry.isSymbolicLink() || !entry.isFile() || !/^[0-9a-f]{64}\.json$/u.test(entry.name)) {
+                throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Marketplace receipt store contains an unexpected node.");
+            }
+            const hash = entry.name.slice(0, -5);
+            const receipt = await this.read(hash);
+            if ((registryId && receipt.registryId !== registryId)
+                || (marketplaceSourceId && receipt.sourceId !== marketplaceSourceId)
+                || (itemId && receipt.release.itemId !== itemId)
+                || (releaseVersion && receipt.release.releaseVersion !== releaseVersion)
+                || (artifactSha256 && receipt.release.artifactSha256 !== artifactSha256)) continue;
+            for (const mapping of receipt.mappings) {
+                if (resourceKind && mapping.resourceKind !== resourceKind) continue;
+                found.push(Object.freeze({ receiptHash: hash, installedAt: receipt.installedAt, mapping }));
+            }
+        }
+        return Object.freeze(found.sort((left, right) => compareUtf8(right.installedAt, left.installedAt)
+            || compareUtf8(left.receiptHash, right.receiptHash)));
+    }
+
     async recover() {
         for (const entry of await fs.readdir(this.paths.receipts, { withFileTypes: true })) {
             if (entry.isSymbolicLink() || !entry.isFile() || !/^[0-9a-f]{64}\.json$/u.test(entry.name)) {

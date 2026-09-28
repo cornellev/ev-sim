@@ -13,6 +13,7 @@ import {
 } from "./AssetDefinition.js";
 import { normalizeVisualLayer } from "../simulation/visual/VisualLayer.js";
 import { readAssetBinding } from "./AssetBackedObject.js";
+import { simulationSha256 } from "../simulation/kernel/SimulationHashes.js";
 
 export const EDITOR_ASSET_CATALOG_KIND = "cev-sim.editor-asset-catalog";
 export const EDITOR_ASSET_CATALOG_VERSION = 1;
@@ -247,6 +248,24 @@ export function validateEditorAssetRevision(value = {}) {
         });
     }
     return issues;
+}
+
+export function hashEditorAssetRevisionContent(value = {}) {
+    const normalized = normalizeEditorAssetRevision(value);
+    const issues = validateEditorAssetRevision(normalized);
+    if (issues.length > 0) throw Object.assign(new TypeError(issues[0].message), { issues });
+    if (normalized.version === EDITOR_ASSET_REVISION_VERSION) {
+        return simulationSha256({ version: normalized.version, modelUseHash: normalized.modelUseHash });
+    }
+    return simulationSha256({
+        version: normalized.version,
+        modelUseHash: normalized.modelUseHash,
+        definition: normalized.definition,
+        metric: normalized.metric,
+        metricHash: normalized.metricHash,
+        geometryHash: normalized.geometryHash,
+        appearance: normalized.appearance,
+    });
 }
 
 export function normalizeAssetInstanceComponent(value = {}) {

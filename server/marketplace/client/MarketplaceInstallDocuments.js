@@ -38,6 +38,7 @@ export const MARKETPLACE_JOB_PHASES = Object.freeze([
     "awaiting-confirmation",
     "commit",
     "recover",
+    "needs-attention",
     "failed",
     "cancelled",
     "complete",
@@ -294,13 +295,24 @@ export function assertInstallJob(value) {
     if (value.finalPlanHash !== null) assertSha256(value.finalPlanHash, "$job.finalPlanHash");
     exactKeys(value.progress, [
         "artifactsTotal", "artifactsComplete", "bytesTotal", "bytesComplete", "currentDigest",
-    ], [], "$job.progress");
+    ], [
+        "totalOperations", "completedOperations", "currentOperation",
+        "operationsTotal", "operationsComplete",
+    ], "$job.progress");
     for (const key of ["artifactsTotal", "artifactsComplete", "bytesTotal", "bytesComplete"]) {
         nonNegative(value.progress[key], `$job.progress.${key}`);
     }
     if (value.progress.artifactsComplete > value.progress.artifactsTotal) invalid("$job.progress.artifactsComplete", "exceeds total");
     if (value.progress.bytesComplete > value.progress.bytesTotal) invalid("$job.progress.bytesComplete", "exceeds total");
     if (value.progress.currentDigest !== null) assertSha256(value.progress.currentDigest, "$job.progress.currentDigest");
+    const totalOperations = value.progress.totalOperations ?? value.progress.operationsTotal;
+    const completedOperations = value.progress.completedOperations ?? value.progress.operationsComplete;
+    if (totalOperations !== undefined || completedOperations !== undefined || value.progress.currentOperation !== undefined) {
+        nonNegative(totalOperations, "$job.progress.totalOperations");
+        nonNegative(completedOperations, "$job.progress.completedOperations");
+        if (completedOperations > totalOperations) invalid("$job.progress.completedOperations", "exceeds total");
+        if (value.progress.currentOperation !== null) assertSha256(value.progress.currentOperation, "$job.progress.currentOperation");
+    }
     if (value.error !== null) {
         exactKeys(value.error, ["code", "message"], [], "$job.error");
         text(value.error.code, "$job.error.code", 128);
@@ -316,7 +328,7 @@ export function assertInstallTransaction(value) {
     exactKeys(value, [
         "kind", "version", "transactionId", "jobId", "operation", "finalPlanHash", "installedBase",
         "installedTarget", "receiptHashes", "adapterCommits",
-    ], ["adapterRemovals"], "$transaction");
+    ], ["adapterRemovals", "adapterOperations"], "$transaction");
     assertKind(value, MARKETPLACE_INSTALL_KINDS.transaction, "$transaction");
     assertCanonicalUuid(value.transactionId, "$transaction.transactionId");
     if (value.jobId !== null) assertCanonicalUuid(value.jobId, "$transaction.jobId");
@@ -336,6 +348,22 @@ export function assertInstallTransaction(value) {
         assertReleaseVersion(entry.releaseVersion, `$transaction.adapterCommits.${index}.releaseVersion`);
         assertSha256(entry.artifactSha256, `$transaction.adapterCommits.${index}.artifactSha256`);
     });
+    if (value.adapterOperations !== undefined) {
+        if (!Array.isArray(value.adapterOperations)) invalid("$transaction.adapterOperations", "expected array");
+        const operationIds = new Set();
+        value.adapterOperations.forEach((entry, index) => {
+            const path = `$transaction.adapterOperations.${index}`;
+            exactKeys(entry, ["operationId", "operationHash", "adapterId", "itemId", "releaseVersion", "artifactSha256"], [], path);
+            assertSha256(entry.operationId, `${path}.operationId`);
+            assertSha256(entry.operationHash, `${path}.operationHash`);
+            text(entry.adapterId, `${path}.adapterId`, 255);
+            text(entry.itemId, `${path}.itemId`, 255);
+            assertReleaseVersion(entry.releaseVersion, `${path}.releaseVersion`);
+            assertSha256(entry.artifactSha256, `${path}.artifactSha256`);
+            if (operationIds.has(entry.operationId)) invalid(`${path}.operationId`, "duplicate operation id");
+            operationIds.add(entry.operationId);
+        });
+    }
     if (value.adapterRemovals !== undefined) {
         if (!Array.isArray(value.adapterRemovals)) invalid("$transaction.adapterRemovals", "expected array");
         value.adapterRemovals.forEach((entry, index) => {

@@ -10,9 +10,14 @@ import {
     validateEditorAssetRevision,
 } from "../../app/editor-assets/EditorAssetContract.js";
 import { compileAssetDefinition } from "../../app/editor-assets/AssetCompiler.js";
-import { validateAssetDefinition, validateAssetMetric } from "../../app/editor-assets/AssetDefinition.js";
+import {
+    collectAssetRevisionReferences,
+    validateAssetDefinition,
+    validateAssetMetric,
+} from "../../app/editor-assets/AssetDefinition.js";
 import { simulationSha256 } from "../../app/simulation/kernel/SimulationHashes.js";
 import { VISUAL_ASSET_UPLOAD_OPERATIONS } from "../../app/simulation/visual/VisualLayer.js";
+import { compareUtf8 } from "../../app/math/compareUtf8.js";
 import { JsonFileStore } from "./JsonFileStore.js";
 import { EDITOR_ASSET_ERROR_CODES, editorAssetError } from "./StorageErrors.js";
 import { fsyncDir, maybeFault, writeExclusiveFile } from "./visual-assets/atomicFs.js";
@@ -192,6 +197,51 @@ export class EditorAssetStore {
         return { catalogRevision, assetId: asset.id, revisions };
     }
 
+    async snapshotRevisionClosure(roots = []) {
+        return this._enqueue(async () => {
+            if (!Array.isArray(roots) || roots.length === 0) {
+                throw editorAssetError(EDITOR_ASSET_ERROR_CODES.INVALID, "Asset-package export requires at least one root revision.");
+            }
+            const catalog = await this._readCatalog();
+            const assetsById = new Map(catalog.assets.map((asset) => [asset.id, asset]));
+            const revisions = new Map();
+            const visiting = new Set();
+            const visit = async (assetIdInput, revisionInput, depth = 1) => {
+                const assetId = safeId(assetIdInput, "assetId");
+                const revision = Number(revisionInput);
+                const asset = assetsById.get(assetId);
+                if (!asset || !Number.isInteger(revision) || revision <= 0 || revision > asset.latestRevision) {
+                    throw editorAssetError(EDITOR_ASSET_ERROR_CODES.NOT_FOUND, `Editor asset revision ${assetId}@${revisionInput} was not found.`);
+                }
+                if (depth > 64) throw editorAssetError(EDITOR_ASSET_ERROR_CODES.INVALID, "Asset revision closure exceeds depth 64.");
+                const key = `${assetId}@${revision}`;
+                if (revisions.has(key)) return;
+                if (visiting.has(key)) throw editorAssetError(EDITOR_ASSET_ERROR_CODES.INVALID, `Asset revision dependency cycle includes ${key}.`);
+                visiting.add(key);
+                const record = await this._readRevisionFile(assetId, revision);
+                if (record.version === 2) {
+                    for (const child of collectAssetRevisionReferences(record.definition)) {
+                        await visit(child.assetId, child.revision, depth + 1);
+                    }
+                }
+                visiting.delete(key);
+                revisions.set(key, record);
+            };
+            const normalizedRoots = roots.map((root) => ({
+                assetId: safeId(root?.assetId, "assetId"),
+                revision: Number(root?.revision),
+            }));
+            for (const root of normalizedRoots) await visit(root.assetId, root.revision);
+            const assetIds = [...new Set([...revisions.values()].map((record) => record.assetId))].sort(compareUtf8);
+            return {
+                catalogRevision: catalog.revision,
+                roots: normalizedRoots.sort((left, right) => compareUtf8(left.assetId, right.assetId) || left.revision - right.revision),
+                assets: assetIds.map((assetId) => clone(assetsById.get(assetId))),
+                revisions: [...revisions.values()].map(clone),
+            };
+        });
+    }
+
     async _findPublication(publicationId) {
         const catalog = await this._readCatalog();
         for (const asset of catalog.assets) {
@@ -201,6 +251,15 @@ export class EditorAssetStore {
             }
         }
         return null;
+    }
+
+    async findPublication(publicationId) {
+        await this.initialize();
+        return this._findPublication(safeId(publicationId, "publicationId"));
+    }
+
+    async publishImportedRevision(draft, expectedRevision) {
+        return this.publishRevision(draft, expectedRevision);
     }
 
     async publishRevision(draft = {}, expectedRevision) {
