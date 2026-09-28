@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
+import { PluginStore } from "../../storage/PluginStore.js";
 import { MARKETPLACE_LIMITS, MARKETPLACE_SOURCE_HEALTH } from "../MarketplaceContract.js";
 import { MARKETPLACE_ERROR_CODES, MarketplaceError, marketplaceError } from "../MarketplaceErrors.js";
 import { assertCanonicalUuid, assertMarketplaceId, assertSha256 } from "../MarketplaceFormats.js";
@@ -24,7 +25,7 @@ import {
     verifyTufRootContract,
 } from "../registry/TufMetadata.js";
 import { inspectPreviewBytes } from "../registry/PreviewMedia.js";
-import { artifactAdapterRegistry } from "../ArtifactAdapters.js";
+import { createMarketplaceClientArtifactRegistry } from "../ArtifactAdapters.js";
 import { MarketplaceArtifactDownloader } from "./MarketplaceArtifactDownloader.js";
 import { MarketplaceArtifactStore } from "./MarketplaceArtifactStore.js";
 import { createMarketplaceHostProfile, evaluateMarketplaceCompatibility } from "./MarketplaceCompatibility.js";
@@ -140,10 +141,18 @@ export class MarketplaceService {
         cacheFault = null,
         transactionFault = null,
         jobFault = null,
-        adapterRegistry = artifactAdapterRegistry,
+        adapterRegistry = null,
+        pluginStore = null,
+        publishPluginLibraryChange = null,
         hostProfileProvider = async () => createMarketplaceHostProfile(),
         releasePolicy,
     } = {}) {
+        const resolvedPluginStore = pluginStore ?? new PluginStore(dataDir);
+        const resolvedAdapterRegistry = adapterRegistry ?? createMarketplaceClientArtifactRegistry({
+            pluginStore: resolvedPluginStore,
+            publishLibraryChange: publishPluginLibraryChange,
+        });
+        await resolvedPluginStore.ensureOwnershipMigration();
         const sourceStore = await MarketplaceSourceStore.open(dataDir);
         const credentialStore = await MarketplaceCredentialStore.open(dataDir);
         const cache = await MarketplaceVerifiedCache.open(dataDir, { now, fault: cacheFault });
@@ -155,7 +164,7 @@ export class MarketplaceService {
             cache,
             installedStore,
             artifactStore,
-            adapterRegistry,
+            adapterRegistry: resolvedAdapterRegistry,
             hostProfileProvider,
             ...(releasePolicy ? { releasePolicy } : {}),
         });
@@ -164,7 +173,7 @@ export class MarketplaceService {
             installedStore,
             receiptStore,
             artifactStore,
-            adapterRegistry,
+            adapterRegistry: resolvedAdapterRegistry,
             now,
             fault: transactionFault,
         });
@@ -193,7 +202,7 @@ export class MarketplaceService {
             planner,
             transactionCoordinator,
             jobManager,
-            adapterRegistry,
+            adapterRegistry: resolvedAdapterRegistry,
             hostProfileProvider,
             now,
         });

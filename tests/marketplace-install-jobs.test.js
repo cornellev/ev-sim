@@ -7,21 +7,30 @@ import test from "node:test";
 import { MarketplaceService } from "../server/marketplace/client/MarketplaceService.js";
 import { marketplaceClientPaths } from "../server/marketplace/client/MarketplaceClientLayout.js";
 import { createMarketplaceHostProfile } from "../server/marketplace/client/MarketplaceCompatibility.js";
+import { PluginStore } from "../server/storage/PluginStore.js";
 import { createPopulatedClientRegistry } from "./helpers/marketplaceClientRegistry.js";
+import { pluginFixtureResource } from "./helpers/pluginFixtures.js";
 import {
     configureMarketplaceSource,
     createTestLifecycleRegistry,
     waitForInstallJob,
 } from "./helpers/marketplaceInstallLifecycle.js";
 
-test("MKT-07 plans, downloads, confirms, installs, removes, and reinstalls offline without executing plugin source", async (t) => {
+test("MKT-08 installs and removes real plugin ownership offline without executing plugin source or deleting CAS", async (t) => {
     const parent = await fs.mkdtemp(path.join(os.tmpdir(), "cev-mkt-install-"));
     t.after(() => fs.rm(parent, { recursive: true, force: true }));
-    const registry = await createPopulatedClientRegistry(parent);
+    const resource = await pluginFixtureResource({
+        mutateFiles(files) {
+            files["runtime/index.js"] = new TextEncoder().encode(
+                "throw new Error('marketplace installation evaluated plugin source');\nexport default {};\n",
+            );
+        },
+    });
+    const registry = await createPopulatedClientRegistry(parent, { pluginResource: resource });
     t.after(() => registry.server.close());
-    const commits = [];
     const dataDir = path.join(parent, "client");
-    const service = await MarketplaceService.open(dataDir, { adapterRegistry: createTestLifecycleRegistry(commits) });
+    const pluginStore = new PluginStore(dataDir);
+    const service = await MarketplaceService.open(dataDir, { pluginStore });
     t.after(() => service.close());
     const sourceId = await configureMarketplaceSource(service, registry);
 
@@ -42,7 +51,16 @@ test("MKT-07 plans, downloads, confirms, installs, removes, and reinstalls offli
     const firstStarted = await service.startInstallJob(firstPlan.planHash);
     const firstReady = await waitForInstallJob(service, firstStarted.job.jobId, "awaiting-confirmation");
     assert.equal(firstReady.finalPlan.committable, true);
-    assert.deepEqual(firstReady.finalPlan.releases[0].rights, [{ id: "plugin-files", allowed: true }]);
+    assert.deepEqual(firstReady.finalPlan.releases[0].rights, []);
+    assert.deepEqual(firstReady.finalPlan.releases[0].adapterPlan.capabilityChange.grantsAdded, []);
+    assert.deepEqual(firstReady.finalPlan.releases[0].adapterPlan.changes, {
+        cas: "add",
+        libraryMembership: "add",
+        marketplaceOwner: "add",
+    });
+    assert.deepEqual(await pluginStore.listInstalled(), { revision: 0, packages: [] });
+    await assert.rejects(pluginStore.getPackage(resource.packageHash), (error) => error.code === "ENOENT");
+    await assert.rejects(fs.access(pluginStore.runtimeDir), (error) => error.code === "ENOENT");
 
     const cancelledStarted = await service.startInstallJob(firstPlan.planHash);
     const cancelledReady = await waitForInstallJob(service, cancelledStarted.job.jobId, "awaiting-confirmation");
@@ -63,14 +81,30 @@ test("MKT-07 plans, downloads, confirms, installs, removes, and reinstalls offli
     assert.equal(committing.job.phase, "commit");
     const complete = await waitForInstallJob(service, firstReady.job.jobId, "complete");
     assert.equal(complete.job.receiptHashes.length, 1);
-    assert.equal(commits.length, 1);
     const installed = await service.listInstalled();
     assert.equal(installed.revision, 1);
     assert.equal(installed.installations.length, 1);
     const receiptHash = installed.installations[0].receiptHashes[0];
     const receipt = await service.readReceipt(receiptHash);
     assert.equal(receipt.release.artifactSha256, registry.release.artifact.sha256);
-    assert.equal(receipt.mappings[0].localId, registry.release.itemId);
+    assert.deepEqual(receipt.mappings, [{
+        resourceKind: "plugin-package",
+        sourceId: "acme.example",
+        localId: "acme.example",
+        hashes: {
+            packageHash: resource.packageHash,
+            runtimeHash: resource.runtimeHash,
+            uiHash: resource.uiHash,
+        },
+    }]);
+    assert.deepEqual((await pluginStore.listInstalled()).packages, [{
+        pluginId: "acme.example",
+        version: "1.0.0",
+        packageHash: resource.packageHash,
+        runtimeHash: resource.runtimeHash,
+        uiHash: resource.uiHash,
+    }]);
+    await assert.rejects(fs.access(pluginStore.runtimeDir), (error) => error.code === "ENOENT");
 
     const artifactFile = path.join(marketplaceClientPaths(dataDir).artifacts, registry.release.artifact.sha256);
     await fs.access(artifactFile);
@@ -83,6 +117,8 @@ test("MKT-07 plans, downloads, confirms, installs, removes, and reinstalls offli
     });
     assert.equal(removed.installedRevision, 2);
     assert.equal((await service.listInstalled()).installations.length, 0);
+    assert.deepEqual((await pluginStore.listInstalled()).packages, []);
+    assert.equal((await pluginStore.getPackage(resource.packageHash)).packageHash, resource.packageHash);
     await service.readReceipt(receiptHash);
     await fs.access(artifactFile);
 
@@ -102,6 +138,7 @@ test("MKT-07 plans, downloads, confirms, installs, removes, and reinstalls offli
     const reinstalled = await service.listInstalled();
     assert.equal(reinstalled.revision, 3);
     assert.equal(reinstalled.installations[0].receiptHashes.length, 2);
+    assert.equal((await pluginStore.listInstalled()).packages.length, 1);
 });
 
 test("MKT-07 rolls a durable journal forward after restart and completes the owning job", async (t) => {

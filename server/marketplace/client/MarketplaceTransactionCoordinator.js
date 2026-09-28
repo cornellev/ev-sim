@@ -273,6 +273,26 @@ export class MarketplaceTransactionCoordinator {
         }
     }
 
+    async #removeAdapterOwnership(prepared) {
+        let index = 0;
+        for (const entry of prepared.journal.adapterRemovals ?? []) {
+            const adapter = this.adapterRegistry.requireRemovalAdapter(entry.adapterId);
+            const receipt = await this.receiptStore.read(entry.receiptHash);
+            await adapter.remove({
+                receipt,
+                removalPlan: entry.removalPlan,
+                transactionId: prepared.journal.transactionId,
+                context: Object.freeze({ operation: prepared.journal.operation }),
+            });
+            await this.fault?.("after-adapter-removal", {
+                journal: prepared.journal,
+                adapterId: adapter.id,
+                index,
+            });
+            index += 1;
+        }
+    }
+
     async #apply(prepared) {
         const current = await this.installedStore.snapshot();
         const currentHash = installedDocumentHash(current);
@@ -280,11 +300,19 @@ export class MarketplaceTransactionCoordinator {
             && currentHash !== prepared.journal.installedTarget.sha256) {
             throw recovery("Installed marketplace ledger matches neither transaction base nor target.");
         }
-        await this.#publishReceipts(prepared);
-        await this.#commitAdapters(prepared);
-        if (currentHash === prepared.journal.installedBase.sha256) {
-            await this.installedStore.commitTarget({ base: current, target: prepared.target });
-            await this.fault?.("after-installed", { journal: prepared.journal });
+        if (prepared.journal.operation === "remove-membership") {
+            if (currentHash === prepared.journal.installedBase.sha256) {
+                await this.installedStore.commitTarget({ base: current, target: prepared.target });
+                await this.fault?.("after-installed", { journal: prepared.journal });
+            }
+            await this.#removeAdapterOwnership(prepared);
+        } else {
+            await this.#publishReceipts(prepared);
+            await this.#commitAdapters(prepared);
+            if (currentHash === prepared.journal.installedBase.sha256) {
+                await this.installedStore.commitTarget({ base: current, target: prepared.target });
+                await this.fault?.("after-installed", { journal: prepared.journal });
+            }
         }
         return Object.freeze({
             transactionId: prepared.journal.transactionId,
@@ -415,6 +443,30 @@ export class MarketplaceTransactionCoordinator {
             throw marketplaceError(MARKETPLACE_ERROR_CODES.DOCUMENT_INVALID, "expectedRevision must be a non-negative integer.");
         }
         const base = await this.installedStore.snapshot();
+        const targetKey = installationKey(request.sourceId, {
+            itemId: request.itemId,
+            releaseVersion: request.releaseVersion,
+            artifactSha256: request.artifactSha256,
+        });
+        const installation = base.installations.find((entry) => installationKey(entry.sourceId, entry.release) === targetKey);
+        if (!installation) {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_NOT_FOUND, "Installed marketplace release was not found.");
+        }
+        const receiptHash = installation.receiptHashes.at(-1);
+        const receipt = await this.receiptStore.read(receiptHash);
+        const removalAdapter = this.adapterRegistry.findRemovalAdapter(receipt);
+        const adapterRemovals = [];
+        if (removalAdapter) {
+            const removalPlan = await removalAdapter.planRemoval({
+                receipt,
+                installation,
+                context: Object.freeze({ installed: base }),
+            });
+            if (!removalPlan || typeof removalPlan !== "object" || Array.isArray(removalPlan)) {
+                throw marketplaceError(MARKETPLACE_ERROR_CODES.DOCUMENT_INVALID, `Artifact adapter ${removalAdapter.id} returned an invalid removal plan.`);
+            }
+            adapterRemovals.push({ adapterId: removalAdapter.id, receiptHash, removalPlan });
+        }
         const target = this.installedStore.prepareRemoval(base, request);
         const transactionId = randomUUID();
         const paths = transactionPaths(this.paths, transactionId);
@@ -432,6 +484,7 @@ export class MarketplaceTransactionCoordinator {
             installedTarget: { revision: target.revision, sha256: installedDocumentHash(target) },
             receiptHashes: [],
             adapterCommits: [],
+            adapterRemovals,
         });
         await writeExclusiveDurable(paths.journal, installDocumentBytes(journal, assertInstallTransaction));
         await this.fault?.("after-journal", { journal });

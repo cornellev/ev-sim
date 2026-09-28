@@ -41,6 +41,15 @@ function releaseFor(inspection, overrides = {}) {
     return {
         contentKind: inspection.contentKind,
         artifact: { ...inspection.artifact },
+        ...(inspection.contentKind === "plugin" ? {
+            itemId: inspection.identity.pluginId,
+            releaseVersion: inspection.identity.version,
+            capabilities: [...inspection.identity.capabilities],
+            compatibility: {
+                cevSim: inspection.identity.engineRange,
+                contracts: [{ kind: "cev-sim.plugin-package", versions: [1] }],
+            },
+        } : {}),
         ...overrides,
     };
 }
@@ -118,17 +127,19 @@ test("MKT-02 vehicle, run-template, and run-package inspections expose exact ser
     assert.doesNotThrow(() => JSON.stringify(packageInspection));
 });
 
-test("MKT-02 adapter validation checks only contract, media, content kind, digest, and size", async (t) => {
+test("MKT-08 plugin validation binds release identity, capabilities, and compatibility to plugin.json", async (t) => {
     const root = await workspace(t);
     const resource = await pluginFixtureResource();
     const handle = await stage(root, "plugin.json", Buffer.from(JSON.stringify(resource)), "plugin");
     const inspection = await artifactAdapterRegistry.inspect("plugin", handle);
-    const valid = releaseFor(inspection, {
-        compatibility: { cevSim: "not evaluated" },
-        capabilities: ["not evaluated"],
-    });
+    const valid = releaseFor(inspection);
     assert.equal(artifactAdapterRegistry.validate("plugin", inspection, valid), inspection);
     for (const invalid of [
+        { ...valid, itemId: "acme.other" },
+        { ...valid, releaseVersion: "2.0.0" },
+        { ...valid, capabilities: ["world.read"] },
+        { ...valid, compatibility: { ...valid.compatibility, cevSim: ">=0.1.0" } },
+        { ...valid, compatibility: { ...valid.compatibility, contracts: [] } },
         { ...valid, contentKind: "vehicle" },
         { ...valid, artifact: { ...valid.artifact, mediaType: MARKETPLACE_ARTIFACTS.vehicle.mediaType } },
         { ...valid, artifact: { ...valid.artifact, sha256: "0".repeat(64) } },

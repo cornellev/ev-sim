@@ -10,6 +10,7 @@ import { marketplaceDocumentBytes } from "../server/marketplace/MarketplaceContr
 import { MarketplaceRegistryService } from "../server/marketplace/registry/RegistryService.js";
 import { MarketplaceRegistryStore } from "../server/marketplace/registry/RegistryStore.js";
 import { blobPath, registryPaths, resolveRegistryPath } from "../server/marketplace/registry/RegistryLayout.js";
+import { marketplacePluginDocuments } from "./helpers/marketplacePluginDocuments.js";
 import { pluginFixtureResource } from "./helpers/pluginFixtures.js";
 
 const documents = JSON.parse(await fs.readFile(new URL("./fixtures/marketplace/documents.v1.json", import.meta.url), "utf8"));
@@ -24,12 +25,13 @@ async function registry(t) {
     return { root, store, service: new MarketplaceRegistryService(store) };
 }
 
-function item(overrides = {}) {
-    return { ...structuredClone(documents.item), previews: [], ...overrides };
-}
-
-function release(artifact, overrides = {}) {
-    return { ...structuredClone(documents.release), artifact, ...overrides };
+function pluginDocuments(resource, artifact, { item: itemOverrides = {}, release: releaseOverrides = {} } = {}) {
+    return marketplacePluginDocuments({
+        item: { ...structuredClone(documents.item), previews: [], ...itemOverrides },
+        release: { ...structuredClone(documents.release), ...releaseOverrides },
+        artifact,
+        resource,
+    });
 }
 
 test("MKT-03 concurrent identical artifacts deduplicate to one verified CAS object without executing plugin modules", async (t) => {
@@ -51,41 +53,45 @@ test("MKT-03 concurrent identical artifacts deduplicate to one verified CAS obje
 
 test("MKT-03 item presentation can change, identity cannot, and release tuples are immutable", async (t) => {
     const { service } = await registry(t);
-    const artifact = (await service.admitArtifact(Buffer.from(JSON.stringify(await pluginFixtureResource())), { contentKind: "plugin" })).descriptor;
-    const first = await service.admitItem(marketplaceDocumentBytes(item()));
-    const retry = await service.admitItem(marketplaceDocumentBytes(item()));
+    const resource = await pluginFixtureResource();
+    const artifact = (await service.admitArtifact(Buffer.from(JSON.stringify(resource)), { contentKind: "plugin" })).descriptor;
+    const aligned = pluginDocuments(resource, artifact);
+    const first = await service.admitItem(marketplaceDocumentBytes(aligned.item));
+    const retry = await service.admitItem(marketplaceDocumentBytes(aligned.item));
     assert.equal(first.revision, 2);
     assert.equal(retry.revision, 2);
-    const updated = await service.admitItem(marketplaceDocumentBytes(item({ displayName: "Updated Control Pack" })));
+    const updated = await service.admitItem(marketplaceDocumentBytes({ ...aligned.item, displayName: "Updated Control Pack" }));
     assert.equal(updated.revision, 3);
     await assert.rejects(
-        service.admitItem(marketplaceDocumentBytes(item({ publisherId: "com.other.publisher" }))),
+        service.admitItem(marketplaceDocumentBytes({ ...aligned.item, publisherId: "com.other.publisher" })),
         (error) => error.code === "CONFLICT",
     );
 
-    const admitted = await service.admitRelease(marketplaceDocumentBytes(release(artifact)), { track: "stable" });
+    const admitted = await service.admitRelease(marketplaceDocumentBytes(aligned.release), { track: "stable" });
     assert.equal(admitted.revision, 4);
-    const releaseRetry = await service.admitRelease(marketplaceDocumentBytes(release(artifact)), { track: "stable" });
+    const releaseRetry = await service.admitRelease(marketplaceDocumentBytes(aligned.release), { track: "stable" });
     assert.equal(releaseRetry.revision, 4);
     await assert.rejects(
-        service.admitRelease(marketplaceDocumentBytes(release(artifact, { changelog: "Different immutable bytes." }))),
+        service.admitRelease(marketplaceDocumentBytes({ ...aligned.release, changelog: "Different immutable bytes." })),
         (error) => error.code === "CONFLICT" && /immutable/u.test(error.message),
     );
     const dependency = {
-        itemId: documents.release.itemId,
-        releaseVersion: documents.release.releaseVersion,
+        itemId: aligned.release.itemId,
+        releaseVersion: aligned.release.releaseVersion,
         artifactSha256: artifact.sha256,
     };
-    const dependent = await service.admitRelease(marketplaceDocumentBytes(release(artifact, {
-        releaseVersion: "2.0.0",
-        dependencies: [dependency],
-    })));
+    const resourceV2 = await pluginFixtureResource({ mutateDocument(document) { document.version = "2.0.0"; } });
+    const artifactV2 = (await service.admitArtifact(Buffer.from(JSON.stringify(resourceV2)), { contentKind: "plugin" })).descriptor;
+    const alignedV2 = pluginDocuments(resourceV2, artifactV2, { release: { dependencies: [dependency] } });
+    const dependent = await service.admitRelease(marketplaceDocumentBytes(alignedV2.release));
     assert.equal(dependent.revision, 5);
+    const resourceV201 = await pluginFixtureResource({ mutateDocument(document) { document.version = "2.0.1"; } });
+    const artifactV201 = (await service.admitArtifact(Buffer.from(JSON.stringify(resourceV201)), { contentKind: "plugin" })).descriptor;
+    const alignedV201 = pluginDocuments(resourceV201, artifactV201, {
+        release: { dependencies: [{ ...dependency, artifactSha256: "0".repeat(64) }] },
+    });
     await assert.rejects(
-        service.admitRelease(marketplaceDocumentBytes(release(artifact, {
-            releaseVersion: "2.0.1",
-            dependencies: [{ ...dependency, artifactSha256: "0".repeat(64) }],
-        }))),
+        service.admitRelease(marketplaceDocumentBytes(alignedV201.release)),
         (error) => error.code === "CONFLICT" && /dependency/u.test(error.message),
     );
     assert.equal((await service.verifyRegistry()).ok, true);
@@ -124,11 +130,13 @@ test("MKT-03 validates and preserves exact PNG, JPEG, and WebP preview bytes and
 
 test("MKT-03 verification reconstructs targets and dry-run GC never deletes unreferenced blobs", async (t) => {
     const { root, service } = await registry(t);
-    const artifact = (await service.admitArtifact(Buffer.from(JSON.stringify(await pluginFixtureResource())), { contentKind: "plugin" })).descriptor;
+    const resource = await pluginFixtureResource();
+    const artifact = (await service.admitArtifact(Buffer.from(JSON.stringify(resource)), { contentKind: "plugin" })).descriptor;
+    const aligned = pluginDocuments(resource, artifact);
     const orphanPreview = await sharp({ create: { width: 1, height: 1, channels: 3, background: "#000000" } }).png().toBuffer();
     const orphan = await service.admitPreview(orphanPreview, { mediaType: "image/png" });
-    await service.admitItem(marketplaceDocumentBytes(item()));
-    await service.admitRelease(marketplaceDocumentBytes(release(artifact)));
+    await service.admitItem(marketplaceDocumentBytes(aligned.item));
+    await service.admitRelease(marketplaceDocumentBytes(aligned.release));
     assert.equal((await service.verifyRegistry()).ok, true);
     const plan = await service.planGarbageCollection({ graceMs: 0 });
     assert.deepEqual(plan.unreferencedBlobs, [orphan.descriptor.sha256]);

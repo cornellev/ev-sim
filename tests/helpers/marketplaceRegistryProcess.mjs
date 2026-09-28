@@ -9,6 +9,11 @@ process.stdout.write(`${JSON.stringify({
     item: registry.item,
     release: registry.release,
     preview: registry.preview,
+    plugin: {
+        packageHash: registry.resource.packageHash,
+        runtimeHash: registry.resource.runtimeHash,
+        uiHash: registry.resource.uiHash,
+    },
 })}\n`);
 
 let closing = false;

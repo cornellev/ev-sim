@@ -562,12 +562,12 @@ verification before `StorageService` writes plugin CAS or authoring state.
 existing plugin-package, vehicle-bundle, run-bundle, and run-package
 authorities. Inspections are serializable identity summaries. Validation only
 binds the adapter contract and marketplace media/content kind to the signed
-artifact digest and byte size. It does not authenticate a release, evaluate
-rights or compatibility, import code, install content, or grant execution.
-MKT-07 defines optional deterministic `plan`, idempotent `commit`, and
-`createReceipt` lifecycle operations, but the four production adapters remain
-read-only until MKT-08/09. Only injected tests provide a complete lifecycle in
-MKT-07.
+artifact digest and byte size; plugin validation additionally binds the signed
+ID, version, capabilities, engine range, and package contract to `plugin.json`.
+It does not authenticate a release, import code, or grant execution. MKT-07
+defines optional deterministic `plan`, idempotent `commit`, and `createReceipt`
+lifecycle operations. MKT-08 activates only the simulator-side plugin adapter;
+the registry adapter and the vehicle/run adapters remain read-only.
 
 MKT-03 adds the offline filesystem registry under
 `server/marketplace/registry/`. `MarketplaceRegistryStore` owns initialization,
@@ -646,6 +646,18 @@ transactions, installed state, receipts, artifact records, quarantine, and
 source metadata remain outside all world, resolved-run, simulation, episode,
 trajectory, plugin-package, vehicle-bundle, run-bundle, and run-package hash
 authorities.
+
+MKT-08 injects the existing `StorageService.plugins` into
+`MarketplaceService`; it never constructs a competing plugin write queue.
+`createPluginLifecycleAdapter()` verifies and publishes immutable package CAS,
+then mutates only private ownership-aware Plugin Library membership. It never
+calls `PluginLoader`, `NodePluginModuleSource.importRuntime()`, or browser
+module import paths. Plugin execution still requires an independently authored
+exact run selection and its existing capability grants. Removal publishes the
+Marketplace installed-ledger target before removing the receipt-derived owner;
+startup replays both steps idempotently. Manual and other Marketplace owners
+survive, and last-owner removal changes visibility without deleting CAS or
+runtime bytes.
 
 ## External Integration
 

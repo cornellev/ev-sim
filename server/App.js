@@ -72,7 +72,17 @@ app.prepare().then(async () => {
     });
     await headlessExperimentService.initialize();
     if (MarketplaceService) {
+        const { storageEvents } = await import('./mcp/events.js');
         marketplaceService = await MarketplaceService.open(storageService.dataDir, {
+            pluginStore: storageService.plugins,
+            publishPluginLibraryChange: async ({ pluginId, action, packageHash, revision }) => {
+                storageEvents.publish({
+                    domain: 'plugin',
+                    id: pluginId,
+                    action,
+                    data: { packageHash, revision },
+                });
+            },
             hostProfileProvider: async () => createMarketplaceHostProfile({
                 supervisorCapabilities: await headlessExperimentService.supervisor.getCapabilities({
                     clientProtocol: HEADLESS_PROTOCOL,

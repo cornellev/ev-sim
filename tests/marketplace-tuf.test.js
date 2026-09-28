@@ -11,6 +11,7 @@ import { MarketplaceRegistryStore } from "../server/marketplace/registry/Registr
 import { generatePrivateKey, loadPrivateKey, tufKeyId } from "../server/marketplace/registry/TufKeys.js";
 import { TUF_DELEGATED_ROLES } from "../server/marketplace/registry/TufMetadata.js";
 import { blobPath, registryPaths, resolveRegistryPath } from "../server/marketplace/registry/RegistryLayout.js";
+import { marketplacePluginDocuments } from "./helpers/marketplacePluginDocuments.js";
 import { pluginFixtureResource } from "./helpers/pluginFixtures.js";
 
 const documents = JSON.parse(await fs.readFile(new URL("./fixtures/marketplace/documents.v1.json", import.meta.url), "utf8"));
@@ -92,26 +93,28 @@ test("MKT-04 publishes raw canonical item and release targets and refreshes only
     const store = await MarketplaceRegistryStore.open(root);
     t.after(() => store.close());
     const service = new MarketplaceRegistryService(store);
+    const resource = await pluginFixtureResource();
     const artifact = (await service.admitArtifact(
-        Buffer.from(JSON.stringify(await pluginFixtureResource())),
+        Buffer.from(JSON.stringify(resource)),
         { contentKind: "plugin" },
     )).descriptor;
-    await service.admitItem(marketplaceDocumentBytes(item()));
-    await service.admitRelease(marketplaceDocumentBytes(release(artifact)));
+    const aligned = marketplacePluginDocuments({ item: item(), release: documents.release, artifact, resource });
+    await service.admitItem(marketplaceDocumentBytes(aligned.item));
+    await service.admitRelease(marketplaceDocumentBytes(aligned.release));
 
     const before = await service.verifyRegistry();
     assert.equal(before.tuf.rootVersion, 1);
     assert.deepEqual(before.tuf.roleVersions, { targets: 1, catalog: 3, items: 2, releases: 2, advisories: 1 });
     const releaseTarget = await store.tufRepository.readPublishedState()
-        .then((state) => state.roles.releases.metadata.signed.targets[`releases/${documents.release.itemId}/${documents.release.releaseVersion}.json`]);
+        .then((state) => state.roles.releases.metadata.signed.targets[`releases/${aligned.release.itemId}/${aligned.release.releaseVersion}.json`]);
     assert.ok(releaseTarget);
     const targetFile = path.join(
         registryPaths(root).tufTargets,
         "releases",
-        documents.release.itemId,
-        `${releaseTarget.hashes.sha256}.${documents.release.releaseVersion}.json`,
+        aligned.release.itemId,
+        `${releaseTarget.hashes.sha256}.${aligned.release.releaseVersion}.json`,
     );
-    assert.deepEqual(await fs.readFile(targetFile), Buffer.from(marketplaceDocumentBytes(release(artifact))));
+    assert.deepEqual(await fs.readFile(targetFile), Buffer.from(marketplaceDocumentBytes(aligned.release)));
 
     const refreshed = await store.mutate(async () => store.tufRepository.refresh(await store.readCatalog()));
     assert.equal(refreshed.timestampVersion, before.tuf.timestampVersion + 1);

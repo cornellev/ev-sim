@@ -16,7 +16,7 @@ hosted private-LAN registry. It is not headless PR 13 and does not extend the
 | MKT-05: simulator trust client and cache | Complete | Local acceptance passed; hosted CI pending | Unmerged |
 | MKT-06: read-only Marketplace workspace | Implemented; acceptance pending | MKT-focused gates pass; repository-wide UI/a11y has unrelated failures | Unmerged |
 | MKT-07: plans, jobs, transactions, receipts | Complete; acceptance pending | Core local gates pass; repository-wide UI/a11y has unrelated failures | Unmerged |
-| MKT-08: plugin lifecycle | Not started | Not run | Unmerged |
+| MKT-08: plugin lifecycle | Complete; acceptance pending | Core local and serial Marketplace gates pass; repository-wide UI/a11y has unrelated failures | Unmerged |
 | MKT-09: vehicle and run lifecycle | Not started | Not run | Unmerged |
 | MKT-10: environment/asset export contracts | Not started | Not run | Unmerged |
 | MKT-11: environment/asset import lifecycle | Not started | Not run | Unmerged |
@@ -43,8 +43,9 @@ and evidence; implementation status alone does not satisfy a milestone gate.
   grants capabilities, changes a run, or activates content.
 - Existing plugin, vehicle, run-bundle, and run-package formats remain
   authoritative. Marketplace is catalog, delivery, and provenance over them.
-- Managed runs continue rejecting plugins until their versioned execution
-  contract explicitly admits them.
+- Correctly resolved managed runs continue executing admitted plugin selections
+  under the existing versioned plugin contract. Marketplace installation alone
+  never selects a plugin, grants capabilities, changes a run, or activates it.
 - Marketplace metadata, sources, installed membership, and receipts are
   nonsemantic. They never enter `worldHash`, package hashes, `resolvedHash`,
   `simulationSemanticHash`, `episodeHash`, `trajectoryHash`, or run-package
@@ -397,6 +398,42 @@ network access, creates marketplace storage, or changes browser workspaces.
   job, API/SSE, transaction-boundary, adapter, offline-reuse, removal, and
   restart-recovery tests pass locally.
 
+## MKT-08 work packages
+
+- [x] WP-00: begin from clean MKT-07 commit `e5ea070`; record the frozen
+  installed schema, receipt schema, compatibility fixture, and headless
+  characterization hashes without changing those bytes.
+- [x] WP-01: bind signed plugin releases to the inspected `plugin.json` ID,
+  version, exact capabilities, engine-range subset, and plugin-package v1
+  contract at both registry admission and finalized client planning.
+- [x] WP-02: migrate the private plugin library to version 2 with atomic,
+  canonical manual and Marketplace ownership while preserving the public
+  `listInstalled()` shape and immutable CAS/runtime content.
+- [x] WP-03: add the production plugin lifecycle adapter with deterministic
+  owner-aware planning, exact receipt mappings, verified commit, no source
+  evaluation, no runtime grants, and visible-membership-only storage events.
+- [x] WP-04: compose the production plugin adapter with the three read-only
+  MKT-09 adapters, share `StorageService.plugins`, and migrate ownership before
+  Marketplace transaction recovery.
+- [x] WP-05: journal immutable adapter-removal plans, publish installed-ledger
+  removal first, remove only the exact Marketplace owner, and replay both new
+  durability boundaries idempotently.
+- [x] WP-06: replace raw plugin-plan and receipt JSON with named Plugin Library
+  changes, hashes, capability requirements, explicit zero-grant messaging,
+  exact completion identity, and ownership/CAS retention removal copy.
+- [x] WP-07: align generated integration releases to the verified fixture
+  manifest without editing canonical Marketplace fixtures; cover static
+  disagreement and owner-aware store behavior.
+- [x] WP-08: exercise the real adapter for precommit immutability, throwing
+  source, offline reuse, manual reuse, stale library revisions, owner removal,
+  source/cache-independent removal, and crash recovery.
+- [x] WP-09: update API and browser expectations so plugin releases are
+  installable while all other content adapters remain lifecycle-disabled, and
+  retain existing plugin execution paths and grant semantics.
+- [x] WP-10: update Marketplace, plugin, and architecture documentation and
+  record factual verification evidence without changing ED, VIS, headless, or
+  run-manifest contracts.
+
 ## Milestones and gates
 
 ### MKT-01 — Program contract and runtime baseline
@@ -472,7 +509,8 @@ capabilities/compatibility, show additions, retain runtime grants, support
 coexisting versions, and remove membership without eager CAS deletion.
 
 Gate: install never executes source or grants capabilities; existing
-browser/headless loading remains unchanged; managed runs still reject plugins.
+browser, direct-headless, and correctly resolved managed plugin execution
+remain unchanged.
 
 ### MKT-09 — Vehicle, run-template, and exact-run lifecycle
 
@@ -878,7 +916,94 @@ browser gates and hosted evidence are green. No PLG, ED, VIS, headless, or
 run-manifest contract or acceptance evidence changed, so no other roadmap was
 updated.
 
+## MKT-08 evidence ledger
+
+Implementation began on 2026-09-28 from clean MKT-07 commit `e5ea070`. The
+pre-change frozen hashes were installed schema
+`274e7b72f65a1df6b220eb1508fac635935765834254455cc1eb33cc2e765e10`,
+receipt schema
+`af1a8db03f31b1ea21d858235f872e0480c39c8a7c4bb39fb348bdfcf3056557`,
+compatibility fixture
+`6904056555062d7267bc0cf749081558e0e1ca5724401e7f0c9bfaeb813c4ae7`,
+and headless characterization
+`60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`.
+All four retain those hashes and have no diff after implementation. Canonical
+Marketplace fixture documents are also unchanged.
+
+Local evidence on 2026-09-28 on macOS arm64:
+
+- `npm run test:marketplace` passed 83/83. Coverage includes signed
+  release/manifest disagreement, strict owner-aware library migration and
+  mutation, real adapter no-execution commit, offline/manual/exact-package
+  reuse, coexistence, stale revisions, owner-specific removal, and recovery at
+  every new journal boundary.
+- `npx playwright test tests/ui/marketplace.spec.js
+  tests/ui/plugins-workspace.spec.js --workers=1` passed 5/5. It covers the
+  complete plugin lifecycle, readable named review fields, explicit zero-grant
+  messaging, exact Installed receipt mapping, Plugin Library visibility,
+  independent manual ownership, last-owner hiding, retained CAS bytes,
+  keyboard/Axe behavior, and 1280x720 containment.
+- `npm run lint` passed with zero errors and the pre-existing `MapSurface.js`
+  `assetEpoch` hook warning.
+- `npm test` ran 1,825 tests: 1,819 passed, six declared skips, and zero
+  failures. This includes the existing plugin admission, authoring, loader,
+  managed-run, direct-headless, sensor, browser module-source, and plugin UI
+  regressions.
+- `npm run build`, `npm run fixtures:headless`, and source
+  `npm run release:check` passed. Fixture regeneration produced no frozen
+  contract or characterization diff.
+- `npm run dist:headless -- --output <temporary>` passed. With a
+  checksum-verified Node 22.22.2 runtime, `npm run dist:verify -- --dist
+  <temporary>` passed. Final staged artifact hashes were npm
+  `00335370da25869b354f836a2a562b12dbf507f4a9a39f7a0cde47bf5ea7c7a3`,
+  wheel `2a22a59167ff1b92fdc74348bf5174349766a7957b7f0eeb5a62a2d7ff963d92`,
+  and source distribution
+  `97a24256fecafee883c44742d0f9ea44f6a3a6200dfbc63749415ebed2f2553d`.
+- `git diff --check` passed.
+
+Repository-wide browser acceptance is not marked passed. `npm run test:a11y`
+completed with five passes and seven failures. The failures were concurrent
+workspace-startup/action timeouts in Environment Editor, Asset Studio,
+Environment Assets, Environment Creation, Marketplace, and the cross-workspace
+sweep; the serial Marketplace Axe case passed in the required focused run.
+The five-worker `npm run test:ui` attempt was stopped after six out-of-scope
+failures in Control Commands, Candidate Outputs, Environment Editor, Asset
+Studio, road geometry/lanes, and Environment Creation. The directly affected
+Marketplace and Plugin Library suites passed serially.
+
+Hosted CI has no run or link because the implementation is not committed or
+pushed. MKT-08 remains unmerged and acceptance-pending until the repository-wide
+browser gates and hosted evidence are green. No ED, VIS, headless, or
+run-manifest contract or acceptance evidence changed; `plugin-plan.md` is the
+only additional roadmap updated because PluginStore persistence and removal
+semantics changed.
+
 ## Decision log
+
+### 2026-09-28 — Keep plugin installation, ownership, and execution separate
+
+MKT-08 uses the existing `PluginStore` CAS and one shared storage-service
+instance, but library visibility is now the union of independent manual and
+Marketplace owners for an exact package hash. Version-1 entries migrate to a
+manual owner at the same revision. Every real owner change increments the
+private library revision; the public library response remains unchanged. The
+last owner removes visibility only and never deletes package CAS or runtime
+materializations.
+
+The plugin lifecycle adapter reopens and verifies artifact bytes at commit and
+adds only a deterministic source/item/release/artifact owner. Installation
+does not import runtime or UI modules and does not add grants. The receipt maps
+the exact package, runtime, and optional UI hashes. Removal first publishes the
+installed-ledger target and then removes only the receipt-derived Marketplace
+owner, so restart can replay before or after owner removal without requiring a
+source or cache. Manual and other Marketplace owners survive.
+
+Registry admission uses the read-only plugin adapter and rejects signed release
+metadata that disagrees with `plugin.json` as `DOCUMENT_INVALID`. Vehicle,
+run-template, and run-package lifecycle adapters remain MKT-09. Marketplace
+state and ownership remain outside every package, run, simulation, episode,
+and trajectory identity. Existing authorized browser, direct headless, and
+managed plugin execution is unchanged.
 
 ### 2026-09-28 — Separate verified preparation from explicit local commit
 

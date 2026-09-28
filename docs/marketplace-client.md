@@ -95,9 +95,11 @@ from expired metadata. There is no unsigned age threshold.
 
 MKT-06 adds a read model over the currently visible verified snapshots. MKT-07
 changes `GET /api/marketplace/status` to `mode: coordinator`; `canInstall` is
-true only when the configured adapter registry has a complete lifecycle. The
-four production adapters remain unavailable in MKT-07, so normal builds still
-return `canInstall: false`. `GET /api/marketplace/discover` accepts only `q`,
+true only when the configured adapter registry has a complete lifecycle.
+MKT-08 activates the production plugin lifecycle, so normal enabled builds
+return `canInstall: true` and plugin detail returns
+`eligibility.lifecycleAvailable: true`. Vehicle, run-template, and run-package
+adapters remain read-only until MKT-09. `GET /api/marketplace/discover` accepts only `q`,
 `track`, `contentKind`, `sourceId`, `publisherId`, `license`, `offset`, and
 `limit`. Stable is the default exact signed track; beta must be selected
 explicitly. Search covers display name, summary, item ID, declared publisher
@@ -153,7 +155,10 @@ cancellable download/inspection progress, final rights/conflicts/mappings
 review, and an explicit exact-plan commit. Commit and recovery cannot be
 dismissed or cancelled. Installed shows exact release/source/registry/digest
 identity, dependency locks, mappings, receipt history, status, and
-membership-only removal.
+membership-only removal. Plugin review names its package, runtime, and UI
+hashes; CAS/library/owner actions; coexisting packages; required capabilities;
+and the fact that no runtime grants are added. Plugin receipts render those
+exact mapping fields instead of raw JSON.
 
 Source mutations use the current source revision. A conflict reloads current
 state and requires review instead of replaying the mutation. Add Source
@@ -194,6 +199,39 @@ publication and dependency-first idempotent adapter commits precede atomic
 installed-ledger replacement. Job completion precedes journal cleanup. Startup
 replays base or target states and fails with `RECOVERY_REQUIRED` for every
 other ledger state.
+
+## Plugin lifecycle and ownership
+
+The MKT-08 client registry uses `createPluginLifecycleAdapter()` for `plugin`
+and retains read-only adapters for vehicle, run-template, and run-package.
+`server/App.js` injects the same `StorageService.plugins` instance used by the
+HTTP/MCP plugin control plane; ownership migration finishes before Marketplace
+transaction recovery starts. Registry admission continues using the separate
+read-only registry adapter, including the same static release/manifest checks.
+
+Planning snapshots the private plugin-library revision and records exact
+plugin/package/runtime/UI identity, one deterministic Marketplace owner,
+coexisting package hashes, CAS/library/owner add-or-reuse decisions, required
+manifest capabilities, and an empty `grantsAdded` array. Commit reopens,
+rehashes, reparses, and compares the artifact with that frozen plan before
+publishing verified plugin CAS and ownership. It never calls a plugin loader,
+runtime module source, or browser UI import path.
+
+`plugins/library.json` version 2 tracks a manual flag and sorted Marketplace
+owners per exact package. Version-1 entries migrate atomically to manual
+ownership without changing the revision. Every real ownership mutation bumps
+the revision even when public membership is unchanged. Removing a Marketplace
+installation removes only its exact owner; manual and independent Marketplace
+owners remain. The last owner hides the package from the public library but
+does not remove plugin CAS, runtime materializations, Marketplace artifacts,
+receipts, or dependencies.
+
+Removal journals carry an optional immutable `adapterRemovals` record. The
+installed ledger target is published first and the plugin owner is removed
+second. Recovery therefore handles both a crash before owner removal and a
+crash after idempotent owner removal. The receipt contains all owner identity
+needed for removal, so removal continues to work after its source and verified
+metadata cache have been deleted.
 
 ## Operations
 

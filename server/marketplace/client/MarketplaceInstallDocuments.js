@@ -316,7 +316,7 @@ export function assertInstallTransaction(value) {
     exactKeys(value, [
         "kind", "version", "transactionId", "jobId", "operation", "finalPlanHash", "installedBase",
         "installedTarget", "receiptHashes", "adapterCommits",
-    ], [], "$transaction");
+    ], ["adapterRemovals"], "$transaction");
     assertKind(value, MARKETPLACE_INSTALL_KINDS.transaction, "$transaction");
     assertCanonicalUuid(value.transactionId, "$transaction.transactionId");
     if (value.jobId !== null) assertCanonicalUuid(value.jobId, "$transaction.jobId");
@@ -336,6 +336,22 @@ export function assertInstallTransaction(value) {
         assertReleaseVersion(entry.releaseVersion, `$transaction.adapterCommits.${index}.releaseVersion`);
         assertSha256(entry.artifactSha256, `$transaction.adapterCommits.${index}.artifactSha256`);
     });
+    if (value.adapterRemovals !== undefined) {
+        if (!Array.isArray(value.adapterRemovals)) invalid("$transaction.adapterRemovals", "expected array");
+        value.adapterRemovals.forEach((entry, index) => {
+            const path = `$transaction.adapterRemovals.${index}`;
+            exactKeys(entry, ["adapterId", "receiptHash", "removalPlan"], [], path);
+            text(entry.adapterId, `${path}.adapterId`, 255);
+            assertSha256(entry.receiptHash, `${path}.receiptHash`);
+            object(entry.removalPlan, `${path}.removalPlan`);
+        });
+    }
+    if (value.operation === "install" && (value.adapterRemovals?.length ?? 0) > 0) {
+        invalid("$transaction.adapterRemovals", "install transactions cannot remove adapter ownership");
+    }
+    if (value.operation === "remove-membership" && value.adapterCommits.length > 0) {
+        invalid("$transaction.adapterCommits", "removal transactions cannot contain install commits");
+    }
     return cloneFrozen(value);
 }
 

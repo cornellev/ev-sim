@@ -17,6 +17,7 @@ import {
 import { MarketplaceRegistryService } from "../server/marketplace/registry/RegistryService.js";
 import { MarketplaceRegistryStore } from "../server/marketplace/registry/RegistryStore.js";
 import { registryPaths } from "../server/marketplace/registry/RegistryLayout.js";
+import { marketplacePluginDocuments } from "./helpers/marketplacePluginDocuments.js";
 import { pluginFixtureResource } from "./helpers/pluginFixtures.js";
 
 const documents = JSON.parse(await fs.readFile(new URL("./fixtures/marketplace/documents.v1.json", import.meta.url), "utf8"));
@@ -46,18 +47,25 @@ async function populatedRegistry(t) {
     await MarketplaceRegistryStore.initialize(root, { offlineRootKeyPath: oldRootKey });
     const store = await MarketplaceRegistryStore.open(root);
     const service = new MarketplaceRegistryService(store);
-    const artifactBytes = Buffer.from(JSON.stringify(await pluginFixtureResource()));
+    const resource = await pluginFixtureResource();
+    const artifactBytes = Buffer.from(JSON.stringify(resource));
     const artifact = (await service.admitArtifact(artifactBytes, { contentKind: "plugin" })).descriptor;
-    const initialItem = { ...structuredClone(documents.item), previews: [] };
+    const aligned = marketplacePluginDocuments({
+        item: { ...structuredClone(documents.item), previews: [] },
+        release: documents.release,
+        artifact,
+        resource,
+    });
+    const initialItem = structuredClone(aligned.item);
     await service.admitItem(marketplaceDocumentBytes(initialItem));
     await service.admitItem(marketplaceDocumentBytes({ ...initialItem, displayName: "Published Control Pack" }));
-    await service.admitRelease(marketplaceDocumentBytes({ ...structuredClone(documents.release), artifact }));
+    await service.admitRelease(marketplaceDocumentBytes(aligned.release));
     await store.mutate(() => store.tufRepository.rotateRoot({
         currentRootKeyPath: oldRootKey,
         newRootKeyPath: newRootKey,
     }));
     await store.close();
-    return { parent, root, artifact, artifactBytes };
+    return { parent, root, artifact, artifactBytes, item: aligned.item, release: aligned.release };
 }
 
 test("MKT-04 raw route, host, and range parsers reject ambiguous inputs before I/O", () => {
@@ -77,7 +85,7 @@ test("MKT-04 raw route, host, and range parsers reject ambiguous inputs before I
 });
 
 test("MKT-04 loopback API serves one atomic TUF view with exact HTTP and range semantics", async (t) => {
-    const { root, artifact, artifactBytes } = await populatedRegistry(t);
+    const { root, artifact, artifactBytes, item, release } = await populatedRegistry(t);
     const server = await MarketplaceRegistryHttpServer.open(root);
     t.after(() => server.close());
     const address = await server.listen({ port: 0 });
@@ -104,10 +112,10 @@ test("MKT-04 loopback API serves one atomic TUF view with exact HTTP and range s
     const catalogEtag = catalogResponse.headers.get("etag");
     assert.equal((await fetch(`${origin}/v1/catalog`, { headers: { "If-None-Match": catalogEtag } })).status, 304);
 
-    const itemResponse = await fetch(`${origin}/v1/items/${documents.item.itemId}`);
+    const itemResponse = await fetch(`${origin}/v1/items/${item.itemId}`);
     assert.equal(itemResponse.status, 200);
     assert.equal((await itemResponse.json()).displayName, "Published Control Pack");
-    const releaseResponse = await fetch(`${origin}/v1/items/${documents.release.itemId}/releases/${documents.release.releaseVersion}`);
+    const releaseResponse = await fetch(`${origin}/v1/items/${release.itemId}/releases/${release.releaseVersion}`);
     assert.equal(releaseResponse.status, 200);
     assert.deepEqual((await releaseResponse.json()).artifact, artifact);
 

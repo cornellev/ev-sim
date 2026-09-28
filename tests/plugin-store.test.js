@@ -13,6 +13,16 @@ async function temporaryStore(t) {
     return { root, store: new PluginStore(root) };
 }
 
+function marketplaceOwner(sourceId = "123e4567-e89b-12d3-a456-426614174001", overrides = {}) {
+    return {
+        sourceId,
+        itemId: "acme.example",
+        releaseVersion: "1.0.0",
+        artifactSha256: "a".repeat(64),
+        ...overrides,
+    };
+}
+
 test("PluginStore publishes immutable CAS bytes and revisions library membership", async (t) => {
     const { store } = await temporaryStore(t);
     const resource = await pluginFixtureResource();
@@ -121,4 +131,89 @@ test("portable file install rejects malformed input, oversize, truncated JSON, a
     assert.equal((await store.getPackage(interrupted.packageHash)).packageHash, interrupted.packageHash);
     assert.equal((await store.listInstalled()).revision, 0);
     store._writeLibrary = originalWrite;
+});
+
+test("PluginStore atomically migrates version-1 entries to manual ownership without changing revision", async (t) => {
+    const { store } = await temporaryStore(t);
+    const resource = await pluginFixtureResource();
+    await store.putPackage(resource);
+    await fs.mkdir(store.root, { recursive: true });
+    await fs.writeFile(store.libraryPath, `${JSON.stringify({
+        kind: "cev-sim.plugin-library",
+        version: 1,
+        revision: 7,
+        packages: [{
+            pluginId: "acme.example",
+            version: "1.0.0",
+            packageHash: resource.packageHash,
+            runtimeHash: resource.runtimeHash,
+            uiHash: resource.uiHash,
+        }],
+    }, null, 2)}\n`);
+
+    assert.deepEqual(await store.ensureOwnershipMigration(), { revision: 7, migrated: true });
+    assert.equal((await store.listInstalled()).revision, 7);
+    const stored = JSON.parse(await fs.readFile(store.libraryPath, "utf8"));
+    assert.equal(stored.version, 2);
+    assert.deepEqual(stored.packages[0].ownership, { manual: true, marketplace: [] });
+});
+
+test("PluginStore preserves manual and independent marketplace ownership until the last owner leaves", async (t) => {
+    const { store } = await temporaryStore(t);
+    const resource = await pluginFixtureResource();
+    const first = marketplaceOwner();
+    const second = marketplaceOwner("123e4567-e89b-12d3-a456-426614174002", { artifactSha256: "b".repeat(64) });
+    await store.putPackage(resource);
+    await store.addManualOwner(resource.packageHash);
+    await store.addMarketplaceOwner(resource, first);
+    await store.addMarketplaceOwner(resource, second);
+    assert.equal((await store.snapshotWithOwners()).revision, 3);
+
+    assert.deepEqual(await store.removeManualOwner("acme.example", resource.packageHash), {
+        ownerChanged: true,
+        membershipChanged: false,
+        revision: 4,
+    });
+    assert.equal((await store.listInstalled()).packages.length, 1);
+    assert.equal((await store.removeMarketplaceOwner("acme.example", resource.packageHash, first)).membershipChanged, false);
+    assert.equal((await store.listInstalled()).packages.length, 1);
+
+    await fs.mkdir(path.join(store.runtimeDir, resource.runtimeHash), { recursive: true });
+    await fs.writeFile(path.join(store.runtimeDir, resource.runtimeHash, "retained"), "retained");
+    assert.equal((await store.removeMarketplaceOwner("acme.example", resource.packageHash, second)).membershipChanged, true);
+    assert.deepEqual((await store.listInstalled()).packages, []);
+    assert.equal((await store.getPackage(resource.packageHash)).packageHash, resource.packageHash);
+    assert.equal(await fs.readFile(path.join(store.runtimeDir, resource.runtimeHash, "retained"), "utf8"), "retained");
+});
+
+test("PluginStore manual removal cannot hide a marketplace-owned package", async (t) => {
+    const { store } = await temporaryStore(t);
+    const resource = await pluginFixtureResource();
+    await store.addMarketplaceOwner(resource, marketplaceOwner());
+    assert.equal(await store.removeFromLibrary("acme.example", resource.packageHash), false);
+    assert.equal((await store.listInstalled()).packages.length, 1);
+});
+
+test("PluginStore keeps coexisting plugin versions and serializes idempotent owner mutations", async (t) => {
+    const { store } = await temporaryStore(t);
+    const first = await pluginFixtureResource();
+    const second = await pluginFixtureResource({ mutateDocument(document) { document.version = "2.0.0"; } });
+    const firstOwner = marketplaceOwner();
+    const secondOwner = marketplaceOwner("123e4567-e89b-12d3-a456-426614174002", {
+        releaseVersion: "2.0.0",
+        artifactSha256: "b".repeat(64),
+    });
+    const additions = await Promise.all(Array.from({ length: 8 }, () => store.addMarketplaceOwner(first, firstOwner)));
+    assert.equal(additions.filter((entry) => entry.ownerChanged).length, 1);
+    await store.addMarketplaceOwner(second, secondOwner);
+    const snapshot = await store.snapshotWithOwners();
+    assert.equal(snapshot.revision, 2);
+    assert.deepEqual(snapshot.packages.map((entry) => entry.version), ["1.0.0", "2.0.0"]);
+
+    const removals = await Promise.all(Array.from({ length: 8 }, () => (
+        store.removeMarketplaceOwner("acme.example", first.packageHash, firstOwner)
+    )));
+    assert.equal(removals.filter((entry) => entry.ownerChanged).length, 1);
+    assert.equal((await store.snapshotWithOwners()).revision, 3);
+    assert.deepEqual((await store.listInstalled()).packages.map((entry) => entry.version), ["2.0.0"]);
 });

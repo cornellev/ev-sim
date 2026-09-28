@@ -26,10 +26,10 @@ test("MKT-07 host profiles normalize supervisor capabilities and hash determinis
         platform: "linux",
         architecture: "x64",
         supervisorCapabilities: {
-            identityProfiles: ["world-v1", "world-v1"],
-            transports: ["unix"],
+            identityProfiles: ["world-v1", "world-v1", ""],
+            transports: ["unix", ""],
             backends: [
-                { kind: 7, id: "state", version: "2", available: true, features: ["packed"] },
+                { kind: 7, id: "state", version: "2", available: true, features: ["packed", ""] },
                 { kind: "gpu", id: "disabled", version: 1, available: false, features: ["ignored"] },
             ],
         },
@@ -71,4 +71,3 @@ test("MKT-07 compatibility evaluates every dimension with deterministic issue or
         ["RUNTIME"],
     );
 });
-

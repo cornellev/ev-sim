@@ -13,6 +13,7 @@ import { createPopulatedClientRegistry } from "./helpers/marketplaceClientRegist
 import {
     configureMarketplaceSource,
     createTestLifecycleRegistry,
+    waitForInstallJob,
 } from "./helpers/marketplaceInstallLifecycle.js";
 
 async function listen(app) {
@@ -149,7 +150,7 @@ test("MKT-06 read and source APIs enforce verification, confinement, revisions, 
     assert.equal(refreshed.status, 200, JSON.stringify(refreshed.body));
 
     const status = await request(origin, "/api/marketplace/status");
-    assert.deepEqual(status.body, { mode: "coordinator", canInstall: false });
+    assert.deepEqual(status.body, { mode: "coordinator", canInstall: true });
     const discover = await request(origin, "/api/marketplace/discover?q=controller&track=stable&limit=1");
     assert.equal(discover.status, 200, JSON.stringify(discover.body));
     assert.equal(discover.cacheControl, "no-store");
@@ -173,12 +174,12 @@ test("MKT-06 read and source APIs enforce verification, confinement, revisions, 
     assert.equal(detail.body.verification.trustedRootFingerprint, preview.body.trustedRootFingerprint);
     assert.equal(detail.body.verification.role, "releases");
     assert.equal(detail.body.verification.roleKeyIds.length, 1);
-    assert.equal(detail.body.canInstall, false);
+    assert.equal(detail.body.canInstall, true);
     assert.deepEqual(detail.body.eligibility, {
-        lifecycleAvailable: false,
+        lifecycleAvailable: true,
         compatible: true,
-        canInstall: false,
-        issues: [{ path: "contentKind", code: "LIFECYCLE_UNAVAILABLE", required: "plugin", actual: null }],
+        canInstall: true,
+        issues: [],
         warnings: [],
     });
     const installPlan = await request(origin, "/api/marketplace/install-plans", {
@@ -192,12 +193,13 @@ test("MKT-06 read and source APIs enforce verification, confinement, revisions, 
     assert.equal(installPlan.status, 201, JSON.stringify(installPlan.body));
     assert.equal(installPlan.body.preflight.source.snapshotId, refreshed.body.snapshotId);
     assert.equal(installPlan.body.preflight.totalDownloadBytes, registry.release.artifact.sizeBytes);
-    const unavailableJob = await request(origin, "/api/marketplace/install-jobs", {
+    const installJob = await request(origin, "/api/marketplace/install-jobs", {
         method: "POST",
         body: { planHash: installPlan.body.planHash },
     });
-    assert.equal(unavailableJob.status, 412);
-    assert.equal(unavailableJob.body.error.code, "INCOMPATIBLE");
+    assert.equal(installJob.status, 202, JSON.stringify(installJob.body));
+    const ready = await waitForInstallJob(service, installJob.body.job.jobId, "awaiting-confirmation");
+    await service.cancelInstallJob(ready.job.jobId, ready.job.revision);
     assert.deepEqual((await request(origin, "/api/marketplace/installed")).body.installations, []);
 
     const previewPath = `${itemPath}/previews/${registry.preview.sha256}`;

@@ -8,6 +8,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 
 let parent;
+const parents = [];
 let registry;
 let registryProcess;
 
@@ -36,6 +37,14 @@ async function stopRegistry() {
     await new Promise((resolve) => registryProcess.once("exit", resolve));
 }
 
+async function startFreshRegistry() {
+    parent = await fs.mkdtemp(path.join(os.tmpdir(), "cev-mkt-ui-"));
+    parents.push(parent);
+    const started = await startRegistry(parent);
+    registryProcess = started.child;
+    registry = started.registry;
+}
+
 async function openMarketplace(page) {
     await page.goto("/");
     await page.keyboard.press("Escape");
@@ -51,6 +60,24 @@ async function clearSources(request) {
         const response = await request.delete(`/api/marketplace/sources/${source.sourceId}?expectedRevision=${snapshot.revision}`);
         expect(response.ok(), await response.text()).toBeTruthy();
         snapshot = await response.json();
+    }
+}
+
+async function clearPluginLifecycleState(request) {
+    let installed = await (await request.get("/api/marketplace/installed")).json();
+    for (const entry of installed.installations) {
+        const segments = [entry.sourceId, entry.release.itemId, entry.release.releaseVersion, entry.release.artifactSha256]
+            .map(encodeURIComponent).join("/");
+        const response = await request.delete(`/api/marketplace/installed/${segments}?expectedRevision=${installed.revision}`);
+        expect(response.ok(), await response.text()).toBeTruthy();
+        installed = await (await request.get("/api/marketplace/installed")).json();
+    }
+    const library = await (await request.get("/api/storage/plugins/library")).json();
+    for (const entry of library.packages.filter((candidate) => candidate.pluginId === "acme.example")) {
+        const response = await request.post("/api/storage/plugins/remove", {
+            data: { pluginId: entry.pluginId, packageHash: entry.packageHash },
+        });
+        expect(response.ok(), await response.text()).toBeTruthy();
     }
 }
 
@@ -82,18 +109,16 @@ async function trustSource(page, request, name = "Playwright Registry") {
 }
 
 test.beforeAll(async () => {
-    parent = await fs.mkdtemp(path.join(os.tmpdir(), "cev-mkt-ui-"));
-    const started = await startRegistry(parent);
-    registryProcess = started.child;
-    registry = started.registry;
+    await startFreshRegistry();
 });
 
 test.afterAll(async () => {
     await stopRegistry();
-    if (parent) await fs.rm(parent, { recursive: true, force: true });
+    await Promise.all(parents.map((directory) => fs.rm(directory, { recursive: true, force: true })));
 });
 
 test.beforeEach(async ({ request }) => {
+    await clearPluginLifecycleState(request);
     await clearSources(request);
 });
 
@@ -118,7 +143,7 @@ test("MKT-06 trusts, refreshes, browses, retains offline catalog, updates, and r
     await expect(details.getByText("[Image: Remote preview]", { exact: true })).toBeVisible();
     await expect(details.locator('a[href^="javascript:"]')).toHaveCount(0);
     await expect(details.getByText("raw html")).toHaveCount(0);
-    await expect(details.getByRole("button", { name: "Install plugin" })).toBeDisabled();
+    await expect(details.getByRole("button", { name: "Install plugin" })).toBeEnabled();
     const preview = details.getByRole("img", { name: "Control Pack preview" });
     await expect(preview).toBeVisible();
     await expect.poll(() => preview.evaluate((image) => image.complete && image.naturalWidth > 0)).toBeTruthy();
@@ -146,6 +171,97 @@ test("MKT-06 trusts, refreshes, browses, retains offline catalog, updates, and r
     const removal = page.getByRole("dialog", { name: "Remove Marketplace source" });
     await removal.getByRole("button", { name: "Remove source" }).click();
     await expect(page.getByText("No trusted sources")).toBeVisible();
+    await startFreshRegistry();
+});
+
+test("MKT-08 installs a plugin with an explicit zero-grant review and safely removes its owner", async ({ page, request }) => {
+    test.setTimeout(120_000);
+    await openMarketplace(page);
+    await trustSource(page, request, "Plugin Lifecycle Registry");
+    await page.getByRole("tab", { name: "Discover" }).click();
+    await page.getByRole("button", { name: /Control Pack/u }).click();
+    const details = page.getByRole("article", { name: "Marketplace release details" });
+    const install = details.getByRole("button", { name: "Install plugin" });
+    await expect(install).toBeEnabled();
+    await install.click();
+
+    const dialog = page.getByRole("dialog", { name: "Install Control Pack" });
+    await dialog.getByRole("button", { name: "Download and inspect" }).click();
+    const commit = dialog.getByRole("button", { name: "Commit installation" });
+    await expect(commit).toBeEnabled({ timeout: 30_000 });
+    await expect(dialog.getByText("Package hash", { exact: true })).toBeVisible();
+    await expect(dialog.getByText(registry.plugin.packageHash, { exact: true })).toBeVisible();
+    await expect(dialog.getByText("CAS action", { exact: true })).toBeVisible();
+    await expect(dialog.getByText("Library action", { exact: true })).toBeVisible();
+    await expect(dialog.getByText("Owner action", { exact: true })).toBeVisible();
+    const grants = dialog.locator("dl > div").filter({ hasText: "Runtime grants added" });
+    await expect(grants).toContainText("None");
+    await commit.click();
+    await expect(dialog.getByText("Installation complete", { exact: true })).toBeVisible({ timeout: 30_000 });
+    await expect(dialog.getByText(new RegExp(`${registry.plugin.packageHash}.*Plugin Library`, "u"))).toBeVisible();
+
+    await expect.poll(async () => {
+        const response = await request.get("/api/storage/plugins/library");
+        const library = await response.json();
+        return library.packages.some((entry) => entry.packageHash === registry.plugin.packageHash);
+    }).toBe(true);
+    await dialog.getByRole("contentinfo").getByRole("button", { name: "Close" }).click();
+    await page.getByRole("tab", { name: "Installed" }).click();
+    const installed = page.getByRole("article").filter({ hasText: "acme.example@1.0.0" });
+    await expect(installed.getByText("Plugin ID", { exact: true })).toBeVisible();
+    await expect(installed.getByText(registry.plugin.runtimeHash, { exact: true })).toBeVisible();
+    await installed.getByRole("button", { name: "Remove membership" }).click();
+    const removal = page.getByRole("dialog", { name: "Remove Marketplace membership" });
+    await expect(removal.getByText(/only the exact Marketplace owner/u)).toBeVisible();
+    await expect(removal.getByText(/Last-owner removal hides it from the Plugin Library/u)).toBeVisible();
+    await removal.getByRole("button", { name: "Remove membership" }).click();
+    await expect(page.getByRole("heading", { name: "No installed Marketplace releases" })).toBeVisible();
+    await expect.poll(async () => {
+        const response = await request.get("/api/storage/plugins/library");
+        const library = await response.json();
+        return library.packages.some((entry) => entry.packageHash === registry.plugin.packageHash);
+    }).toBe(false);
+    const dataDir = process.env.CEV_SIM_DATA_DIR ?? ".playwright-data/storage";
+    await fs.access(path.resolve(dataDir, "plugins", "cas", "sha256", registry.plugin.packageHash));
+});
+
+test("MKT-08 Marketplace removal preserves an independent manual plugin owner", async ({ page, request }) => {
+    test.setTimeout(120_000);
+    const manual = await request.post("/api/storage/plugins/install", {
+        data: { source: { kind: "directory", path: path.resolve("tests/fixtures/plugins/acme.example") } },
+    });
+    expect(manual.ok(), await manual.text()).toBeTruthy();
+    expect((await manual.json()).package.packageHash).toBe(registry.plugin.packageHash);
+
+    await openMarketplace(page);
+    await trustSource(page, request, "Manual Owner Registry");
+    await page.getByRole("tab", { name: "Discover" }).click();
+    await page.getByRole("button", { name: /Control Pack/u }).click();
+    await page.getByRole("button", { name: "Install plugin" }).click();
+    const dialog = page.getByRole("dialog", { name: "Install Control Pack" });
+    await dialog.getByRole("button", { name: "Download and inspect" }).click();
+    const commit = dialog.getByRole("button", { name: "Commit installation" });
+    await expect(commit).toBeEnabled({ timeout: 30_000 });
+    await expect(dialog.locator("dl > div").filter({ hasText: "CAS action" })).toContainText("reuse");
+    await expect(dialog.locator("dl > div").filter({ hasText: "Library action" })).toContainText("reuse");
+    await expect(dialog.locator("dl > div").filter({ hasText: "Owner action" })).toContainText("add");
+    await commit.click();
+    await expect(dialog.getByText("Installation complete", { exact: true })).toBeVisible({ timeout: 30_000 });
+    await dialog.getByRole("contentinfo").getByRole("button", { name: "Close" }).click();
+
+    await page.getByRole("tab", { name: "Installed" }).click();
+    const installed = page.getByRole("article").filter({ hasText: "acme.example@1.0.0" });
+    await installed.getByRole("button", { name: "Remove membership" }).click();
+    await page.getByRole("dialog", { name: "Remove Marketplace membership" })
+        .getByRole("button", { name: "Remove membership" }).click();
+    await expect(page.getByRole("heading", { name: "No installed Marketplace releases" })).toBeVisible();
+    const library = await (await request.get("/api/storage/plugins/library")).json();
+    expect(library.packages.some((entry) => entry.packageHash === registry.plugin.packageHash)).toBe(true);
+
+    const cleanup = await request.post("/api/storage/plugins/remove", {
+        data: { pluginId: registry.release.itemId, packageHash: registry.plugin.packageHash },
+    });
+    expect(cleanup.ok(), await cleanup.text()).toBeTruthy();
 });
 
 test("MKT-06 Marketplace tabs and trust dialog are keyboard accessible @a11y", async ({ page, request }) => {

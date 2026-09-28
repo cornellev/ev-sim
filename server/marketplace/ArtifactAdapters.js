@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
+import semver from "semver";
+
+import { compareUtf8 } from "../../app/math/compareUtf8.js";
 import { verifyPluginPackage } from "../../app/plugin/PluginPackage.js";
 import { verifyRunBundleBytes } from "../headless/RunBundle.js";
 import { verifyRunPackageArchive } from "../headless/VisualAssetPack.js";
@@ -17,6 +21,7 @@ const SHA256 = /^[a-f0-9]{64}$/u;
 const JSON_ARTIFACT_LIMIT = 64 * 1024 * 1024;
 const READ_ONLY_CAPABILITIES = Object.freeze({
     inspect: true, validate: true, plan: false, commit: false, createReceipt: false,
+    planRemoval: false, remove: false,
 });
 
 export class ArtifactOperationUnsupportedError extends Error {
@@ -136,46 +141,263 @@ function validateRelease(adapter, inspection, release) {
     return inspection;
 }
 
-export function defineArtifactAdapter({ id, contentKind, inspect, plan = null, commit = null, createReceipt = null }) {
+export function assertPluginReleaseMatchesInspection(inspection, release) {
+    const identity = inspection?.identity;
+    const invalid = (message) => {
+        throw marketplaceError(MARKETPLACE_ERROR_CODES.DOCUMENT_INVALID, message);
+    };
+    if (release.itemId !== identity?.pluginId) {
+        invalid("Plugin release itemId must match plugin.json id.");
+    }
+    if (release.releaseVersion !== identity.version) {
+        invalid("Plugin releaseVersion must match plugin.json version.");
+    }
+    const declared = [...release.capabilities].sort(compareUtf8);
+    const packaged = [...identity.capabilities].sort(compareUtf8);
+    if (!isDeepStrictEqual(declared, packaged)) {
+        invalid("Plugin release capabilities must exactly match plugin.json capabilities.");
+    }
+    if (!semver.subset(release.compatibility.cevSim, identity.engineRange, { includePrerelease: true })) {
+        invalid("Plugin release compatibility cannot exceed plugin.json engines.cevSim.");
+    }
+    const contract = release.compatibility.contracts.find((entry) => entry.kind === "cev-sim.plugin-package");
+    if (!contract?.versions.includes(1)) {
+        invalid("Plugin release compatibility must declare cev-sim.plugin-package version 1.");
+    }
+    return inspection;
+}
+
+export function defineArtifactAdapter({
+    id,
+    contentKind,
+    inspect,
+    validateInspection = null,
+    plan = null,
+    commit = null,
+    createReceipt = null,
+    planRemoval = null,
+    remove = null,
+    receiptResourceKinds = [],
+}) {
     const contract = Object.freeze({ ...MARKETPLACE_ARTIFACTS[contentKind] });
     const lifecycle = [plan, commit, createReceipt].every((operation) => typeof operation === "function");
     if ([plan, commit, createReceipt].some(Boolean) && !lifecycle) {
         throw new TypeError(`Artifact adapter ${id} must implement plan, commit, and createReceipt together.`);
     }
-    const capabilities = lifecycle ? Object.freeze({
-        inspect: true, validate: true, plan: true, commit: true, createReceipt: true,
+    const removalLifecycle = [planRemoval, remove].every((operation) => typeof operation === "function");
+    if ([planRemoval, remove].some(Boolean) && !removalLifecycle) {
+        throw new TypeError(`Artifact adapter ${id} must implement planRemoval and remove together.`);
+    }
+    if (!Array.isArray(receiptResourceKinds) || receiptResourceKinds.some((entry) => typeof entry !== "string" || !entry)) {
+        throw new TypeError(`Artifact adapter ${id} receiptResourceKinds must be bounded strings.`);
+    }
+    const capabilities = lifecycle || removalLifecycle ? Object.freeze({
+        inspect: true,
+        validate: true,
+        plan: lifecycle,
+        commit: lifecycle,
+        createReceipt: lifecycle,
+        planRemoval: removalLifecycle,
+        remove: removalLifecycle,
     }) : READ_ONLY_CAPABILITIES;
     const adapter = {
         id,
         contentKind,
         contract,
         capabilities,
+        receiptResourceKinds: Object.freeze([...receiptResourceKinds].sort(compareUtf8)),
         inspect: (handle, context = {}) => inspect(adapter, handle, context),
-        validate: (inspection, release) => validateRelease(adapter, inspection, release),
+        validate: (inspection, release) => {
+            const validated = validateRelease(adapter, inspection, release);
+            return validateInspection ? validateInspection(adapter, validated, release) : validated;
+        },
         plan: lifecycle ? (input) => plan(adapter, input) : () => unsupported(id, "plan"),
         commit: lifecycle ? (input) => commit(adapter, input) : () => unsupported(id, "commit"),
         createReceipt: lifecycle ? (input) => createReceipt(adapter, input) : () => unsupported(id, "createReceipt"),
+        planRemoval: removalLifecycle ? (input) => planRemoval(adapter, input) : () => unsupported(id, "planRemoval"),
+        remove: removalLifecycle ? (input) => remove(adapter, input) : () => unsupported(id, "remove"),
     };
     return Object.freeze(adapter);
+}
+
+async function inspectPlugin(adapter, rawHandle) {
+    const { handle, bytes } = await readJsonArtifact(rawHandle, adapter.contract, PORTABLE_PLUGIN_MAX_JSON_BYTES);
+    const verified = verifyPluginPackage(parsePortablePluginFile(bytes));
+    return baseInspection(adapter, handle, {
+        pluginId: verified.document.id,
+        version: verified.document.version,
+        packageHash: verified.resource.packageHash,
+        runtimeHash: verified.resource.runtimeHash,
+        uiHash: verified.resource.uiHash ?? null,
+        engineRange: verified.document.engines.cevSim,
+        capabilities: [...verified.document.capabilities],
+    });
+}
+
+function validatePlugin(_adapter, inspection, release) {
+    return assertPluginReleaseMatchesInspection(inspection, release);
+}
+
+function exactMarketplaceOwner(source, release) {
+    return Object.freeze({
+        sourceId: source.sourceId,
+        itemId: release.itemId,
+        releaseVersion: release.releaseVersion,
+        artifactSha256: release.artifact.sha256,
+    });
+}
+
+function ownerKey(owner) {
+    return `${owner.sourceId}\u0000${owner.itemId}\u0000${owner.releaseVersion}\u0000${owner.artifactSha256}`;
+}
+
+function pluginMapping(identity) {
+    return Object.freeze({
+        resourceKind: "plugin-package",
+        sourceId: identity.pluginId,
+        localId: identity.pluginId,
+        hashes: Object.freeze({
+            packageHash: identity.packageHash,
+            runtimeHash: identity.runtimeHash,
+            ...(identity.uiHash ? { uiHash: identity.uiHash } : {}),
+        }),
+    });
 }
 
 export const pluginArtifactAdapter = defineArtifactAdapter({
     id: "plugin@1",
     contentKind: "plugin",
-    async inspect(adapter, rawHandle) {
-        const { handle, bytes } = await readJsonArtifact(rawHandle, adapter.contract, PORTABLE_PLUGIN_MAX_JSON_BYTES);
-        const verified = verifyPluginPackage(parsePortablePluginFile(bytes));
-        return baseInspection(adapter, handle, {
-            pluginId: verified.document.id,
-            version: verified.document.version,
-            packageHash: verified.resource.packageHash,
-            runtimeHash: verified.resource.runtimeHash,
-            uiHash: verified.resource.uiHash ?? null,
-            engineRange: verified.document.engines.cevSim,
-            capabilities: [...verified.document.capabilities],
-        });
-    },
+    inspect: inspectPlugin,
+    validateInspection: validatePlugin,
 });
+
+export function createPluginLifecycleAdapter({ pluginStore, publishLibraryChange = null } = {}) {
+    if (!pluginStore || typeof pluginStore.snapshotWithOwners !== "function") {
+        throw new TypeError("Plugin lifecycle adapter requires PluginStore.");
+    }
+    return defineArtifactAdapter({
+        id: "plugin@1",
+        contentKind: "plugin",
+        inspect: inspectPlugin,
+        validateInspection: validatePlugin,
+        receiptResourceKinds: ["plugin-package"],
+        async plan(_adapter, { release, inspection, context }) {
+            const library = await pluginStore.snapshotWithOwners();
+            const identity = inspection.identity;
+            const owner = exactMarketplaceOwner(context.source, release);
+            const current = library.packages.find((entry) => entry.pluginId === identity.pluginId
+                && entry.packageHash === identity.packageHash);
+            let casAction = "add";
+            try {
+                const existing = await pluginStore.verifyPackage(identity.packageHash);
+                if (existing.resource.runtimeHash !== identity.runtimeHash
+                    || (existing.resource.uiHash ?? null) !== identity.uiHash) {
+                    throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Plugin CAS identity disagrees with the marketplace artifact.");
+                }
+                casAction = "reuse";
+            } catch (error) {
+                if (error.code !== "ENOENT") throw error;
+            }
+            const hasOwner = current?.ownership.marketplace.some((entry) => ownerKey(entry) === ownerKey(owner)) ?? false;
+            const coexistingPackages = library.packages
+                .filter((entry) => entry.pluginId === identity.pluginId && entry.packageHash !== identity.packageHash)
+                .map((entry) => ({ version: entry.version, packageHash: entry.packageHash }))
+                .sort((left, right) => compareUtf8(left.version, right.version) || compareUtf8(left.packageHash, right.packageHash));
+            return {
+                preconditions: [{ kind: "plugin-library", revision: library.revision }],
+                plugin: structuredClone(identity),
+                owner,
+                changes: {
+                    cas: casAction,
+                    libraryMembership: current ? "reuse" : "add",
+                    marketplaceOwner: hasOwner ? "reuse" : "add",
+                },
+                coexistingPackages,
+                capabilityChange: {
+                    required: [...identity.capabilities],
+                    grantsAdded: [],
+                },
+                rights: [],
+                conflicts: [],
+                mappings: [pluginMapping(identity)],
+                warnings: [],
+                blockingIssues: [],
+            };
+        },
+        async commit(adapter, { release, inspection, adapterPlan, artifactHandle }) {
+            const { bytes } = await readJsonArtifact(artifactHandle, adapter.contract, PORTABLE_PLUGIN_MAX_JSON_BYTES);
+            const resource = parsePortablePluginFile(bytes);
+            const verified = verifyPluginPackage(resource);
+            const freshInspection = baseInspection(adapter, artifactHandle, {
+                pluginId: verified.document.id,
+                version: verified.document.version,
+                packageHash: verified.resource.packageHash,
+                runtimeHash: verified.resource.runtimeHash,
+                uiHash: verified.resource.uiHash ?? null,
+                engineRange: verified.document.engines.cevSim,
+                capabilities: [...verified.document.capabilities],
+            });
+            adapter.validate(freshInspection, release);
+            if (!isDeepStrictEqual(freshInspection.identity, inspection.identity)
+                || !isDeepStrictEqual(adapterPlan.plugin, inspection.identity)) {
+                throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Plugin marketplace plan identity changed before commit.");
+            }
+            const result = await pluginStore.addMarketplaceOwner(verified.resource, adapterPlan.owner);
+            if (result.membershipChanged) {
+                await publishLibraryChange?.({
+                    pluginId: result.package.pluginId,
+                    action: "installed",
+                    packageHash: result.package.packageHash,
+                    revision: result.revision,
+                });
+            }
+            return result;
+        },
+        async createReceipt(_adapter, { adapterPlan }) {
+            return { mappings: adapterPlan.mappings };
+        },
+        async planRemoval(_adapter, { receipt, installation }) {
+            const mapping = receipt.mappings.find((entry) => entry.resourceKind === "plugin-package");
+            if (!mapping?.hashes?.packageHash) {
+                throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Plugin marketplace receipt has no package mapping.");
+            }
+            const owner = Object.freeze({
+                sourceId: installation.sourceId,
+                itemId: installation.release.itemId,
+                releaseVersion: installation.release.releaseVersion,
+                artifactSha256: installation.release.artifactSha256,
+            });
+            const library = await pluginStore.snapshotWithOwners();
+            const current = library.packages.find((entry) => entry.pluginId === mapping.localId
+                && entry.packageHash === mapping.hashes.packageHash);
+            if (!current?.ownership.marketplace.some((entry) => ownerKey(entry) === ownerKey(owner))) {
+                throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Installed plugin marketplace membership has no matching library owner.");
+            }
+            return Object.freeze({
+                pluginId: mapping.localId,
+                packageHash: mapping.hashes.packageHash,
+                owner,
+                libraryRevision: library.revision,
+            });
+        },
+        async remove(_adapter, { removalPlan }) {
+            const result = await pluginStore.removeMarketplaceOwner(
+                removalPlan.pluginId,
+                removalPlan.packageHash,
+                removalPlan.owner,
+            );
+            if (result.membershipChanged) {
+                await publishLibraryChange?.({
+                    pluginId: removalPlan.pluginId,
+                    action: "removed",
+                    packageHash: removalPlan.packageHash,
+                    revision: result.revision,
+                });
+            }
+            return result;
+        },
+    });
+}
 
 export const vehicleArtifactAdapter = defineArtifactAdapter({
     id: "vehicle@1",
@@ -257,6 +479,7 @@ export const MARKETPLACE_ARTIFACT_ADAPTERS = Object.freeze([
 
 export class ArtifactAdapterRegistry {
     #adapters = new Map();
+    #adaptersById = new Map();
 
     constructor(adapters = MARKETPLACE_ARTIFACT_ADAPTERS) {
         for (const adapter of adapters) this.#register(adapter);
@@ -269,7 +492,9 @@ export class ArtifactAdapterRegistry {
             throw new TypeError(`Artifact adapter ${adapter?.id ?? "<unknown>"} does not match MARKETPLACE_ARTIFACTS.`);
         }
         if (this.#adapters.has(adapter.contentKind)) throw new TypeError(`Duplicate artifact adapter for ${adapter.contentKind}.`);
+        if (this.#adaptersById.has(adapter.id)) throw new TypeError(`Duplicate artifact adapter ID ${adapter.id}.`);
         this.#adapters.set(adapter.contentKind, adapter);
+        this.#adaptersById.set(adapter.id, adapter);
     }
 
     get(contentKind) {
@@ -309,6 +534,35 @@ export class ArtifactAdapterRegistry {
         for (const operation of ["plan", "commit", "createReceipt"]) this.requireOperation(contentKind, operation);
         return adapter;
     }
+
+    findRemovalAdapter(receipt) {
+        const resourceKinds = new Set((receipt?.mappings ?? []).map((entry) => entry.resourceKind));
+        const matches = [...this.#adapters.values()].filter((adapter) => (
+            adapter.capabilities.planRemoval && adapter.capabilities.remove
+            && adapter.receiptResourceKinds.some((entry) => resourceKinds.has(entry))
+        ));
+        if (matches.length > 1) {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Marketplace receipt matches multiple removal adapters.");
+        }
+        return matches[0] ?? null;
+    }
+
+    requireRemovalAdapter(adapterId) {
+        const adapter = this.#adaptersById.get(adapterId);
+        if (!adapter || !adapter.capabilities.planRemoval || !adapter.capabilities.remove) {
+            throw new ArtifactOperationUnsupportedError(adapterId, "remove");
+        }
+        return adapter;
+    }
 }
 
 export const artifactAdapterRegistry = Object.freeze(new ArtifactAdapterRegistry());
+
+export function createMarketplaceClientArtifactRegistry(options) {
+    return new ArtifactAdapterRegistry([
+        createPluginLifecycleAdapter(options),
+        vehicleArtifactAdapter,
+        runTemplateArtifactAdapter,
+        runPackageArtifactAdapter,
+    ]);
+}

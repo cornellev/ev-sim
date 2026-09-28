@@ -13,6 +13,10 @@ function sortedUnique(values) {
     return [...new Set(values)].sort(compareUtf8);
 }
 
+function sortedFeatureNames(values) {
+    return sortedUnique(values.filter((value) => typeof value === "string" && value.length > 0));
+}
+
 function normalizeBackend(entry) {
     const version = Number(entry?.version);
     if (!entry?.available || typeof entry.id !== "string" || !entry.id
@@ -39,7 +43,7 @@ export function createMarketplaceHostProfile({
     const contracts = [...contractsByKind.entries()]
         .map(([kind, versions]) => Object.freeze({ kind, versions: Object.freeze(sortedUnique(versions)) }))
         .sort((left, right) => compareUtf8(left.kind, right.kind));
-    const features = sortedUnique([
+    const features = sortedFeatureNames([
         ...(supervisorCapabilities.identityProfiles ?? []),
         ...(supervisorCapabilities.assetAdmissionProfiles ?? []),
         ...(supervisorCapabilities.observationProfiles ?? []),

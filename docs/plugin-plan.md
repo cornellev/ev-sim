@@ -247,6 +247,18 @@ uses operation-owned staging, and materializes verified Node closures below
 `plugins/runtime/<runtimeHash>`. Installation never imports code. Library
 removal preserves CAS bytes and immutable URLs.
 
+MKT-08 upgrades the private library document to version 2. Each exact package
+records `{ manual, marketplace[] }` ownership; version-1 membership migrates
+atomically to `manual: true` at the same revision. Public
+`PluginStore.listInstalled()` and `/api/storage/plugins/library` responses do
+not expose ownership. Manual installation adds only the manual owner and
+manual removal removes only that owner. Marketplace operations add or remove
+one exact source/release/artifact owner. A package remains visible while any
+owner remains, and each actual owner mutation increments the library revision.
+Last-owner removal hides membership but never deletes package CAS or runtime
+materializations. Multiple versions and distinct exact package hashes for one
+plugin ID can coexist.
+
 The Node source imports a verified, runtime-only tree with a host-generated
 `{ "type": "module" }` marker. The browser source imports the runtime entry
 from the verified same-origin CAS route. Paths derive only from digests and
@@ -678,6 +690,15 @@ change the outstanding PR-12 hosted, soak, NVIDIA x64, or Jetson ARM64 gates.
 | Identity / distribution | Characterization, lint, soak, dist | `npm run fixtures:headless`; `git diff --exit-code -- tests/fixtures/headless/characterization.v1.json`; `npm run lint`; `npm test`; `npm run test:python`; `npm run lint:python`; `npm run proto:python`; `npm run build`; `npm run test:soak:quick`; `npm run dist:headless`; `npm run dist:verify`; `git diff --check` | Characterization unchanged. ESLint 0 errors, one pre-existing `MapSurface.js` warning. Node 1,582 passed, 0 failed, 4 existing skips. Python 69/69; Ruff and generated-Protobuf checks passed. Production Next.js build passed. Quick soak passed (`protocol` 1.4). Dist verify passed, including installed-worker/plugin `node:dgram` exclusion. Whitespace check passed. Artifact digests: npm `6b51acaa1d30650b703bea584b265bb7f5290e9f60e10c293af069497ddf4b27`, wheel `736545a3b617474d35c44b5e818c651da4deb27a52ac2067647ee3c1ed606def`, sdist `d7e2d2515dd3e066d2b8fb8d710e0800b16daff0f6814dc05b5064f8e4bc80e2` |
 
 ## Decision log
+
+- **2026-09-28 — MKT-08 makes plugin-library membership ownership-aware.**
+  Manual and Marketplace installs are independent owners of one exact package.
+  Marketplace removal is receipt-driven and can remove only its own
+  source/release/artifact owner; it cannot remove a manual or other Marketplace
+  owner. The last owner controls library visibility only. Immutable CAS and
+  runtime materializations remain available, and Marketplace state stays out
+  of package, run, simulation, and episode hashes. Existing browser, direct
+  headless, and correctly resolved managed execution contracts are unchanged.
 
 - **2026-09-26 — PLG-01 through PLG-07 are merged.** `origin/plugin` is an ancestor of `origin/main`, and later plugin UI commits landed on `main` after that branch tip. The status table now records each milestone as merged. Acceptance evidence is unchanged. Dated notes below that say a milestone "remains unmerged" describe the state at acceptance time. This is not headless PR 13 and does not close the outstanding PR-12 hosted, soak, NVIDIA x64, or Jetson ARM64 gates.
 
