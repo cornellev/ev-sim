@@ -7,6 +7,7 @@ import test from "node:test";
 import express from "express";
 
 import { MarketplaceService } from "../server/marketplace/client/MarketplaceService.js";
+import { blobPath, registryPaths, resolveRegistryPath } from "../server/marketplace/registry/RegistryLayout.js";
 import { createMarketplaceRouter } from "../server/routes/marketplaceRouter.js";
 import { createPopulatedClientRegistry } from "./helpers/marketplaceClientRegistry.js";
 
@@ -31,6 +32,15 @@ async function request(origin, requestPath, { method = "GET", body } = {}) {
     };
 }
 
+async function rawRequest(origin, requestPath, { headers = {} } = {}) {
+    const response = await fetch(`${origin}${requestPath}`, { headers });
+    return {
+        status: response.status,
+        headers: response.headers,
+        bytes: Buffer.from(await response.arrayBuffer()),
+    };
+}
+
 async function readOperationalText(root) {
     const chunks = [];
     for (const entry of await fs.readdir(root, { withFileTypes: true })) {
@@ -42,7 +52,7 @@ async function readOperationalText(root) {
     return chunks.join("\n");
 }
 
-test("MKT-05 source APIs enforce confirmation, revisions, immutability, no-store, and redaction", async (t) => {
+test("MKT-06 read and source APIs enforce verification, confinement, revisions, no-store, and redaction", async (t) => {
     const parent = await fs.mkdtemp(path.join(os.tmpdir(), "cev-mkt-api-"));
     t.after(() => fs.rm(parent, { recursive: true, force: true }));
     const registry = await createPopulatedClientRegistry(parent);
@@ -110,7 +120,60 @@ test("MKT-05 source APIs enforce confirmation, revisions, immutability, no-store
         method: "POST",
         body: { expectedRevision: 1 },
     });
-    assert.equal(refreshed.status, 200);
+    assert.equal(refreshed.status, 200, JSON.stringify(refreshed.body));
+
+    const status = await request(origin, "/api/marketplace/status");
+    assert.deepEqual(status.body, { mode: "read-only", canInstall: false });
+    const discover = await request(origin, "/api/marketplace/discover?q=controller&track=stable&limit=1");
+    assert.equal(discover.status, 200, JSON.stringify(discover.body));
+    assert.equal(discover.cacheControl, "no-store");
+    assert.equal(discover.body.page.total, 1, JSON.stringify(discover.body));
+    assert.equal(discover.body.entries[0].item.itemId, registry.item.itemId);
+    assert.equal(discover.body.entries[0].source.sourceId, added.body.source.sourceId);
+    assert.equal(discover.body.entries[0].fresh, true);
+    assert.equal(discover.body.entries[0].preview.sha256, registry.preview.sha256);
+    const repeated = await request(origin, "/api/marketplace/discover?q=one&q=two");
+    assert.equal(repeated.status, 422);
+    const unknown = await request(origin, "/api/marketplace/discover?installed=true");
+    assert.equal(unknown.status, 422);
+    const overLimit = await request(origin, "/api/marketplace/discover?limit=101");
+    assert.equal(overLimit.status, 422);
+
+    const itemPath = `/api/marketplace/items/${added.body.source.sourceId}/${registry.item.itemId}`;
+    const detail = await request(origin, itemPath);
+    assert.equal(detail.status, 200, JSON.stringify(detail.body));
+    assert.equal(detail.body.selectedRelease.releaseVersion, registry.release.releaseVersion);
+    assert.equal(detail.body.verification.registryId, preview.body.registryId);
+    assert.equal(detail.body.verification.trustedRootFingerprint, preview.body.trustedRootFingerprint);
+    assert.equal(detail.body.verification.role, "releases");
+    assert.equal(detail.body.verification.roleKeyIds.length, 1);
+    assert.equal(detail.body.canInstall, false);
+
+    const previewPath = `${itemPath}/previews/${registry.preview.sha256}`;
+    const previewResponse = await rawRequest(origin, previewPath);
+    assert.equal(previewResponse.status, 200);
+    assert.deepEqual(previewResponse.bytes, registry.previewBytes);
+    assert.equal(previewResponse.headers.get("content-type"), "image/png");
+    assert.equal(previewResponse.headers.get("content-length"), String(registry.previewBytes.byteLength));
+    assert.equal(previewResponse.headers.get("etag"), `"${registry.preview.sha256}"`);
+    assert.equal(previewResponse.headers.get("x-content-type-options"), "nosniff");
+    assert.equal(previewResponse.headers.get("cross-origin-resource-policy"), "same-origin");
+    assert.equal(previewResponse.headers.get("cache-control"), "private, max-age=31536000, immutable");
+    const notModified = await rawRequest(origin, previewPath, {
+        headers: { "if-none-match": `"${registry.preview.sha256}"` },
+    });
+    assert.equal(notModified.status, 304);
+    assert.equal(notModified.bytes.byteLength, 0);
+    const unreferenced = await request(origin, `${itemPath}/previews/${"0".repeat(64)}`);
+    assert.equal(unreferenced.status, 404);
+    await fs.writeFile(
+        resolveRegistryPath(registryPaths(registry.root), blobPath(registry.preview.sha256)),
+        Buffer.alloc(registry.previewBytes.byteLength, 0x3c),
+    );
+    const malformed = await request(origin, previewPath);
+    assert.equal(malformed.status, 422);
+    assert.equal(malformed.body.error.code, "ARTIFACT_HASH_MISMATCH");
+    assert.doesNotMatch(JSON.stringify(malformed.body), /authorization|api-secret-token|cause|registry\/blobs/u);
 
     const immutable = await request(origin, `/api/marketplace/sources/${added.body.source.sourceId}`, {
         method: "PATCH",

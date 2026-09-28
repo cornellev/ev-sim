@@ -83,6 +83,67 @@ snapshot remains readable after expiry with `fresh: false`. `requireFresh:
 true` returns `METADATA_EXPIRED`; an absent item or release cannot be resolved
 from expired metadata. There is no unsigned age threshold.
 
+## Read-only discovery
+
+MKT-06 adds a read model over the currently visible verified snapshots. `GET
+/api/marketplace/status` identifies the enabled workspace as `read-only` with
+`canInstall: false`. `GET /api/marketplace/discover` accepts only `q`,
+`track`, `contentKind`, `sourceId`, `publisherId`, `license`, `offset`, and
+`limit`. Stable is the default exact signed track; beta must be selected
+explicitly. Search covers display name, summary, item ID, declared publisher
+ID, categories, and tags. SPDX filtering is exact, and ordering is source
+priority/source ID followed by display name/item ID/release version.
+
+Each read reverifies the immutable snapshot from its pinned bootstrap trust
+root. Missing snapshots remain visible as unavailable sources. A corrupted,
+untrusted, or locally unrecoverable snapshot fails the complete read instead
+of disappearing from results. Offline and expired verified entries remain
+browsable with `fresh: false` and their source health. The read model does not
+evaluate compatibility or infer installation membership.
+
+`GET /api/marketplace/items/:sourceId/:itemId` returns the complete verified
+item and selected release, exact tracks, releases, yanks, health, and an
+ephemeral verification summary. That summary names the registry UUID, pinned
+root fingerprint, verification time, root version, and authorized TUF
+`releases` role/version/expiry/key IDs. These are registry distribution signer
+details. `publisherId` is a declared publisher identifier; publisher DSSE does
+not exist until MKT-13.
+
+## Preview proxy
+
+The browser never receives registry credentials or registry URLs for preview
+fetching. The local backend first finds the requested digest in the verified
+item's `previews` array, then permits only the exact configured-origin path
+`/v1/blobs/sha256/<digest>`. Redirects, changed origins, arbitrary paths,
+queries, fragments, and over-limit reads fail closed. Returned bytes must
+match the signed media type, byte length, and SHA-256 descriptor and must pass
+the raster preview inspector again. SVG, HTML, masquerading, malformed,
+animated, multi-page, trailing-data, over-byte, and over-pixel inputs are not
+served.
+
+Successful preview responses use the exact media type and length, a quoted
+digest ETag, `nosniff`, same-origin resource policy, and private immutable
+caching. Conditional requests return 304. Preview bytes are not persisted by
+MKT-06; offline catalog text remains available while the browser shows an
+accessible preview placeholder.
+
+## Browser workspace
+
+The browser probes the enabled-only status route before exposing Marketplace
+navigation. Discover, Installed, and Sources are explicit workspace tabs.
+Descriptions and changelogs use pinned CommonMark rendering with raw HTML and
+images suppressed; only HTTP(S) links are admitted and external links use
+`noopener noreferrer`. Compatibility is presented only as declared
+requirements. Every content action is disabled with an MKT-07 explanation,
+and Installed states plainly that no marketplace ledger or receipt exists.
+
+Source mutations use the current source revision. A conflict reloads current
+state and requires review instead of replaying the mutation. Add Source
+separates trust creation from refresh, displays the complete bootstrap
+fingerprint and registry limits, and requires exact fingerprint entry. Bearer
+tokens remain only in transient password-field component state and are cleared
+on success, cancellation, or unmount.
+
 ## Operations
 
 - Preview trust, then add the source with its exact registry UUID and root

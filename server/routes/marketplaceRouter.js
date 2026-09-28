@@ -29,6 +29,17 @@ function queryRevision(request) {
     return revision;
 }
 
+function exactQuery(request, allowed) {
+    const result = {};
+    const accepted = new Set(allowed);
+    for (const [key, value] of Object.entries(request.query)) {
+        if (!accepted.has(key)) invalid(`$.${key}`, "is not allowed");
+        if (Array.isArray(value) || typeof value !== "string") invalid(`$.${key}`, "must occur exactly once");
+        result[key] = value;
+    }
+    return result;
+}
+
 function statusFor(error) {
     switch (error.code) {
     case MARKETPLACE_ERROR_CODES.SOURCE_NOT_FOUND:
@@ -41,6 +52,7 @@ function statusFor(error) {
     case MARKETPLACE_ERROR_CODES.DOCUMENT_INVALID:
     case MARKETPLACE_ERROR_CODES.UNSUPPORTED_SCHEMA:
     case MARKETPLACE_ERROR_CODES.SIGNATURE_INVALID:
+    case MARKETPLACE_ERROR_CODES.ARTIFACT_HASH_MISMATCH:
         return 422;
     case MARKETPLACE_ERROR_CODES.LIMIT_EXCEEDED:
         return 413;
@@ -72,6 +84,53 @@ export function createMarketplaceRouter(service, {
         next();
     });
     router.use(jsonParser);
+
+    router.get("/status", handler(async (request, response) => {
+        exactQuery(request, []);
+        response.json({ mode: "read-only", canInstall: false });
+    }));
+
+    router.get("/discover", handler(async (request, response) => {
+        const query = exactQuery(request, [
+            "q", "track", "contentKind", "sourceId", "publisherId", "license", "offset", "limit",
+        ]);
+        try {
+            response.json(await service.searchCatalog(query));
+        } catch (error) {
+            if (error instanceof TypeError) invalid("$", error.message);
+            throw error;
+        }
+    }));
+
+    router.get("/items/:sourceId/:itemId", handler(async (request, response) => {
+        const query = exactQuery(request, ["releaseVersion"]);
+        response.json(await service.getCatalogItem(request.params.sourceId, request.params.itemId, {
+            releaseVersion: query.releaseVersion || null,
+        }));
+    }));
+
+    router.get("/items/:sourceId/:itemId/previews/:digest", handler(async (request, response) => {
+        exactQuery(request, []);
+        const result = await service.readVerifiedPreview(
+            request.params.sourceId,
+            request.params.itemId,
+            request.params.digest,
+        );
+        const etag = `"${result.descriptor.sha256}"`;
+        response.set({
+            "Cache-Control": "private, max-age=31536000, immutable",
+            "Content-Type": result.descriptor.mediaType,
+            "Content-Length": String(result.bytes.byteLength),
+            ETag: etag,
+            "X-Content-Type-Options": "nosniff",
+            "Cross-Origin-Resource-Policy": "same-origin",
+        });
+        if (request.headers["if-none-match"]?.split(",").map((value) => value.trim()).includes(etag)) {
+            response.status(304).end();
+            return;
+        }
+        response.send(result.bytes);
+    }));
 
     router.post("/sources/preview", handler(async (request, response) => {
         const body = exactBody(request.body, ["baseUrl"], ["credential"]);

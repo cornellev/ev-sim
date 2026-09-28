@@ -13,6 +13,8 @@ import VehicleEditorPage from './vehicles/editor/VehicleEditorPage';
 import ScenarioPage from './scenarios/ScenarioPage';
 import ExperimentPage from './experiments/ExperimentPage';
 import HeadlessPage from './headless/HeadlessPage';
+import MarketplacePage from './marketplace/MarketplacePage';
+import { getMarketplaceStatus } from './marketplace/MarketplaceClient';
 import McpExperimentBridge from './experiments/McpExperimentBridge';
 import { getExperimentRunController } from './experiments/ExperimentRunController';
 import Menu from './3d/overlay/menu/Menu';
@@ -64,6 +66,7 @@ function HomeContent() {
     const [headlessPreselectedSuiteId, setHeadlessPreselectedSuiteId] = useState(null);
     const [configInitialManifestId, setConfigInitialManifestId] = useState(null);
     const [experimentNavigation, setExperimentNavigation] = useState(null);
+    const [marketplaceAvailable, setMarketplaceAvailable] = useState(false);
     const perspectiveActive = usePerspectiveViewActive();
 
     useEffect(() => {
@@ -80,6 +83,17 @@ function HomeContent() {
     useEffect(() => {
         const bridge = getTelemetryTabBridge();
         return () => bridge.stop();
+    }, []);
+
+    useEffect(() => {
+        const controller = new AbortController();
+        getMarketplaceStatus({ signal: controller.signal })
+            .then((status) => setMarketplaceAvailable(status?.mode === "read-only" && status.canInstall === false))
+            .catch((error) => {
+                if (error.name !== "AbortError") console.warn("Could not probe Marketplace availability:", error);
+                setMarketplaceAvailable(false);
+            });
+        return () => controller.abort();
     }, []);
 
     useEffect(() => getExperimentRunController().subscribe((snapshot) => {
@@ -198,6 +212,14 @@ function HomeContent() {
             setMenuVisible(false);
         });
     }, [requestWorkspace]);
+
+    const goToMarketplace = useCallback(() => {
+        if (!marketplaceAvailable) return;
+        requestWorkspace(() => {
+            setView(APP_VIEWS.MARKETPLACE);
+            setMenuVisible(false);
+        });
+    }, [marketplaceAvailable, requestWorkspace]);
 
     const updateExperimentDiagnosticsViewport = useCallback((nextViewport) => {
         setExperimentDiagnosticsViewport((current) => {
@@ -318,6 +340,8 @@ function HomeContent() {
                     onReplay={goToReplay}
                     onLogs={goToLogs}
                     onAnalysis={goToAnalysis}
+                    marketplaceAvailable={marketplaceAvailable}
+                    onMarketplace={goToMarketplace}
                     instant={menuSource === "keyboard"}
                 />
             )
@@ -397,6 +421,9 @@ function HomeContent() {
         }
         {
             view === APP_VIEWS.HEADLESS_RUNS && <HeadlessPage onOpenWorkspace={() => openWorkspaceSwitcher("pointer")} onOpenReplay={goToReplay} onOpenAnalysis={goToAnalysis} preselectedSuiteId={headlessPreselectedSuiteId} />
+        }
+        {
+            view === APP_VIEWS.MARKETPLACE && <MarketplacePage onOpenWorkspace={() => openWorkspaceSwitcher("pointer")} />
         }
         {
             activeEnvironmentId && (

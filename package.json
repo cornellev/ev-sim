@@ -81,6 +81,7 @@
     "radix-ui": "^1.6.7",
     "react": "19.2.3",
     "react-dom": "19.2.3",
+    "react-markdown": "10.1.0",
     "semver": "7.7.3",
     "sharp": "^0.35.4",
     "spdx-expression-parse": "4.0.0",

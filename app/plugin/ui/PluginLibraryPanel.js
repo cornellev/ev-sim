@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import { AsyncState } from "../../ui";
+import { AsyncState, Button } from "../../ui";
 import { installLocalPlugin } from "../PluginClient.js";
 import { PluginPackageDetail } from "./PluginPackageDetail.js";
 import { PluginPackageList } from "./PluginPackageList.js";
@@ -10,7 +10,7 @@ import { localPackageInstallState, selectLocalPackage } from "./pluginSelection.
 import { usePluginLibrary } from "./usePluginLibrary.js";
 import styles from "./PluginsPage.module.css";
 
-export function PluginLibraryPanel() {
+export function PluginLibraryPanel({ onOpenMarketplace = null }) {
     const library = usePluginLibrary();
     const [preferredDirectory, setPreferredDirectory] = useState(null);
     const [installingDirectory, setInstallingDirectory] = useState(null);
@@ -35,28 +35,31 @@ export function PluginLibraryPanel() {
         }
     };
 
+    const marketplaceAction = onOpenMarketplace ? <Button size="compact" onClick={onOpenMarketplace}>Browse Marketplace</Button> : null;
     if (library.status === "loading" && library.packages.length === 0) {
-        return <div className={styles.centerState}><AsyncState title="Loading plugins" /></div>;
+        return <div className={styles.panel}><div className={styles.marketplaceAction}>{marketplaceAction}</div><div className={styles.centerState}><AsyncState title="Loading plugins" /></div></div>;
     }
     if (library.status === "error" && library.packages.length === 0) {
         return (
-            <div className={styles.centerState}>
+            <div className={styles.panel}><div className={styles.marketplaceAction}>{marketplaceAction}</div><div className={styles.centerState}>
                 <AsyncState
                     status="error"
                     title="Could not load plugins"
                     detail={library.error || "The plugins folder is unavailable."}
                     onRetry={library.refresh}
                 />
-            </div>
+            </div></div>
         );
     }
     if (library.status === "ready" && library.packages.length === 0) {
-        return <div className={styles.centerState}><AsyncState status="empty" title="No local plugins" detail="Add a package under the plugins folder." /></div>;
+        return <div className={styles.panel}><div className={styles.marketplaceAction}>{marketplaceAction}</div><div className={styles.centerState}><AsyncState status="empty" title="No local plugins" detail="Add a package under the plugins folder." /></div></div>;
     }
 
     const detailStatus = entry?.error ? "error" : entry?.document ? "ready" : "error";
     return (
-        <div className={styles.library}>
+        <div className={styles.panel}>
+            <div className={styles.marketplaceAction}>{marketplaceAction}</div>
+            <div className={styles.library}>
             <PluginPackageList
                 packages={library.packages}
                 installed={library.installed}
@@ -78,6 +81,7 @@ export function PluginLibraryPanel() {
             ) : (
                 <div className={styles.centerState}><AsyncState title="Loading plugin" /></div>
             )}
+            </div>
         </div>
     );
 }

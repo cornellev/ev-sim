@@ -215,6 +215,7 @@ export async function verifyClientSnapshot(snapshotRoot, source, {
     }
 
     const items = [];
+    const itemDocuments = [];
     for (const summary of catalog.items) {
         const logicalPath = tufItemTargetPath(summary.itemId);
         const entry = await readTarget(snapshotRoot, roles.items.metadata.signed.targets[logicalPath], assertMarketplaceItem, `Marketplace item ${summary.itemId}`);
@@ -223,8 +224,10 @@ export async function verifyClientSnapshot(snapshotRoot, source, {
             throw signature(`Marketplace item ${summary.itemId} does not match its catalog summary.`);
         }
         items.push({ ...entry.descriptor, itemId: summary.itemId });
+        itemDocuments.push(entry.document);
     }
     const releases = [];
+    const releaseDocuments = [];
     for (const summary of catalog.releases) {
         const logicalPath = tufReleaseTargetPath(summary.itemId, summary.releaseVersion);
         const entry = await readTarget(snapshotRoot, roles.releases.metadata.signed.targets[logicalPath], assertMarketplaceRelease, `Marketplace release ${summary.itemId}@${summary.releaseVersion}`);
@@ -241,6 +244,7 @@ export async function verifyClientSnapshot(snapshotRoot, source, {
             releaseHash,
             artifactSha256: entry.document.artifact.sha256,
         });
+        releaseDocuments.push(entry.document);
     }
 
     const requiredMetadata = [trusted, timestamp, snapshot, ...Object.values(roles)];
@@ -272,7 +276,28 @@ export async function verifyClientSnapshot(snapshotRoot, source, {
     const earliestExpiryAt = requiredMetadata
         .map((entry) => expiresAt(entry.metadata))
         .sort()[0];
-    return Object.freeze({ manifest, catalog, expired, earliestExpiryAt });
+    const releasesRole = roles.targets.metadata.signed.delegations?.roles?.[TUF_ROLES.RELEASES];
+    const verification = Object.freeze({
+        registryId: source.registryId,
+        trustedRootFingerprint: source.trustedRootFingerprint,
+        verifiedAt,
+        rootVersion: trusted.metadata.signed.version,
+        role: TUF_ROLES.RELEASES,
+        roleVersion: roles.releases.metadata.signed.version,
+        roleKeyIds: Object.freeze([...(releasesRole?.keyIDs ?? [])].sort()),
+        roleExpiresAt: expiresAt(roles.releases.metadata),
+    });
+    return Object.freeze({
+        manifest,
+        catalog,
+        expired,
+        earliestExpiryAt,
+        verification,
+        documents: Object.freeze({
+            items: Object.freeze(itemDocuments),
+            releases: Object.freeze(releaseDocuments),
+        }),
+    });
 }
 
 export class MarketplaceTrustClient {

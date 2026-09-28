@@ -20,6 +20,7 @@ test("getActiveWorkspaceKey maps scripting and 3D submodes", () => {
     assert.equal(getActiveWorkspaceKey(APP_VIEWS.SCENARIOS, THREE_D_MODES.SIMULATION), "scenarios");
     assert.equal(getActiveWorkspaceKey(APP_VIEWS.LOGS, THREE_D_MODES.SIMULATION), "logs");
     assert.equal(getActiveWorkspaceKey(APP_VIEWS.EXPERIMENTS, THREE_D_MODES.SIMULATION), "experiments");
+    assert.equal(getActiveWorkspaceKey(APP_VIEWS.MARKETPLACE, THREE_D_MODES.SIMULATION), "marketplace");
     assert.equal(getActiveWorkspaceKey(APP_VIEWS.THREE_D, THREE_D_MODES.SIMULATION), "3d:simulation");
     assert.equal(getActiveWorkspaceKey(APP_VIEWS.THREE_D, THREE_D_MODES.ENVIRONMENT), "3d:environment");
 });
@@ -47,6 +48,10 @@ test("parseWorkspaceKey round-trips 3D submodes", () => {
     });
     assert.deepEqual(parseWorkspaceKey("experiments"), {
         view: APP_VIEWS.EXPERIMENTS,
+        threeDMode: null,
+    });
+    assert.deepEqual(parseWorkspaceKey("marketplace"), {
+        view: APP_VIEWS.MARKETPLACE,
         threeDMode: null,
     });
 });

@@ -3,9 +3,10 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
-import { MARKETPLACE_SOURCE_HEALTH } from "../MarketplaceContract.js";
+import { MARKETPLACE_LIMITS, MARKETPLACE_SOURCE_HEALTH } from "../MarketplaceContract.js";
 import { MARKETPLACE_ERROR_CODES, MarketplaceError, marketplaceError } from "../MarketplaceErrors.js";
-import { assertCanonicalUuid } from "../MarketplaceFormats.js";
+import { assertCanonicalUuid, assertMarketplaceId, assertSha256 } from "../MarketplaceFormats.js";
+import { hashMarketplaceBytes } from "../MarketplaceJson.js";
 import {
     atomicReplaceDurable,
     lstatOrNull,
@@ -22,6 +23,7 @@ import {
     verifyTufDelegate,
     verifyTufRootContract,
 } from "../registry/TufMetadata.js";
+import { inspectPreviewBytes } from "../registry/PreviewMedia.js";
 import {
     assertHealthDocument,
     createEmptyHealth,
@@ -35,6 +37,16 @@ import { MarketplaceCredentialStore } from "./MarketplaceCredentialStore.js";
 import { MarketplaceSourceStore } from "./MarketplaceSourceStore.js";
 import { MarketplaceTrustClient } from "./MarketplaceTrustClient.js";
 import { MarketplaceVerifiedCache } from "./MarketplaceVerifiedCache.js";
+import { MarketplaceFixedOriginFetcher } from "./MarketplaceFixedOriginFetcher.js";
+import {
+    assertMarketplaceDetailSelection,
+    buildMarketplaceFacets,
+    filterCatalogEntries,
+    normalizeMarketplaceQuery,
+    paginateMarketplaceEntries,
+    projectCatalogEntries,
+    sortCatalogEntries,
+} from "./MarketplaceReadModel.js";
 
 function recovery(message, pathName = null, cause = null) {
     return marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, message, { path: pathName, cause });
@@ -438,6 +450,113 @@ export class MarketplaceService {
     async readVerifiedRelease(sourceId, itemId, releaseVersion, options = {}) {
         this.#assertOpen();
         return this.cache.readRelease(this.#requireSource(sourceId), itemId, releaseVersion, options);
+    }
+
+    async searchCatalog(filters = {}) {
+        this.#assertOpen();
+        const query = normalizeMarketplaceQuery(filters);
+        const snapshot = this.sourceStore.snapshot();
+        const publicSources = [];
+        const entries = [];
+        for (const source of snapshot.sources) {
+            const health = await this.#health(source);
+            publicSources.push(publicSource(source, health));
+            if (!source.enabled) continue;
+            const current = await this.cache.readCurrent(source);
+            if (!current) continue;
+            const itemsById = new Map(current.documents.items.map((item) => [item.itemId, item]));
+            entries.push(...projectCatalogEntries({
+                source,
+                health,
+                catalog: current.catalog,
+                itemsById,
+                track: query.track,
+                fresh: current.fresh && health.status === MARKETPLACE_SOURCE_HEALTH.READY,
+            }));
+        }
+        const sorted = sortCatalogEntries(entries);
+        const filtered = filterCatalogEntries(sorted, query);
+        const paginated = paginateMarketplaceEntries(filtered, query);
+        return Object.freeze({
+            sourcesRevision: snapshot.revision,
+            sources: Object.freeze(publicSources),
+            query,
+            page: paginated.page,
+            entries: Object.freeze(paginated.entries),
+            facets: buildMarketplaceFacets(sorted),
+        });
+    }
+
+    async getCatalogItem(sourceId, itemId, { releaseVersion = null } = {}) {
+        this.#assertOpen();
+        assertCanonicalUuid(sourceId, "sourceId");
+        assertMarketplaceId(itemId, "itemId");
+        const source = this.#requireSource(sourceId);
+        const current = await this.cache.readCurrent(source);
+        if (!current) throw marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_UNAVAILABLE, "Marketplace source has no verified snapshot.");
+        const item = current.documents.items.find((entry) => entry.itemId === itemId);
+        if (!item) throw marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_NOT_FOUND, "Marketplace item is not present in the verified snapshot.");
+        const selectedSummary = assertMarketplaceDetailSelection(current.catalog, itemId, releaseVersion);
+        if (!selectedSummary) throw marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_NOT_FOUND, "Marketplace release is not present in the verified snapshot.");
+        const selectedRelease = current.documents.releases.find((entry) => entry.itemId === itemId
+            && entry.releaseVersion === selectedSummary.releaseVersion);
+        if (!selectedRelease) throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Marketplace verified snapshot is incomplete.");
+        const releases = current.catalog.releases.filter((entry) => entry.itemId === itemId);
+        const tracks = Object.fromEntries(current.catalog.tracks
+            .filter((entry) => entry.itemId === itemId)
+            .map((entry) => [entry.track, entry.releaseVersion]));
+        const yanks = current.catalog.yanks.filter((entry) => entry.release.itemId === itemId);
+        const health = await this.#health(source);
+        return Object.freeze({
+            source: publicSource(source, health),
+            item,
+            selectedRelease,
+            selectedReleaseHash: selectedSummary.releaseHash,
+            releases: Object.freeze(releases),
+            tracks: Object.freeze(tracks),
+            yanks: Object.freeze(yanks),
+            verification: current.verification,
+            fresh: current.fresh && health.status === MARKETPLACE_SOURCE_HEALTH.READY,
+            canInstall: false,
+        });
+    }
+
+    async readVerifiedPreview(sourceId, itemId, digest) {
+        this.#assertOpen();
+        assertCanonicalUuid(sourceId, "sourceId");
+        assertMarketplaceId(itemId, "itemId");
+        assertSha256(digest, "digest");
+        const source = this.#requireSource(sourceId);
+        const current = await this.cache.readCurrent(source);
+        if (!current) throw marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_UNAVAILABLE, "Marketplace source has no verified snapshot.");
+        const item = current.documents.items.find((entry) => entry.itemId === itemId);
+        const descriptor = item?.previews?.find((entry) => entry.sha256 === digest);
+        if (!descriptor) throw marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_NOT_FOUND, "Marketplace preview is not present in the verified item.");
+        const pathName = `/v1/blobs/sha256/${digest}`;
+        const fetcher = new MarketplaceFixedOriginFetcher({
+            baseUrl: source.baseUrl,
+            bearerToken: await this.credentialStore.readBearer(source.credentialRef),
+            fetchImpl: this.trustClient.fetchImpl,
+        });
+        fetcher.allowPath(pathName);
+        let bytes;
+        try {
+            bytes = Buffer.from(await fetcher.downloadBytes(
+                fetcher.url(pathName),
+                Math.min(MARKETPLACE_LIMITS.previewBytes, descriptor.sizeBytes) + 1,
+            ));
+        } catch (error) {
+            if (error instanceof MarketplaceError) throw error;
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_UNAVAILABLE, "Marketplace preview is unavailable.", { cause: error });
+        }
+        if (bytes.byteLength !== descriptor.sizeBytes || hashMarketplaceBytes(bytes) !== descriptor.sha256) {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.ARTIFACT_HASH_MISMATCH, "Marketplace preview bytes do not match the verified descriptor.");
+        }
+        const inspected = await inspectPreviewBytes(bytes, { mediaType: descriptor.mediaType });
+        if (inspected.sha256 !== descriptor.sha256 || inspected.sizeBytes !== descriptor.sizeBytes) {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.ARTIFACT_HASH_MISMATCH, "Marketplace preview inspection does not match the verified descriptor.");
+        }
+        return Object.freeze({ bytes, descriptor });
     }
 
     async close() {

@@ -14,6 +14,7 @@ import {
     IconPlayerPlay,
     IconPuzzle,
     IconRoute,
+    IconShoppingBag,
     IconFlask2,
     IconTerminal2,
     IconWorld,
@@ -48,6 +49,8 @@ export default function Menu({
     onReplay,
     onLogs,
     onAnalysis,
+    marketplaceAvailable = false,
+    onMarketplace,
     onClose,
     instant = false,
 }) {
@@ -69,6 +72,7 @@ export default function Menu({
                 { key: "scenarios", label: "Scenarios", hint: "Create test scenarios", icon: IconRoute, active: activeView === APP_VIEWS.SCENARIOS, onSelect: onScenarios },
                 { key: "experiments", label: "Experiment Suite", hint: "Experiment with scenarios", icon: IconFlask2, active: activeView === APP_VIEWS.EXPERIMENTS, onSelect: onExperiments },
                 { key: "headless-runs", label: "Headless Runs", hint: "Queue and monitor server runs", icon: IconTerminal2, active: activeView === APP_VIEWS.HEADLESS_RUNS, onSelect: onHeadlessRuns },
+                ...(marketplaceAvailable ? [{ key: "marketplace", label: "Marketplace", hint: "Browse verified registry catalogs", icon: IconShoppingBag, active: activeView === APP_VIEWS.MARKETPLACE, onSelect: onMarketplace }] : []),
             ],
         },
         {
@@ -96,6 +100,8 @@ export default function Menu({
         onHeadlessRuns,
         onEnvironmentEditor,
         onLogs,
+        marketplaceAvailable,
+        onMarketplace,
         onReplay,
         onScripting,
         onSimulation,
@@ -146,7 +152,10 @@ export default function Menu({
                             })}
                         </nav>
                         <div className="sf-workspace-menu__pane">
-                            {pane === "plugins" ? <PluginLibraryPanel /> : (
+                            {pane === "plugins" ? <PluginLibraryPanel onOpenMarketplace={marketplaceAvailable ? () => {
+                                onClose?.();
+                                onMarketplace?.();
+                            } : null} /> : (
                                 <div className="sf-workspace-menu__body">
                                     {sections.map((section) => (
                                         <section className="sf-workspace-menu__section" key={section.label}>

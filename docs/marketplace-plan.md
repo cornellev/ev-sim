@@ -14,7 +14,7 @@ hosted private-LAN registry. It is not headless PR 13 and does not extend the
 | MKT-03: registry CAS and atomic storage | Complete | Local acceptance passed; hosted CI pending | Unmerged |
 | MKT-04: TUF repository and read API | Complete | Local acceptance passed; hosted CI pending | Unmerged |
 | MKT-05: simulator trust client and cache | Complete | Local acceptance passed; hosted CI pending | Unmerged |
-| MKT-06: read-only Marketplace workspace | Not started | Not run | Unmerged |
+| MKT-06: read-only Marketplace workspace | Implemented; acceptance pending | MKT-focused gates pass; repository-wide UI/a11y has unrelated failures | Unmerged |
 | MKT-07: plans, jobs, transactions, receipts | Not started | Not run | Unmerged |
 | MKT-08: plugin lifecycle | Not started | Not run | Unmerged |
 | MKT-09: vehicle and run lifecycle | Not started | Not run | Unmerged |
@@ -313,6 +313,46 @@ network access, creates marketplace storage, or changes browser workspaces.
   client modules and document in the headless distribution, run complete local
   acceptance, record immutable fixture checks, and retain hosted CI as the
   final pre-merge evidence requirement.
+
+## MKT-06 work packages
+
+- [x] WP-00: begin from clean MKT-05 commit `810ad70`; record the 55/55
+  marketplace baseline; preserve canonical marketplace fixtures,
+  `sources.schema.json`, plugin/vehicle/run-package identities, and headless
+  characterization; keep installation, compatibility eligibility,
+  plans/jobs/receipts, installed state, DSSE, advisories, and automatic
+  refresh outside MKT-06.
+- [x] WP-01: add the pure deterministic `MarketplaceReadModel` with strict
+  queries, signed-track selection, source-specific projections, exact filters,
+  searchable fields, facets, stable ordering, and bounded pagination.
+- [x] WP-02: expose ephemeral TUF distribution verification from reverified
+  snapshots without changing the cache-manifest schema; add search, detail,
+  and referenced-preview reads to `MarketplaceService`; preserve offline and
+  expired snapshots while failing closed on corrupt trust/cache state.
+- [x] WP-03: add enabled-only read routes, strict query/path handling,
+  digest-addressed fixed-origin preview fetching, exact byte/media/digest
+  checks, raster reinspection, redacted stable errors, immutable private
+  headers, and ETag conditionals.
+- [x] WP-04: add the abortable browser API client, structured marketplace
+  errors, pinned safe CommonMark rendering, and content-specific disabled
+  action labels.
+- [x] WP-05: add `APP_VIEWS.MARKETPLACE`, enabled status probing, conditional
+  workspace navigation, and disabled-startup coverage.
+- [x] WP-06: implement the 1280x720 Discover/result/details workspace with
+  verified previews, exact release data, declared compatibility requirements,
+  truthful registry-signer terminology, and disabled installation controls.
+- [x] WP-07: implement revisioned Sources, complete typed-fingerprint trust,
+  explicit refresh, rename/enable/priority/credential/update/removal flows,
+  conflict review, focus restoration, and transient bearer handling.
+- [x] WP-08: add the honest Installed scaffold and conditional Plugin Library
+  link without changing existing local plugin behavior or inferring installed
+  membership.
+- [x] WP-09: add read-model, API, real-registry Playwright, keyboard, viewport,
+  redaction, offline retention, preview, and Axe coverage; enable the feature
+  only in the Playwright server environment.
+- [x] WP-10: document read semantics, signer terminology, preview confinement,
+  offline behavior, browser/backend/registry boundaries, milestone decisions,
+  and factual acceptance evidence.
 
 ## Milestones and gates
 
@@ -690,7 +730,84 @@ advisory policy, or secure LAN hosting. No PLG, ED, VIS, headless, or
 run-manifest contract or acceptance evidence changed, so no other roadmap was
 updated.
 
+## MKT-06 evidence ledger
+
+Implementation began on 2026-09-27 from clean MKT-05 commit `810ad70`. The
+pre-change `npm run test:marketplace` baseline passed 55/55. Canonical
+marketplace fixtures, `sources.schema.json`, plugin/vehicle/run-package
+identities, and the headless characterization fixture remain unchanged.
+
+Local evidence on 2026-09-27 used checksum-verified Node 22.22.2 on macOS
+arm64:
+
+- Focused read-model and view-state tests passed 8/8; the focused marketplace
+  API suite also passed.
+- `npx playwright test tests/ui/marketplace.spec.js --workers=1` passed 2/2.
+  It covers the real registry trust/refresh/source lifecycle, discovery,
+  filters, safe previews, offline cache retention, malformed refresh
+  retention, disabled installation, keyboard navigation, focus restoration,
+  1280x720 containment, and Axe.
+- The directly affected Marketplace, Plugin Library, and workspace navigation
+  suites passed 7/7 serially.
+- `npm run lint` passed with zero errors and the pre-existing `MapSurface.js`
+  `assetEpoch` hook warning.
+- `npm run test:marketplace` passed 60/60.
+- `npm test` ran 1,798 tests: 1,792 passed, six declared skips, and zero
+  failures.
+- `npm run build` passed.
+- `npm run fixtures:headless` passed with no characterization diff. Canonical
+  marketplace fixtures and `sources.schema.json` also have no diff.
+- Source and staged `npm run release:check` passed.
+- `npm run dist:headless -- --output <temporary>` and
+  `npm run dist:verify -- --dist <temporary>` passed. Final staged artifact
+  hashes were npm
+  `5cd9efcc34389f82e648b5d3d37cabbfd34706830a2ec0eccedab31a74aab636`,
+  wheel `55b40782e8a5f5a24820cc743bd0bd9c2cbd9d3775bbce04d07c34a547f76c0b`,
+  and source distribution
+  `c2325f6ee04cf1d210f3d0f4bfff747f49e40d2ba181377b766dc7199a642a95`.
+- `git diff --check` passed.
+
+Repository-wide browser acceptance is not marked passed. The five-worker
+`npm run test:ui` attempt encountered unrelated 3D loading-overlay timeouts and
+was stopped after five failures, four passes, and 66 tests not run; the
+directly affected suites then passed serially. `npm run test:a11y` completed
+8/12: the Marketplace test passed, three Environment Editor tests timed out
+under concurrent WebGL load, and the all-workspaces sweep found serious Axe
+violations only in Replay (`aria-prohibited-attr`) and Logs
+(`color-contrast`). Those failures are outside the MKT-06 files and contract,
+so they are recorded rather than repaired as Marketplace scope. MKT-06 remains
+acceptance-pending until the repository-wide gates are green.
+
+Hosted CI has no run or link because the implementation is not committed or
+pushed. MKT-06 remains unmerged. It adds no install, import, activation,
+receipt, installed-state, publisher DSSE, advisory, or automatic-refresh
+behavior. No PLG, ED, VIS, headless, or run-manifest contract or acceptance
+evidence changed, so no other roadmap was updated.
+
 ## Decision log
+
+### 2026-09-27 — Keep MKT-06 reads reverified, read-only, and source-specific
+
+Discover and details are projections of the current immutable verified cache,
+not a second catalog database. Stable and beta select exact signed track
+pointers, duplicate item IDs remain distinct by source, and every snapshot is
+reverified before projection. Missing snapshots remain visible through source
+health; corrupt trust or local cache state fails the complete read. Offline or
+expired verified entries remain browseable but are explicitly non-fresh.
+
+Preview proxying begins only after a digest is found in the verified item and
+permits one exact fixed-origin CAS path. Returned raster bytes must match the
+signed digest, size, and media type and pass the preview inspector again. The
+browser never receives registry credentials or contacts registry origins.
+Preview bytes are not cached locally in MKT-06.
+
+The workspace presents compatibility as declared requirements and TUF role
+keys as registry distribution verification. It labels `publisherId` as the
+declared publisher because publisher DSSE remains MKT-13. Installed state,
+eligibility, plans, jobs, receipts, installation/import/activation/removal,
+advisory policy, and automatic refresh remain outside MKT-06. No simulation,
+package, environment, plugin, vehicle, run-manifest, or headless identity
+contract changes.
 
 ### 2026-09-27 — Commit trust before refresh and cache the complete signed catalog
 

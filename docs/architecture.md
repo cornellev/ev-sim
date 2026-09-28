@@ -614,6 +614,23 @@ source management, and explicit refresh under `/api/marketplace`. Browser code
 does not contact registries, startup does not auto-refresh, and MKT-05 performs
 no artifact download or installation. See [Marketplace trust client](marketplace-client.md).
 
+MKT-06 adds `MarketplaceReadModel.js` and enabled-only status, discovery,
+detail, and preview routes. The read model combines only enabled sources'
+reverified current snapshots, retains offline or expired verified entries with
+explicit freshness and health, and fails closed on corrupt trust or cache
+state. Browser requests terminate at the local backend; only the backend reads
+credentials and the fixed-origin fetcher permits the exact digest-addressed
+preview blob path. Preview bytes are rechecked against the verified descriptor
+and raster inspector before being returned and are not persisted.
+
+`app/marketplace/` is a presentation and source-management client over that
+local API. It cannot contact registry origins, download artifacts, install or
+import content, create receipts, evaluate compatibility, or create installed
+state. `publisherId` is shown as a declared publisher; the displayed signer
+keys belong to the registry's TUF `releases` distribution role. Marketplace
+navigation exists only after the enabled status probe succeeds, so disabled
+startup still constructs no marketplace service or storage.
+
 ## External Integration
 
 cev-sim does not embed ROS. `app/3d/managers/ClientManager.js` creates a browser client from `app/client/Client.js`, syncs message definitions from the external orchestrator Types API, then connects to the orchestrator WebSocket.
