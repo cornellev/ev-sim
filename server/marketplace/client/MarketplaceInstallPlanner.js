@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import { compareUtf8 } from "../../../app/math/compareUtf8.js";
 import { hashMarketplaceRelease } from "../MarketplaceContracts.js";
@@ -17,7 +18,7 @@ import {
     hashMarketplaceHostProfile,
 } from "./MarketplaceCompatibility.js";
 import { marketplaceClientPaths } from "./MarketplaceClientLayout.js";
-import { resolveDependencyDag } from "./MarketplaceDependencyResolver.js";
+import { resolveInstallGraph } from "./MarketplaceDependencyResolver.js";
 import {
     MARKETPLACE_INSTALL_DOCUMENT_VERSION,
     MARKETPLACE_INSTALL_KINDS,
@@ -76,6 +77,7 @@ export class MarketplaceInstallPlanner {
         sourceStore,
         cache,
         installedStore,
+        ownershipStore = null,
         artifactStore,
         adapterRegistry,
         hostProfileProvider,
@@ -85,6 +87,7 @@ export class MarketplaceInstallPlanner {
         this.sourceStore = sourceStore;
         this.cache = cache;
         this.installedStore = installedStore;
+        this.ownershipStore = ownershipStore;
         this.artifactStore = artifactStore;
         this.adapterRegistry = adapterRegistry;
         this.hostProfileProvider = hostProfileProvider;
@@ -134,13 +137,13 @@ export class MarketplaceInstallPlanner {
             release.itemId === itemId && release.releaseVersion === releaseVersion
         ));
         if (!root) throw marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_NOT_FOUND, "Marketplace release is not present in the verified snapshot.");
-        const resolved = resolveDependencyDag({
+        const resolved = resolveInstallGraph({
             rootRelease: exactRef(root),
             catalog: current.catalog,
             releases: current.documents.releases,
             releasePolicy: this.releasePolicy,
         });
-        for (const release of resolved.releases) {
+        for (const { release } of resolved.releases) {
             const limit = artifactByteLimitFor(release.contentKind);
             if (release.artifact.sizeBytes > limit) {
                 throw marketplaceError(MARKETPLACE_ERROR_CODES.LIMIT_EXCEEDED, `Marketplace ${release.contentKind} artifact exceeds its ${limit}-byte limit.`);
@@ -149,12 +152,16 @@ export class MarketplaceInstallPlanner {
         const hostProfile = await this.hostProfileProvider();
         const hostProfileHash = hashMarketplaceHostProfile(hostProfile);
         const installed = await this.installedStore.snapshot();
+        if (this.ownershipStore) {
+            const ownership = await this.ownershipStore.snapshot();
+            this.ownershipStore.verifyAgainstInstalled(ownership, installed);
+        }
         const yanks = yankedSet(current.catalog);
         const summaryHashes = new Map(current.catalog.releases.map((release) => [
             `${release.itemId}\u0000${release.releaseVersion}`,
             release.releaseHash,
         ]));
-        const releases = resolved.releases.map((release) => {
+        const releases = resolved.releases.map(({ release, disposition, owners }) => {
             const compatibility = evaluateMarketplaceCompatibility(release.compatibility, hostProfile);
             const releaseHash = summaryHashes.get(`${release.itemId}\u0000${release.releaseVersion}`);
             if (releaseHash !== hashMarketplaceRelease(release)) {
@@ -164,15 +171,22 @@ export class MarketplaceInstallPlanner {
             return {
                 release,
                 releaseHash,
+                disposition,
+                owners,
                 compatibility,
                 yanked,
                 warnings: yanked ? [`Exact release ${release.itemId}@${release.releaseVersion} is yanked.`] : [],
             };
         });
-        const artifacts = [...new Map(resolved.releases.map((release) => [
-            release.artifact.sha256,
-            structuredClone(release.artifact),
-        ])).values()].sort((left, right) => compareUtf8(left.sha256, right.sha256));
+        const artifactsByDigest = new Map();
+        for (const { release } of resolved.releases) {
+            const current = artifactsByDigest.get(release.artifact.sha256);
+            if (current && (current.mediaType !== release.artifact.mediaType || current.sizeBytes !== release.artifact.sizeBytes)) {
+                throw marketplaceError(MARKETPLACE_ERROR_CODES.SIGNATURE_INVALID, "Verified releases disagree about a shared artifact descriptor.");
+            }
+            artifactsByDigest.set(release.artifact.sha256, structuredClone(release.artifact));
+        }
+        const artifacts = [...artifactsByDigest.values()].sort((left, right) => compareUtf8(left.sha256, right.sha256));
         const totalDownloadBytes = artifacts.reduce((total, artifact) => {
             const next = total + artifact.sizeBytes;
             if (!Number.isSafeInteger(next)) throw marketplaceError(MARKETPLACE_ERROR_CODES.LIMIT_EXCEEDED, "Marketplace installation download size is too large.");
@@ -247,7 +261,32 @@ export class MarketplaceInstallPlanner {
             `${release.itemId}\u0000${release.releaseVersion}`,
             release,
         ]));
+        const pinnedRoot = pinnedReleases.get(`${preflight.root.itemId}\u0000${preflight.root.releaseVersion}`);
+        const reproduced = resolveInstallGraph({
+            rootRelease: preflight.root,
+            catalog: pinned.catalog,
+            releases: pinned.documents.releases,
+            releasePolicy: this.releasePolicy,
+        });
+        const hasInstallIntent = preflight.releases.some((entry) => entry.disposition !== undefined);
+        const reproducedIntent = reproduced.releases.map((entry) => hasInstallIntent ? ({
+            release: entry.release,
+            disposition: entry.disposition,
+            owners: entry.owners,
+        }) : entry.release);
+        const preflightIntent = preflight.releases.map((entry) => hasInstallIntent ? ({
+            release: entry.release,
+            disposition: entry.disposition,
+            owners: entry.owners,
+        }) : entry.release);
+        if (!pinnedRoot || !isDeepStrictEqual(reproducedIntent, preflightIntent)) {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Marketplace preflight graph or installation intent changed.");
+        }
         const installed = await this.installedStore.snapshot();
+        if (this.ownershipStore) {
+            const ownership = await this.ownershipStore.snapshot();
+            this.ownershipStore.verifyAgainstInstalled(ownership, installed);
+        }
         const hostProfile = await this.hostProfileProvider();
         const hostProfileHash = hashMarketplaceHostProfile(hostProfile);
         const releases = [];
@@ -259,14 +298,18 @@ export class MarketplaceInstallPlanner {
                 throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Pinned marketplace release identity changed.");
             }
             const compatibility = evaluateMarketplaceCompatibility(release.compatibility, hostProfile);
-            if (!compatibility.compatible && !AUTHORING_ONLY_CONTENT_KINDS.includes(release.contentKind)) {
+            if (!compatibility.compatible && release.contentKind !== "collection"
+                && !AUTHORING_ONLY_CONTENT_KINDS.includes(release.contentKind)) {
                 throw marketplaceError(MARKETPLACE_ERROR_CODES.INCOMPATIBLE, `Marketplace release ${release.itemId}@${release.releaseVersion} is incompatible with this host.`);
             }
             const policy = this.releasePolicy(release) ?? {};
             if (policy.blocked) {
                 throw marketplaceError(MARKETPLACE_ERROR_CODES.RELEASE_BLOCKED, `Marketplace release ${release.itemId}@${release.releaseVersion} is blocked.`);
             }
-            const adapter = this.adapterRegistry.requireLifecycle(release.contentKind);
+            const disposition = entry.disposition ?? "requested";
+            const adapter = disposition === "artifact-only"
+                ? this.adapterRegistry.get(release.contentKind)
+                : this.adapterRegistry.requireLifecycle(release.contentKind);
             const artifactHandle = await this.artifactStore.get(release.artifact);
             if (!artifactHandle) throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Verified marketplace artifact is unavailable during planning.");
             const context = Object.freeze({
@@ -285,7 +328,21 @@ export class MarketplaceInstallPlanner {
                 await this.artifactStore.quarantineCached(release.artifact).catch(() => {});
                 throw error;
             }
-            const adapterPlan = normalizePlan(await adapter.plan({ release, inspection, artifactHandle, context }));
+            let adapterPlan = disposition === "artifact-only"
+                ? normalizePlan({
+                    mode: "artifact-only",
+                    rights: [], conflicts: [], mappings: [], warnings: [], blockingIssues: [], operations: [],
+                })
+                : normalizePlan(await adapter.plan({ release, inspection, artifactHandle, context }));
+            const alreadyInstalled = installed.installations.some((installation) => (
+                installation.sourceId === preflight.source.sourceId
+                && installation.release.itemId === release.itemId
+                && installation.release.releaseVersion === release.releaseVersion
+                && installation.release.artifactSha256 === release.artifact.sha256
+            ));
+            if (disposition !== "artifact-only" && alreadyInstalled) {
+                adapterPlan = { ...adapterPlan, operations: [], installationAction: "reuse" };
+            }
             const rightsDenied = adapterPlan.rights.filter(deniedRight);
             const blockingIssues = [
                 ...adapterPlan.blockingIssues.map(String),
@@ -294,6 +351,9 @@ export class MarketplaceInstallPlanner {
             releases.push({
                 release,
                 releaseHash: entry.releaseHash,
+                disposition,
+                owners: entry.owners ?? [{ kind: "direct" }],
+                compatibility,
                 adapterId: adapter.id,
                 artifact: release.artifact,
                 inspection,

@@ -20,7 +20,7 @@ hosted private-LAN registry. It is not headless PR 13 and does not extend the
 | MKT-09: asset-package export, import, and revision mapping | Complete; acceptance pending | Core local gates pass; repository-wide a11y has unrelated workspace timeouts; hosted CI pending | Unmerged |
 | MKT-10: portable environments | Implemented; acceptance pending | Core local gates pass; browser remainder waived for this run; supported-Node and hosted CI evidence pending | Unmerged |
 | MKT-11: complete editable run templates | Implemented; acceptance pending | Full local and serial Marketplace gates pass; supported-Node and hosted CI evidence pending | Unmerged |
-| MKT-12: collections | Not started | Not run | Unmerged |
+| MKT-12: collections | Implemented; acceptance pending | Focused contract, graph, ownership, registry, integration, API, job, and recovery suites pass; full gates pending | Unmerged |
 | MKT-13: publishers, authentication, secure LAN | Not started | Not run | Unmerged |
 | MKT-14: LAN discovery, updates, advisories | Not started | Not run | Unmerged |
 | MKT-15: scale, recovery, and operations | Not started | Not run | Unmerged |
@@ -632,6 +632,65 @@ after all imports, and preserve independent installs on removal.
 Gate: cycles, missing releases, digest mismatch, and cross-registry refs fail;
 partial failure installs no collection; reinstalls are idempotent.
 
+## MKT-12 work packages
+
+- [x] WP-00: freeze commit `1c08065`, the 102-test Marketplace baseline,
+  Node 22.22.2 acceptance runtime, and public schema/fixture identities.
+- [x] WP-01: add bounded canonical collection inspection, exact signed-member
+  validation, and the verification-only collection lifecycle adapter.
+- [x] WP-02: apply exact admitted-member and stored-inspection invariants during
+  registry admission and verification.
+- [x] WP-03: add deterministic multi-root intent resolution with requested,
+  collection, and artifact-only dispositions and deduplicated descriptors.
+- [x] WP-04: add the private revisioned `ownership.json` ledger, legacy direct
+  migration, strict invariants, and idempotent multi-owner acquisition.
+- [x] WP-05: stage installed and ownership targets in one journal, commit
+  dependency-first release groups, publish ownership before installed visibility,
+  and retain backward recovery for older journals.
+- [x] WP-06: make removal direct-owner-specific and cascade a collection only
+  when its final owner disappears, preserving other owners and retained bytes.
+- [x] WP-07: add collection detail, installed ownership, and enriched durable
+  operation projections without exposing registry or staging internals.
+- [x] WP-08: add collection member/review/progress and owner-aware Installed UI.
+- [x] WP-09: add focused collection inspection, graph, ownership, publication,
+  installation, reinstall, removal, and durable-boundary recovery coverage.
+- [ ] WP-10: finish the complete repository, browser, accessibility,
+  distribution, supported-Node, hosted-CI, and merge evidence matrix.
+
+MKT-12 began on 2026-09-29 from clean commit `1c08065`. The pre-change
+Marketplace baseline was 102 tests. This host uses Node `v22.14.0`, below the
+required Node `22.22.2` acceptance runtime. Frozen baseline hashes are:
+
+- installed schema: `274e7b72f65a1df6b220eb1508fac635935765834254455cc1eb33cc2e765e10`
+- receipt schema: `af1a8db03f31b1ea21d858235f872e0480c39c8a7c4bb39fb348bdfcf3056557`
+- compatibility fixture: `6904056555062d7267bc0cf749081558e0e1ca5724401e7f0c9bfaeb813c4ae7`
+- headless characterization: `60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`
+- collection-bearing document fixture: `f98ed99c53a446f046a1857356b4c1876e388a4f345ed07d1cb37ce6360b5287`
+- canonical Marketplace fixture: `333579f7dd4f9905137c754a0419ecf2ba6911054794d8cc8ee074309987a301`
+
+Local evidence on 2026-09-29 used the checksum-verified Node 22.22.2 runtime.
+`npm run test:marketplace` passed 114/114. The focused MKT-12 coverage includes
+the 8 MiB JSON ceiling, canonical collection inspection, exact signed members,
+nested intent expansion, ownership migration and cascade, real registry/client
+installation, and injected failure recovery after member operation/receipt,
+collection verification/receipt, ownership publication, and installed
+publication. `npm test` passed 1,851 tests with six declared skips and zero
+failures (1,857 total).
+
+The serial Marketplace Playwright suite passed 5/5 at the configured desktop
+viewport, covering collection discovery, exact member details, grouped review,
+commit, Installed ownership, collection removal, keyboard operation, and Axe.
+`npm run lint` passed with only the pre-existing `MapSurface.js` hook warning;
+`npm run build`, both fixture generators, `npm run release:check`, and
+`git diff --check` passed. Headless distribution and installed-tarball
+verification passed under Node 22.22.2; the npm artifact was 1,281,302 bytes
+with SHA-256
+`ab7ba07dd8e5e6c06f82c6592dcf3ae6f763780d93b3226f2042376a06ada120`.
+The parallel full accessibility command remains open after unrelated
+Environment Editor/workspace timeout failures and a Marketplace timeout under
+contention; the serial Marketplace keyboard/Axe case passes. Hosted CI and
+merge evidence also remain open, so MKT-12 is not marked verified or merged.
+
 ### MKT-13 — Publisher identity, authenticated publishing, and secure LAN
 
 Add Ed25519 key generation/DSSE signing, publisher registration/revocation,
@@ -1184,6 +1243,23 @@ Local evidence on 2026-09-28:
   WP-10 and milestone acceptance open.
 
 ## Decision log
+
+### 2026-09-29 — Keep collection ownership private and publish installed visibility last
+
+A collection artifact duplicates its direct ordered presentation members in
+the signed release dependency set. Registry admission and final planning require
+exact set equality, so preflight expands only signed metadata while final
+inspection recovers group labels. Requested members and nested collections are
+installed; ordinary transitive releases are verified artifact-only closure.
+
+The frozen public installed and receipt schemas remain unchanged. Exact direct
+and collection owners plus collection-member groups live in the private
+revision-locked `marketplace/ownership.json` ledger. Transactions freeze and
+stage both ledgers, complete member operations and receipts before collection
+verification, publish ownership, and replace `installed.json` last. Removing a
+release removes only its direct owner; collection edges cascade only when the
+owning collection loses its final owner. All Marketplace state remains outside
+world, simulation, run, artifact, episode, and trajectory identities.
 
 ### 2026-09-28 — Make MKT-11 the complete editable-template closure
 

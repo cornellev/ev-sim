@@ -184,6 +184,11 @@ export function createMarketplaceRouter(service, {
         response.json(await service.listInstalled());
     }));
 
+    router.get("/installed-ownership", handler(async (request, response) => {
+        exactQuery(request, []);
+        response.json(await service.listInstalledOwnership());
+    }));
+
     router.get("/receipts/:receiptHash", handler(async (request, response) => {
         exactQuery(request, []);
         response.json(await service.readReceipt(request.params.receiptHash));

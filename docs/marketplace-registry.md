@@ -21,6 +21,8 @@ Initialize and administer a registry with:
 cev-mkt init --root /srv/cev-marketplace --offline-root-key /secure/cev-marketplace-root.pem
 cev-mkt validate artifact --content-kind plugin --file plugin.json
 cev-mkt admit artifact --root /srv/cev-marketplace --content-kind plugin --file plugin.json
+cev-mkt validate artifact --content-kind collection --file collection.json
+cev-mkt admit artifact --root /srv/cev-marketplace --content-kind collection --file collection.json
 cev-mkt admit preview --root /srv/cev-marketplace --media-type image/png --file preview.png
 cev-mkt admit item --root /srv/cev-marketplace --file item.json
 cev-mkt admit release --root /srv/cev-marketplace --file release.json --track stable
@@ -49,6 +51,18 @@ root. Every numbered root is retained for sequential client updates.
 Commands write exactly one JSON result to stdout. Failures write one redacted
 JSON record to stderr and use a nonzero exit code. `serve` writes one startup
 record, remains quiet, and closes cleanly on `SIGINT` or `SIGTERM`.
+
+For a collection, admit every exact member release first. The canonical
+`cev-sim.marketplace-collection@1` artifact contains only ordered
+`{release, group?}` members; same-registry identity is structural because no
+source or registry field is admitted. The collection release must repeat the
+exact member set in `dependencies`, including item ID, version, and artifact
+digest. Admission rejects missing members, extra members, version/digest
+mismatches, unknown cross-registry fields, self-reference, and noncanonical or
+over-JSON-limit bytes. Registry verification reopens the stored artifact and
+reapplies the same set-equality and admitted-member checks before reporting the
+catalog healthy. Normal catalog and TUF publication then makes the collection
+snapshot-consistent with its members.
 
 ## Layout and key custody
 

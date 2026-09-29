@@ -70,6 +70,7 @@ export function marketplaceClientPaths(dataDir) {
         health: path.join(root, "health"),
         cache: path.join(root, "cache"),
         installed: path.join(root, "installed.json"),
+        ownership: path.join(root, "ownership.json"),
         plans: path.join(root, "plans", "sha256"),
         jobs: path.join(root, "jobs"),
         artifacts: path.join(root, "artifacts", "sha256"),

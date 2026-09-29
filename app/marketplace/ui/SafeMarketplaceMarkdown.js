@@ -35,5 +35,5 @@ export const MARKETPLACE_ACTION_LABELS = Object.freeze({
     "run-package": "Retain run package",
     environment: "Import environment",
     "asset-pack": "Import asset pack",
-    collection: "Add collection",
+    collection: "Install collection",
 });

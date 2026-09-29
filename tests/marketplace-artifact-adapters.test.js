@@ -191,7 +191,7 @@ test("MKT-02 invalid vehicle, run-template, and run-package bytes fail without r
 });
 
 test("MKT-02/MKT-09 registry rejects duplicate kinds and exposes deterministic unsupported operations", () => {
-    assert.equal(MARKETPLACE_ARTIFACT_ADAPTERS.length, 6);
+    assert.equal(MARKETPLACE_ARTIFACT_ADAPTERS.length, 7);
     assert.equal(artifactAdapterRegistry.get("asset-pack").id, "asset-pack@1");
     assert.equal(artifactAdapterRegistry.get("environment").id, "environment@1");
     assert.throws(

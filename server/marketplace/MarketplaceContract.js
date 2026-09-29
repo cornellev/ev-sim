@@ -83,6 +83,7 @@ export const RUN_TEMPLATE_PACKAGE_LIMITS = PORTABLE_MARKETPLACE_ARCHIVE_LIMITS;
 export const AUTHORING_ONLY_CONTENT_KINDS = Object.freeze(["asset-pack", "environment", "run-template"]);
 
 export function artifactByteLimitFor(contentKind) {
+    if (contentKind === "collection") return MARKETPLACE_LIMITS.jsonBytes;
     return AUTHORING_ONLY_CONTENT_KINDS.includes(contentKind)
         ? PORTABLE_MARKETPLACE_ARCHIVE_LIMITS.archiveBytes
         : MARKETPLACE_LIMITS.artifactBytes;

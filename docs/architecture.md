@@ -700,6 +700,26 @@ visual, artifact, resolved, simulation-semantic, episode, and run-package hash
 contracts are unchanged. Package preparations, receipts, mappings, and installed
 membership are provenance only and enter none of those hashes.
 
+MKT-12 treats `cev-sim.marketplace-collection@1` as a verification-only
+orchestration artifact. A collection release's signed exact dependencies are
+the authoritative direct member set; static artifact inspection must reproduce
+that set and adds only ordered presentation groups. `resolveInstallGraph()`
+expands one dependency-first same-registry graph, marks collection-named
+releases as installed intent, and leaves other transitive releases as
+artifact-only verified cache entries.
+
+`MarketplaceInstallOwnershipStore` owns private
+`marketplace/ownership.json`. Its revision always equals `installed.json`; it
+records exact direct/collection owner edges and collection member groups without
+changing the frozen installed or receipt schemas. Legacy ledgers migrate to one
+direct owner per installed entry. Install transactions stage both targets,
+commit member release groups before collection verification, publish ownership,
+and replace `installed.json` last. Recovery accepts only the base/target states
+reachable through that order. Direct removal changes only the direct edge;
+collection edges cascade when their collection loses its final owner. Receipts,
+artifact cache, plugin CAS/runtime bytes, authoring records, and visual roots
+remain immutable or retained.
+
 ## External Integration
 
 cev-sim does not embed ROS. `app/3d/managers/ClientManager.js` creates a browser client from `app/client/Client.js`, syncs message definitions from the external orchestrator Types API, then connects to the orchestrator WebSocket.

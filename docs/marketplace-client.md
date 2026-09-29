@@ -45,6 +45,7 @@ cache/<sourceId>/snapshots/<snapshotId>/
   targets/releases/<itemId>/<releaseVersion>.json
 cache/<sourceId>/staging/<operationId>/
 installed.json
+ownership.json
 plans/sha256/<planHash>.json
 jobs/<jobId>/{snapshot.json,work/}
 jobs/<jobId>/work/asset-packages/<preparationHash>/{preparation.json,generated/}
@@ -179,7 +180,8 @@ The installation API is:
 - post-commit `POST /install-jobs/:jobId/resume`,
   `POST /install-jobs/:jobId/replan`, and paginated/status-filtered
   `GET /install-jobs/:jobId/operations`;
-- `GET /installed`, `GET /receipts/:receiptHash`, and exact installed
+- `GET /installed`, sanitized private-owner projection
+  `GET /installed-ownership`, `GET /receipts/:receiptHash`, and exact installed
   membership `DELETE`.
 
 Preflights contain no creation timestamp in hashed bytes. They pin the source,
@@ -200,7 +202,7 @@ Verified CAS bytes may be reused offline. Downloaded but uninstalled bytes and
 historical receipts remain for MKT-15 garbage collection.
 
 The transaction journal fixes one install timestamp, exact receipt bytes, the
-installed-ledger base/target hashes, final plan, and complete ordered adapter
+installed- and ownership-ledger base/target hashes, final plan, and complete ordered adapter
 operation set before authoring starts. Each operation has a hash-derived ID and
 a strict durable completion marker. Recovery skips it only after the adapter
 verifies the current result. Receipt publication and dependency-first
@@ -209,6 +211,35 @@ completion precedes journal cleanup. Startup replays base or target states and
 fails with `RECOVERY_REQUIRED` for every other ledger state. Live failures after
 the journal is durable enter `needs-attention`; cancellation remains precommit
 only.
+
+## Collections and installation ownership
+
+Collection preflight expands exact signed dependencies without opening the
+collection artifact. Every graph node has a private disposition: `requested`
+and `collection` nodes acquire installed ownership, while `artifact-only`
+transitive nodes are downloaded, hashed, statically inspected, and retained in
+cache without adapter planning, receipts, or installed membership. Final
+planning opens the canonical collection artifact, requires its member set to
+equal the signed dependencies exactly, and retains its ordered group labels for
+review. Collection compatibility is non-executable; requested member
+compatibility and lifecycle availability decide whether commit is possible.
+
+`ownership.json` is an owner-only, canonical private document whose revision
+always equals `installed.json`. `memberships` associates each exact installed
+release with a direct owner and/or one or more exact collection owners;
+`collections` records direct members and nullable group labels. Existing
+installed ledgers migrate in place to direct ownership without rewriting public
+installed state or receipts. `GET /installed` remains byte-contract compatible;
+`GET /installed-ownership` exposes only this sanitized projection.
+
+Commit processes dependency-first release groups. Each member's frozen adapter
+operations and completion markers precede its immutable receipt; the collection
+verification operation and receipt follow all requested members. Ownership is
+published next and `installed.json` remains the final visibility point. Removing
+an exact route removes only a direct owner. A collection losing its final owner
+removes its member edges recursively; entries with another direct or collection
+owner remain installed. Removal never deletes receipts, cached artifacts,
+plugin CAS/runtime bytes, authoring records, or visual roots.
 
 ## Asset-package lifecycle
 

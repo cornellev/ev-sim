@@ -144,10 +144,13 @@ export class MarketplaceInstallJobManager {
         this.#assertOpen();
         assertSha256(planHash, "planHash");
         const preflight = await this.planner.readPreflight(planHash);
-        if (preflight.releases.some((entry) => !entry.compatibility.compatible && entry.release.contentKind !== "asset-pack")) {
+        if (preflight.releases.some((entry) => !entry.compatibility.compatible
+            && entry.release.contentKind !== "collection"
+            && !["asset-pack", "environment", "run-template"].includes(entry.release.contentKind))) {
             throw marketplaceError(MARKETPLACE_ERROR_CODES.INCOMPATIBLE, "Marketplace release dependency graph is incompatible with this host.");
         }
         for (const entry of preflight.releases) {
+            if (entry.disposition === "artifact-only") continue;
             if (!this.planner.adapterRegistry.hasLifecycle(entry.release.contentKind)) {
                 throw marketplaceError(
                     MARKETPLACE_ERROR_CODES.INCOMPATIBLE,
@@ -264,7 +267,11 @@ export class MarketplaceInstallJobManager {
                 error: null,
                 progress: {
                     ...current.progress,
-                    totalOperations: finalized.plan.releases.reduce((total, entry) => total + (entry.adapterPlan.operations?.length ?? 1), 0),
+                    totalOperations: finalized.plan.releases.reduce((total, entry) => (
+                        entry.disposition === "artifact-only"
+                            ? total
+                            : total + (entry.adapterPlan.operations?.length ?? 1)
+                    ), 0),
                     completedOperations: 0,
                     currentOperation: null,
                 },
@@ -393,7 +400,11 @@ export class MarketplaceInstallJobManager {
                 error: null,
                 progress: {
                     ...job.progress,
-                    totalOperations: finalized.plan.releases.reduce((total, entry) => total + (entry.adapterPlan.operations?.length ?? 1), 0),
+                    totalOperations: finalized.plan.releases.reduce((total, entry) => (
+                        entry.disposition === "artifact-only"
+                            ? total
+                            : total + (entry.adapterPlan.operations?.length ?? 1)
+                    ), 0),
                     completedOperations: 0,
                     currentOperation: null,
                 },

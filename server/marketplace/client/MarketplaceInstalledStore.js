@@ -75,7 +75,7 @@ export class MarketplaceInstalledStore {
         return document;
     }
 
-    prepareInstall(base, additions) {
+    prepareInstall(base, additions, { forceRevision = false } = {}) {
         const installed = assertMarketplaceInstalled(base);
         const byKey = new Map(installed.installations.map((entry) => [installationKey(entry), structuredClone(entry)]));
         let changed = false;
@@ -94,8 +94,20 @@ export class MarketplaceInstalledStore {
         }
         return assertMarketplaceInstalled({
             ...installed,
-            revision: installed.revision + (changed ? 1 : 0),
+            revision: installed.revision + (changed || forceRevision ? 1 : 0),
             installations: sortInstallations(byKey.values()),
+        });
+    }
+
+    prepareRemovalSet(base, requests, { forceRevision = true } = {}) {
+        const installed = assertMarketplaceInstalled(base);
+        const removalKeys = new Set(requests.map((request) => `${request.sourceId}\u0000${request.itemId}\u0000${request.releaseVersion}\u0000${request.artifactSha256}`));
+        const installations = installed.installations.filter((entry) => !removalKeys.has(installationKey(entry)));
+        const changed = installations.length !== installed.installations.length;
+        return assertMarketplaceInstalled({
+            ...installed,
+            revision: installed.revision + (changed || forceRevision ? 1 : 0),
+            installations,
         });
     }
 
@@ -103,15 +115,10 @@ export class MarketplaceInstalledStore {
         const installed = assertMarketplaceInstalled(base);
         if (request.expectedRevision !== installed.revision) throw conflict("Installed marketplace revision is stale.");
         const targetKey = `${request.sourceId}\u0000${request.itemId}\u0000${request.releaseVersion}\u0000${request.artifactSha256}`;
-        const installations = installed.installations.filter((entry) => installationKey(entry) !== targetKey);
-        if (installations.length === installed.installations.length) {
+        if (!installed.installations.some((entry) => installationKey(entry) === targetKey)) {
             throw marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_NOT_FOUND, "Installed marketplace release was not found.");
         }
-        return assertMarketplaceInstalled({
-            ...installed,
-            revision: installed.revision + 1,
-            installations,
-        });
+        return this.prepareRemovalSet(installed, [request]);
     }
 
     async commitTarget({ base, target }) {

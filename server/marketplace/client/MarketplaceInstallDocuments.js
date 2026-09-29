@@ -111,6 +111,34 @@ function assertExactReleaseRef(value, path) {
     assertSha256(value.artifactSha256, `${path}.artifactSha256`);
 }
 
+function assertInstallIntent(value, path) {
+    if (value.disposition === undefined && value.owners === undefined) return;
+    if (!["requested", "collection", "artifact-only"].includes(value.disposition)) {
+        invalid(`${path}.disposition`, "expected requested, collection, or artifact-only");
+    }
+    if (!Array.isArray(value.owners)) invalid(`${path}.owners`, "expected an array");
+    const seen = new Set();
+    value.owners.forEach((owner, index) => {
+        const ownerPath = `${path}.owners.${index}`;
+        object(owner, ownerPath);
+        if (owner.kind === "direct") {
+            exactKeys(owner, ["kind"], [], ownerPath);
+        } else if (owner.kind === "collection") {
+            exactKeys(owner, ["kind", "collection"], [], ownerPath);
+            assertExactReleaseRef(owner.collection, `${ownerPath}.collection`);
+        } else {
+            invalid(`${ownerPath}.kind`, "expected direct or collection");
+        }
+        const ownerKey = owner.kind === "direct"
+            ? "direct"
+            : `collection\u0000${owner.collection.itemId}\u0000${owner.collection.releaseVersion}\u0000${owner.collection.artifactSha256}`;
+        if (seen.has(ownerKey)) invalid(ownerPath, "duplicate owner");
+        seen.add(ownerKey);
+    });
+    if (value.disposition === "artifact-only" && value.owners.length) invalid(`${path}.owners`, "artifact-only releases cannot have owners");
+    if (value.disposition !== "artifact-only" && value.owners.length === 0) invalid(`${path}.owners`, "installed releases require an owner");
+}
+
 function assertSourcePin(value, path) {
     exactKeys(value, [
         "sourceId", "registryId", "trustedRootFingerprint", "snapshotId", "catalogRevision", "catalogSha256",
@@ -162,26 +190,31 @@ function assertHostProfile(value, path) {
     strings(value.features, `${path}.features`);
 }
 
-function assertPreflightRelease(value, path) {
-    exactKeys(value, [
-        "release", "releaseHash", "compatibility", "yanked", "warnings",
-    ], [], path);
-    const release = assertMarketplaceRelease(value.release);
-    if (!isDeepStrictEqual(release, value.release)) invalid(`${path}.release`, "release is not canonical");
-    assertSha256(value.releaseHash, `${path}.releaseHash`);
-    if (value.releaseHash !== hashMarketplaceRelease(release)) invalid(`${path}.releaseHash`, "does not match release bytes");
-    exactKeys(value.compatibility, ["compatible", "issues"], [], `${path}.compatibility`);
-    if (typeof value.compatibility.compatible !== "boolean") invalid(`${path}.compatibility.compatible`, "expected boolean");
-    if (!Array.isArray(value.compatibility.issues)) invalid(`${path}.compatibility.issues`, "expected array");
-    value.compatibility.issues.forEach((entry, index) => {
-        const issuePath = `${path}.compatibility.issues.${index}`;
+function assertCompatibilityResult(value, path) {
+    exactKeys(value, ["compatible", "issues"], [], path);
+    if (typeof value.compatible !== "boolean") invalid(`${path}.compatible`, "expected boolean");
+    if (!Array.isArray(value.issues)) invalid(`${path}.issues`, "expected array");
+    value.issues.forEach((entry, index) => {
+        const issuePath = `${path}.issues.${index}`;
         exactKeys(entry, ["path", "code", "required", "actual"], [], issuePath);
         text(entry.path, `${issuePath}.path`, 1024);
         text(entry.code, `${issuePath}.code`, 255);
     });
-    if (value.compatibility.compatible !== (value.compatibility.issues.length === 0)) {
-        invalid(`${path}.compatibility.compatible`, "does not match compatibility issues");
+    if (value.compatible !== (value.issues.length === 0)) {
+        invalid(`${path}.compatible`, "does not match compatibility issues");
     }
+}
+
+function assertPreflightRelease(value, path) {
+    exactKeys(value, [
+        "release", "releaseHash", "compatibility", "yanked", "warnings",
+    ], ["disposition", "owners"], path);
+    assertInstallIntent(value, path);
+    const release = assertMarketplaceRelease(value.release);
+    if (!isDeepStrictEqual(release, value.release)) invalid(`${path}.release`, "release is not canonical");
+    assertSha256(value.releaseHash, `${path}.releaseHash`);
+    if (value.releaseHash !== hashMarketplaceRelease(release)) invalid(`${path}.releaseHash`, "does not match release bytes");
+    assertCompatibilityResult(value.compatibility, `${path}.compatibility`);
     if (typeof value.yanked !== "boolean") invalid(`${path}.yanked`, "expected boolean");
     strings(value.warnings, `${path}.warnings`);
 }
@@ -235,7 +268,8 @@ function assertFinalRelease(value, path) {
     exactKeys(value, [
         "release", "releaseHash", "adapterId", "artifact", "inspection", "adapterPlan",
         "rights", "conflicts", "mappings", "warnings", "blockingIssues",
-    ], [], path);
+    ], ["disposition", "owners", "compatibility"], path);
+    assertInstallIntent(value, path);
     const release = assertMarketplaceRelease(value.release);
     if (!isDeepStrictEqual(release, value.release)) invalid(`${path}.release`, "release is not canonical");
     assertSha256(value.releaseHash, `${path}.releaseHash`);
@@ -243,6 +277,7 @@ function assertFinalRelease(value, path) {
     text(value.adapterId, `${path}.adapterId`, 255);
     assertArtifactDescriptor(value.artifact, `${path}.artifact`);
     if (!isDeepStrictEqual(value.artifact, release.artifact)) invalid(`${path}.artifact`, "does not match release artifact");
+    if (value.compatibility !== undefined) assertCompatibilityResult(value.compatibility, `${path}.compatibility`);
     object(value.inspection, `${path}.inspection`);
     object(value.adapterPlan, `${path}.adapterPlan`);
     for (const key of ["rights", "conflicts", "mappings"]) {
@@ -328,7 +363,7 @@ export function assertInstallTransaction(value) {
     exactKeys(value, [
         "kind", "version", "transactionId", "jobId", "operation", "finalPlanHash", "installedBase",
         "installedTarget", "receiptHashes", "adapterCommits",
-    ], ["adapterRemovals", "adapterOperations"], "$transaction");
+    ], ["adapterRemovals", "adapterOperations", "ownershipBase", "ownershipTarget"], "$transaction");
     assertKind(value, MARKETPLACE_INSTALL_KINDS.transaction, "$transaction");
     assertCanonicalUuid(value.transactionId, "$transaction.transactionId");
     if (value.jobId !== null) assertCanonicalUuid(value.jobId, "$transaction.jobId");
@@ -339,27 +374,52 @@ export function assertInstallTransaction(value) {
         nonNegative(entry.revision, `$transaction.${name}.revision`);
         assertSha256(entry.sha256, `$transaction.${name}.sha256`);
     }
+    if ((value.ownershipBase === undefined) !== (value.ownershipTarget === undefined)) {
+        invalid("$transaction.ownershipBase", "ownership base and target must be present together");
+    }
+    for (const name of ["ownershipBase", "ownershipTarget"]) {
+        const entry = value[name];
+        if (entry === undefined) continue;
+        exactKeys(entry, ["revision", "sha256"], [], `$transaction.${name}`);
+        nonNegative(entry.revision, `$transaction.${name}.revision`);
+        assertSha256(entry.sha256, `$transaction.${name}.sha256`);
+    }
     strings(value.receiptHashes, "$transaction.receiptHashes", { hashes: true });
     if (!Array.isArray(value.adapterCommits)) invalid("$transaction.adapterCommits", "expected array");
     value.adapterCommits.forEach((entry, index) => {
-        exactKeys(entry, ["adapterId", "itemId", "releaseVersion", "artifactSha256"], [], `$transaction.adapterCommits.${index}`);
+        exactKeys(entry, ["adapterId", "itemId", "releaseVersion", "artifactSha256"], ["receiptHash"], `$transaction.adapterCommits.${index}`);
         text(entry.adapterId, `$transaction.adapterCommits.${index}.adapterId`, 255);
         text(entry.itemId, `$transaction.adapterCommits.${index}.itemId`, 255);
         assertReleaseVersion(entry.releaseVersion, `$transaction.adapterCommits.${index}.releaseVersion`);
         assertSha256(entry.artifactSha256, `$transaction.adapterCommits.${index}.artifactSha256`);
+        if (entry.receiptHash !== undefined) assertSha256(entry.receiptHash, `$transaction.adapterCommits.${index}.receiptHash`);
     });
     if (value.adapterOperations !== undefined) {
         if (!Array.isArray(value.adapterOperations)) invalid("$transaction.adapterOperations", "expected array");
         const operationIds = new Set();
         value.adapterOperations.forEach((entry, index) => {
             const path = `$transaction.adapterOperations.${index}`;
-            exactKeys(entry, ["operationId", "operationHash", "adapterId", "itemId", "releaseVersion", "artifactSha256"], [], path);
+            exactKeys(entry, ["operationId", "operationHash", "adapterId", "itemId", "releaseVersion", "artifactSha256"], [
+                "disposition", "owners", "collectionGroups",
+            ], path);
             assertSha256(entry.operationId, `${path}.operationId`);
             assertSha256(entry.operationHash, `${path}.operationHash`);
             text(entry.adapterId, `${path}.adapterId`, 255);
             text(entry.itemId, `${path}.itemId`, 255);
             assertReleaseVersion(entry.releaseVersion, `${path}.releaseVersion`);
             assertSha256(entry.artifactSha256, `${path}.artifactSha256`);
+            if (entry.disposition !== undefined && !["requested", "collection"].includes(entry.disposition)) {
+                invalid(`${path}.disposition`, "expected requested or collection");
+            }
+            if (entry.owners !== undefined) {
+                assertInstallIntent({ disposition: entry.disposition ?? "requested", owners: entry.owners }, path);
+            }
+            if (entry.collectionGroups !== undefined) {
+                if (!Array.isArray(entry.collectionGroups)) invalid(`${path}.collectionGroups`, "expected an array");
+                entry.collectionGroups.forEach((group, groupIndex) => {
+                    if (group !== null) text(group, `${path}.collectionGroups.${groupIndex}`, 256);
+                });
+            }
             if (operationIds.has(entry.operationId)) invalid(`${path}.operationId`, "duplicate operation id");
             operationIds.add(entry.operationId);
         });

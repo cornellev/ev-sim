@@ -65,7 +65,17 @@ async function clearSources(request) {
 
 async function clearPluginLifecycleState(request) {
     let installed = await (await request.get("/api/marketplace/installed")).json();
-    for (const entry of installed.installations) {
+    const ownership = await (await request.get("/api/marketplace/installed-ownership")).json();
+    const collectionKeys = new Set(ownership.collections.map((entry) => `${entry.sourceId}:${entry.release.itemId}:${entry.release.releaseVersion}:${entry.release.artifactSha256}`));
+    const direct = ownership.memberships.filter((entry) => entry.owners.some((owner) => owner.kind === "direct"))
+        .sort((left, right) => Number(collectionKeys.has(`${right.sourceId}:${right.release.itemId}:${right.release.releaseVersion}:${right.release.artifactSha256}`))
+            - Number(collectionKeys.has(`${left.sourceId}:${left.release.itemId}:${left.release.releaseVersion}:${left.release.artifactSha256}`)));
+    for (const owner of direct) {
+        const entry = installed.installations.find((candidate) => candidate.sourceId === owner.sourceId
+            && candidate.release.itemId === owner.release.itemId
+            && candidate.release.releaseVersion === owner.release.releaseVersion
+            && candidate.release.artifactSha256 === owner.release.artifactSha256);
+        if (!entry) continue;
         const segments = [entry.sourceId, entry.release.itemId, entry.release.releaseVersion, entry.release.artifactSha256]
             .map(encodeURIComponent).join("/");
         const response = await request.delete(`/api/marketplace/installed/${segments}?expectedRevision=${installed.revision}`);
@@ -210,11 +220,11 @@ test("MKT-08 installs a plugin with an explicit zero-grant review and safely rem
     const installed = page.getByRole("article").filter({ hasText: "acme.example@1.0.0" });
     await expect(installed.getByText("Plugin ID", { exact: true })).toBeVisible();
     await expect(installed.getByText(registry.plugin.runtimeHash, { exact: true })).toBeVisible();
-    await installed.getByRole("button", { name: "Remove membership" }).click();
-    const removal = page.getByRole("dialog", { name: "Remove Marketplace membership" });
-    await expect(removal.getByText(/only the exact Marketplace owner/u)).toBeVisible();
-    await expect(removal.getByText(/Last-owner removal hides it from the Plugin Library/u)).toBeVisible();
-    await removal.getByRole("button", { name: "Remove membership" }).click();
+    await installed.getByRole("button", { name: "Remove installation" }).click();
+    const removal = page.getByRole("dialog", { name: "Remove installation" });
+    await expect(removal.getByText(/removes the direct owner only/u)).toBeVisible();
+    await expect(removal.getByText(/Last-owner removal updates Marketplace visibility/u)).toBeVisible();
+    await removal.getByRole("button", { name: "Remove installation" }).click();
     await expect(page.getByRole("heading", { name: "No installed Marketplace releases" })).toBeVisible();
     await expect.poll(async () => {
         const response = await request.get("/api/storage/plugins/library");
@@ -251,9 +261,9 @@ test("MKT-08 Marketplace removal preserves an independent manual plugin owner", 
 
     await page.getByRole("tab", { name: "Installed" }).click();
     const installed = page.getByRole("article").filter({ hasText: "acme.example@1.0.0" });
-    await installed.getByRole("button", { name: "Remove membership" }).click();
-    await page.getByRole("dialog", { name: "Remove Marketplace membership" })
-        .getByRole("button", { name: "Remove membership" }).click();
+    await installed.getByRole("button", { name: "Remove installation" }).click();
+    await page.getByRole("dialog", { name: "Remove installation" })
+        .getByRole("button", { name: "Remove installation" }).click();
     await expect(page.getByRole("heading", { name: "No installed Marketplace releases" })).toBeVisible();
     const library = await (await request.get("/api/storage/plugins/library")).json();
     expect(library.packages.some((entry) => entry.packageHash === registry.plugin.packageHash)).toBe(true);
@@ -262,6 +272,42 @@ test("MKT-08 Marketplace removal preserves an independent manual plugin owner", 
         data: { pluginId: registry.release.itemId, packageHash: registry.plugin.packageHash },
     });
     expect(cleanup.ok(), await cleanup.text()).toBeTruthy();
+});
+
+test("MKT-12 reviews grouped collection members and removes only collection ownership", async ({ page, request }) => {
+    test.setTimeout(120_000);
+    await openMarketplace(page);
+    await trustSource(page, request, "Collection Registry");
+    await page.getByRole("tab", { name: "Discover" }).click();
+    await page.getByRole("button", { name: /Control Collection/u }).click();
+    const details = page.getByRole("article", { name: "Marketplace release details" });
+    await expect(details.getByRole("button", { name: "Install collection" })).toBeEnabled();
+    await expect(details.getByRole("heading", { name: "Collection members" })).toBeVisible();
+    await expect(details.getByText(/Control Pack.*Plugin.*1\.0\.0/u)).toBeVisible();
+    await expect(details.locator("dl > div").filter({ hasText: "Executable" })).toContainText("not-applicable");
+    await details.getByRole("button", { name: "Install collection" }).click();
+
+    const dialog = page.getByRole("dialog", { name: "Install Control Collection" });
+    await dialog.getByRole("button", { name: "Download and inspect" }).click();
+    const commit = dialog.getByRole("button", { name: "Commit installation" });
+    await expect(commit).toBeEnabled({ timeout: 30_000 });
+    await expect(dialog.getByRole("heading", { name: "Collection members" })).toBeVisible();
+    await expect(dialog.getByText("Controllers", { exact: true })).toBeVisible();
+    await expect(dialog.getByText(/acme\.example@1\.0\.0.*operations/u)).toBeVisible();
+    await expect(dialog.getByRole("heading", { name: "Artifact-only dependencies" })).toBeVisible();
+    await commit.click();
+    await expect(dialog.getByText("Installation complete", { exact: true })).toBeVisible({ timeout: 30_000 });
+    await dialog.getByRole("contentinfo").getByRole("button", { name: "Close" }).click();
+
+    await page.getByRole("tab", { name: "Installed" }).click();
+    const member = page.getByRole("article").filter({ hasText: "acme.example@1.0.0" });
+    await expect(member.getByText(/Retained by collection ownership/u)).toBeVisible();
+    await expect(member.getByRole("button", { name: "Remove installation" })).toHaveCount(0);
+    const collection = page.getByRole("article").filter({ hasText: "com.example.control-collection@1.0.0" });
+    await expect(collection.getByText(/acme\.example@1\.0\.0 \(Controllers\)/u)).toBeVisible();
+    await collection.getByRole("button", { name: "Remove collection" }).click();
+    await page.getByRole("dialog", { name: "Remove collection" }).getByRole("button", { name: "Remove collection" }).click();
+    await expect(page.getByRole("heading", { name: "No installed Marketplace releases" })).toBeVisible();
 });
 
 test("MKT-06 Marketplace tabs and trust dialog are keyboard accessible @a11y", async ({ page, request }) => {

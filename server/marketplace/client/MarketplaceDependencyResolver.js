@@ -17,6 +17,18 @@ function exactMatches(reference, release) {
     return release && release.artifact.sha256 === reference.artifactSha256;
 }
 
+function exactRef(release) {
+    return Object.freeze({
+        itemId: release.itemId,
+        releaseVersion: release.releaseVersion,
+        artifactSha256: release.artifactSha256 ?? release.artifact.sha256,
+    });
+}
+
+function ownerKey(owner) {
+    return owner.kind === "direct" ? "direct" : `collection\u0000${tupleKey(owner.collection)}`;
+}
+
 export function resolveDependencyDag({
     rootRelease,
     catalog,
@@ -111,5 +123,48 @@ export function resolveDependencyDag({
     return Object.freeze({
         releases: Object.freeze(ordered.map((release) => Object.freeze(structuredClone(release)))),
         warnings: Object.freeze([...new Set(warnings)].sort(compareUtf8)),
+    });
+}
+
+export function resolveInstallGraph(input) {
+    const dependencyDag = resolveDependencyDag(input);
+    const byKey = new Map(dependencyDag.releases.map((release) => [key(release), release]));
+    const requested = new Set([key(input.rootRelease)]);
+    const owners = new Map([[key(input.rootRelease), [{ kind: "direct" }]]]);
+    const pendingCollections = [];
+    const root = byKey.get(key(input.rootRelease));
+    if (root.contentKind === "collection") pendingCollections.push(root);
+
+    const expandedCollections = new Set();
+    while (pendingCollections.length) {
+        pendingCollections.sort((left, right) => compareUtf8(tupleKey(left), tupleKey(right)));
+        const collection = pendingCollections.shift();
+        const collectionKey = key(collection);
+        if (expandedCollections.has(collectionKey)) continue;
+        expandedCollections.add(collectionKey);
+        const collectionOwner = Object.freeze({ kind: "collection", collection: exactRef(collection) });
+        for (const dependency of collection.dependencies) {
+            const member = byKey.get(key(dependency));
+            requested.add(key(member));
+            const memberOwners = owners.get(key(member)) ?? [];
+            if (!memberOwners.some((entry) => ownerKey(entry) === ownerKey(collectionOwner))) {
+                memberOwners.push(collectionOwner);
+                memberOwners.sort((left, right) => compareUtf8(ownerKey(left), ownerKey(right)));
+                owners.set(key(member), memberOwners);
+            }
+            if (member.contentKind === "collection") pendingCollections.push(member);
+        }
+    }
+
+    const entries = dependencyDag.releases.map((release) => Object.freeze({
+        release,
+        disposition: requested.has(key(release))
+            ? (release.contentKind === "collection" ? "collection" : "requested")
+            : "artifact-only",
+        owners: Object.freeze((owners.get(key(release)) ?? []).map((owner) => Object.freeze(structuredClone(owner)))),
+    }));
+    return Object.freeze({
+        releases: Object.freeze(entries),
+        warnings: dependencyDag.warnings,
     });
 }

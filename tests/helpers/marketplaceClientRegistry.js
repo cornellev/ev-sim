@@ -13,7 +13,7 @@ import { pluginFixtureResource } from "./pluginFixtures.js";
 const documentsPromise = fs.readFile(new URL("../fixtures/marketplace/documents.v1.json", import.meta.url), "utf8")
     .then((text) => JSON.parse(text));
 
-export async function createPopulatedClientRegistry(parent, { pluginResource = null } = {}) {
+export async function createPopulatedClientRegistry(parent, { pluginResource = null, includeCollection = false } = {}) {
     const documents = await documentsPromise;
     const root = path.join(parent, "registry");
     await MarketplaceRegistryStore.initialize(root, {
@@ -42,6 +42,47 @@ export async function createPopulatedClientRegistry(parent, { pluginResource = n
     await service.admitItem(marketplaceDocumentBytes(item));
     const release = structuredClone(aligned.release);
     await service.admitRelease(marketplaceDocumentBytes(release), { track: "stable" });
+    let collection = null;
+    if (includeCollection) {
+        const member = {
+            itemId: release.itemId,
+            releaseVersion: release.releaseVersion,
+            artifactSha256: release.artifact.sha256,
+        };
+        const document = {
+            kind: "cev-sim.marketplace-collection",
+            version: 1,
+            members: [{ release: member, group: "Controllers" }],
+        };
+        const collectionArtifact = (await service.admitArtifact(marketplaceDocumentBytes(document), { contentKind: "collection" })).descriptor;
+        const collectionItem = {
+            ...structuredClone(item),
+            itemId: "com.example.control-collection",
+            contentKind: "collection",
+            displayName: "Control Collection",
+            summary: "An exact controller collection.",
+            description: "Installs the signed exact controller member in one plan.",
+            previews: [],
+            tags: ["collection", "control"],
+            categories: ["collections"],
+        };
+        const collectionRelease = {
+            ...structuredClone(release),
+            itemId: collectionItem.itemId,
+            contentKind: "collection",
+            artifact: collectionArtifact,
+            capabilities: [],
+            dependencies: [member],
+            compatibility: {
+                ...structuredClone(release.compatibility),
+                contracts: [{ kind: "cev-sim.marketplace-collection", versions: [1] }],
+                runtimes: [],
+            },
+        };
+        await service.admitItem(marketplaceDocumentBytes(collectionItem));
+        await service.admitRelease(marketplaceDocumentBytes(collectionRelease), { track: "stable" });
+        collection = Object.freeze({ item: collectionItem, release: collectionRelease, document });
+    }
     await store.close();
     const server = await MarketplaceRegistryHttpServer.open(root);
     const address = await server.listen({ port: 0 });
@@ -54,5 +95,6 @@ export async function createPopulatedClientRegistry(parent, { pluginResource = n
         preview,
         previewBytes,
         resource,
+        collection,
     });
 }

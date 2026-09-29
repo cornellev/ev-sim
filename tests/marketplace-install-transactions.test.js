@@ -14,7 +14,16 @@ import {
     waitForInstallJob,
 } from "./helpers/marketplaceInstallLifecycle.js";
 
-const RECOVERY_BOUNDARIES = ["after-receipt", "after-adapter-commit", "after-installed", "after-cleanup"];
+const RECOVERY_BOUNDARIES = [
+    "after-member-operation",
+    "after-member-receipt",
+    "after-ownership-publication",
+    "after-installed-publication",
+    "after-receipt",
+    "after-adapter-commit",
+    "after-installed",
+    "after-cleanup",
+];
 
 async function installPlugin(service, registry, sourceId) {
     const plan = await service.createInstallPlan({

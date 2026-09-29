@@ -55,6 +55,11 @@ import {
     readPreparedRunTemplateImportRecord,
 } from "./RunTemplatePackageImportPlanner.js";
 import { MARKETPLACE_ARTIFACTS, MARKETPLACE_LIMITS } from "./MarketplaceContract.js";
+import {
+    assertMarketplaceCollection,
+    marketplaceDocumentBytes,
+    parseMarketplaceDocument,
+} from "./MarketplaceContracts.js";
 import { MARKETPLACE_ERROR_CODES, marketplaceError } from "./MarketplaceErrors.js";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
@@ -177,6 +182,47 @@ function validateRelease(adapter, inspection, release) {
     if (release.artifact.sha256 !== inspection.artifact.sha256
         || release.artifact.sizeBytes !== inspection.artifact.sizeBytes) {
         throw marketplaceError(MARKETPLACE_ERROR_CODES.ARTIFACT_HASH_MISMATCH, "Release artifact digest or byte size does not match the inspected artifact.");
+    }
+    return inspection;
+}
+
+function exactReleaseRef(release) {
+    return Object.freeze({
+        itemId: release.itemId,
+        releaseVersion: release.releaseVersion,
+        artifactSha256: release.artifactSha256 ?? release.artifact.sha256,
+    });
+}
+
+function exactReleaseRefKey(release) {
+    const exact = exactReleaseRef(release);
+    return `${exact.itemId}\u0000${exact.releaseVersion}\u0000${exact.artifactSha256}`;
+}
+
+export async function inspectCollectionArtifact(adapter, rawHandle) {
+    const { handle, bytes } = await readJsonArtifact(rawHandle, adapter.contract, MARKETPLACE_LIMITS.jsonBytes);
+    const collection = assertMarketplaceCollection(parseMarketplaceDocument(bytes));
+    const canonicalBytes = marketplaceDocumentBytes(collection);
+    if (!Buffer.from(bytes).equals(Buffer.from(canonicalBytes))) {
+        throw marketplaceError(MARKETPLACE_ERROR_CODES.DOCUMENT_INVALID, "Collection artifact bytes must be canonical marketplace JSON.");
+    }
+    return baseInspection(adapter, handle, {
+        memberCount: collection.members.length,
+        members: collection.members.map((member) => Object.freeze({
+            release: exactReleaseRef(member.release),
+            group: member.group ?? null,
+        })),
+    });
+}
+
+export function validateCollectionRelease(_adapter, inspection, release) {
+    const inspected = inspection.identity.members.map((member) => exactReleaseRefKey(member.release)).sort(compareUtf8);
+    const signed = release.dependencies.map(exactReleaseRefKey).sort(compareUtf8);
+    if (!isDeepStrictEqual(inspected, signed)) {
+        throw marketplaceError(
+            MARKETPLACE_ERROR_CODES.DOCUMENT_INVALID,
+            "Collection members must exactly match the signed release dependencies.",
+        );
     }
     return inspection;
 }
@@ -557,6 +603,66 @@ export const assetPackageArtifactAdapter = defineArtifactAdapter({
     contentKind: "asset-pack",
     inspect: inspectAssetPackageArtifact,
 });
+
+export const collectionArtifactAdapter = defineArtifactAdapter({
+    id: "collection@1",
+    contentKind: "collection",
+    inspect: inspectCollectionArtifact,
+    validateInspection: validateCollectionRelease,
+});
+
+function collectionMapping(release) {
+    return Object.freeze({
+        resourceKind: "marketplace-collection",
+        sourceId: release.itemId,
+        localId: release.itemId,
+        hashes: Object.freeze({ artifactSha256: release.artifact.sha256 }),
+    });
+}
+
+export function createCollectionLifecycleAdapter() {
+    return defineArtifactAdapter({
+        id: "collection@1",
+        contentKind: "collection",
+        inspect: inspectCollectionArtifact,
+        validateInspection: validateCollectionRelease,
+        receiptResourceKinds: ["marketplace-collection"],
+        async plan(_adapter, { release, inspection }) {
+            return {
+                collection: {
+                    members: structuredClone(inspection.identity.members),
+                    memberCount: inspection.identity.memberCount,
+                },
+                rights: [],
+                conflicts: [],
+                mappings: [collectionMapping(release)],
+                warnings: [],
+                blockingIssues: [],
+                operations: [{
+                    operationId: createHash("sha256")
+                        .update(`marketplace-collection\u0000${release.artifact.sha256}`)
+                        .digest("hex"),
+                    kind: "verify-marketplace-collection",
+                }],
+            };
+        },
+        async commit(adapter, { release, inspection, adapterPlan, artifactHandle, operation }) {
+            if (operation?.operationId !== adapterPlan.operations[0]?.operationId) {
+                throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Collection verification operation is not in the final plan.");
+            }
+            const current = await inspectCollectionArtifact(adapter, artifactHandle);
+            validateCollectionRelease(adapter, current, release);
+            if (!isDeepStrictEqual(current.identity, inspection.identity)
+                || !isDeepStrictEqual(current.identity.members, adapterPlan.collection.members)) {
+                throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Collection artifact changed after final planning.");
+            }
+            return { kind: operation.kind, artifactSha256: release.artifact.sha256 };
+        },
+        async createReceipt(_adapter, { release }) {
+            return { mappings: [collectionMapping(release)] };
+        },
+    });
+}
 
 async function inspectEnvironmentPackageArtifact(adapter, rawHandle, context) {
     const { normalized: handle, opened } = await openHandle(rawHandle, adapter.contract);
@@ -1206,6 +1312,7 @@ export const MARKETPLACE_ARTIFACT_ADAPTERS = Object.freeze([
     runPackageArtifactAdapter,
     environmentArtifactAdapter,
     assetPackageArtifactAdapter,
+    collectionArtifactAdapter,
 ]);
 
 export class ArtifactAdapterRegistry {
@@ -1303,5 +1410,6 @@ export function createMarketplaceClientArtifactRegistry(options) {
         options?.editorAssetStore && options?.visualAssetStore && options?.receiptStore
             ? createAssetPackageLifecycleAdapter(options)
             : assetPackageArtifactAdapter,
+        createCollectionLifecycleAdapter(),
     ]);
 }

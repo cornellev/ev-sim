@@ -23,6 +23,11 @@ import {
 } from "../registry/RegistryFs.js";
 import { marketplaceClientPaths } from "./MarketplaceClientLayout.js";
 import {
+    assertInstallOwnership,
+    installOwnershipBytes,
+    installOwnershipHash,
+} from "./MarketplaceInstallOwnershipStore.js";
+import {
     MARKETPLACE_INSTALL_DOCUMENT_VERSION,
     MARKETPLACE_INSTALL_KINDS,
     assertInstallTransaction,
@@ -35,6 +40,7 @@ const JOURNAL_FILE = "journal.json";
 const WRITES_DIRECTORY = "writes";
 const COMPLETIONS_DIRECTORY = "completions";
 const INSTALLED_WRITE = "installed.json";
+const OWNERSHIP_WRITE = "ownership.json";
 
 function transactionPaths(paths, transactionId) {
     assertCanonicalUuid(transactionId, "transactionId");
@@ -44,6 +50,7 @@ function transactionPaths(paths, transactionId) {
         journal: path.join(root, JOURNAL_FILE),
         writes: path.join(root, WRITES_DIRECTORY),
         installed: path.join(root, WRITES_DIRECTORY, INSTALLED_WRITE),
+        ownership: path.join(root, WRITES_DIRECTORY, OWNERSHIP_WRITE),
         completions: path.join(root, COMPLETIONS_DIRECTORY),
     });
 }
@@ -105,6 +112,7 @@ export class MarketplaceTransactionCoordinator {
         paths,
         planner,
         installedStore,
+        ownershipStore,
         receiptStore,
         artifactStore,
         adapterRegistry,
@@ -114,6 +122,7 @@ export class MarketplaceTransactionCoordinator {
         this.paths = paths;
         this.planner = planner;
         this.installedStore = installedStore;
+        this.ownershipStore = ownershipStore;
         this.receiptStore = receiptStore;
         this.artifactStore = artifactStore;
         this.adapterRegistry = adapterRegistry;
@@ -135,6 +144,8 @@ export class MarketplaceTransactionCoordinator {
         }
         const preflight = await this.planner.readPreflight(validated.preflightHash);
         const base = await this.installedStore.snapshot();
+        const ownershipBase = await this.ownershipStore.snapshot();
+        this.ownershipStore.verifyAgainstInstalled(ownershipBase, base);
         if (base.revision !== validated.installedRevision) {
             throw marketplaceError(MARKETPLACE_ERROR_CODES.CONFLICT, "Installed marketplace revision changed before commit.");
         }
@@ -145,6 +156,7 @@ export class MarketplaceTransactionCoordinator {
         const receipts = [];
         const additions = [];
         for (const entry of validated.releases) {
+            if (entry.disposition === "artifact-only") continue;
             const release = entry.release;
             const key = installationKey(preflight.source.sourceId, release);
             if (existing.has(key)) continue;
@@ -201,13 +213,37 @@ export class MarketplaceTransactionCoordinator {
                 status: preflightByKey.get(exactKey(release))?.yanked ? "yanked" : "installed",
             });
         }
-        const target = this.installedStore.prepareInstall(base, additions);
+        const ownershipMemberships = validated.releases
+            .filter((entry) => entry.disposition !== "artifact-only")
+            .map((entry) => ({
+                sourceId: preflight.source.sourceId,
+                registryId: preflight.source.registryId,
+                release: exactRef(entry.release),
+                owners: structuredClone(entry.owners ?? [{ kind: "direct" }]),
+            }));
+        const ownershipCollections = validated.releases
+            .filter((entry) => entry.disposition === "collection")
+            .map((entry) => ({
+                sourceId: preflight.source.sourceId,
+                registryId: preflight.source.registryId,
+                release: exactRef(entry.release),
+                members: structuredClone(entry.adapterPlan.collection?.members ?? []),
+            }));
+        const ownershipTarget = this.ownershipStore.prepareInstall(ownershipBase, {
+            memberships: ownershipMemberships,
+            collections: ownershipCollections,
+        });
+        const target = this.installedStore.prepareInstall(base, additions, {
+            forceRevision: ownershipTarget.revision !== ownershipBase.revision,
+        });
+        if (target.revision !== ownershipTarget.revision) throw recovery("Marketplace installed and ownership targets have different revisions.");
         const transactionId = randomUUID();
         const paths = transactionPaths(this.paths, transactionId);
         await ensureDirectory(paths.root);
         await ensureDirectory(paths.writes);
         await ensureDirectory(paths.completions);
         await writeExclusiveDurable(paths.installed, marketplaceDocumentBytes(target));
+        await writeExclusiveDurable(paths.ownership, installOwnershipBytes(ownershipTarget));
         for (const receipt of receipts) {
             await writeExclusiveDurable(receiptWrite(paths, receipt.hash), marketplaceDocumentBytes(receipt.document));
         }
@@ -221,6 +257,9 @@ export class MarketplaceTransactionCoordinator {
                 })),
                 kind: "commit-adapter",
             }];
+            const owningCollections = (entry.owners ?? [])
+                .filter((owner) => owner.kind === "collection")
+                .map((owner) => exactKey(owner.collection));
             return operations.map((operation) => ({
                 operationId: operation.operationId,
                 operationHash: operationHash(operation),
@@ -228,6 +267,12 @@ export class MarketplaceTransactionCoordinator {
                 itemId: addition.release.itemId,
                 releaseVersion: addition.release.releaseVersion,
                 artifactSha256: addition.release.artifactSha256,
+                disposition: entry.disposition ?? "requested",
+                owners: structuredClone(entry.owners ?? [{ kind: "direct" }]),
+                collectionGroups: owningCollections.map((collectionKey) => {
+                    const collection = validated.releases.find((candidate) => exactKey(candidate.release) === collectionKey);
+                    return collection?.adapterPlan.collection?.members.find((member) => exactKey(member.release) === exactKey(addition.release))?.group ?? null;
+                }),
             }));
         });
         const journal = assertInstallTransaction({
@@ -239,6 +284,8 @@ export class MarketplaceTransactionCoordinator {
             finalPlanHash: job.finalPlanHash,
             installedBase: { revision: base.revision, sha256: installedDocumentHash(base) },
             installedTarget: { revision: target.revision, sha256: installedDocumentHash(target) },
+            ownershipBase: { revision: ownershipBase.revision, sha256: installOwnershipHash(ownershipBase) },
+            ownershipTarget: { revision: ownershipTarget.revision, sha256: installOwnershipHash(ownershipTarget) },
             receiptHashes: receipts.map((entry) => entry.hash).sort(compareUtf8),
             adapterCommits: additions.map((addition) => {
                 const entry = validated.releases.find((candidate) => exactKey(candidate.release) === exactKey(addition.release));
@@ -247,6 +294,9 @@ export class MarketplaceTransactionCoordinator {
                     itemId: addition.release.itemId,
                     releaseVersion: addition.release.releaseVersion,
                     artifactSha256: addition.release.artifactSha256,
+                    receiptHash: receipts.find((receipt) => receipt.document.release.itemId === addition.release.itemId
+                        && receipt.document.release.releaseVersion === addition.release.releaseVersion
+                        && receipt.document.release.artifactSha256 === addition.release.artifactSha256).hash,
                 };
             }),
             adapterOperations,
@@ -258,7 +308,7 @@ export class MarketplaceTransactionCoordinator {
             error.marketplaceTransactionDurable = true;
             throw error;
         }
-        return Object.freeze({ journal, paths, base, target, finalPlan: validated, preflight });
+        return Object.freeze({ journal, paths, base, target, ownershipBase, ownershipTarget, finalPlan: validated, preflight });
     }
 
     async #readPrepared(journal, paths) {
@@ -271,7 +321,18 @@ export class MarketplaceTransactionCoordinator {
         }
         const finalPlan = journal.finalPlanHash ? await this.planner.readFinalPlan(journal.finalPlanHash) : null;
         const preflight = finalPlan ? await this.planner.readPreflight(finalPlan.preflightHash) : null;
-        return Object.freeze({ journal, paths, target, finalPlan, preflight });
+        let ownershipTarget = null;
+        if (journal.ownershipTarget) {
+            const ownershipBytes = await readRegularBytes(paths.ownership, { maxBytes: 16 * 1024 * 1024 });
+            const { document } = parseMarketplaceJsonBytes(ownershipBytes);
+            ownershipTarget = assertInstallOwnership(document);
+            if (installOwnershipHash(ownershipTarget) !== journal.ownershipTarget.sha256
+                || ownershipTarget.revision !== journal.ownershipTarget.revision
+                || !Buffer.from(ownershipBytes).equals(Buffer.from(installOwnershipBytes(ownershipTarget)))) {
+                throw recovery("Marketplace transaction target ownership ledger is invalid.");
+            }
+        }
+        return Object.freeze({ journal, paths, target, ownershipTarget, finalPlan, preflight });
     }
 
     async #preparedTransactionForJob(job) {
@@ -306,6 +367,18 @@ export class MarketplaceTransactionCoordinator {
             if (published.hash !== receiptHash) throw recovery("Marketplace transaction receipt hash is invalid.");
             await this.fault?.("after-receipt", { journal: prepared.journal, receiptHash, index });
         }
+    }
+
+    async #publishReceipt(prepared, receiptHash, index) {
+        const bytes = await readRegularBytes(receiptWrite(prepared.paths, receiptHash), { maxBytes: 16 * 1024 * 1024 });
+        const receipt = assertMarketplaceInstallReceipt(parseMarketplaceDocument(bytes));
+        const published = await this.receiptStore.publish(receipt);
+        if (published.hash !== receiptHash) throw recovery("Marketplace transaction receipt hash is invalid.");
+        await this.fault?.("after-receipt", { journal: prepared.journal, receiptHash, index });
+        const planned = prepared.finalPlan?.releases.find((entry) => isDeepStrictEqual(exactRef(entry.release), receipt.release));
+        await this.fault?.(planned?.disposition === "collection" ? "after-collection-receipt" : "after-member-receipt", {
+            journal: prepared.journal, receiptHash, index,
+        });
     }
 
     async #readCompletion(prepared, transactionOperation) {
@@ -394,6 +467,9 @@ export class MarketplaceTransactionCoordinator {
                 await this.fault?.("after-adapter-operation", {
                     journal: prepared.journal, adapterId: adapter.id, operationId: operation.operationId, index,
                 });
+                await this.fault?.(entry.disposition === "collection" ? "after-collection-operation" : "after-member-operation", {
+                    journal: prepared.journal, adapterId: adapter.id, operationId: operation.operationId, index,
+                });
                 await this.fault?.("after-adapter-commit", { journal: prepared.journal, adapterId: adapter.id, index });
                 index += 1;
                 await prepared.onOperation?.({
@@ -402,6 +478,8 @@ export class MarketplaceTransactionCoordinator {
                     totalOperations: transactionOperations.length,
                 });
             }
+            const commit = commits.get(exactKey(entry.release));
+            if (commit.receiptHash) await this.#publishReceipt(prepared, commit.receiptHash, index);
         }
     }
 
@@ -432,18 +510,58 @@ export class MarketplaceTransactionCoordinator {
             && currentHash !== prepared.journal.installedTarget.sha256) {
             throw recovery("Installed marketplace ledger matches neither transaction base nor target.");
         }
+        let currentOwnership = null;
+        let currentOwnershipHash = null;
+        let legacyOwnershipTarget = null;
+        if (prepared.journal.ownershipTarget) {
+            currentOwnership = await this.ownershipStore.snapshot();
+            currentOwnershipHash = installOwnershipHash(currentOwnership);
+            if (currentOwnershipHash !== prepared.journal.ownershipBase.sha256
+                && currentOwnershipHash !== prepared.journal.ownershipTarget.sha256) {
+                throw recovery("Marketplace ownership ledger matches neither transaction base nor target.");
+            }
+            if (currentHash === prepared.journal.installedTarget.sha256
+                && currentOwnershipHash !== prepared.journal.ownershipTarget.sha256) {
+                throw recovery("Installed membership became visible before its ownership target.");
+            }
+        } else {
+            currentOwnership = await this.ownershipStore.snapshot();
+            legacyOwnershipTarget = this.ownershipStore.prepareLegacyInstalledTarget(currentOwnership, prepared.target);
+        }
         if (prepared.journal.operation === "remove-membership") {
+            if (currentOwnershipHash === prepared.journal.ownershipBase?.sha256) {
+                await this.ownershipStore.commitTarget({ base: currentOwnership, target: prepared.ownershipTarget });
+                currentOwnership = prepared.ownershipTarget;
+                await this.fault?.("after-ownership-publication", { journal: prepared.journal });
+            }
+            if (legacyOwnershipTarget && installOwnershipHash(currentOwnership) !== installOwnershipHash(legacyOwnershipTarget)) {
+                await this.ownershipStore.commitTarget({ base: currentOwnership, target: legacyOwnershipTarget });
+                await this.fault?.("after-ownership-publication", { journal: prepared.journal });
+            }
             if (currentHash === prepared.journal.installedBase.sha256) {
                 await this.installedStore.commitTarget({ base: current, target: prepared.target });
                 await this.fault?.("after-installed", { journal: prepared.journal });
+                await this.fault?.("after-installed-publication", { journal: prepared.journal });
             }
             await this.#removeAdapterOwnership(prepared);
         } else {
-            await this.#publishReceipts(prepared);
-            await this.#commitAdapters(prepared);
+            if (prepared.journal.ownershipTarget) await this.#commitAdapters(prepared);
+            else {
+                await this.#publishReceipts(prepared);
+                await this.#commitAdapters(prepared);
+            }
+            if (currentOwnershipHash === prepared.journal.ownershipBase?.sha256) {
+                await this.ownershipStore.commitTarget({ base: currentOwnership, target: prepared.ownershipTarget });
+                await this.fault?.("after-ownership-publication", { journal: prepared.journal });
+            }
+            if (legacyOwnershipTarget && installOwnershipHash(currentOwnership) !== installOwnershipHash(legacyOwnershipTarget)) {
+                await this.ownershipStore.commitTarget({ base: currentOwnership, target: legacyOwnershipTarget });
+                await this.fault?.("after-ownership-publication", { journal: prepared.journal });
+            }
             if (currentHash === prepared.journal.installedBase.sha256) {
                 await this.installedStore.commitTarget({ base: current, target: prepared.target });
                 await this.fault?.("after-installed", { journal: prepared.journal });
+                await this.fault?.("after-installed-publication", { journal: prepared.journal });
             }
         }
         return Object.freeze({
@@ -531,6 +649,7 @@ export class MarketplaceTransactionCoordinator {
             }
             const expectedWrites = [
                 INSTALLED_WRITE,
+                ...(journal.ownershipTarget ? [OWNERSHIP_WRITE] : []),
                 ...journal.receiptHashes.map((hash) => `receipt-${hash}.json`),
             ].sort(compareUtf8);
             const actualWrites = (await fs.readdir(paths.writes)).sort(compareUtf8);
@@ -549,16 +668,19 @@ export class MarketplaceTransactionCoordinator {
         const finalPlan = await this.planner.readFinalPlan(job.finalPlanHash);
         const preflight = await this.planner.readPreflight(finalPlan.preflightHash);
         const installed = await this.installedStore.snapshot();
+        const ownership = await this.ownershipStore.snapshot();
+        this.ownershipStore.verifyAgainstInstalled(ownership, installed);
         const installations = new Map(installed.installations.map((entry) => [
             installationKey(entry.sourceId, entry.release), entry,
         ]));
-        const matched = finalPlan.releases.map((entry) => (
+        const installedPlans = finalPlan.releases.filter((entry) => entry.disposition !== "artifact-only");
+        const matched = installedPlans.map((entry) => (
             installations.get(installationKey(preflight.source.sourceId, entry.release))
         ));
         if (matched.some((entry) => !entry)) return null;
         for (let index = 0; index < matched.length; index += 1) {
             const installation = matched[index];
-            const planned = finalPlan.releases[index];
+            const planned = installedPlans[index];
             if (installation.registryId !== preflight.source.registryId
                 || !await this.artifactStore.get(planned.release.artifact)) {
                 throw recovery("Installed marketplace membership failed its integrity check.");
@@ -570,6 +692,11 @@ export class MarketplaceTransactionCoordinator {
                     && isDeepStrictEqual(receipt.release, exactRef(planned.release))) exactReceipt = true;
             }
             if (!exactReceipt) throw recovery("Installed marketplace membership has no matching immutable receipt.");
+            const membership = ownership.memberships.find((entry) => installationKey(entry.sourceId, entry.release)
+                === installationKey(preflight.source.sourceId, planned.release));
+            if (!membership || !(planned.owners ?? [{ kind: "direct" }]).every((owner) => (
+                membership.owners.some((candidate) => isDeepStrictEqual(candidate, owner))
+            ))) throw recovery("Installed marketplace membership has incomplete ownership.");
         }
         return Object.freeze({
             jobId: job.jobId,
@@ -587,6 +714,8 @@ export class MarketplaceTransactionCoordinator {
             throw marketplaceError(MARKETPLACE_ERROR_CODES.DOCUMENT_INVALID, "expectedRevision must be a non-negative integer.");
         }
         const base = await this.installedStore.snapshot();
+        const ownershipBase = await this.ownershipStore.snapshot();
+        this.ownershipStore.verifyAgainstInstalled(ownershipBase, base);
         const targetKey = installationKey(request.sourceId, {
             itemId: request.itemId,
             releaseVersion: request.releaseVersion,
@@ -596,27 +725,39 @@ export class MarketplaceTransactionCoordinator {
         if (!installation) {
             throw marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_NOT_FOUND, "Installed marketplace release was not found.");
         }
-        const receiptHash = installation.receiptHashes.at(-1);
-        const receipt = await this.receiptStore.read(receiptHash);
-        const removalAdapter = this.adapterRegistry.findRemovalAdapter(receipt);
+        const ownershipRemoval = this.ownershipStore.prepareRemoval(ownershipBase, request);
         const adapterRemovals = [];
-        if (removalAdapter) {
-            const removalPlan = await removalAdapter.planRemoval({
-                receipt,
-                installation,
-                context: Object.freeze({ installed: base }),
-            });
-            if (!removalPlan || typeof removalPlan !== "object" || Array.isArray(removalPlan)) {
-                throw marketplaceError(MARKETPLACE_ERROR_CODES.DOCUMENT_INVALID, `Artifact adapter ${removalAdapter.id} returned an invalid removal plan.`);
+        for (const removed of ownershipRemoval.removedMemberships) {
+            const removedInstallation = base.installations.find((entry) => installationKey(entry.sourceId, entry.release) === installationKey(removed.sourceId, removed.release));
+            if (!removedInstallation) throw recovery("Ownership removal refers to a missing installed membership.");
+            const receiptHash = removedInstallation.receiptHashes.at(-1);
+            const receipt = await this.receiptStore.read(receiptHash);
+            const removalAdapter = this.adapterRegistry.findRemovalAdapter(receipt);
+            if (removalAdapter) {
+                const removalPlan = await removalAdapter.planRemoval({
+                    receipt,
+                    installation: removedInstallation,
+                    context: Object.freeze({ installed: base }),
+                });
+                if (!removalPlan || typeof removalPlan !== "object" || Array.isArray(removalPlan)) {
+                    throw marketplaceError(MARKETPLACE_ERROR_CODES.DOCUMENT_INVALID, `Artifact adapter ${removalAdapter.id} returned an invalid removal plan.`);
+                }
+                adapterRemovals.push({ adapterId: removalAdapter.id, receiptHash, removalPlan });
             }
-            adapterRemovals.push({ adapterId: removalAdapter.id, receiptHash, removalPlan });
         }
-        const target = this.installedStore.prepareRemoval(base, request);
+        const target = this.installedStore.prepareRemovalSet(base, ownershipRemoval.removedMemberships.map((entry) => ({
+            sourceId: entry.sourceId,
+            itemId: entry.release.itemId,
+            releaseVersion: entry.release.releaseVersion,
+            artifactSha256: entry.release.artifactSha256,
+        })));
+        if (target.revision !== ownershipRemoval.target.revision) throw recovery("Marketplace removal targets have different revisions.");
         const transactionId = randomUUID();
         const paths = transactionPaths(this.paths, transactionId);
         await ensureDirectory(paths.root);
         await ensureDirectory(paths.writes);
         await writeExclusiveDurable(paths.installed, marketplaceDocumentBytes(target));
+        await writeExclusiveDurable(paths.ownership, installOwnershipBytes(ownershipRemoval.target));
         const journal = assertInstallTransaction({
             kind: MARKETPLACE_INSTALL_KINDS.transaction,
             version: MARKETPLACE_INSTALL_DOCUMENT_VERSION,
@@ -626,13 +767,17 @@ export class MarketplaceTransactionCoordinator {
             finalPlanHash: null,
             installedBase: { revision: base.revision, sha256: installedDocumentHash(base) },
             installedTarget: { revision: target.revision, sha256: installedDocumentHash(target) },
+            ownershipBase: { revision: ownershipBase.revision, sha256: installOwnershipHash(ownershipBase) },
+            ownershipTarget: { revision: ownershipRemoval.target.revision, sha256: installOwnershipHash(ownershipRemoval.target) },
             receiptHashes: [],
             adapterCommits: [],
             adapterRemovals,
         });
         await writeExclusiveDurable(paths.journal, installDocumentBytes(journal, assertInstallTransaction));
         await this.fault?.("after-journal", { journal });
-        return this.commit(Object.freeze({ journal, paths, base, target, finalPlan: null, preflight: null }));
+        return this.commit(Object.freeze({
+            journal, paths, base, target, ownershipBase, ownershipTarget: ownershipRemoval.target, finalPlan: null, preflight: null,
+        }));
     }
 
     async listJobOperations(jobId) {
@@ -667,6 +812,12 @@ export class MarketplaceTransactionCoordinator {
                 if (journal.jobId !== jobId) continue;
                 if (installedDocumentHash(current) !== journal.installedBase.sha256) {
                     throw marketplaceError(MARKETPLACE_ERROR_CODES.CONFLICT, "Marketplace transaction already changed installed membership and cannot be replanned.");
+                }
+                if (journal.ownershipBase) {
+                    const ownership = await this.ownershipStore.snapshot();
+                    if (installOwnershipHash(ownership) !== journal.ownershipBase.sha256) {
+                        throw marketplaceError(MARKETPLACE_ERROR_CODES.CONFLICT, "Marketplace transaction already changed installation ownership and cannot be replanned.");
+                    }
                 }
                 await removeDirectoryDurable(paths.root);
             }

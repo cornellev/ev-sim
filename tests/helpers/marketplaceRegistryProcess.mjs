@@ -3,7 +3,7 @@ import { createPopulatedClientRegistry } from "./marketplaceClientRegistry.js";
 const parent = process.argv[2];
 if (!parent) throw new TypeError("Expected a registry parent directory.");
 
-const registry = await createPopulatedClientRegistry(parent);
+const registry = await createPopulatedClientRegistry(parent, { includeCollection: true });
 process.stdout.write(`${JSON.stringify({
     baseUrl: registry.baseUrl,
     item: registry.item,
@@ -14,6 +14,7 @@ process.stdout.write(`${JSON.stringify({
         runtimeHash: registry.resource.runtimeHash,
         uiHash: registry.resource.uiHash,
     },
+    collection: registry.collection,
 })}\n`);
 
 let closing = false;

@@ -168,6 +168,10 @@ export function listMarketplaceInstalled({ signal } = {}) {
     return requestJson("/api/marketplace/installed", { signal });
 }
 
+export function listMarketplaceInstalledOwnership({ signal } = {}) {
+    return requestJson("/api/marketplace/installed-ownership", { signal });
+}
+
 export function getMarketplaceReceipt(receiptHash, { signal } = {}) {
     return requestJson(`/api/marketplace/receipts/${encodeURIComponent(receiptHash)}`, { signal });
 }

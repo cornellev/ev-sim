@@ -36,7 +36,9 @@ import { MarketplaceArtifactStore } from "./MarketplaceArtifactStore.js";
 import { createMarketplaceHostProfile, evaluateMarketplaceCompatibility } from "./MarketplaceCompatibility.js";
 import { MarketplaceInstalledStore } from "./MarketplaceInstalledStore.js";
 import { MarketplaceInstallJobManager } from "./MarketplaceInstallJobManager.js";
+import { MarketplaceInstallOwnershipStore } from "./MarketplaceInstallOwnershipStore.js";
 import { MarketplaceInstallPlanner } from "./MarketplaceInstallPlanner.js";
+import { resolveDependencyDag } from "./MarketplaceDependencyResolver.js";
 import { MarketplaceReceiptStore } from "./MarketplaceReceiptStore.js";
 import { MarketplaceTransactionCoordinator } from "./MarketplaceTransactionCoordinator.js";
 import {
@@ -115,6 +117,7 @@ export class MarketplaceService {
         cache,
         trustClient,
         installedStore,
+        ownershipStore,
         receiptStore,
         artifactStore,
         planner,
@@ -130,6 +133,7 @@ export class MarketplaceService {
         this.cache = cache;
         this.trustClient = trustClient;
         this.installedStore = installedStore;
+        this.ownershipStore = ownershipStore;
         this.receiptStore = receiptStore;
         this.artifactStore = artifactStore;
         this.planner = planner;
@@ -161,6 +165,7 @@ export class MarketplaceService {
         const credentialStore = await MarketplaceCredentialStore.open(dataDir);
         const cache = await MarketplaceVerifiedCache.open(dataDir, { now, fault: cacheFault });
         const installedStore = await MarketplaceInstalledStore.open(dataDir);
+        const ownershipStore = await MarketplaceInstallOwnershipStore.open(dataDir, await installedStore.snapshot(), { allowPending: true });
         const receiptStore = await MarketplaceReceiptStore.open(dataDir);
         const resolvedAdapterRegistry = adapterRegistry ?? createMarketplaceClientArtifactRegistry({
             pluginStore: resolvedPluginStore,
@@ -175,6 +180,7 @@ export class MarketplaceService {
             sourceStore,
             cache,
             installedStore,
+            ownershipStore,
             artifactStore,
             adapterRegistry: resolvedAdapterRegistry,
             hostProfileProvider,
@@ -183,6 +189,7 @@ export class MarketplaceService {
         const transactionCoordinator = await MarketplaceTransactionCoordinator.create(dataDir, {
             planner,
             installedStore,
+            ownershipStore,
             receiptStore,
             artifactStore,
             adapterRegistry: resolvedAdapterRegistry,
@@ -209,6 +216,7 @@ export class MarketplaceService {
             cache,
             trustClient: new MarketplaceTrustClient({ fetchImpl, now }),
             installedStore,
+            ownershipStore,
             receiptStore,
             artifactStore,
             planner,
@@ -224,6 +232,7 @@ export class MarketplaceService {
         await service.#recoverOperationalState(snapshot.sources);
         await planner.recover();
         const recoveredTransactions = await transactionCoordinator.recoverPending();
+        ownershipStore.verifyAgainstInstalled(await ownershipStore.snapshot(), await installedStore.snapshot());
         await jobManager.recover(recoveredTransactions);
         return service;
     }
@@ -619,6 +628,7 @@ export class MarketplaceService {
         const health = await this.#health(source);
         const hostProfile = await this.hostProfileProvider();
         const compatibility = evaluateMarketplaceCompatibility(selectedRelease.compatibility, hostProfile);
+        const isCollection = selectedRelease.contentKind === "collection";
         const lifecycleAvailable = this.adapterRegistry.hasLifecycle(selectedRelease.contentKind);
         const lifecycleIssues = !lifecycleAvailable ? [{
                 path: "contentKind",
@@ -626,15 +636,28 @@ export class MarketplaceService {
                 required: selectedRelease.contentKind,
                 actual: null,
             }] : [];
-        const sizeAllowed = selectedRelease.artifact.sizeBytes <= artifactByteLimitFor(selectedRelease.contentKind);
-        const downloadIssues = sizeAllowed ? [] : [{
-            path: "artifact.sizeBytes",
+        const closure = isCollection ? resolveDependencyDag({
+            rootRelease: {
+                itemId: selectedRelease.itemId,
+                releaseVersion: selectedRelease.releaseVersion,
+                artifactSha256: selectedRelease.artifact.sha256,
+            },
+            catalog: current.catalog,
+            releases: current.documents.releases,
+        }).releases : [selectedRelease];
+        const oversized = closure.filter((release) => release.artifact.sizeBytes > artifactByteLimitFor(release.contentKind));
+        const sizeAllowed = oversized.length === 0;
+        const downloadIssues = oversized.map((release) => ({
+            path: release.itemId === selectedRelease.itemId && release.releaseVersion === selectedRelease.releaseVersion
+                ? "artifact.sizeBytes"
+                : `dependencies.${release.itemId}.artifact.sizeBytes`,
             code: "ARTIFACT_LIMIT_EXCEEDED",
-            required: artifactByteLimitFor(selectedRelease.contentKind),
-            actual: selectedRelease.artifact.sizeBytes,
-        }];
+            required: artifactByteLimitFor(release.contentKind),
+            actual: release.artifact.sizeBytes,
+        }));
         const authoringOnly = AUTHORING_ONLY_CONTENT_KINDS.includes(selectedRelease.contentKind);
-        const issues = [...downloadIssues, ...lifecycleIssues, ...(authoringOnly ? [] : compatibility.issues)];
+        const nonExecutable = authoringOnly || isCollection;
+        const issues = [...downloadIssues, ...lifecycleIssues, ...(nonExecutable ? [] : compatibility.issues)];
         const selectedExactKey = `${selectedRelease.itemId}\u0000${selectedRelease.releaseVersion}\u0000${selectedRelease.artifact.sha256}`;
         const warnings = yanks.some((entry) => (
             `${entry.release.itemId}\u0000${entry.release.releaseVersion}\u0000${entry.release.artifactSha256}` === selectedExactKey
@@ -647,17 +670,35 @@ export class MarketplaceService {
                 issues: Object.freeze(downloadIssues),
             }),
             importable: Object.freeze({
-                status: lifecycleAvailable ? (authoringOnly ? "requires-inspection" : "eligible") : "blocked",
+                status: lifecycleAvailable ? (nonExecutable ? "requires-inspection" : "eligible") : "blocked",
                 issues: Object.freeze(lifecycleIssues),
             }),
             executable: Object.freeze({
-                status: authoringOnly ? "not-applicable" : (compatibility.compatible ? "eligible" : "blocked"),
-                issues: Object.freeze(authoringOnly ? [] : compatibility.issues),
+                status: nonExecutable ? "not-applicable" : (compatibility.compatible ? "eligible" : "blocked"),
+                issues: Object.freeze(nonExecutable ? [] : compatibility.issues),
             }),
-            canInstall: sizeAllowed && lifecycleAvailable && (authoringOnly || compatibility.compatible),
+            canInstall: sizeAllowed && lifecycleAvailable && (nonExecutable || compatibility.compatible),
             issues: Object.freeze(issues),
             warnings: Object.freeze(warnings),
         });
+        const itemsById = new Map(current.documents.items.map((candidate) => [candidate.itemId, candidate]));
+        const releasesByExact = new Map(current.documents.releases.map((candidate) => [
+            `${candidate.itemId}\u0000${candidate.releaseVersion}\u0000${candidate.artifact.sha256}`,
+            candidate,
+        ]));
+        const collectionMembers = isCollection ? selectedRelease.dependencies.map((reference) => {
+            const memberRelease = releasesByExact.get(`${reference.itemId}\u0000${reference.releaseVersion}\u0000${reference.artifactSha256}`);
+            const memberItem = itemsById.get(reference.itemId);
+            if (!memberRelease || !memberItem) throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Collection member is missing from the verified snapshot.");
+            return Object.freeze({
+                release: reference,
+                name: memberItem.displayName,
+                contentKind: memberItem.contentKind,
+                publisherId: memberItem.publisherId,
+                releaseHash: current.catalog.releases.find((candidate) => candidate.itemId === reference.itemId
+                    && candidate.releaseVersion === reference.releaseVersion)?.releaseHash,
+            });
+        }) : [];
         return Object.freeze({
             source: publicSource(source, health),
             item,
@@ -670,6 +711,7 @@ export class MarketplaceService {
             fresh: current.fresh && health.status === MARKETPLACE_SOURCE_HEALTH.READY,
             eligibility,
             canInstall: eligibility.canInstall,
+            collectionMembers: Object.freeze(collectionMembers),
         });
     }
 
@@ -753,6 +795,14 @@ export class MarketplaceService {
         return this.installedStore.snapshot();
     }
 
+    async listInstalledOwnership() {
+        this.#assertOpen();
+        const installed = await this.installedStore.snapshot();
+        const ownership = await this.ownershipStore.snapshot();
+        this.ownershipStore.verifyAgainstInstalled(ownership, installed);
+        return ownership;
+    }
+
     async readReceipt(receiptHash) {
         this.#assertOpen();
         return this.receiptStore.read(receiptHash);
@@ -808,6 +858,7 @@ export class MarketplaceService {
         await this.jobManager.close();
         await this.transactionCoordinator.close();
         await this.installedStore.close();
+        await this.ownershipStore.close();
         await Promise.allSettled(this.#sourceQueues.values());
     }
 }

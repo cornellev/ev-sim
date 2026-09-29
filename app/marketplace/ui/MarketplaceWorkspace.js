@@ -19,6 +19,8 @@ import {
     getMarketplaceItem,
     getMarketplaceReceipt,
     listMarketplaceInstalled,
+    listMarketplaceInstalledOwnership,
+    listMarketplaceInstallJobOperations,
     listMarketplaceSources,
     MarketplaceApiError,
     marketplaceApiErrorMessage,
@@ -179,11 +181,50 @@ function GenericPlanReview({ entry }) {
     return (
         <MetadataList>
             <MetadataField label="Adapter">{entry.adapterId}</MetadataField>
+            <MetadataField label="Disposition">{entry.disposition || "requested"}</MetadataField>
+            <MetadataField label="Action">{entry.adapterPlan.installationAction === "reuse" ? "Reuse installed release" : entry.disposition === "artifact-only" ? "Verify and cache" : "Add installation"}</MetadataField>
+            <MetadataField label="Compatibility">{entry.release.contentKind === "collection" ? "Not applicable" : entry.compatibility?.compatible === false ? `Blocked: ${entry.compatibility.issues.map((issue) => issue.code).join(", ")}` : "Compatible"}</MetadataField>
+            <MetadataField label="Owners">{entry.owners?.length ? entry.owners.map((owner) => owner.kind === "direct"
+                ? "Direct installation"
+                : `Collection ${owner.collection.itemId}@${owner.collection.releaseVersion}`).join(", ") : "Artifact cache only"}</MetadataField>
+            <MetadataField label="Operations">{entry.adapterPlan.operations?.length ?? 0}</MetadataField>
             <MetadataField label="Required rights">{entry.rights.length ? JSON.stringify(entry.rights) : "None"}</MetadataField>
             <MetadataField label="Conflicts">{entry.conflicts.length ? JSON.stringify(entry.conflicts) : "None"}</MetadataField>
             <MetadataField label="Local mappings">{entry.mappings.length ? JSON.stringify(entry.mappings) : "None"}</MetadataField>
         </MetadataList>
     );
+}
+
+function CollectionPlanReview({ finalPlan }) {
+    const collections = finalPlan.releases.filter((entry) => entry.disposition === "collection");
+    if (!collections.length) return null;
+    const groups = new Map();
+    for (const collection of collections) {
+        for (const member of collection.adapterPlan.collection?.members ?? []) {
+            groups.set(`${collection.release.itemId}\u0000${member.release.itemId}\u0000${member.release.releaseVersion}\u0000${member.release.artifactSha256}`, member.group ?? "Ungrouped");
+        }
+    }
+    const installed = finalPlan.releases.filter((entry) => entry.disposition !== "artifact-only"
+        && !(entry.disposition === "collection" && entry.owners?.some((owner) => owner.kind === "direct")));
+    const artifactOnly = finalPlan.releases.filter((entry) => entry.disposition === "artifact-only");
+    const grouped = new Map();
+    for (const entry of installed) {
+        const owner = entry.owners?.find((candidate) => candidate.kind === "collection");
+        const group = owner ? groups.get(`${owner.collection.itemId}\u0000${entry.release.itemId}\u0000${entry.release.releaseVersion}\u0000${entry.release.artifact.sha256}`) ?? "Ungrouped" : "Direct";
+        const entries = grouped.get(group) ?? [];
+        entries.push(entry);
+        grouped.set(group, entries);
+    }
+    return <section className={styles.detailSection} aria-label="Collection installation plan">
+        <h4>Collection members</h4>
+        {[...grouped].map(([group, entries]) => <div key={group}><strong>{group}</strong><ul className={styles.plainList}>{entries.map((entry) => <li key={`${entry.release.itemId}:${entry.release.releaseVersion}`}>
+            {entry.release.itemId}@{entry.release.releaseVersion} · {entry.adapterPlan.installationAction === "reuse" ? "reuse" : "add"} · {entry.release.contentKind === "collection" ? "compatibility not applicable" : entry.compatibility?.compatible === false ? "incompatible" : "compatible"} · {entry.owners?.length ?? 0} owners · {entry.rights.length} rights · {entry.mappings.length} mappings · {entry.adapterPlan.operations?.length ?? 0} operations
+        </li>)}</ul></div>)}
+        <h4>Artifact-only dependencies</h4>
+        {artifactOnly.length ? <ul className={styles.plainList}>{artifactOnly.map((entry) => <li key={`${entry.release.itemId}:${entry.release.releaseVersion}`}>
+            {entry.release.itemId}@{entry.release.releaseVersion} · verified and cached, not installed
+        </li>)}</ul> : <p className={styles.muted}>None.</p>}
+    </section>;
 }
 
 function AssetPackagePlanReview({ entry }) {
@@ -249,6 +290,7 @@ function InstallDialog({ target, onClose, onInstalled, onOpenEnvironment, onOpen
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState(null);
     const [streamGeneration, setStreamGeneration] = useState(0);
+    const [operations, setOperations] = useState([]);
     const jobId = view?.job.jobId ?? null;
     const phase = view?.job.phase ?? null;
 
@@ -257,6 +299,7 @@ function InstallDialog({ target, onClose, onInstalled, onOpenEnvironment, onOpen
         const controller = new AbortController();
         setPlan(null);
         setView(null);
+        setOperations([]);
         setError(null);
         setBusy(true);
         createMarketplaceInstallPlan({
@@ -279,6 +322,13 @@ function InstallDialog({ target, onClose, onInstalled, onOpenEnvironment, onOpen
             onError: () => {},
         });
     }, [jobId, onInstalled, streamGeneration]);
+
+    useEffect(() => {
+        if (!jobId || !["commit", "recover", "needs-attention", "complete"].includes(phase)) return;
+        listMarketplaceInstallJobOperations(jobId, { limit: 500 })
+            .then((result) => setOperations(result.entries))
+            .catch(() => {});
+    }, [jobId, phase, view?.job.revision]);
 
     if (!target) return null;
     const start = async () => {
@@ -355,7 +405,8 @@ function InstallDialog({ target, onClose, onInstalled, onOpenEnvironment, onOpen
                 <div className={styles.installFlow}>
                     <section><h3>1. Verified metadata</h3><MetadataList><MetadataField label="Plan hash">{plan.planHash}</MetadataField><MetadataField label="Registry">{plan.preflight.source.registryId}</MetadataField><MetadataField label="Snapshot">{plan.preflight.source.snapshotId}</MetadataField><MetadataField label="Download">{formatBytes(plan.preflight.totalDownloadBytes)}</MetadataField><MetadataField label="Host profile">{plan.preflight.hostProfileHash}</MetadataField></MetadataList><ul className={styles.plainList}>{plan.preflight.releases.map((entry) => <li key={`${entry.release.itemId}:${entry.release.releaseVersion}`}>{entry.release.itemId}@{entry.release.releaseVersion}<small>{entry.release.artifact.sha256}</small></li>)}</ul></section>
                     {view && <section><h3>2. Download and inspection</h3><p className={styles.muted}>{phase}</p><progress max={Math.max(1, progress.bytesTotal)} value={progress.bytesComplete} aria-label="Installation download progress" /><p className={styles.muted}>{progress.artifactsComplete}/{progress.artifactsTotal} artifacts · {formatBytes(progress.bytesComplete)} / {formatBytes(progress.bytesTotal)}</p>{(progress.totalOperations ?? progress.operationsTotal ?? 0) > 0 && <><progress max={progress.totalOperations ?? progress.operationsTotal} value={progress.completedOperations ?? progress.operationsComplete} aria-label="Installation operation progress" /><p className={styles.muted}>{progress.completedOperations ?? progress.operationsComplete}/{progress.totalOperations ?? progress.operationsTotal} durable operations</p></>}</section>}
-                    {finalPlan && <section><h3>3. Review local changes</h3>{finalPlan.blockingIssues.length ? <StatusMessage tone="danger" title="Commit is blocked">{finalPlan.blockingIssues.join(" · ")}</StatusMessage> : <StatusMessage tone="success" title="Ready for explicit commit">No blocking rights or mapping conflicts were reported.</StatusMessage>}{finalPlan.releases.map((entry) => <article className={styles.planRelease} key={`${entry.release.itemId}:${entry.release.releaseVersion}`}><strong>{entry.release.itemId}@{entry.release.releaseVersion}</strong>{entry.adapterId === "plugin@1" ? <PluginPlanReview entry={entry} /> : entry.adapterId === "asset-pack@1" ? <AssetPackagePlanReview entry={entry} /> : entry.adapterId === "environment@1" ? <EnvironmentPackagePlanReview entry={entry} /> : entry.adapterId === "run-template@1" ? <RunTemplatePlanReview entry={entry} /> : <GenericPlanReview entry={entry} />}</article>)}</section>}
+                    {operations.length > 0 && <section><h3>Member operations</h3><ul className={styles.plainList}>{operations.map((operation) => <li key={operation.operationId}>{operation.itemId}@{operation.releaseVersion} · {operation.disposition} · {operation.status}{operation.collectionGroups?.filter(Boolean).length ? ` · ${operation.collectionGroups.filter(Boolean).join(", ")}` : ""}</li>)}</ul></section>}
+                    {finalPlan && <section><h3>3. Review local changes</h3>{finalPlan.blockingIssues.length ? <StatusMessage tone="danger" title="Commit is blocked">{finalPlan.blockingIssues.join(" · ")}</StatusMessage> : <StatusMessage tone="success" title="Ready for explicit commit">No blocking rights or mapping conflicts were reported.</StatusMessage>}<CollectionPlanReview finalPlan={finalPlan} />{finalPlan.releases.map((entry) => <article className={styles.planRelease} key={`${entry.release.itemId}:${entry.release.releaseVersion}`}><strong>{entry.release.itemId}@{entry.release.releaseVersion}</strong>{entry.adapterId === "plugin@1" ? <PluginPlanReview entry={entry} /> : entry.adapterId === "asset-pack@1" ? <AssetPackagePlanReview entry={entry} /> : entry.adapterId === "environment@1" ? <EnvironmentPackagePlanReview entry={entry} /> : entry.adapterId === "run-template@1" ? <RunTemplatePlanReview entry={entry} /> : <GenericPlanReview entry={entry} />}</article>)}</section>}
                     {phase === "complete" && <StatusMessage tone="success" title="Installation complete">{completedPlugin
                         ? `${completedPlugin.pluginId}@${completedPlugin.version} (${completedPlugin.packageHash}) was added to the Plugin Library.`
                         : "Installed membership and immutable receipts are now visible."}</StatusMessage>}
@@ -416,6 +467,7 @@ function ReleaseDetail({ detail, loading, error, onRetry, releaseVersion, onRele
             </MetadataList>
             {item.description && <section className={styles.detailSection}><h3>Description</h3><SafeMarketplaceMarkdown className={styles.markdown}>{item.description}</SafeMarketplaceMarkdown></section>}
             {release.changelog && <section className={styles.detailSection}><h3>Release notes</h3><SafeMarketplaceMarkdown className={styles.markdown}>{release.changelog}</SafeMarketplaceMarkdown></section>}
+            {item.contentKind === "collection" && <section className={styles.detailSection}><h3>Collection members</h3><p className={styles.muted}>Compatibility and lifecycle eligibility are checked together in one installation plan.</p><ul className={styles.plainList}>{detail.collectionMembers.map((member) => <li key={`${member.release.itemId}:${member.release.releaseVersion}`}><strong>{member.name}</strong> · {displayKind(member.contentKind)} · {member.release.releaseVersion}<small>{member.release.artifactSha256}</small></li>)}</ul></section>}
             {item.links?.length ? <section className={styles.detailSection}><h3>Links</h3><ul className={styles.plainList}>{item.links.map((link) => <li key={`${link.label}:${link.url}`}><a href={link.url} target="_blank" rel="noopener noreferrer">{link.label}</a></li>)}</ul></section> : null}
             <Compatibility compatibility={release.compatibility} eligibility={detail.eligibility} />
             <section className={styles.detailSection}>
@@ -718,15 +770,20 @@ function SourcesTab() {
 
 function InstalledTab({ onOpenEnvironment, onOpenRunConfig }) {
     const [snapshot, setSnapshot] = useState(null);
+    const [ownership, setOwnership] = useState(null);
     const [receipts, setReceipts] = useState({});
     const [error, setError] = useState(null);
     const [removing, setRemoving] = useState(null);
     const load = useCallback(async () => {
         try {
-            const installed = await listMarketplaceInstalled();
+            const [installed, installedOwnership] = await Promise.all([
+                listMarketplaceInstalled(),
+                listMarketplaceInstalledOwnership(),
+            ]);
             const hashes = [...new Set(installed.installations.flatMap((entry) => entry.receiptHashes))];
             const documents = await Promise.all(hashes.map(async (hash) => [hash, await getMarketplaceReceipt(hash)]));
             setSnapshot(installed);
+            setOwnership(installedOwnership);
             setReceipts(Object.fromEntries(documents));
             setError(null);
         } catch (caught) {
@@ -758,10 +815,22 @@ function InstalledTab({ onOpenEnvironment, onOpenRunConfig }) {
                 const pluginMapping = receipt?.mappings.find((mapping) => mapping.resourceKind === "plugin-package");
                 const environmentMapping = receipt?.mappings.find((mapping) => mapping.resourceKind === "environment");
                 const runManifestMapping = receipt?.mappings.find((mapping) => mapping.resourceKind === "run-manifest");
-                return <article className={styles.sourceCard} key={`${installation.sourceId}:${installation.release.itemId}:${installation.release.releaseVersion}:${installation.release.artifactSha256}`}><header><div><h2>{installation.release.itemId}@{installation.release.releaseVersion}</h2><p>{installation.release.artifactSha256}</p></div><span className={styles.health} data-tone={installation.status === "installed" ? "success" : "warning"}>{installation.status}</span></header><MetadataList><MetadataField label="Source ID">{installation.sourceId}</MetadataField><MetadataField label="Registry ID">{installation.registryId}</MetadataField><MetadataField label="Dependency lock">{receipt?.dependencyLock.length ? receipt.dependencyLock.map((entry) => `${entry.itemId}@${entry.releaseVersion}`).join(", ") : "None"}</MetadataField>{pluginMapping ? <><MetadataField label="Plugin ID">{pluginMapping.sourceId}</MetadataField><MetadataField label="Local plugin ID">{pluginMapping.localId}</MetadataField><MetadataField label="Package hash">{pluginMapping.hashes.packageHash}</MetadataField><MetadataField label="Runtime hash">{pluginMapping.hashes.runtimeHash}</MetadataField><MetadataField label="UI hash">{pluginMapping.hashes.uiHash || "None"}</MetadataField></> : <MetadataField label="Local mappings">{receipt?.mappings.length ? JSON.stringify(receipt.mappings) : "None"}</MetadataField>}<MetadataField label="Receipt history">{installation.receiptHashes.join(", ")}</MetadataField><MetadataField label="Installed at">{formatDate(receipt?.installedAt)}</MetadataField></MetadataList><div className={styles.sourceActions}>{environmentMapping && <Button size="compact" onClick={() => onOpenEnvironment?.(environmentMapping.localId)}>Open in Environment Editor</Button>}{runManifestMapping && <Button size="compact" onClick={() => onOpenRunConfig?.(runManifestMapping.localId)}>Open in Run Configuration</Button>}<Button variant="danger" size="compact" onClick={() => setRemoving(installation)}>Remove membership</Button></div></article>;
+                const membership = ownership?.memberships.find((entry) => entry.sourceId === installation.sourceId
+                    && entry.release.itemId === installation.release.itemId
+                    && entry.release.releaseVersion === installation.release.releaseVersion
+                    && entry.release.artifactSha256 === installation.release.artifactSha256);
+                const collection = ownership?.collections.find((entry) => entry.sourceId === installation.sourceId
+                    && entry.release.itemId === installation.release.itemId
+                    && entry.release.releaseVersion === installation.release.releaseVersion
+                    && entry.release.artifactSha256 === installation.release.artifactSha256);
+                const hasDirectOwner = membership?.owners.some((owner) => owner.kind === "direct");
+                const ownerText = membership?.owners.map((owner) => owner.kind === "direct"
+                    ? "Direct installation"
+                    : `${owner.collection.itemId}@${owner.collection.releaseVersion}`).join(", ") ?? "Unavailable";
+                return <article className={styles.sourceCard} key={`${installation.sourceId}:${installation.release.itemId}:${installation.release.releaseVersion}:${installation.release.artifactSha256}`}><header><div><h2>{installation.release.itemId}@{installation.release.releaseVersion}</h2><p>{installation.release.artifactSha256}</p></div><span className={styles.health} data-tone={installation.status === "installed" ? "success" : "warning"}>{installation.status}</span></header><MetadataList><MetadataField label="Source ID">{installation.sourceId}</MetadataField><MetadataField label="Registry ID">{installation.registryId}</MetadataField><MetadataField label="Owners">{ownerText}</MetadataField>{collection && <MetadataField label="Collection members">{collection.members.length ? collection.members.map((member) => `${member.release.itemId}@${member.release.releaseVersion}${member.group ? ` (${member.group})` : ""}`).join(", ") : "None"}</MetadataField>}<MetadataField label="Dependency lock">{receipt?.dependencyLock.length ? receipt.dependencyLock.map((entry) => `${entry.itemId}@${entry.releaseVersion}`).join(", ") : "None"}</MetadataField>{pluginMapping ? <><MetadataField label="Plugin ID">{pluginMapping.sourceId}</MetadataField><MetadataField label="Local plugin ID">{pluginMapping.localId}</MetadataField><MetadataField label="Package hash">{pluginMapping.hashes.packageHash}</MetadataField><MetadataField label="Runtime hash">{pluginMapping.hashes.runtimeHash}</MetadataField><MetadataField label="UI hash">{pluginMapping.hashes.uiHash || "None"}</MetadataField></> : <MetadataField label="Local mappings">{receipt?.mappings.length ? JSON.stringify(receipt.mappings) : "None"}</MetadataField>}<MetadataField label="Receipt history">{installation.receiptHashes.join(", ")}</MetadataField><MetadataField label="Installed at">{formatDate(receipt?.installedAt)}</MetadataField></MetadataList><div className={styles.sourceActions}>{environmentMapping && <Button size="compact" onClick={() => onOpenEnvironment?.(environmentMapping.localId)}>Open in Environment Editor</Button>}{runManifestMapping && <Button size="compact" onClick={() => onOpenRunConfig?.(runManifestMapping.localId)}>Open in Run Configuration</Button>}{hasDirectOwner ? <Button variant="danger" size="compact" onClick={() => setRemoving({ ...installation, membership, collection })}>{collection ? "Remove collection" : "Remove installation"}</Button> : <span className={styles.muted}>Retained by collection ownership.</span>}</div></article>;
             })}</div>
-            <DialogSurface open={Boolean(removing)} onOpenChange={(open) => !open && setRemoving(null)} title="Remove Marketplace membership" description="This removes only the exact Marketplace owner recorded by this installation receipt." footer={<><Button onClick={() => setRemoving(null)}>Cancel</Button><Button variant="danger" onClick={remove}>Remove membership</Button></>}>
-                <StatusMessage tone="warning" title={removing ? `${removing.release.itemId}@${removing.release.releaseVersion}` : "Exact release"}>Manual ownership or another Marketplace owner keeps this plugin visible. Last-owner removal hides it from the Plugin Library but retains immutable plugin CAS and runtime bytes. Dependencies are not removed recursively.</StatusMessage>
+            <DialogSurface open={Boolean(removing)} onOpenChange={(open) => !open && setRemoving(null)} title={removing?.collection ? "Remove collection" : "Remove installation"} description="This removes the direct owner only. Collection and authored content are preserved while another owner remains." footer={<><Button onClick={() => setRemoving(null)}>Cancel</Button><Button variant="danger" onClick={remove}>{removing?.collection ? "Remove collection" : "Remove installation"}</Button></>}>
+                <StatusMessage tone="warning" title={removing ? `${removing.release.itemId}@${removing.release.releaseVersion}` : "Exact release"}>Other direct or collection owners keep a member installed. Last-owner removal updates Marketplace visibility but retains immutable receipts, cached artifacts, CAS bytes, visual roots, and authored content.</StatusMessage>
             </DialogSurface>
         </div>
     );
