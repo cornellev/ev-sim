@@ -1,5 +1,12 @@
 # Scripting Architecture
 
+MKT-11 editable run templates package reachable editable graph documents and
+their current compiled artifacts. Imported graph-node `state.sourceScriptId`
+references are rewritten through deterministic local mappings, while compiled
+artifacts are retained rather than recompiled. Imported run manifests use
+`scripts.bindingSource: "embedded"`, so destination global bindings never enter
+the frozen template set; import never writes the global binding library.
+
 The scripting system has a live editor graph and a compiled artifact runtime.
 
 ```mermaid

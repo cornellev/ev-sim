@@ -24,7 +24,7 @@ export const MARKETPLACE_CONTENT_KINDS = Object.freeze([
 export const MARKETPLACE_ARTIFACTS = Object.freeze({
     plugin: Object.freeze({ kind: "cev-sim.plugin-package", version: 1, mediaType: "application/vnd.cev-sim.plugin-package+json" }),
     vehicle: Object.freeze({ kind: "cev-sim.vehicle-bundle", version: 1, mediaType: "application/vnd.cev-sim.vehicle-bundle+json" }),
-    "run-template": Object.freeze({ kind: "cev-sim.run-bundle", version: 1, mediaType: "application/vnd.cev-sim.run-bundle+json" }),
+    "run-template": Object.freeze({ kind: "cev-sim.run-template-package", version: 1, mediaType: "application/vnd.cev-sim.run-template-package+tar" }),
     "run-package": Object.freeze({ kind: "cev-sim.run-package", version: 1, mediaType: "application/vnd.cev-sim.run-package+tar" }),
     environment: Object.freeze({ kind: "cev-sim.environment-package", version: 1, mediaType: "application/vnd.cev-sim.environment-package+tar" }),
     "asset-pack": Object.freeze({ kind: "cev-sim.asset-package", version: 1, mediaType: "application/vnd.cev-sim.asset-package+tar" }),
@@ -78,9 +78,12 @@ export const PORTABLE_MARKETPLACE_ARCHIVE_LIMITS = Object.freeze({
 // allowing one portable format to raise the frozen shared ceiling.
 export const ASSET_PACKAGE_LIMITS = PORTABLE_MARKETPLACE_ARCHIVE_LIMITS;
 export const ENVIRONMENT_PACKAGE_LIMITS = PORTABLE_MARKETPLACE_ARCHIVE_LIMITS;
+export const RUN_TEMPLATE_PACKAGE_LIMITS = PORTABLE_MARKETPLACE_ARCHIVE_LIMITS;
+
+export const AUTHORING_ONLY_CONTENT_KINDS = Object.freeze(["asset-pack", "environment", "run-template"]);
 
 export function artifactByteLimitFor(contentKind) {
-    return contentKind === "asset-pack" || contentKind === "environment"
+    return AUTHORING_ONLY_CONTENT_KINDS.includes(contentKind)
         ? PORTABLE_MARKETPLACE_ARCHIVE_LIMITS.archiveBytes
         : MARKETPLACE_LIMITS.artifactBytes;
 }

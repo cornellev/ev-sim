@@ -1,5 +1,7 @@
 import semver from "semver";
 
+import { compareUtf8 } from "../../app/math/compareUtf8.js";
+
 import {
     MARKETPLACE_KINDS,
     MARKETPLACE_LIMITS,
@@ -59,6 +61,19 @@ function assertRelease(value, path = "$") {
     unique(value.dependencies, releaseKey, `${path}.dependencies`, "dependency release");
     if (value.dependencies.some((entry) => releaseKey(entry) === releaseKey(value))) {
         invalid(`${path}.dependencies`, "release cannot depend on itself");
+    }
+    const embeddedPlugins = value.embeddedPlugins ?? [];
+    if (embeddedPlugins.length > 0 && !["vehicle", "run-template", "run-package"].includes(value.contentKind)) {
+        invalid(`${path}.embeddedPlugins`, "only executable-containing releases may declare embedded plugins");
+    }
+    unique(embeddedPlugins, (entry) => entry.pluginId, `${path}.embeddedPlugins`, "embedded plugin ID");
+    unique(embeddedPlugins, (entry) => entry.packageHash, `${path}.embeddedPlugins`, "embedded plugin package");
+    for (let index = 1; index < embeddedPlugins.length; index += 1) {
+        const previous = embeddedPlugins[index - 1];
+        const current = embeddedPlugins[index];
+        if (compareUtf8(previous.pluginId, current.pluginId) >= 0) {
+            invalid(`${path}.embeddedPlugins`, "embedded plugins must be in canonical pluginId order");
+        }
     }
 }
 

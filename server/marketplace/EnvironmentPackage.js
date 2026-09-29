@@ -236,7 +236,7 @@ function packageLimits(overrides = {}) {
     return Object.freeze(merged);
 }
 
-function verifyVisualClosure({ manifest, recordBytes, blobEntries, limits }) {
+export function verifyVisualClosure({ manifest, recordBytes, blobEntries, limits }) {
     if (!manifest) return Object.freeze({ descriptor: null, access: null, uses: new Map(), useOrder: Object.freeze([]), useEdges: Object.freeze([]) });
     for (const descriptor of manifest.uses) if (descriptor.sizeBytes > limits.recordBytes) limit("Environment visual-use record exceeds the record limit.");
     for (const blob of manifest.blobs) if (blob.sizeBytes > limits.blobBytes) limit("Environment visual blob exceeds the blob limit.");
@@ -423,7 +423,7 @@ export async function inspectEnvironmentPackage({ archivePath, stagingRoot, limi
     return inspection;
 }
 
-async function buildEnvironmentExport({ storageService, environmentId, expectedRevision }) {
+export async function collectEnvironmentPackageClosure({ storageService, environmentId, expectedRevision }) {
     const snapshot = await storageService.snapshotMarketplaceEnvironment(environmentId);
     if (expectedRevision !== undefined && snapshot.environment.revision !== expectedRevision) conflict("Environment revision changed before export.");
     const environment = snapshot.environment;
@@ -492,7 +492,7 @@ export async function exportEnvironmentPackage({
 } = {}) {
     let captured = null;
     for (let attempt = 1; attempt <= 3; attempt += 1) {
-        captured = await buildEnvironmentExport({ storageService, environmentId, expectedRevision });
+        captured = await collectEnvironmentPackageClosure({ storageService, environmentId, expectedRevision });
         await maybeFault(storageService.faults, "marketplaceEnvironmentExportBeforeRecheck");
         const current = await storageService.snapshotMarketplaceEnvironment(environmentId);
         const currentRecord = environmentRecord(current.environment);

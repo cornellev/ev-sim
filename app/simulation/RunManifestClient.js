@@ -2,6 +2,7 @@ import {
     storageDelete,
     storageGet,
     storagePost,
+    storagePostBinary,
     storagePut,
 } from "../client/storageClient.js";
 
@@ -45,6 +46,13 @@ export function resolveRunManifest(id, manifest = null) {
 
 export function exportRunManifest(id) {
     return storageGet(`${collection}/${encodeURIComponent(id)}/export`);
+}
+
+export function exportRunTemplatePackage(id, { expectedRevision, pluginReleaseRefs = [] } = {}) {
+    return storagePostBinary(`${collection}/${encodeURIComponent(id)}/template-packages/export`, {
+        expectedRevision,
+        pluginReleaseRefs,
+    }, { accept: "application/vnd.cev-sim.run-template-package+tar" });
 }
 
 export function importRunBundle(bundle) {

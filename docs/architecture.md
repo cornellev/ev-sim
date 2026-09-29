@@ -1,5 +1,12 @@
 # Architecture
 
+Editable Marketplace run templates use
+`cev-sim.run-template-package@1`, a nonsemantic authoring transport distinct
+from exact `cev-sim.run-bundle@1` and `cev-sim.run-package@1` artifacts. Import
+publishes the guarded authoring closure and the run manifest last. Marketplace
+release references, receipts, mappings, installed state, and preparations stay
+outside world, resolved-run, simulation, episode, and package identities.
+
 cev-sim is a Next.js app with two main user surfaces: a visual scripting canvas and a Three.js simulation scene. The browser app can also connect to an external orchestrator process for ROS-style topics.
 
 ```mermaid

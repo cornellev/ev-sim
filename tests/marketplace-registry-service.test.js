@@ -2,14 +2,18 @@ import assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
 import test from "node:test";
 
 import sharp from "sharp";
 
+import { createDefaultRunManifest } from "../app/simulation/RunManifest.js";
 import { marketplaceDocumentBytes } from "../server/marketplace/MarketplaceContracts.js";
+import { exportRunTemplatePackage } from "../server/marketplace/RunTemplatePackage.js";
 import { MarketplaceRegistryService } from "../server/marketplace/registry/RegistryService.js";
 import { MarketplaceRegistryStore } from "../server/marketplace/registry/RegistryStore.js";
 import { blobPath, registryPaths, resolveRegistryPath } from "../server/marketplace/registry/RegistryLayout.js";
+import { StorageService } from "../server/storage/StorageService.js";
 import { marketplacePluginDocuments } from "./helpers/marketplacePluginDocuments.js";
 import { pluginFixtureResource } from "./helpers/pluginFixtures.js";
 
@@ -141,6 +145,73 @@ test("MKT-03 verification reconstructs targets and dry-run GC never deletes unre
     const plan = await service.planGarbageCollection({ graceMs: 0 });
     assert.deepEqual(plan.unreferencedBlobs, [orphan.descriptor.sha256]);
     await assert.doesNotReject(fs.access(resolveRegistryPath(registryPaths(root), blobPath(orphan.descriptor.sha256))));
+});
+
+test("MKT-11 registry admits run-template inventories only after their exact plugin releases", async (t) => {
+    const { root, service } = await registry(t);
+    const resource = await pluginFixtureResource();
+    const pluginArtifact = (await service.admitArtifact(Buffer.from(JSON.stringify(resource)), { contentKind: "plugin" })).descriptor;
+    const plugin = pluginDocuments(resource, pluginArtifact);
+    await service.admitItem(marketplaceDocumentBytes(plugin.item));
+
+    const authoring = new StorageService(path.join(root, "template-authoring"));
+    await authoring.plugins.putPackage(resource);
+    const environment = await authoring.createEnvironment({ id: "registry-yard", name: "Registry Yard", supportedEditorSourceVersions: [1] });
+    const manifest = await authoring.createRunManifest({
+        ...createDefaultRunManifest({ id: "registry-template", environment: { id: environment.environmentId, expectedHash: null } }),
+        plugins: {
+            enabled: true,
+            artifacts: [{ pluginId: plugin.item.itemId, expectedHash: resource.packageHash, capabilities: [] }],
+        },
+    });
+    const archivePath = path.join(root, "template-authoring.tar");
+    const exported = await exportRunTemplatePackage({
+        storageService: authoring,
+        manifestId: manifest.id,
+        expectedRevision: manifest.revision,
+        pluginReleaseRefs: [{
+            packageHash: resource.packageHash,
+            itemId: plugin.release.itemId,
+            releaseVersion: plugin.release.releaseVersion,
+            artifactSha256: pluginArtifact.sha256,
+        }],
+    });
+    await pipeline(exported.stream, (await fs.open(archivePath, "wx")).createWriteStream());
+    await exported.completion;
+    const templateArtifact = (await service.admitArtifact(await fs.readFile(archivePath), { contentKind: "run-template" })).descriptor;
+    const templateItem = {
+        ...structuredClone(documents.item),
+        itemId: "com.example.editable-template",
+        contentKind: "run-template",
+        previews: [],
+    };
+    const templateRelease = {
+        ...structuredClone(documents.release),
+        itemId: templateItem.itemId,
+        contentKind: "run-template",
+        artifact: templateArtifact,
+        capabilities: [],
+        compatibility: {
+            ...structuredClone(documents.release.compatibility),
+            contracts: [{ kind: "cev-sim.run-template-package", versions: [1] }],
+        },
+        dependencies: [],
+        embeddedPlugins: [{
+            pluginId: plugin.item.itemId,
+            packageHash: resource.packageHash,
+            runtimeHash: resource.runtimeHash,
+            release: {
+                itemId: plugin.release.itemId,
+                releaseVersion: plugin.release.releaseVersion,
+                artifactSha256: pluginArtifact.sha256,
+            },
+        }],
+    };
+    await service.admitItem(marketplaceDocumentBytes(templateItem));
+    await assert.rejects(service.admitRelease(marketplaceDocumentBytes(templateRelease)), /not admitted with the exact artifact/u);
+    await service.admitRelease(marketplaceDocumentBytes(plugin.release));
+    await service.admitRelease(marketplaceDocumentBytes(templateRelease));
+    assert.equal((await service.verifyRegistry()).ok, true);
 });
 
 test("MKT-04 keeps the standalone loopback listener out of the application server import graph", async () => {

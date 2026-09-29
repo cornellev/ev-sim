@@ -434,7 +434,7 @@ function HomeContent() {
             view === APP_VIEWS.HEADLESS_RUNS && <HeadlessPage onOpenWorkspace={() => openWorkspaceSwitcher("pointer")} onOpenReplay={goToReplay} onOpenAnalysis={goToAnalysis} preselectedSuiteId={headlessPreselectedSuiteId} />
         }
         {
-            view === APP_VIEWS.MARKETPLACE && <MarketplacePage onOpenWorkspace={() => openWorkspaceSwitcher("pointer")} onOpenEnvironment={openMarketplaceEnvironment} />
+            view === APP_VIEWS.MARKETPLACE && <MarketplacePage onOpenWorkspace={() => openWorkspaceSwitcher("pointer")} onOpenEnvironment={openMarketplaceEnvironment} onOpenRunConfig={goToConfig} />
         }
         {
             activeEnvironmentId && (

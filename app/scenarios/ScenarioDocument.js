@@ -56,6 +56,30 @@ export const EXPECTED_OUTCOME_KINDS = Object.freeze([
 export const PARAMETER_TYPES = Object.freeze(["float64", "int32", "boolean", "string"]);
 export const PARAMETER_TARGET_KINDS = Object.freeze(["scalar-field", "script-input", "scenario-signal"]);
 
+/** Collect every visual-script id referenced by a normalized scenario. */
+export function collectScenarioScriptIds(scenario = {}) {
+    scenario = scenario ?? {};
+    const ids = new Set();
+    for (const route of scenario.routes ?? []) {
+        if (route.controller?.scriptId) ids.add(route.controller.scriptId);
+    }
+    for (const trigger of scenario.triggers ?? []) {
+        for (const action of trigger.actions ?? []) if (action.scriptId) ids.add(action.scriptId);
+    }
+    for (const completion of scenario.completion?.conditions ?? []) {
+        if (completion.scriptId) ids.add(completion.scriptId);
+    }
+    for (const outcome of scenario.expectedOutcomes ?? []) {
+        if (outcome.scriptId) ids.add(outcome.scriptId);
+    }
+    for (const parameter of scenario.parameters ?? []) {
+        if (parameter.target?.kind === "script-input" && parameter.target.scriptId) {
+            ids.add(parameter.target.scriptId);
+        }
+    }
+    return [...ids].sort((left, right) => left.localeCompare(right));
+}
+
 function positive(value, fallback = 1) {
     return Math.max(Number.EPSILON, finite(value, fallback));
 }

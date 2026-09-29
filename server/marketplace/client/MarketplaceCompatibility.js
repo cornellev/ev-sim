@@ -4,7 +4,7 @@ import process from "node:process";
 import semver from "semver";
 
 import { compareUtf8 } from "../../../app/math/compareUtf8.js";
-import { MARKETPLACE_ARTIFACTS } from "../MarketplaceContract.js";
+import { AUTHORING_ONLY_CONTENT_KINDS, MARKETPLACE_ARTIFACTS } from "../MarketplaceContract.js";
 import { canonicalMarketplaceBytes, hashMarketplaceBytes } from "../MarketplaceJson.js";
 
 const PACKAGE_VERSION = createRequire(import.meta.url)("../../../package.json").version;
@@ -34,8 +34,8 @@ export function createMarketplaceHostProfile({
         .sort((left, right) => compareUtf8(left.kind, right.kind)
             || compareUtf8(left.id, right.id) || left.version - right.version);
     const contractsByKind = new Map();
-    for (const artifact of Object.values(MARKETPLACE_ARTIFACTS)) {
-        if (["cev-sim.environment-package", "cev-sim.asset-package", "cev-sim.marketplace-collection"].includes(artifact.kind)) continue;
+    for (const [contentKind, artifact] of Object.entries(MARKETPLACE_ARTIFACTS)) {
+        if (AUTHORING_ONLY_CONTENT_KINDS.includes(contentKind) || contentKind === "collection") continue;
         const versions = contractsByKind.get(artifact.kind) ?? [];
         versions.push(artifact.version);
         contractsByKind.set(artifact.kind, versions);

@@ -1,6 +1,7 @@
 import express from "express";
 import { storageEvents } from "../mcp/events.js";
 import { exportEnvironmentPackage } from "../marketplace/EnvironmentPackage.js";
+import { exportRunTemplatePackage } from "../marketplace/RunTemplatePackage.js";
 import { jsonHandler } from "./jsonHandler.js";
 
 /**
@@ -199,6 +200,32 @@ export function createStorageRouter(service) {
     router.post("/run-manifests/:id/validate", handle(async (req) => service.validateRunManifest(req.params.id, req.body ?? null)));
     router.post("/run-manifests/:id/resolve", handle(async (req) => service.resolveRunManifest(req.params.id, req.body ?? null)));
     router.get("/run-manifests/:id/export", handle(async (req) => service.exportRunManifest(req.params.id)));
+    router.post("/run-manifests/:id/template-packages/export", async (req, res) => {
+        try {
+            const exported = await exportRunTemplatePackage({
+                storageService: service,
+                manifestId: req.params.id,
+                expectedRevision: parseExpectedRevision(req.body?.expectedRevision),
+                pluginReleaseRefs: req.body?.pluginReleaseRefs ?? [],
+                signal: req.signal,
+            });
+            res.status(200).set({
+                "Cache-Control": "no-store",
+                "Content-Type": "application/vnd.cev-sim.run-template-package+tar",
+                "Content-Disposition": `attachment; filename="cev-sim-run-template-${req.params.id}.tar"`,
+                "X-Content-Type-Options": "nosniff",
+            });
+            exported.stream.on("error", (error) => {
+                if (!res.destroyed) res.destroy(error);
+            });
+            exported.stream.pipe(res);
+            await exported.completion;
+        } catch (error) {
+            console.error(`[storage] ${req.method} ${req.originalUrl} failed:`, error);
+            if (res.headersSent) res.destroy(error);
+            else res.status(Number(error.statusCode) || (error.code === "CONFLICT" ? 409 : 400)).json({ error: error.message, code: error.code });
+        }
+    });
     router.get("/run-manifests/:id", handle(async (req) => service.getRunManifest(req.params.id)));
     router.put("/run-manifests/:id", handle(async (req) => service.putRunManifest(req.params.id, req.body ?? {})));
     router.delete("/run-manifests/:id", handle(async (req) => service.deleteRunManifest(req.params.id)));

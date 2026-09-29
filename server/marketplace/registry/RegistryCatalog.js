@@ -71,6 +71,9 @@ export function projectReleaseSummary(release, releaseHash, target) {
         compatibility: sortedCompatibility(release.compatibility),
         capabilities: sortedStrings(release.capabilities),
         dependencies: structuredClone(release.dependencies).sort(byKeys("itemId", "releaseVersion", "artifactSha256")),
+        ...(release.embeddedPlugins ? {
+            embeddedPlugins: structuredClone(release.embeddedPlugins).sort(byKeys("pluginId", "packageHash")),
+        } : {}),
         releaseHash,
         target: structuredClone(target),
     });

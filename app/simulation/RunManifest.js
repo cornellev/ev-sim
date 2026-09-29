@@ -649,6 +649,9 @@ export function normalizeRunManifest(value, {
     const initial = object(source.initialState);
     const clock = object(source.clock);
     const scripts = object(source.scripts);
+    if (scripts.bindingSource !== undefined && scripts.bindingSource !== "embedded") {
+        throw new Error('scripts.bindingSource must be "embedded" when provided.');
+    }
     const migratedTopics = (Array.isArray(source.topics) ? source.topics : []).map(topic);
     // Ensure candidate returns for pre-v8 and always rewrite legacy ackdrive via migrateLegacyTopic.
     const topics = sourceVersion < RUN_MANIFEST_V8
@@ -712,6 +715,7 @@ export function normalizeRunManifest(value, {
             bindingIds: (Array.isArray(scripts.bindingIds) ? scripts.bindingIds : []).map((id) => text(id)).filter(Boolean),
             expectedBindingsHash: text(scripts.expectedBindingsHash) || null,
             embeddedBindings: Array.isArray(scripts.embeddedBindings) ? clonePlain(scripts.embeddedBindings) : [],
+            ...(scripts.bindingSource === "embedded" ? { bindingSource: "embedded" } : {}),
         },
         ...(plugins ? { plugins } : {}),
         ...(reconciledTransports ? { sensorTransports: reconciledTransports } : {}),

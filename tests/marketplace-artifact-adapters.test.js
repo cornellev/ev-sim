@@ -3,8 +3,11 @@ import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
 import test from "node:test";
 
+import { createDefaultRunManifest } from "../app/simulation/RunManifest.js";
+import { simulationIdentityVersion } from "../app/simulation/kernel/RunIdentity.js";
 import { createDefaultVehicleManifest, VEHICLE_BUNDLE_KIND, VEHICLE_BUNDLE_VERSION } from "../app/vehicles/VehicleManifest.js";
 import { canonicalRunBundleStringify } from "../server/headless/RunBundle.js";
 import { encodeRunPackage } from "../server/headless/VisualAssetPack.js";
@@ -17,6 +20,8 @@ import {
 } from "../server/marketplace/ArtifactAdapters.js";
 import { MARKETPLACE_ARTIFACTS } from "../server/marketplace/MarketplaceContract.js";
 import { computeVehicleBundleHash } from "../server/artifacts/VehicleBundle.js";
+import { exportRunTemplatePackage } from "../server/marketplace/RunTemplatePackage.js";
+import { StorageService } from "../server/storage/StorageService.js";
 import { createPluginPortableHeadlessBundle } from "./helpers/headlessRunnerBundle.js";
 import { pluginFixtureResource } from "./helpers/pluginFixtures.js";
 
@@ -96,16 +101,24 @@ test("MKT-02 vehicle, run-template, and run-package inspections expose exact ser
         embeddedPlugins: [],
     });
 
+    const storage = new StorageService(path.join(root, "storage"));
+    const environment = await storage.createEnvironment({ id: "adapter-yard", name: "Adapter Yard", supportedEditorSourceVersions: [1] });
+    const manifest = await storage.createRunManifest(createDefaultRunManifest({ id: "adapter-template", environment: { id: environment.environmentId, expectedHash: null } }));
+    const templatePath = path.join(root, "run-template.tar");
+    const exportedTemplate = await exportRunTemplatePackage({ storageService: storage, manifestId: manifest.id, expectedRevision: manifest.revision });
+    await pipeline(exportedTemplate.stream, (await fs.open(templatePath, "wx")).createWriteStream());
+    await exportedTemplate.completion;
+    const templateBytes = await fs.readFile(templatePath);
+    const templateHandle = await stage(root, "staged-run-template.tar", templateBytes, "run-template");
+    const templateInspection = await artifactAdapterRegistry.inspect("run-template", templateHandle);
+    assert.equal(templateInspection.identity.manifestId, manifest.id);
+    assert.equal(templateInspection.identity.scenarioCount, 0);
+    assert.equal(templateInspection.identity.scriptCount, 0);
+    assert.deepEqual(templateInspection.identity.plugins, []);
+
     const resource = await pluginFixtureResource();
     const bundle = await createPluginPortableHeadlessBundle(resource);
     const bundleBytes = Buffer.from(canonicalRunBundleStringify(bundle));
-    const templateHandle = await stage(root, "run-bundle.json", bundleBytes, "run-template");
-    const templateInspection = await artifactAdapterRegistry.inspect("run-template", templateHandle);
-    assert.equal(templateInspection.identity.manifestId, bundle.manifest.id);
-    assert.equal(templateInspection.identity.resolvedHash, bundle.resolvedHash);
-    assert.equal(templateInspection.identity.simulationSemanticHash, bundle.simulationSemanticHash);
-    assert.deepEqual(templateInspection.identity.plugins, bundle.resolved.plugins);
-    assert.deepEqual(templateInspection.identity.requestedBackends, bundle.resolved.backendSelections);
 
     const encoded = encodeRunPackage({ bundleBytes, assets: [] });
     const packageHandle = await stage(root, "run-package.tar", encoded.bytes, "run-package");
@@ -119,7 +132,7 @@ test("MKT-02 vehicle, run-template, and run-package inspections expose exact ser
         bundleBytesHash: encoded.bundleBytesHash,
         resolvedHash: bundle.resolvedHash,
         simulationSemanticHash: bundle.simulationSemanticHash,
-        identityVersion: templateInspection.identity.identityVersion,
+        identityVersion: simulationIdentityVersion(bundle.resolved),
         assetCount: 0,
         assetBytes: 0,
     });
@@ -162,14 +175,11 @@ test("MKT-02 invalid vehicle, run-template, and run-package bytes fail without r
     const vehicleHandle = await stage(root, "invalid-vehicle.json", Buffer.from(JSON.stringify(invalidVehicle)), "vehicle");
     await assert.rejects(artifactAdapterRegistry.inspect("vehicle", vehicleHandle), /canonical base64/);
 
+    const templateHandle = await stage(root, "invalid-run-template.tar", Buffer.from("not a tar archive"), "run-template");
+    await assert.rejects(artifactAdapterRegistry.inspect("run-template", templateHandle), /USTAR|[Aa]rchive/u);
+
     const resource = await pluginFixtureResource();
     const bundle = await createPluginPortableHeadlessBundle(resource);
-    const invalidBundle = structuredClone(bundle);
-    invalidBundle.resolvedHash = "0".repeat(64);
-    const invalidBundleBytes = Buffer.from(canonicalRunBundleStringify(invalidBundle));
-    const templateHandle = await stage(root, "invalid-run-bundle.json", invalidBundleBytes, "run-template");
-    await assert.rejects(artifactAdapterRegistry.inspect("run-template", templateHandle), /resolved hash is invalid/);
-
     const validBundleBytes = Buffer.from(canonicalRunBundleStringify(bundle));
     const corruptedArchive = Buffer.from(encodeRunPackage({ bundleBytes: validBundleBytes, assets: [] }).bytes);
     corruptedArchive[148] ^= 1;

@@ -202,6 +202,29 @@ function releaseKey(release) {
     return `${release.itemId}\u0000${release.releaseVersion}`;
 }
 
+async function verifyEmbeddedPluginReferences(paths, release, indexedReleases, fail) {
+    for (const embedded of release.embeddedPlugins ?? []) {
+        const admitted = indexedReleases.get(releaseKey(embedded.release));
+        if (!admitted || admitted.artifact.sha256 !== embedded.release.artifactSha256) {
+            throw fail(`Embedded plugin release ${embedded.release.itemId}@${embedded.release.releaseVersion} is not admitted with the exact artifact.`);
+        }
+        const target = await readRegularBytes(resolveRegistryPath(paths, admitted.target.path));
+        const pluginRelease = assertMarketplaceRelease(parseMarketplaceDocument(target));
+        if (pluginRelease.contentKind !== "plugin" || pluginRelease.artifact.sha256 !== embedded.release.artifactSha256) {
+            throw fail(`Embedded plugin reference ${embedded.pluginId} does not name an admitted plugin artifact.`);
+        }
+        const record = await readBlobRecord(paths, pluginRelease.artifact.sha256);
+        await verifyBlobRecordAndFile(paths, record);
+        const identity = record.usage?.inspection?.identity;
+        if (record.usage?.type !== "artifact" || record.usage.contentKind !== "plugin"
+            || identity?.pluginId !== embedded.pluginId
+            || identity?.packageHash !== embedded.packageHash
+            || identity?.runtimeHash !== embedded.runtimeHash) {
+            throw fail(`Embedded plugin ${embedded.pluginId} does not match its admitted plugin inspection.`);
+        }
+    }
+}
+
 function catalogWithoutRevision(catalog) {
     const value = structuredClone(catalog);
     delete value.revision;
@@ -427,6 +450,7 @@ export class MarketplaceRegistryService {
                     throw conflict(`Exact dependency ${dependency.itemId}@${dependency.releaseVersion} is not admitted.`);
                 }
             }
+            await verifyEmbeddedPluginReferences(this.store.paths, release, indexedReleases, conflict);
             const existing = indexedReleases.get(releaseKey(release));
             if (existing && existing.releaseHash !== releaseHash) {
                 throw conflict(`Release tuple ${release.itemId}@${release.releaseVersion} is immutable.`);
@@ -533,6 +557,12 @@ export class MarketplaceRegistryService {
                 const admitted = releases.get(releaseKey(dependency));
                 if (!admitted || admitted.artifact.sha256 !== dependency.artifactSha256) throw recovery("Release dependency is unavailable.", summary.target.path);
             }
+            await verifyEmbeddedPluginReferences(
+                this.store.paths,
+                release,
+                releases,
+                (message) => recovery(message, summary.target.path),
+            );
         }
     }
 

@@ -4,7 +4,12 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 
 import { PluginStore } from "../../storage/PluginStore.js";
-import { MARKETPLACE_LIMITS, MARKETPLACE_SOURCE_HEALTH, artifactByteLimitFor } from "../MarketplaceContract.js";
+import {
+    AUTHORING_ONLY_CONTENT_KINDS,
+    MARKETPLACE_LIMITS,
+    MARKETPLACE_SOURCE_HEALTH,
+    artifactByteLimitFor,
+} from "../MarketplaceContract.js";
 import { MARKETPLACE_ERROR_CODES, MarketplaceError, marketplaceError } from "../MarketplaceErrors.js";
 import { assertCanonicalUuid, assertMarketplaceId, assertSha256 } from "../MarketplaceFormats.js";
 import { hashMarketplaceBytes } from "../MarketplaceJson.js";
@@ -628,7 +633,7 @@ export class MarketplaceService {
             required: artifactByteLimitFor(selectedRelease.contentKind),
             actual: selectedRelease.artifact.sizeBytes,
         }];
-        const authoringOnly = ["asset-pack", "environment"].includes(selectedRelease.contentKind);
+        const authoringOnly = AUTHORING_ONLY_CONTENT_KINDS.includes(selectedRelease.contentKind);
         const issues = [...downloadIssues, ...lifecycleIssues, ...(authoringOnly ? [] : compatibility.issues)];
         const selectedExactKey = `${selectedRelease.itemId}\u0000${selectedRelease.releaseVersion}\u0000${selectedRelease.artifact.sha256}`;
         const warnings = yanks.some((entry) => (

@@ -19,7 +19,7 @@ hosted private-LAN registry. It is not headless PR 13 and does not extend the
 | MKT-08: plugin lifecycle | Complete; acceptance pending | Core local and serial Marketplace gates pass; repository-wide UI/a11y has unrelated failures | Unmerged |
 | MKT-09: asset-package export, import, and revision mapping | Complete; acceptance pending | Core local gates pass; repository-wide a11y has unrelated workspace timeouts; hosted CI pending | Unmerged |
 | MKT-10: portable environments | Implemented; acceptance pending | Core local gates pass; browser remainder waived for this run; supported-Node and hosted CI evidence pending | Unmerged |
-| MKT-11: vehicle and run lifecycle | Not started | Not run | Unmerged |
+| MKT-11: complete editable run templates | Implemented; acceptance pending | Full local and serial Marketplace gates pass; supported-Node and hosted CI evidence pending | Unmerged |
 | MKT-12: collections | Not started | Not run | Unmerged |
 | MKT-13: publishers, authentication, secure LAN | Not started | Not run | Unmerged |
 | MKT-14: LAN discovery, updates, advisories | Not started | Not run | Unmerged |
@@ -42,7 +42,9 @@ and evidence; implementation status alone does not satisfy a milestone gate.
 - Installation and updates are explicit. Installation never executes plugins,
   grants capabilities, changes a run, or activates content.
 - Existing plugin, vehicle, run-bundle, and run-package formats remain
-  authoritative. Marketplace is catalog, delivery, and provenance over them.
+  authoritative. Editable templates use the separate
+  `cev-sim.run-template-package@1` authoring-closure contract; the exact
+  run-bundle and run-package workflows and identities are unchanged.
 - Correctly resolved managed runs continue executing admitted plugin selections
   under the existing versioned plugin contract. Marketplace installation alone
   never selects a plugin, grants capabilities, changes a run, or activates it.
@@ -112,14 +114,15 @@ release that was not previously verified.
 | --- | --- | --- |
 | `plugin` | `cev-sim.plugin-package@1` | `application/vnd.cev-sim.plugin-package+json` |
 | `vehicle` | `cev-sim.vehicle-bundle@1` | `application/vnd.cev-sim.vehicle-bundle+json` |
-| `run-template` | `cev-sim.run-bundle@1` | `application/vnd.cev-sim.run-bundle+json` |
+| `run-template` | `cev-sim.run-template-package@1` | `application/vnd.cev-sim.run-template-package+tar` |
 | `run-package` | `cev-sim.run-package@1` | `application/vnd.cev-sim.run-package+tar` |
 | `environment` | `cev-sim.environment-package@1` | `application/vnd.cev-sim.environment-package+tar` |
 | `asset-pack` | `cev-sim.asset-package@1` | `application/vnd.cev-sim.asset-package+tar` |
 | `collection` | `cev-sim.marketplace-collection@1` | `application/vnd.cev-sim.marketplace-collection+json` |
 
-Scripts, scenarios, sensors, and behaviors remain inside plugins or run
-bundles in v1. They are not standalone marketplace content.
+Scripts, scenarios, sensors, and behaviors remain inside plugins, exact run
+artifacts, or the reachable closure of an editable run-template package. They
+are not standalone marketplace content.
 
 MKT-01 publishes draft-2020-12 schemas and executable strict readers for:
 
@@ -554,14 +557,71 @@ back user edits; round trips remain editable through `CommandBus` and
 `SceneProjector`; carried rights cannot grant authority; world identity changes
 only with canonical world content.
 
-### MKT-11 — Vehicle, run-template, and exact-run lifecycle
+### MKT-11 — Complete editable run templates
 
-Wire existing vehicle/run-bundle/run-package importers. Embedded vehicle
-plugins enter CAS without library membership. Templates become editable local
-configs; exact packages remain immutable.
+Implement `cev-sim.run-template-package@1` as a deterministic USTAR package
+containing the saved run manifest and its complete reachable authoring closure:
+schema-v4 environment data and assets, custom vehicles and model files,
+scenarios, editable script graphs and their current compiled artifacts, frozen
+bindings, exact plugin packages, and explicit built-in references. The signed
+release carries an exact `embeddedPlugins` inventory tied to already-admitted
+same-registry plugin releases.
 
-Gate: artifact hashes and exact reproduction remain stable; collision mappings
-are deterministic; unsupported backends fail rather than substitute.
+Import is static and destination-independent. It never imports plugin modules,
+adds Plugin Library membership or grants, or resolves/launches the run. It
+deterministically maps authoring IDs, rewrites typed references and authoring
+locks, publishes CAS-only plugin prerequisites, environment content, vehicle
+assets and manifests, scripts, scenarios, and finally the run manifest through
+guarded replayable operations. Imported manifests set
+`scripts.bindingSource: "embedded"`, clear `bindingIds`, and freeze even an
+empty binding set.
+
+Standalone vehicle installation and exact-run retention/execution remain
+unmet prerequisites from the earlier MKT-08 lifecycle scope. They are not
+silently absorbed into MKT-11.
+
+Gate: repeated exports are byte-identical; archive inspection proves an exact
+nonexecuting closure; collision and prior-receipt mappings are deterministic;
+crash recovery never overwrites user edits; the run manifest publishes last;
+an imported template can be opened, edited, explicitly validated, resolved,
+and run while existing run-bundle/run-package bytes and semantic identities
+remain unchanged.
+
+## MKT-11 work packages
+
+- [x] WP-00–02: reconcile roadmap authority, introduce the package contract and
+  signed plugin inventory, and freeze destination-independent binding behavior.
+- [x] WP-03–04: capture and recheck the reachable authoring closure and perform
+  strict manifest-first static verification without runtime plugin loading.
+- [x] WP-05–07: plan deterministic mappings and typed rewrites, add guarded
+  authoring persistence, and journal the package lifecycle with final run
+  publication last.
+- [x] WP-08–10: enforce registry plugin-reference admission, expose the export
+  API and Config controls, and surface imported run-manifest mappings for
+  Marketplace navigation.
+- [ ] WP-11–12: complete the hostile/collision/crash matrix, serial Marketplace
+  browser acceptance, supported Node 22.22.2 and hosted CI evidence.
+
+Local evidence on 2026-09-29:
+
+- `npm run test:marketplace` passed 102 tests with zero failures, including
+  deterministic template export, exact static closure verification, built-in
+  descriptors, custom vehicle assets, signed plugin-release admission,
+  collision allocation, every typed script-reference rewrite, empty frozen
+  bindings, final run-manifest publication, and exact lifecycle replay.
+- `npm test` passed 1,839 tests with six declared skips and zero failures
+  (1,845 total). Existing run-bundle/run-package identity tests remained green.
+- `npm run lint` completed with zero errors and the pre-existing
+  `MapSurface.js` `assetEpoch` hook warning. `npm run build` and
+  `npm run release:check` passed.
+- `npm run fixtures:headless` and `npm run fixtures:environment-editor` passed
+  without changing either frozen fixture. `git diff --check` passed.
+- `npx playwright test tests/ui/marketplace.spec.js --workers=1` passed 4/4,
+  including the serial keyboard/Axe case at the configured desktop viewport.
+- This host uses Node `v22.14.0`/npm `11.4.1`, below the locked Node `22.22.2`
+  patch baseline. The remaining hostile/crash matrix, dedicated imported-run
+  browser flow, supported-Node run, hosted CI, and merge evidence keep
+  WP-11–12 and milestone acceptance open.
 
 ### MKT-12 — Collections and multi-release plans
 
@@ -1124,6 +1184,25 @@ Local evidence on 2026-09-28:
   WP-10 and milestone acceptance open.
 
 ## Decision log
+
+### 2026-09-28 — Make MKT-11 the complete editable-template closure
+
+`run-template` now identifies `cev-sim.run-template-package@1`, not an exact
+run bundle. The deterministic archive carries the complete saved authoring
+closure and a signed exact plugin inventory. Static verification never loads
+plugin modules. Import freezes bindings with the additive run-manifest v11
+`bindingSource: "embedded"` marker, uses CAS-only plugin prerequisites,
+rewrites typed references through deterministic mappings, and publishes the
+run manifest last. Absence of `bindingSource` preserves existing normalization
+and hashes; existing run-bundle and run-package contracts and bytes are not
+changed.
+
+Standalone vehicle Marketplace installation and exact-run lifecycle remain
+earlier-roadmap gaps rather than MKT-11 work. Focused, Marketplace-wide,
+repository-wide, fixture, release, build, and serial Marketplace browser gates
+pass on this host. The remaining hostile/crash matrix, dedicated imported-run
+browser flow, supported Node 22.22.2, hosted CI, and merge evidence remain
+acceptance work.
 
 ### 2026-09-28 — Make portable environments MKT-10
 

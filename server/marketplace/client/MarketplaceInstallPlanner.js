@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { compareUtf8 } from "../../../app/math/compareUtf8.js";
 import { hashMarketplaceRelease } from "../MarketplaceContracts.js";
-import { artifactByteLimitFor } from "../MarketplaceContract.js";
+import { AUTHORING_ONLY_CONTENT_KINDS, artifactByteLimitFor } from "../MarketplaceContract.js";
 import { MARKETPLACE_ERROR_CODES, marketplaceError } from "../MarketplaceErrors.js";
 import { assertCanonicalUuid, assertMarketplaceId, assertReleaseVersion, assertSha256 } from "../MarketplaceFormats.js";
 import {
@@ -259,7 +259,7 @@ export class MarketplaceInstallPlanner {
                 throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Pinned marketplace release identity changed.");
             }
             const compatibility = evaluateMarketplaceCompatibility(release.compatibility, hostProfile);
-            if (!compatibility.compatible && !["asset-pack", "environment"].includes(release.contentKind)) {
+            if (!compatibility.compatible && !AUTHORING_ONLY_CONTENT_KINDS.includes(release.contentKind)) {
                 throw marketplaceError(MARKETPLACE_ERROR_CODES.INCOMPATIBLE, `Marketplace release ${release.itemId}@${release.releaseVersion} is incompatible with this host.`);
             }
             const policy = this.releasePolicy(release) ?? {};

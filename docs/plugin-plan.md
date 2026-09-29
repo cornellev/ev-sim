@@ -1,5 +1,11 @@
 # Simulator Plugin Roadmap
 
+MKT-11 run-template packages may carry exact plugin package records as static
+authoring prerequisites. Marketplace import publishes those records only to
+`PluginStore` CAS. It does not add Plugin Library membership, marketplace
+ownership, grants, activation, or module loading. Signed `embeddedPlugins`
+entries bind each package to an already admitted same-registry plugin release.
+
 This document is the implementation authority for simulator plugins. The
 `PLG-*` program is separate from the headless, visual-layer (`VIS-*`), and
 environment-editor (`ED-*`) programs. A plugin milestone does not extend or

@@ -78,6 +78,22 @@ test("MKT-01 freezes all content-kind artifact contracts", () => {
     assert.equal(assertMarketplaceDocument(previewBoundary).previews[0].sizeBytes, 8 * 1024 ** 2);
     previewBoundary.previews[0].sizeBytes += 1;
     assert.equal(validateMarketplaceDocument(previewBoundary).ok, false);
+
+    const template = clone(fixture.release);
+    template.itemId = "com.example.template";
+    template.contentKind = "run-template";
+    template.capabilities = [];
+    template.artifact.mediaType = MARKETPLACE_ARTIFACTS["run-template"].mediaType;
+    template.compatibility.contracts = [{ kind: MARKETPLACE_ARTIFACTS["run-template"].kind, versions: [1] }];
+    template.embeddedPlugins = [{
+        pluginId: "com.example.plugin",
+        packageHash: "1".repeat(64),
+        runtimeHash: "2".repeat(64),
+        release: { itemId: "com.example.plugin", releaseVersion: "1.2.3", artifactSha256: "3".repeat(64) },
+    }];
+    assert.equal(assertMarketplaceRelease(template).embeddedPlugins.length, 1);
+    assert.throws(() => assertMarketplaceRelease({ ...template, embeddedPlugins: [...template.embeddedPlugins, clone(template.embeddedPlugins[0])] }), /duplicate embedded plugin/u);
+    assert.throws(() => assertMarketplaceRelease({ ...fixture.release, embeddedPlugins: template.embeddedPlugins }), /executable-containing/u);
 });
 
 test("MKT-01 identifier, SemVer, path, URL, and schema boundaries are strict", () => {

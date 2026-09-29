@@ -43,6 +43,20 @@ export async function storagePost(path, body) {
     return storageWrite("POST", path, body);
 }
 
+/** POST JSON and return the successful response body as a Blob. */
+export async function storagePostBinary(path, body, { accept = "application/octet-stream" } = {}) {
+    const response = await fetch(url(path), {
+        method: "POST",
+        headers: {
+            Accept: accept,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+    });
+    await assertOk(response, "export");
+    return response.blob();
+}
+
 /** Partially update a resource. */
 export async function storagePatch(path, body) {
     return storageWrite("PATCH", path, body);

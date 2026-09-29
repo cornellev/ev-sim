@@ -1,5 +1,11 @@
 # Headless Simulation Implementation Plan
 
+MKT-11 adds optional `scripts.bindingSource: "embedded"` to run-manifest v11
+authoring. Absence preserves existing normalization and hashes; the explicit
+value freezes `embeddedBindings`, including an empty array, for newly imported
+editable templates. This does not change run-bundle/run-package contracts or
+the JavaScript simulation kernel.
+
 This document is the shared implementation handoff for humans, Cursor, and
 Codex. It is the authority for scope, order, and acceptance gates. The
 language-neutral API authority is
@@ -499,6 +505,16 @@ compared with the committed characterization.
 - [Isaac Lab reinforcement-learning architecture](https://docs.nvidia.com/learning/physical-ai/getting-started-with-isaac-lab/latest/train-your-first-robot-with-isaac-lab/02-how-isaac-lab-accelerates-reinforcement-learning.html)
 
 ## Decision log
+
+### 2026-09-28 — Admit explicit frozen binding sources for editable templates
+
+MKT-11 adds optional `scripts.bindingSource: "embedded"` within the existing
+run-manifest v11 contract. The explicit value makes `embeddedBindings` the
+complete effective binding set, including when it is empty. Documents without
+the field retain legacy global/explicit and nonempty-embedded precedence and
+therefore retain their existing hashes. This authoring addition does not
+version or change run-bundle, run-package, protocol, worker, or simulation
+kernel behavior.
 
 ### 2026-09-26 — MKT-01 raises the repository Node baseline without changing headless identity
 

@@ -27,6 +27,7 @@ import {
     CONTROL_AUTHORITY_MODES,
     CONTROL_STALE_POLICIES,
     createDefaultRunManifest,
+    computeResolvedRunHash,
     normalizeRunManifest,
     RUN_MANIFEST_VERSION,
     validateRunManifest,
@@ -43,6 +44,7 @@ import {
     deleteRunManifest,
     duplicateRunManifest,
     exportRunManifest,
+    exportRunTemplatePackage,
     getRunManifest,
     importRunBundle,
     listRunManifests,
@@ -117,6 +119,15 @@ function runIdFromName(name) {
 
 function downloadJson(name, value) {
     const blob = new Blob([`${JSON.stringify(value, null, 2)}\n`], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = name;
+    anchor.click();
+    URL.revokeObjectURL(url);
+}
+
+function downloadBlob(name, blob) {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
@@ -660,6 +671,14 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
         downloadJson(`${current.id}.run-bundle.json`, bundle);
     });
 
+    const exportTemplate = () => perform(async () => {
+        const current = dirty ? await save() : saved;
+        const archive = await exportRunTemplatePackage(current.id, {
+            expectedRevision: current.revision,
+        });
+        downloadBlob(`${current.id}.run-template.tar`, archive);
+    });
+
     const importBundleFile = (event) => perform(async () => {
         const file = event.target.files?.[0];
         event.target.value = "";
@@ -721,7 +740,8 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                         <div className="space-y-2 border-t border-[var(--slate-border)] p-3">
                             <div className="flex gap-2">
                                 <Action compact icon={<IconCopy size={14} stroke={1.75} />} label="Duplicate" onClick={duplicate} disabled={busy} />
-                                <Action compact icon={<IconDownload size={14} stroke={1.75} />} label="Export" onClick={exportBundle} disabled={busy} />
+                                <Action compact icon={<IconDownload size={14} stroke={1.75} />} label="Export bundle" onClick={exportBundle} disabled={busy} />
+                                <Action compact icon={<IconDownload size={14} stroke={1.75} />} label="Export template" onClick={exportTemplate} disabled={busy} />
                                 <IconButton label="Delete manifest" onClick={remove} disabled={busy} className="text-[var(--slate-danger)]"><IconTrash size={14} stroke={1.75} /></IconButton>
                             </div>
                             <p className="truncate font-mono text-[11px] text-[var(--slate-muted)]">{saved?.definitionHash || "Unsaved"}</p>
@@ -1745,11 +1765,37 @@ function Scripts({ draft, update, validation = null, sensorRegistry = sensorType
     const pluginIssues = (validation?.issues || []).filter((issue) => (
         String(issue.path || "").includes("plugin") || String(issue.message || "").toLowerCase().includes("plugin")
     ));
+    const setBindingSource = (value) => {
+        const next = structuredClone(draft);
+        if (value === "embedded") {
+            next.scripts.bindingSource = "embedded";
+            next.scripts.bindingIds = [];
+            next.scripts.expectedBindingsHash = computeResolvedRunHash(next.scripts.embeddedBindings);
+        } else {
+            delete next.scripts.bindingSource;
+        }
+        update([], next);
+    };
+    const setEmbeddedBindings = (value) => {
+        const next = structuredClone(draft);
+        const bindings = Array.isArray(value) ? value : [];
+        next.scripts.embeddedBindings = bindings;
+        if (next.scripts.bindingSource === "embedded" || bindings.length > 0) {
+            next.scripts.expectedBindingsHash = computeResolvedRunHash(bindings);
+        }
+        update([], next);
+    };
 
     return (
         <div className="space-y-4">
             <Toggle label="Run deterministic scripts" value={draft.scripts.enabled} onChange={(value) => update(["scripts", "enabled"], value)} />
-            <Field label="Binding IDs (comma separated)"><input value={draft.scripts.bindingIds.join(", ")} onChange={(event) => update(["scripts", "bindingIds"], event.target.value.split(",").map((id) => id.trim()).filter(Boolean))} /></Field>
+            <Field label="Binding source">
+                <select value={draft.scripts.bindingSource || "legacy"} onChange={(event) => setBindingSource(event.target.value)}>
+                    <option value="legacy">Global and explicit bindings</option>
+                    <option value="embedded">Frozen embedded bindings</option>
+                </select>
+            </Field>
+            <Field label="Binding IDs (comma separated)"><input disabled={draft.scripts.bindingSource === "embedded"} value={draft.scripts.bindingIds.join(", ")} onChange={(event) => update(["scripts", "bindingIds"], event.target.value.split(",").map((id) => id.trim()).filter(Boolean))} /></Field>
             <AdvancedFields label="Script artifacts and hashes">
                 <div className="flex items-center justify-between">
                     <p className="text-xs text-zinc-400">Artifact and binding hashes lock the exact controller dependencies.</p>
@@ -1763,7 +1809,7 @@ function Scripts({ draft, update, validation = null, sensorRegistry = sensorType
                     </div>
                 ))}
                 <Field label="Expected bindings SHA-256"><input value={draft.scripts.expectedBindingsHash || ""} placeholder="Unlocked" onChange={(event) => update(["scripts", "expectedBindingsHash"], event.target.value || null)} /></Field>
-                <Field label="Embedded portable bindings"><JsonField value={draft.scripts.embeddedBindings} onChange={(value) => update(["scripts", "embeddedBindings"], value)} rows={9} /></Field>
+                <Field label="Embedded portable bindings"><JsonField value={draft.scripts.embeddedBindings} onChange={setEmbeddedBindings} rows={9} /></Field>
             </AdvancedFields>
             <div className="space-y-4">
                 <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--slate-muted)]">Simulator plugins</p>

@@ -30,6 +30,17 @@
       },
       "additionalProperties": false
     },
+    "embeddedPlugin": {
+      "type": "object",
+      "required": ["pluginId", "packageHash", "runtimeHash", "release"],
+      "properties": {
+        "pluginId": { "$ref": "#/$defs/marketplaceId" },
+        "packageHash": { "$ref": "#/$defs/sha256" },
+        "runtimeHash": { "$ref": "#/$defs/sha256" },
+        "release": { "$ref": "#/$defs/exactReleaseRef" }
+      },
+      "additionalProperties": false
+    },
     "targetDescriptor": {
       "type": "object",
       "required": ["path", "sha256", "sizeBytes"],
@@ -130,6 +141,7 @@
         "compatibility": { "$ref": "#/$defs/compatibility" },
         "capabilities": { "type": "array", "uniqueItems": true, "items": { "type": "string", "format": "plugin-capability" } },
         "dependencies": { "type": "array", "items": { "$ref": "#/$defs/exactReleaseRef" } },
+        "embeddedPlugins": { "type": "array", "items": { "$ref": "#/$defs/embeddedPlugin" } },
         "releaseHash": { "$ref": "#/$defs/sha256" },
         "target": { "$ref": "#/$defs/targetDescriptor" }
       },

@@ -36,6 +36,28 @@ test("run manifest normalization supplies deterministic professional defaults", 
     assert.equal(validateRunManifest(manifest).ok, true);
 });
 
+test("run manifest bindingSource freezes empty and nonempty embedded binding sets without changing legacy documents", () => {
+    const legacy = createDefaultRunManifest();
+    assert.equal(Object.hasOwn(legacy.scripts, "bindingSource"), false);
+    const empty = normalizeRunManifest({
+        ...legacy,
+        scripts: { ...legacy.scripts, bindingSource: "embedded", bindingIds: ["ignored"], embeddedBindings: [] },
+    });
+    assert.equal(empty.scripts.bindingSource, "embedded");
+    assert.deepEqual(empty.scripts.embeddedBindings, []);
+    const nonempty = normalizeRunManifest({
+        ...legacy,
+        scripts: {
+            ...legacy.scripts,
+            bindingSource: "embedded",
+            embeddedBindings: [{ id: "frozen", name: "Frozen", scope: "run", scriptId: "controller", enabled: true }],
+        },
+    });
+    assert.equal(nonempty.scripts.bindingSource, "embedded");
+    assert.equal(nonempty.scripts.embeddedBindings[0].id, "frozen");
+    assert.throws(() => normalizeRunManifest({ ...legacy, scripts: { ...legacy.scripts, bindingSource: "global" } }), /bindingSource/u);
+});
+
 test("run manifest v4 migrates v1-v3 and rejects future versions and duplicate stable ids", () => {
     const migrated = normalizeRunManifest({
         ...createDefaultRunManifest(),

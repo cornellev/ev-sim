@@ -156,7 +156,9 @@ import {
     createBindingManifest,
     normalizeBindingManifest,
 } from "../../app/scripting/bindings/BindingDocument.js";
+import { normalizeScriptDocument } from "../../app/scripting/EditorDocument.js";
 import {
+    collectScenarioScriptIds,
     createDefaultScenario,
     createScenarioCatalog,
     normalizeScenario,
@@ -359,6 +361,7 @@ export class StorageService {
         this.environmentWriteSchemaVersion = options.environmentSchemaVersion === 3 ? 3 : 4;
         this._environmentRecovery = null;
         this._runManifestWriteChains = new Map();
+        this._scriptWriteChains = new Map();
         this._scenarioWriteChains = new Map();
         this._scenarioCatalogWriteChain = Promise.resolve();
         this._experimentSuiteWriteChains = new Map();
@@ -1164,6 +1167,37 @@ export class StorageService {
         return this._fileStore(this._scriptPath(document.id), null).write(document);
     }
 
+    async commitMarketplaceScript({ scriptId, document, expectedContentHash = null, contentHash } = {}) {
+        safeSegment(scriptId);
+        const previous = this._scriptWriteChains.get(scriptId) ?? Promise.resolve();
+        const operation = previous.catch(() => {}).then(async () => {
+            const candidate = normalizeScriptDocument({ ...document, id: scriptId });
+            if (semanticHash(candidate) !== contentHash) throw new Error("Prepared marketplace script content hash changed.");
+            const current = await this.getScript(scriptId);
+            if (current) {
+                const currentHash = semanticHash(normalizeScriptDocument(current));
+                if (currentHash === contentHash) return Object.freeze({ scriptId, contentHash, reused: true });
+                const error = new Error(`Script "${scriptId}" changed after marketplace planning.`);
+                error.code = "CONFLICT";
+                error.statusCode = 409;
+                throw error;
+            }
+            if (expectedContentHash !== null) {
+                const error = new Error(`Script "${scriptId}" was removed after marketplace planning.`);
+                error.code = "CONFLICT";
+                error.statusCode = 409;
+                throw error;
+            }
+            await this.putScript(candidate);
+            return Object.freeze({ scriptId, contentHash, reused: false });
+        });
+        this._scriptWriteChains.set(scriptId, operation);
+        operation.finally(() => {
+            if (this._scriptWriteChains.get(scriptId) === operation) this._scriptWriteChains.delete(scriptId);
+        }).catch(() => {});
+        return operation;
+    }
+
     /** Delete a script document. Resolves true whether or not it existed. */
     async deleteScript(scriptId) {
         const filePath = this._scriptPath(scriptId);
@@ -1223,6 +1257,39 @@ export class StorageService {
         const expectedRevision = input.expectedRevision ?? requested.revision;
         const scenario = normalizeScenario({ ...requested, id: scenarioId }, { allowMissingKind: true });
         return this._writeScenario(scenarioId, scenario, { expectedRevision });
+    }
+
+    async commitMarketplaceScenario({ scenarioId, scenario, expectedRevision, contentHash } = {}) {
+        const candidate = normalizeScenario({ ...scenario, id: scenarioId }, { allowMissingKind: true });
+        const candidateHash = semanticHash(stripScenarioMetadata(candidate));
+        if (candidateHash !== contentHash) throw new Error("Prepared marketplace scenario content hash changed.");
+        const current = await this.getScenario(scenarioId);
+        if (current) {
+            const currentHash = semanticHash(stripScenarioMetadata(normalizeScenario(current, { allowMissingKind: true })));
+            if (currentHash === contentHash) {
+                return Object.freeze({ scenarioId, revision: current.revision, contentHash, reused: true });
+            }
+            const error = new Error(`Scenario "${scenarioId}" changed after marketplace planning.`);
+            error.code = "CONFLICT";
+            error.statusCode = 409;
+            throw error;
+        }
+        if (expectedRevision !== 0) {
+            const error = new Error(`Scenario "${scenarioId}" was removed after marketplace planning.`);
+            error.code = "CONFLICT";
+            error.statusCode = 409;
+            throw error;
+        }
+        let committed;
+        try {
+            committed = await this.createScenario(candidate);
+        } catch (error) {
+            if (!/already exists/u.test(String(error.message))) throw error;
+            error.code = "CONFLICT";
+            error.statusCode = 409;
+            throw error;
+        }
+        return Object.freeze({ scenarioId, revision: committed.revision, contentHash, reused: false });
     }
 
     async duplicateScenario(sourceId, input = {}) {
@@ -1837,6 +1904,39 @@ export class StorageService {
         return this._writeRunManifest(manifestId, validation.manifest, { expectedRevision });
     }
 
+    async commitMarketplaceRunManifest({ manifestId, manifest, expectedRevision, contentHash } = {}) {
+        const candidate = normalizeRunManifest({ ...manifest, id: manifestId });
+        if (semanticHash(candidate) !== contentHash) throw new Error("Prepared marketplace run-manifest content hash changed.");
+        const current = await this.getRunManifest(manifestId);
+        const builtIn = manifestId === "igvc-default" && current?.revision === 0;
+        if (current && !builtIn) {
+            const currentHash = semanticHash(normalizeRunManifest(current));
+            if (currentHash === contentHash) {
+                return Object.freeze({ manifestId, revision: current.revision, contentHash, reused: true });
+            }
+            const error = new Error(`Run manifest "${manifestId}" changed after marketplace planning.`);
+            error.code = "CONFLICT";
+            error.statusCode = 409;
+            throw error;
+        }
+        if (expectedRevision !== 0 || builtIn) {
+            const error = new Error(`Run manifest "${manifestId}" cannot be published at the planned revision.`);
+            error.code = "CONFLICT";
+            error.statusCode = 409;
+            throw error;
+        }
+        let committed;
+        try {
+            committed = await this.createRunManifest(candidate);
+        } catch (error) {
+            if (!/already exists/u.test(String(error.message))) throw error;
+            error.code = "CONFLICT";
+            error.statusCode = 409;
+            throw error;
+        }
+        return Object.freeze({ manifestId, revision: committed.revision, contentHash, reused: false });
+    }
+
     /**
      * Move a run manifest to a new stable id and store the submitted document.
      * The route id still wins for {@link putRunManifest}; only this method renames.
@@ -2042,7 +2142,9 @@ export class StorageService {
 
         const allBindings = await this.getBindings();
         const explicitBindingIds = new Set(manifest.scripts.bindingIds);
-        const selectedBindings = manifest.scripts.embeddedBindings.length > 0
+        const selectedBindings = manifest.scripts.bindingSource === "embedded"
+            ? manifest.scripts.embeddedBindings
+            : manifest.scripts.embeddedBindings.length > 0
             ? manifest.scripts.embeddedBindings
             : (allBindings?.bindings || []).filter((binding) => (
                 binding.scope === BINDING_SCOPES.GLOBAL || explicitBindingIds.has(binding.id)
@@ -2813,6 +2915,92 @@ export class StorageService {
         return { vehicleId, fileName, size: buffer.length };
     }
 
+    async commitMarketplaceVehicleAsset({
+        vehicleId, fileName, bytes, sha256,
+        expectedVehicleRevision = 0, expectedVehicleContentHash = null,
+        publishedVehicleContentHash = null,
+    } = {}) {
+        safeSegment(vehicleId);
+        const buffer = Buffer.from(bytes);
+        const incomingHash = createHash("sha256").update(buffer).digest("hex");
+        if (incomingHash !== sha256) throw new Error("Prepared marketplace vehicle asset hash changed.");
+        const previous = this._vehicleWriteChains.get(vehicleId) ?? Promise.resolve();
+        const operation = previous.catch(() => {}).then(async () => {
+            const manifest = await this.getVehicleManifest(vehicleId);
+            const manifestRevision = Number(manifest?.revision ?? 0);
+            const manifestHash = manifest?.definitionHash ?? null;
+            const plannedState = manifestRevision === Number(expectedVehicleRevision)
+                && (expectedVehicleContentHash === null ? manifest === null : manifestHash === expectedVehicleContentHash);
+            const publishedState = expectedVehicleRevision === 0
+                && manifestRevision === 1
+                && publishedVehicleContentHash !== null
+                && manifestHash === publishedVehicleContentHash;
+            if (!plannedState && !publishedState) {
+                const error = new Error(`Vehicle "${vehicleId}" changed before its marketplace assets were published.`);
+                error.code = "CONFLICT";
+                error.statusCode = 409;
+                throw error;
+            }
+            try {
+                const current = await this.readVehicleAsset(vehicleId, fileName);
+                const currentHash = createHash("sha256").update(current).digest("hex");
+                if (currentHash === sha256) return Object.freeze({ vehicleId, fileName, sha256, sizeBytes: current.length, reused: true });
+                const error = new Error(`Vehicle asset "${vehicleId}/${fileName}" changed after marketplace planning.`);
+                error.code = "CONFLICT";
+                error.statusCode = 409;
+                throw error;
+            } catch (error) {
+                if (error.code !== "ENOENT") throw error;
+            }
+            if (publishedState) {
+                const error = new Error(`Published marketplace vehicle "${vehicleId}" is missing asset "${fileName}".`);
+                error.code = "RECOVERY_REQUIRED";
+                error.statusCode = 409;
+                throw error;
+            }
+            await this.putVehicleAsset(vehicleId, fileName, buffer);
+            return Object.freeze({ vehicleId, fileName, sha256, sizeBytes: buffer.length, reused: false });
+        });
+        this._vehicleWriteChains.set(vehicleId, operation);
+        operation.finally(() => {
+            if (this._vehicleWriteChains.get(vehicleId) === operation) this._vehicleWriteChains.delete(vehicleId);
+        }).catch(() => {});
+        return operation;
+    }
+
+    async commitMarketplaceVehicle({ vehicleId, manifest, expectedRevision, contentHash } = {}) {
+        const { registry } = await this._sensorRegistryForVehicle({ ...manifest, id: vehicleId });
+        const candidate = normalizeVehicleManifest({ ...manifest, id: vehicleId }, { sensorRegistry: registry });
+        if (semanticHash(candidate) !== contentHash) throw new Error("Prepared marketplace vehicle content hash changed.");
+        const current = await this.getVehicleManifest(vehicleId);
+        if (current) {
+            const currentHash = semanticHash(normalizeVehicleManifest(current, { sensorRegistry: registry }));
+            if (currentHash === contentHash) {
+                return Object.freeze({ vehicleId, revision: current.revision, contentHash, reused: true });
+            }
+            const error = new Error(`Vehicle "${vehicleId}" changed after marketplace planning.`);
+            error.code = "CONFLICT";
+            error.statusCode = 409;
+            throw error;
+        }
+        if (expectedRevision !== 0) {
+            const error = new Error(`Vehicle "${vehicleId}" was removed after marketplace planning.`);
+            error.code = "CONFLICT";
+            error.statusCode = 409;
+            throw error;
+        }
+        let committed;
+        try {
+            committed = await this.createVehicleManifest(candidate);
+        } catch (error) {
+            if (!/already exists/u.test(String(error.message))) throw error;
+            error.code = "CONFLICT";
+            error.statusCode = 409;
+            throw error;
+        }
+        return Object.freeze({ vehicleId, revision: committed.revision, contentHash, reused: false });
+    }
+
     async readVehicleAsset(vehicleId, fileName) {
         return fs.readFile(this._vehicleAssetPath(vehicleId, fileName));
     }
@@ -2828,6 +3016,7 @@ export class StorageService {
         const operation = previous.catch(() => {}).then(async () => {
             const current = await this.getVehicleManifest(vehicleId);
             const currentRevision = Number(current?.revision || 0);
+            if (create && current) throw new Error(`Vehicle "${vehicleId}" already exists.`);
             if (!create && expectedRevision !== undefined && Number(expectedRevision) !== currentRevision) {
                 throw new Error(`Vehicle manifest revision conflict: expected ${expectedRevision}, current revision is ${currentRevision}.`);
             }
@@ -3127,6 +3316,7 @@ export class StorageService {
         const operation = previous.catch(() => {}).then(async () => {
             const current = await this.getRunManifest(manifestId);
             const currentRevision = Number(current?.revision || 0);
+            if (create && current) throw new Error(`Run manifest "${manifestId}" already exists.`);
             if (!create && expectedRevision !== undefined && Number(expectedRevision) !== currentRevision) {
                 throw new Error(`Run manifest revision conflict: expected ${expectedRevision}, current revision is ${currentRevision}.`);
             }
@@ -4007,19 +4197,6 @@ function experimentCaseIdentityMatches(entry, requested = {}) {
 
 function objectValues(value) {
     return value && typeof value === "object" && !Array.isArray(value) ? value : {};
-}
-
-function collectScenarioScriptIds(scenario) {
-    const ids = new Set();
-    for (const route of scenario.routes) {
-        if (route.controller?.scriptId) ids.add(route.controller.scriptId);
-    }
-    for (const trigger of scenario.triggers) {
-        for (const action of trigger.actions) if (action.scriptId) ids.add(action.scriptId);
-    }
-    for (const completion of scenario.completion.conditions) if (completion.scriptId) ids.add(completion.scriptId);
-    for (const outcome of scenario.expectedOutcomes) if (outcome.scriptId) ids.add(outcome.scriptId);
-    return [...ids].sort((left, right) => left.localeCompare(right));
 }
 
 function parameterValueMatches(type, value) {
