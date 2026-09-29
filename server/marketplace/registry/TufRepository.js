@@ -6,7 +6,9 @@ import path from "node:path";
 import { fsyncDir } from "../../storage/visual-assets/atomicFs.js";
 import {
     assertMarketplaceCatalog,
+    assertMarketplaceAdvisory,
     assertMarketplaceItem,
+    assertMarketplacePublisher,
     assertMarketplaceRelease,
     marketplaceDocumentBytes,
     parseMarketplaceDocument,
@@ -30,6 +32,8 @@ import {
     tufCatalogTargetPath,
     tufConsistentTargetPath,
     tufItemTargetPath,
+    tufAdvisoryTargetPath,
+    tufPublisherTargetPath,
     tufReleaseTargetPath,
 } from "./RegistryLayout.js";
 import {
@@ -156,7 +160,7 @@ async function metadataHistory(paths) {
     ].map((role) => [role, []]));
     for (const name of await fs.readdir(paths.tufMetadata)) {
         if (name === "timestamp.json") continue;
-        const match = /^([1-9][0-9]*)\.(root|targets|catalog|items|releases|advisories|snapshot|timestamp)\.json$/u.exec(name);
+        const match = /^([1-9][0-9]*)\.(root|targets|catalog|items|publishers|releases|advisories|snapshot|timestamp)\.json$/u.exec(name);
         if (!match) throw recovery("TUF metadata directory contains an unexpected filename.", name);
         histories[match[2]].push(Number(match[1]));
     }
@@ -215,10 +219,20 @@ async function projectCatalogTargets(paths, catalog, { publish = true } = {}) {
         const target = await projectTarget(paths, tufItemTargetPath(summary.itemId), bytes, writes, { publish });
         roles[TUF_ROLES.ITEMS][target.path] = target;
     }
+    for (const summary of catalog.publishers ?? []) {
+        const bytes = await readRegularBytes(resolveRegistryPath(paths, summary.target.path));
+        const target = await projectTarget(paths, tufPublisherTargetPath(summary.publisherId), bytes, writes, { publish });
+        roles[TUF_ROLES.PUBLISHERS][target.path] = target;
+    }
     for (const summary of catalog.releases) {
         const bytes = await readRegularBytes(resolveRegistryPath(paths, summary.target.path));
         const target = await projectTarget(paths, tufReleaseTargetPath(summary.itemId, summary.releaseVersion), bytes, writes, { publish });
         roles[TUF_ROLES.RELEASES][target.path] = target;
+    }
+    for (const summary of catalog.advisories) {
+        const bytes = await readRegularBytes(resolveRegistryPath(paths, summary.target.path));
+        const target = await projectTarget(paths, tufAdvisoryTargetPath(summary.advisoryId), bytes, writes, { publish });
+        roles[TUF_ROLES.ADVISORIES][target.path] = target;
     }
     return { roles, writes };
 }
@@ -270,7 +284,7 @@ async function verifyConsistentTargetTree(directory, root = directory) {
         }
         if (!entry.isFile()) throw recovery("TUF target repository contains a non-regular node.", entryPath);
         const relative = path.relative(root, entryPath).split(path.sep).join("/");
-        if (!/^(?:catalog|items|advisories)\/[a-f0-9]{64}\.[A-Za-z0-9._-]+\.json$|^releases\/[a-z0-9.-]+\/[a-f0-9]{64}\.[0-9A-Za-z.-]+\.json$/u.test(relative)) {
+        if (!/^(?:catalog|items|publishers|advisories)\/[a-f0-9]{64}\.[A-Za-z0-9._-]+\.json$|^releases\/[a-z0-9.-]+\/[a-f0-9]{64}\.[0-9A-Za-z.-]+\.json$/u.test(relative)) {
             throw recovery("TUF target repository contains an invalid consistent target path.", relative);
         }
         const expected = entry.name.slice(0, 64);
@@ -626,6 +640,7 @@ export class TufRepository {
                 [TUF_ROLES.TARGETS]: state.roles.targets.metadata.signed.version,
                 [TUF_ROLES.CATALOG]: state.roles.catalog.metadata.signed.version,
                 [TUF_ROLES.ITEMS]: state.roles.items.metadata.signed.version,
+                [TUF_ROLES.PUBLISHERS]: state.roles.publishers.metadata.signed.version,
                 [TUF_ROLES.RELEASES]: state.roles.releases.metadata.signed.version,
                 [TUF_ROLES.ADVISORIES]: state.roles.advisories.metadata.signed.version,
                 [TUF_ROLES.SNAPSHOT]: state.snapshot.metadata.signed.version,
@@ -665,11 +680,8 @@ export class TufRepository {
             assertTufNotExpired(entry.metadata, now);
         }
         verifyTufDelegationContract(state.roles.targets.metadata);
-        if (Object.keys(state.roles.advisories.metadata.signed.targets).length !== 0) {
-            throw signature("MKT-04 advisory delegation must be empty.");
-        }
         const documents = {};
-        for (const role of [TUF_ROLES.CATALOG, TUF_ROLES.ITEMS, TUF_ROLES.RELEASES]) {
+        for (const role of [TUF_ROLES.CATALOG, TUF_ROLES.ITEMS, TUF_ROLES.PUBLISHERS, TUF_ROLES.ADVISORIES]) {
             documents[role] = {};
             for (const target of Object.values(state.roles[role].metadata.signed.targets)) {
                 const { filePath } = await verifyTargetFile(this.paths, target);
@@ -681,16 +693,42 @@ export class TufRepository {
                 documents[role][target.path] = { bytes, document, target };
             }
         }
+        documents.releases = {};
+        for (const target of Object.values(state.roles.releases.metadata.signed.targets)) {
+            const { filePath } = await verifyTargetFile(this.paths, target);
+            const bytes = await readRegularBytes(filePath, { maxBytes: TUF_METADATA_MAX_BYTES });
+            documents.releases[target.path] = { bytes, target };
+        }
         const catalogEntry = documents.catalog[tufCatalogTargetPath()];
         if (!catalogEntry) throw recovery("Published catalog TUF target is missing.");
         const catalog = assertMarketplaceCatalog(catalogEntry.document);
         if (catalog.registryId !== this.registry.registryId) throw signature("Published catalog registry UUID is invalid.");
         const expectedItemTargets = catalog.items.map((item) => tufItemTargetPath(item.itemId));
+        const expectedPublisherTargets = (catalog.publishers ?? []).map((publisher) => tufPublisherTargetPath(publisher.publisherId));
         const expectedReleaseTargets = catalog.releases.map((release) => tufReleaseTargetPath(release.itemId, release.releaseVersion));
+        const expectedAdvisoryTargets = catalog.advisories.map((advisory) => tufAdvisoryTargetPath(advisory.advisoryId));
         if (!sameStringSet(Object.keys(documents.catalog), [tufCatalogTargetPath()])
             || !sameStringSet(Object.keys(documents.items), expectedItemTargets)
-            || !sameStringSet(Object.keys(documents.releases), expectedReleaseTargets)) {
+            || !sameStringSet(Object.keys(documents.publishers), expectedPublisherTargets)
+            || !sameStringSet(Object.keys(documents.releases), expectedReleaseTargets)
+            || !sameStringSet(Object.keys(documents.advisories), expectedAdvisoryTargets)) {
             throw recovery("Published delegated target sets do not match the catalog.");
+        }
+        for (const publisher of catalog.publishers ?? []) {
+            const entry = documents.publishers[tufPublisherTargetPath(publisher.publisherId)];
+            const document = assertMarketplacePublisher(entry.document);
+            if (document.publisherId !== publisher.publisherId || entry.target.hashes.sha256 !== publisher.target.sha256
+                || entry.target.length !== publisher.target.sizeBytes) {
+                throw recovery("Published publisher target does not match its catalog summary.", publisher.publisherId);
+            }
+        }
+        for (const advisory of catalog.advisories) {
+            const entry = documents.advisories[tufAdvisoryTargetPath(advisory.advisoryId)];
+            const document = assertMarketplaceAdvisory(entry.document);
+            if (document.advisoryId !== advisory.advisoryId || entry.target.hashes.sha256 !== advisory.target.sha256
+                || entry.target.length !== advisory.target.sizeBytes) {
+                throw recovery("Published advisory target does not match its catalog summary.", advisory.advisoryId);
+            }
         }
         for (const item of catalog.items) {
             const entry = documents.items[tufItemTargetPath(item.itemId)];
@@ -703,12 +741,10 @@ export class TufRepository {
         }
         for (const release of catalog.releases) {
             const entry = documents.releases[tufReleaseTargetPath(release.itemId, release.releaseVersion)];
-            const document = assertMarketplaceRelease(entry.document);
-            if (document.itemId !== release.itemId || document.releaseVersion !== release.releaseVersion
-                || entry.target.hashes.sha256 !== release.target.sha256 || entry.target.length !== release.target.sizeBytes) {
+            if (entry.target.hashes.sha256 !== release.target.sha256 || entry.target.length !== release.target.sizeBytes) {
                 throw recovery("Published release target does not match its catalog summary.", `${release.itemId}@${release.releaseVersion}`);
             }
-            await verifyReferencedBlob(this.paths, document.artifact);
+            await verifyReferencedBlob(this.paths, release.artifact);
         }
         return Object.freeze({
             ok: true,

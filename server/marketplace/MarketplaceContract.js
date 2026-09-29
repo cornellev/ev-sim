@@ -11,6 +11,16 @@ export const MARKETPLACE_KINDS = Object.freeze({
     installReceipt: "cev-sim.marketplace-install-receipt",
 });
 
+export const MARKETPLACE_AUTHORITY_KINDS = Object.freeze({
+    publisher: "cev-sim.marketplace-publisher",
+    bootstrap: "cev-sim.marketplace-bootstrap",
+});
+
+export const MARKETPLACE_ALL_KINDS = Object.freeze({
+    ...MARKETPLACE_AUTHORITY_KINDS,
+    ...MARKETPLACE_KINDS,
+});
+
 export const MARKETPLACE_CONTENT_KINDS = Object.freeze([
     "plugin",
     "vehicle",
@@ -34,8 +44,21 @@ export const MARKETPLACE_ARTIFACTS = Object.freeze({
 export const MARKETPLACE_RELEASE_PAYLOAD_TYPE = "application/vnd.cev-sim.marketplace-release+json";
 export const MARKETPLACE_PREVIEW_MEDIA_TYPES = Object.freeze(["image/jpeg", "image/png", "image/webp"]);
 export const MARKETPLACE_TRACKS = Object.freeze(["stable", "beta"]);
-export const MARKETPLACE_ADVISORY_ACTIONS = Object.freeze(["warn", "yank", "block"]);
+export const MARKETPLACE_ADVISORY_ACTIONS = Object.freeze(["warn", "yank", "block", "clear"]);
 export const MARKETPLACE_ADVISORY_SEVERITIES = Object.freeze(["low", "moderate", "high", "critical"]);
+export const MARKETPLACE_PUBLISHER_KEY_STATUSES = Object.freeze(["active", "retired", "revoked"]);
+
+export const MARKETPLACE_TOKEN_SCOPES = Object.freeze([
+    "read",
+    "publish:blob",
+    "publish:item",
+    "publish:release",
+    "manage:track",
+    "manage:yank",
+    "manage:advisory",
+    "manage:publisher",
+    "manage:token",
+]);
 
 export const MARKETPLACE_SOURCE_HEALTH = Object.freeze({
     DISABLED: "disabled",

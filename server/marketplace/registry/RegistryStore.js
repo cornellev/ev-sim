@@ -67,13 +67,15 @@ async function validateLayout(paths) {
     return { registry, catalog };
 }
 
-async function buildInitialRegistry(root, registryId, now) {
+async function buildInitialRegistry(root, registryId, now, { unsafeUnsignedDevelopment = false } = {}) {
     const paths = registryPaths(root);
     await fs.mkdir(paths.root, { mode: REGISTRY_DIRECTORY_MODE });
     await fs.chmod(paths.root, REGISTRY_DIRECTORY_MODE);
     for (const directory of requiredRegistryCoreDirectories(paths)) await ensureDirectoryWithin(paths.root, directory);
     const registry = createRegistryDocument(registryId, now);
-    const catalog = createEmptyCatalog(registryId, now);
+    const catalog = createEmptyCatalog(registryId, now, {
+        releaseAuthority: unsafeUnsignedDevelopment ? "development-unsigned" : "publisher-dsse",
+    });
     const catalogData = catalogBytesAndHash(catalog);
     await writeExclusiveDurable(paths.registry, registryDocumentBytes(registry, assertRegistryDocument));
     await writeExclusiveDurable(paths.catalogCurrent, catalogData.bytes);
@@ -101,6 +103,7 @@ export class MarketplaceRegistryStore {
         registryId = null,
         offlineRootKeyPath = null,
         now = () => new Date(),
+        unsafeUnsignedDevelopment = false,
     } = {}) {
         const paths = registryPaths(root);
         const existing = await lstatOrNull(paths.root);
@@ -133,7 +136,7 @@ export class MarketplaceRegistryStore {
         const temporary = path.join(parent, `.${path.basename(paths.root)}.initialize-${randomUUID()}`);
         try {
             if (offlineRootKeyPath) await ensurePrivateKey(offlineRootKeyPath, { registryRoot: paths.root });
-            await buildInitialRegistry(temporary, registryId ?? randomUUID(), now);
+            await buildInitialRegistry(temporary, registryId ?? randomUUID(), now, { unsafeUnsignedDevelopment });
             if (offlineRootKeyPath) {
                 const temporaryPaths = registryPaths(temporary);
                 await TufRepository.initialize(temporaryPaths, await readRegistry(temporaryPaths), { offlineRootKeyPath, now });
@@ -175,15 +178,20 @@ export class MarketplaceRegistryStore {
     }
 
     async readTarget(target) {
-        const bytes = await readRegularBytes(resolveRegistryPath(this.paths, target.path));
-        if (bytes.byteLength !== target.sizeBytes) throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Target size does not match its descriptor.");
+        const bytes = await this.readTargetBytes(target);
         const document = parseMarketplaceDocument(bytes);
         if (!Buffer.from(bytes).equals(Buffer.from(marketplaceDocumentBytes(document)))) {
             throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Target bytes are not canonical.", { path: target.path });
         }
+        return { document, bytes };
+    }
+
+    async readTargetBytes(target) {
+        const bytes = await readRegularBytes(resolveRegistryPath(this.paths, target.path));
+        if (bytes.byteLength !== target.sizeBytes) throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Target size does not match its descriptor.");
         const sha256 = hashMarketplaceBytes(bytes);
         if (sha256 !== target.sha256) throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Target digest does not match its descriptor.");
-        return { document, bytes };
+        return bytes;
     }
 
     async recover() {

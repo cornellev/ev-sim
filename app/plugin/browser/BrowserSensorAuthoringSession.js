@@ -8,14 +8,22 @@ import { PLUGIN_ERROR_CODES, pluginError } from "../PluginErrors.js";
 import { verifyPluginPackage } from "../PluginPackage.js";
 import { BrowserPluginModuleSource } from "./BrowserPluginModuleSource.js";
 import { PluginUiHost } from "./PluginUiHost.js";
+import {
+    announceMarketplaceReloadRequired,
+    authorizeBrowserPackage,
+    subscribeBrowserMarketplacePolicy,
+} from "./BrowserMarketplacePolicy.js";
 
 export class BrowserSensorAuthoringSession {
     constructor({
         moduleSource = new BrowserPluginModuleSource(),
         fetchPackage = null,
+        authorizePackage = typeof window === "undefined" ? null : authorizeBrowserPackage,
+        subscribePolicy = typeof window === "undefined" ? null : subscribeBrowserMarketplacePolicy,
     } = {}) {
         this.moduleSource = moduleSource;
         this.fetchPackageFn = fetchPackage;
+        this.authorizePackage = authorizePackage;
         this.sensorRegistry = registerBuiltInSensorTypes(new SensorTypeRegistry({ allowPlugins: true }));
         this.uiHost = new PluginUiHost({ moduleSource });
         this.loaded = new Map();
@@ -23,6 +31,9 @@ export class BrowserSensorAuthoringSession {
         this.unresolvedLocks = [];
         this.errors = [];
         this.disposed = false;
+        this.reloadRequired = false;
+        this.reloadRequiredPackageHashes = [];
+        this.unsubscribePolicy = subscribePolicy?.(() => { this.#policyChanged().catch(() => {}); }) ?? null;
     }
 
     get registry() {
@@ -64,6 +75,7 @@ export class BrowserSensorAuthoringSession {
 
     async loadLock(lock) {
         if (this.disposed) throw pluginError(PLUGIN_ERROR_CODES.INTEGRITY, "Sensor authoring session is disposed.");
+        if (this.reloadRequired) throw pluginError(PLUGIN_ERROR_CODES.UNAVAILABLE, "Marketplace policy changed; reload this editor before activating plugin sensors.", { requiresReset: true });
         const packageHash = String(lock?.packageHash ?? "").trim();
         if (!packageHash) {
             throw pluginError(PLUGIN_ERROR_CODES.INTEGRITY, "Sensor authoring locks require packageHash.");
@@ -86,6 +98,7 @@ export class BrowserSensorAuthoringSession {
             const resource = await this.fetchPackage(packageHash);
             verified = verifyPluginPackage(resource);
             this.#assertLock(lock, verified);
+            if (this.authorizePackage) await this.authorizePackage(verified.resource.packageHash, verified);
             const ownership = {
                 pluginId: verified.document.id,
                 version: verified.document.version,
@@ -166,7 +179,22 @@ export class BrowserSensorAuthoringSession {
         }
     }
 
+    async #policyChanged() {
+        if (!this.loaded.size || this.reloadRequired) return;
+        const denied = [];
+        for (const packageHash of this.loaded.keys()) {
+            try { await this.authorizePackage?.(packageHash); }
+            catch { denied.push(packageHash); }
+        }
+        if (!denied.length) return;
+        this.reloadRequired = true;
+        this.reloadRequiredPackageHashes = denied.sort();
+        announceMarketplaceReloadRequired(denied);
+    }
+
     dispose() {
+        this.unsubscribePolicy?.();
+        this.unsubscribePolicy = null;
         this.disposed = true;
         this.loaded.clear();
         this.verified.clear();

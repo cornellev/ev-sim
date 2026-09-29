@@ -23,6 +23,10 @@ export function registryPaths(root) {
         blobRecords: path.join(resolvedRoot, "blob-records", "sha256"),
         itemTargets: path.join(resolvedRoot, "targets", "items"),
         releaseTargets: path.join(resolvedRoot, "targets", "releases"),
+        publisherTargets: path.join(resolvedRoot, "targets", "publishers"),
+        advisoryTargets: path.join(resolvedRoot, "targets", "advisories"),
+        auth: path.join(resolvedRoot, "auth"),
+        authTokens: path.join(resolvedRoot, "auth", "tokens.json"),
         catalog: path.join(resolvedRoot, "catalog"),
         catalogCurrent: path.join(resolvedRoot, "catalog", "current.json"),
         catalogRevisions: path.join(resolvedRoot, "catalog", "revisions"),
@@ -47,6 +51,18 @@ export function releaseTargetPath(itemId, releaseVersion, releaseHash) {
     assertReleaseVersion(releaseVersion, "releaseVersion");
     assertSha256(releaseHash, "releaseHash");
     return `targets/releases/${itemId}/${releaseVersion}/${releaseHash}.json`;
+}
+
+export function publisherTargetPath(publisherId, publisherHash) {
+    assertMarketplaceId(publisherId, "publisherId");
+    assertSha256(publisherHash, "publisherHash");
+    return `targets/publishers/${publisherId}/${publisherHash}.json`;
+}
+
+export function advisoryTargetPath(advisoryId, advisoryHash) {
+    assertMarketplaceId(advisoryId, "advisoryId");
+    assertSha256(advisoryHash, "advisoryHash");
+    return `targets/advisories/${advisoryId}/${advisoryHash}.json`;
 }
 
 export function catalogRevisionPath(revision, catalogHash) {
@@ -85,6 +101,11 @@ export function tufAdvisoryTargetPath(advisoryId) {
     return `advisories/${advisoryId}.json`;
 }
 
+export function tufPublisherTargetPath(publisherId) {
+    assertMarketplaceId(publisherId, "publisherId");
+    return `publishers/${publisherId}.json`;
+}
+
 export function tufConsistentTargetPath(targetPath, sha256) {
     assertTargetPath(targetPath, "targetPath");
     assertSha256(sha256, "sha256");
@@ -106,6 +127,9 @@ export function requiredRegistryCoreDirectories(paths) {
         paths.blobRecords,
         paths.itemTargets,
         paths.releaseTargets,
+        paths.publisherTargets,
+        paths.advisoryTargets,
+        paths.auth,
         paths.catalogRevisions,
         paths.transactions,
         paths.uploadStaging,

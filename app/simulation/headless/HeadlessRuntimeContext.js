@@ -96,6 +96,8 @@ export function createHeadlessRuntimeContext(options = {}) {
             const session = new PluginRunSession({
                 moduleSource: options.pluginModuleSource,
                 plugins: resolvedRun.plugins,
+                authorizePackage: options.authorizePackage,
+                subscribePolicy: options.subscribePolicy,
                 availableCapabilities: pluginRuntimeCapabilitiesForRun(resolvedRun, {
                     renderTarget: runtimeOptions.renderTarget ?? "headless",
                     backendSelections: runtimeOptions.backendSelections

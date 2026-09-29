@@ -211,8 +211,11 @@ export function assertRegistryDiscoveryDocument(value) {
     assertSha256(value.tuf.bootstrapRootSha256, "$.tuf.bootstrapRootSha256");
     object(value.authentication, "$.authentication");
     exactKeys(value.authentication, ["required", "schemes"], "$.authentication");
-    if (value.authentication.required !== false || !Array.isArray(value.authentication.schemes) || value.authentication.schemes.length !== 0) {
-        invalid("$.authentication", "MKT-04 authentication must be disabled");
+    if (typeof value.authentication.required !== "boolean" || !Array.isArray(value.authentication.schemes)
+        || value.authentication.schemes.some((scheme) => scheme !== "bearer")
+        || (value.authentication.required && value.authentication.schemes.length !== 1)
+        || (!value.authentication.required && value.authentication.schemes.length !== 0)) {
+        invalid("$.authentication", "expected disabled authentication or required bearer authentication");
     }
     object(value.limits, "$.limits");
     exactKeys(value.limits, ["jsonBytes", "catalogBytes", "jsonDepth", "artifactBytes", "previewBytes", "maxRangeBytes"], "$.limits");

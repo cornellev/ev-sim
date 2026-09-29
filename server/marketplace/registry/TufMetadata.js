@@ -22,6 +22,7 @@ export const TUF_ROLES = Object.freeze({
     TARGETS: "targets",
     CATALOG: "catalog",
     ITEMS: "items",
+    PUBLISHERS: "publishers",
     RELEASES: "releases",
     ADVISORIES: "advisories",
     SNAPSHOT: "snapshot",
@@ -30,6 +31,7 @@ export const TUF_ROLES = Object.freeze({
 export const TUF_DELEGATED_ROLES = Object.freeze([
     TUF_ROLES.CATALOG,
     TUF_ROLES.ITEMS,
+    TUF_ROLES.PUBLISHERS,
     TUF_ROLES.RELEASES,
     TUF_ROLES.ADVISORIES,
 ]);
@@ -49,6 +51,7 @@ export const TUF_EXPIRATION_MS = Object.freeze({
 export const TUF_DELEGATION_PATHS = Object.freeze({
     [TUF_ROLES.CATALOG]: ["catalog/*"],
     [TUF_ROLES.ITEMS]: ["items/*"],
+    [TUF_ROLES.PUBLISHERS]: ["publishers/*"],
     [TUF_ROLES.RELEASES]: ["releases/*/*"],
     [TUF_ROLES.ADVISORIES]: ["advisories/*"],
 });

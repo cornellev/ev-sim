@@ -1,9 +1,10 @@
 # Marketplace registry operations
 
-MKT-04 provides a single-host, filesystem-backed registry with a TUF 1.0.31
-repository and a read-only loopback HTTP service. It does not mount simulator
-routes, enable the dormant marketplace flag, authenticate users, bind a LAN
-address, install content, or execute packages.
+The registry is a single-writer, filesystem-backed TUF 1.0.31 repository.
+MKT-13 adds publisher-signed DSSE release targets, scoped bearer
+authentication, HTTPS/mTLS hosting, authenticated writes, tracks, yanks,
+advisories, and publisher compromise response. It remains separate from the
+simulator and never installs or executes packages.
 
 ## Commands
 
@@ -25,7 +26,14 @@ cev-mkt validate artifact --content-kind collection --file collection.json
 cev-mkt admit artifact --root /srv/cev-marketplace --content-kind collection --file collection.json
 cev-mkt admit preview --root /srv/cev-marketplace --media-type image/png --file preview.png
 cev-mkt admit item --root /srv/cev-marketplace --file item.json
-cev-mkt admit release --root /srv/cev-marketplace --file release.json --track stable
+cev-mkt key generate --private-key publisher.pem --public-key publisher-key.json
+cev-mkt publisher register --root /srv/cev-marketplace --file publisher.json
+cev-mkt sign release --file release.json --private-key publisher.pem --output release.dsse.json
+cev-mkt admit release --root /srv/cev-marketplace --file release.dsse.json --track stable
+cev-mkt token create --root /srv/cev-marketplace --subject publisher \
+  --publisher-id com.example.publisher --namespace com.example --scope publish:blob,publish:item,publish:release,manage:track,manage:yank
+cev-mkt publisher set-key-status --root /srv/cev-marketplace \
+  --publisher-id com.example.publisher --key-id SHA256 --status retired
 cev-mkt list --root /srv/cev-marketplace --kind releases
 cev-mkt verify --root /srv/cev-marketplace
 cev-mkt tuf refresh --root /srv/cev-marketplace
@@ -33,6 +41,9 @@ cev-mkt tuf rotate-root --root /srv/cev-marketplace \
   --current-root-key /secure/cev-marketplace-root.pem \
   --new-root-key /secure/cev-marketplace-root-next.pem
 cev-mkt serve --root /srv/cev-marketplace --host 127.0.0.1 --port 8080
+cev-mkt serve --root /srv/cev-marketplace --host 10.0.0.20 --port 8443 \
+  --tls-key server-key.pem --tls-cert server-cert.pem --tls-ca private-ca.pem \
+  --mtls --read-auth --writable
 cev-mkt gc --root /srv/cev-marketplace --dry-run --grace-hours 24
 ```
 
@@ -41,7 +52,16 @@ creates an Ed25519 PKCS#8 key with mode `0600` when absent, or validates and
 reuses an existing key. Symlinks, group/other permissions, non-Ed25519 keys,
 and paths inside the registry are rejected. Re-running `init` is idempotent
 only when the requested registry UUID and current root key agree. The command
-also upgrades a valid MKT-03 root in place and projects its current catalog.
+does not upgrade or sign an old raw-release catalog. A new registry declares
+`releaseAuthority: "publisher-dsse"`; an old catalog without this marker is
+`UPGRADE_REQUIRED` and must be republished under a new registry UUID.
+
+The DSSE payload type is
+`application/vnd.cev-sim.marketplace-release+json`. The payload is the exact
+canonical release bytes. Its artifact descriptor still binds exact artifact
+SHA-256 and size. Only an active registered Ed25519 key may admit a new
+envelope. Retired/revoked keys and public bytes remain available for historical
+verification.
 
 `tuf refresh` gives every online delegated role, snapshot, and timestamp a new
 version and expiration. `tuf rotate-root` publishes an old/new overlap root,
@@ -69,10 +89,13 @@ snapshot-consistent with its members.
 ```text
 registry.json
 .writer-lock/owner.json
+auth/tokens.json
 blobs/sha256/<digest>
 blob-records/sha256/<digest>.json
 targets/items/<itemId>/<itemHash>.json
+targets/publishers/<publisherId>/<publisherHash>.json
 targets/releases/<itemId>/<releaseVersion>/<releaseHash>.json
+targets/advisories/<advisoryId>/<advisoryHash>.json
 catalog/current.json
 catalog/revisions/<revision>-<catalogHash>.json
 transactions/<transactionId>/
@@ -80,19 +103,22 @@ staging/uploads/<operationId>/
 tuf/
   metadata/<version>.root.json
   metadata/<version>.targets.json
-  metadata/<version>.<catalog|items|releases|advisories>.json
+  metadata/<version>.<catalog|items|publishers|releases|advisories>.json
   metadata/<version>.snapshot.json
   metadata/<version>.timestamp.json
   metadata/timestamp.json
   targets/catalog/<sha256>.catalog.json
   targets/items/<sha256>.<itemId>.json
+  targets/publishers/<sha256>.<publisherId>.json
   targets/releases/<itemId>/<sha256>.<releaseVersion>.json
-  keys/online/<catalog|items|releases|advisories|snapshot|timestamp>.pem
+  keys/online/<catalog|items|publishers|releases|advisories|snapshot|timestamp>.pem
   transactions/<transactionId>/
 ```
 
 Registry directories use mode `0700`; registry files and online private keys
-use mode `0600`. The six online keys are registry backup material. The offline
+use mode `0600`. Bearer tokens are returned once and only SHA-256 digests are
+stored. Authentication compares a real or dummy digest with
+`timingSafeEqual`, so an unknown token ID does not select a shortcut. The seven online keys are registry backup material. The offline
 root key is deliberately external and must not be copied into a registry
 backup. Back it up through a separate offline-key custody process.
 
@@ -100,8 +126,9 @@ TUF uses consistent snapshots, Ed25519 signatures, and threshold 1. Root and
 top-level targets are offline-root signed. Catalog, item, release, advisory,
 snapshot, and timestamp roles have separate online keys. Timestamp expires in
 48 hours, snapshot in 14 days, delegated roles in 90 days, and root/top-level
-targets in 365 days. MKT-04 publishes raw canonical release JSON; publisher
-DSSE remains MKT-13. The advisory role exists but remains empty until MKT-14.
+targets in 365 days. Release targets are immutable canonical DSSE envelopes;
+the delegated `publishers` targets authenticate signer history and the
+`advisories` targets carry immutable warn/yank/block/clear records.
 
 ## Publication and recovery
 
@@ -125,18 +152,34 @@ with `RECOVERY_REQUIRED`. Readers already running continue to see the previous
 complete timestamp until the switch. `/readyz` remains unavailable while the
 public catalog and `catalog/current.json` are unreconciled.
 
-## Loopback read API
+## HTTP API and transport
 
-Only `127.0.0.1` and `::1` are accepted bind hosts. Wildcard, hostname, and LAN
-addresses are rejected before a socket is opened. TLS, authentication, CORS,
-LAN discovery, and write routes remain out of scope.
+Loopback HTTP remains supported. A non-loopback bind requires TLS and read
+authentication unless the operator supplies the explicit
+`--unsafe-development-lan` override. Optional mTLS adds a client-certificate
+transport check but never replaces bearer authorization. The server emits no
+CORS headers and never returns bearer values.
 
 ```text
 GET      /.well-known/cev-sim-marketplace
 GET      /v1/catalog
 GET      /v1/items/{itemId}
 GET      /v1/items/{itemId}/releases/{releaseVersion}
+GET      /v1/publishers/{publisherId}
+GET      /v1/advisories/{advisoryId}
 GET|HEAD /v1/blobs/sha256/{digest}
+POST     /v1/artifacts/{contentKind}
+PUT      /v1/items
+PUT      /v1/releases
+PUT      /v1/publishers
+POST     /v1/publishers/{publisherId}/keys
+PUT      /v1/publishers/{publisherId}/keys/{keyId}/status
+POST     /v1/publishers/{publisherId}/keys/{keyId}/compromise
+POST     /v1/tokens
+DELETE   /v1/tokens/{tokenId}
+PUT      /v1/items/{itemId}/tracks/{stable|beta}
+PUT      /v1/items/{itemId}/yanks
+PUT      /v1/advisories
 GET      /tuf/metadata/{strict-filename}
 GET      /tuf/targets/{strict-consistent-target-path}
 GET      /healthz

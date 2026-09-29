@@ -96,12 +96,18 @@ export class PluginRunSession {
         availableCapabilities = PLG03_RUNTIME_CAPABILITIES,
         simulatorVersion = "0.1.0",
         logger = () => {},
+        authorizePackage = null,
+        subscribePolicy = null,
     } = {}) {
         this.moduleSource = moduleSource;
         this.plugins = normalizeResolvedPlugins(plugins);
         this.availableCapabilities = Object.freeze([...availableCapabilities].sort(comparePluginText));
         this.simulatorVersion = simulatorVersion;
         this.logger = logger;
+        this.authorizePackage = authorizePackage;
+        this.admittedPolicySnapshots = new Map();
+        this.policyRevisionChanged = false;
+        this.unsubscribePolicy = subscribePolicy?.(() => { this.policyRevisionChanged = true; }) ?? null;
         this.host = null;
         this.loader = null;
         this.registry = null;
@@ -179,7 +185,15 @@ export class PluginRunSession {
             createFacade: (base, context) => this._createFacade(base, context),
             onUnitDispose: (adapter) => this.detachUnit(adapter),
         });
-        this.loader = new PluginLoader({ moduleSource: this.moduleSource, host: this.host });
+        this.loader = new PluginLoader({
+            moduleSource: this.moduleSource,
+            host: this.host,
+            authorizePackage: this.authorizePackage ? async (packageHash, verified) => {
+                const snapshot = await this.authorizePackage(packageHash, verified);
+                this.admittedPolicySnapshots.set(packageHash, snapshot ?? null);
+                return snapshot;
+            } : null,
+        });
         for (const selected of this.plugins) {
             await this.loader.loadPackage(verifiedById.get(selected.pluginId).resource, {
                 capabilities: selected.capabilities,
@@ -203,6 +217,21 @@ export class PluginRunSession {
         this.dispatcher.sort();
         this.mode = "definitions";
         return this;
+    }
+
+    async revalidatePolicy() {
+        if (!this.authorizePackage) {
+            this.policyRevisionChanged = false;
+            return Object.freeze([]);
+        }
+        const snapshots = [];
+        for (const packageHash of [...this.admittedPolicySnapshots.keys()].sort(comparePluginText)) {
+            const snapshot = await this.authorizePackage(packageHash);
+            this.admittedPolicySnapshots.set(packageHash, snapshot ?? null);
+            snapshots.push(Object.freeze({ packageHash, snapshot: snapshot ?? null }));
+        }
+        this.policyRevisionChanged = false;
+        return Object.freeze(snapshots);
     }
 
     bindServices({
@@ -810,6 +839,9 @@ export class PluginRunSession {
     }
 
     beginResetWindow({ resetSeed = "0", signalStore = this.services.signalStore } = {}) {
+        if (this.policyRevisionChanged) {
+            throw pluginError(PLUGIN_ERROR_CODES.UNAVAILABLE, "Plugin policy changed; re-admit packages before reset.", { requiresReset: true });
+        }
         this._assertOpen();
         for (const unit of [...this.units]) unit?.dispose?.();
         this.generation += 1;
@@ -898,6 +930,8 @@ export class PluginRunSession {
     }
 
     dispose() {
+        this.unsubscribePolicy?.();
+        this.unsubscribePolicy = null;
         if (this.disposed) return;
         this.dispatcher.dispose();
         this._unbindRouter();

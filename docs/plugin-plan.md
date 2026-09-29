@@ -697,6 +697,17 @@ change the outstanding PR-12 hosted, soak, NVIDIA x64, or Jetson ARM64 gates.
 
 ## Decision log
 
+- **2026-09-29 — MKT-13 adds nonsemantic executable admission.**
+  `PluginLoader` accepts an async `authorizePackage(packageHash)` callback after
+  package/capability verification and before module import. Node and browser
+  module sources and browser file delivery repeat the check. Marketplace
+  provenance requires an approved publisher and no effective canonical package
+  block; manual-only ownership remains the explicit local trust path. A policy
+  revision does not unload active evaluation, but it marks the session
+  reload-required and refuses reset/new admission until policy is revalidated.
+  The callback and its result are host policy, not plugin package, run,
+  simulation, episode, or trajectory identity.
+
 - **2026-09-28 — MKT-08 makes plugin-library membership ownership-aware.**
   Manual and Marketplace installs are independent owners of one exact package.
   Marketplace removal is receipt-driven and can remove only its own

@@ -226,7 +226,7 @@ test("MKT-12 ownership migrates direct installs, deduplicates acquisition, and c
 test("MKT-12 installs a collection atomically and preserves a separately direct member on removal", async (t) => {
     const parent = await workspace(t);
     const registryRoot = path.join(parent, "registry");
-    await MarketplaceRegistryStore.initialize(registryRoot, { offlineRootKeyPath: path.join(parent, "root.pem") });
+    await MarketplaceRegistryStore.initialize(registryRoot, { offlineRootKeyPath: path.join(parent, "root.pem"), unsafeUnsignedDevelopment: true });
     const store = await MarketplaceRegistryStore.open(registryRoot);
     const registryService = new MarketplaceRegistryService(store);
     const resource = await pluginFixtureResource();

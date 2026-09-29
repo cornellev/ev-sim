@@ -16,7 +16,8 @@ function mimeType(filePath) {
 
 function sendError(res, error) {
     const missing = error.code === "ENOENT";
-    res.status(missing ? 404 : 400).json({
+    const denied = error.code === "RELEASE_BLOCKED" || error.code === "RIGHTS_DENIED";
+    res.status(missing ? 404 : denied ? 403 : 400).json({
         ok: false,
         error: error.code ?? "PLUGIN_REQUEST_INVALID",
         message: error.message,
@@ -35,6 +36,7 @@ function publishLibrary(pluginId, action, packageHash, revision) {
 
 export async function sendPluginFileResponse(service, { packageHash, member, head = false }, res) {
     try {
+        await service.marketplaceExecutablePolicy?.authorizePackage(packageHash);
         const resource = await service.plugins.getPackage(packageHash);
         const record = resource.files.find((entry) => entry.path === member);
         if (!record) {
@@ -165,6 +167,7 @@ export function createPluginRouter(service, { jsonParser } = {}) {
 
     router.get("/packages/:packageHash", async (req, res) => {
         try {
+            await service.marketplaceExecutablePolicy?.authorizePackage(req.params.packageHash);
             const resource = await service.plugins.getPackage(req.params.packageHash);
             res.set("ETag", `"${resource.packageHash}"`);
             res.set("Cache-Control", "public, max-age=31536000, immutable");

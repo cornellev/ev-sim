@@ -28,10 +28,14 @@ export async function listUnitCatalog(storage) {
 }
 
 export async function createStorageAuthoringRegistry(storage, locks, options = {}) {
+    const authorizePackage = options.authorizePackage
+        ?? storage.marketplaceExecutablePolicy?.authorizePackage.bind(storage.marketplaceExecutablePolicy)
+        ?? null;
     return createAuthoringRegistry({
         locks,
         getPackage: (packageHash) => storage.getPluginPackage(packageHash),
-        moduleSource: new NodePluginModuleSource({ pluginStore: storage.plugins }),
+        moduleSource: new NodePluginModuleSource({ pluginStore: storage.plugins, authorizePackage }),
+        authorizePackage,
         ...options,
     });
 }

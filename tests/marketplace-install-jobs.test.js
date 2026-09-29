@@ -16,6 +16,16 @@ import {
     waitForInstallJob,
 } from "./helpers/marketplaceInstallLifecycle.js";
 
+async function waitForEmptyDirectory(directory, timeoutMs = 10_000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        const entries = await fs.readdir(directory);
+        if (!entries.length) return;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.deepEqual(await fs.readdir(directory), []);
+}
+
 test("MKT-08 installs and removes real plugin ownership offline without executing plugin source or deleting CAS", async (t) => {
     const parent = await fs.mkdtemp(path.join(os.tmpdir(), "cev-mkt-install-"));
     t.after(() => fs.rm(parent, { recursive: true, force: true }));
@@ -300,7 +310,7 @@ test("MKT-07 serializes concurrent commits and rejects changed host or local rev
         assert.equal(entry.job.error.code, "CONFLICT");
     }
     assert.equal((await service.listInstalled()).revision, 1);
-    assert.deepEqual(await fs.readdir(marketplaceClientPaths(dataDir).transactions), []);
+    await waitForEmptyDirectory(marketplaceClientPaths(dataDir).transactions);
 });
 
 test("MKT-07 exposes denied rights in a non-committable final plan", async (t) => {

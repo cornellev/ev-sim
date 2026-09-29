@@ -127,3 +127,26 @@ test("capability failures precede import and runtime materializations are reveri
         (error) => error.code === "PLUGIN_INTEGRITY" && /membership/.test(error.message),
     );
 });
+
+test("Marketplace package authorization fails before runtime import", async (t) => {
+    const { store } = await harness(t);
+    const resource = await pluginFixtureResource();
+    await store.putPackage(resource);
+    let imported = false;
+    const moduleSource = {
+        async importRuntime() {
+            imported = true;
+            return {};
+        },
+    };
+    const denied = Object.assign(new Error("blocked"), { code: "RELEASE_BLOCKED" });
+    await assert.rejects(new PluginLoader({
+        host: new PluginHost(),
+        moduleSource,
+        authorizePackage: async (packageHash) => {
+            assert.equal(packageHash, resource.packageHash);
+            throw denied;
+        },
+    }).loadPackage(resource), (error) => error === denied);
+    assert.equal(imported, false);
+});

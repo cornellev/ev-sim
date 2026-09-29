@@ -30,19 +30,19 @@ function clone(value) {
     return structuredClone(value);
 }
 
-test("MKT-01 publishes and validates all eight versioned documents", () => {
+test("MKT-01/MKT-13 publishes legacy documents and authority schemas", () => {
     assert.deepEqual(Object.values(fixture).map((value) => assertMarketplaceDocument(value).kind), Object.values(MARKETPLACE_KINDS));
     for (const value of Object.values(fixture)) {
         const result = validateMarketplaceDocument(value);
         assert.equal(result.ok, true);
         assert.equal(Object.isFrozen(result.document), true);
     }
-    assert.equal(Object.keys(MARKETPLACE_SCHEMAS).length, 9);
+    assert.equal(Object.keys(MARKETPLACE_SCHEMAS).length, 11);
     assert.ok(marketplaceSchemaEngine().getSchema(MARKETPLACE_SCHEMAS.release.$id));
 });
 
 test("MKT-01 marketplace errors preserve public codes and redact internal causes", () => {
-    assert.equal(new Set(Object.values(MARKETPLACE_ERROR_CODES)).size, 17);
+    assert.equal(new Set(Object.values(MARKETPLACE_ERROR_CODES)).size, 19);
     const error = marketplaceError("DOCUMENT_INVALID", "Public failure.", {
         path: "$.release",
         cause: new Error("credential=secret"),

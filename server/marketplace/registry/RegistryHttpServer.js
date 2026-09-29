@@ -1,8 +1,14 @@
 import { createHash } from "node:crypto";
 import http from "node:http";
+import https from "node:https";
 
-import { assertMarketplaceId, assertReleaseVersion, assertSha256 } from "../MarketplaceFormats.js";
+import { assertCanonicalUuid, assertMarketplaceId, assertReleaseVersion, assertSha256 } from "../MarketplaceFormats.js";
+import { MARKETPLACE_LIMITS } from "../MarketplaceContract.js";
+import { MARKETPLACE_ERROR_CODES, MarketplaceError, marketplaceError } from "../MarketplaceErrors.js";
 import { MarketplaceRegistryReader, REGISTRY_HTTP_MAX_RANGE_BYTES } from "./RegistryReader.js";
+import { MarketplaceRegistryStore } from "./RegistryStore.js";
+import { MarketplaceRegistryService } from "./RegistryService.js";
+import { RegistryAuthStore } from "./RegistryAuthStore.js";
 
 const JSON_TYPE = "application/json; charset=utf-8";
 const IMMUTABLE_CACHE = "public, max-age=31536000, immutable";
@@ -98,39 +104,99 @@ function parseRange(header, sizeBytes) {
 }
 
 function assertLoopbackHost(host) {
-    if (host !== "127.0.0.1" && host !== "::1") throw new TypeError("Marketplace registry host must be 127.0.0.1 or ::1 until secure LAN hosting is implemented.");
+    if (host !== "127.0.0.1" && host !== "::1") throw new TypeError("Marketplace registry host must be loopback.");
+    return host;
+}
+
+function assertHostSecurity(host, { tlsEnabled, readAuthentication, unsafeDevelopmentLan }) {
+    if (host === "127.0.0.1" || host === "::1") return host;
+    if ((!tlsEnabled || !readAuthentication) && !unsafeDevelopmentLan) {
+        throw new TypeError("Non-loopback Marketplace registry binds require TLS and read authentication.");
+    }
     return host;
 }
 
 function targetContentType(relativePath) {
     if (relativePath.startsWith("catalog/")) return "application/vnd.cev-sim.marketplace-catalog+json";
     if (relativePath.startsWith("items/")) return "application/vnd.cev-sim.marketplace-item+json";
-    if (relativePath.startsWith("releases/")) return "application/vnd.cev-sim.marketplace-release+json";
+    if (relativePath.startsWith("publishers/")) return "application/vnd.cev-sim.marketplace-publisher+json";
+    if (relativePath.startsWith("releases/")) return "application/vnd.dsse.envelope.v1+json";
     return "application/vnd.cev-sim.marketplace-advisory+json";
 }
 
+async function requestBytes(request, maxBytes) {
+    const declared = request.headers["content-length"];
+    if (declared !== undefined && (!/^\d+$/u.test(declared) || Number(declared) > maxBytes)) throw new RangeError("Request body is too large.");
+    const chunks = [];
+    let size = 0;
+    for await (const chunk of request) {
+        size += chunk.byteLength;
+        if (size > maxBytes) throw new RangeError("Request body is too large.");
+        chunks.push(chunk);
+    }
+    return Buffer.concat(chunks, size);
+}
+
+async function requestJson(request, maxBytes = MARKETPLACE_LIMITS.jsonBytes) {
+    const bytes = await requestBytes(request, maxBytes);
+    try {
+        return JSON.parse(bytes.toString("utf8"));
+    } catch {
+        throw new SyntaxError("Request body must be valid JSON.");
+    }
+}
+
+function httpFailure(error) {
+    if (error instanceof RangeError) return { status: 413, code: "LIMIT_EXCEEDED", message: "Request body is too large." };
+    if (error instanceof SyntaxError || error instanceof TypeError) return { status: 400, code: "DOCUMENT_INVALID", message: error.message };
+    if (error instanceof MarketplaceError) {
+        if (error.code === "AUTHENTICATION_REQUIRED") return { status: 401, code: error.code, message: "Bearer authentication is required." };
+        if (error.code === "RIGHTS_DENIED") return { status: 403, code: error.code, message: "Registry operation is not authorized." };
+        if (error.code === "CONFLICT") return { status: 409, code: error.code, message: error.message };
+        return { status: 400, code: error.code, message: error.message };
+    }
+    return { status: 500, code: "INTERNAL", message: "Marketplace registry request failed." };
+}
+
 export class MarketplaceRegistryHttpServer {
-    constructor(reader) {
+    constructor(reader, { store = null, authStore = null, tls = null, readAuthentication = false, unsafeDevelopmentLan = false } = {}) {
         this.reader = reader;
-        this.server = http.createServer({ maxHeaderSize: 16 * 1024 }, (request, response) => {
-            this.#handle(request, response).catch(() => {
-                if (!response.headersSent) sendError(response, 500, "INTERNAL", "Marketplace registry request failed.");
+        this.store = store;
+        this.service = store ? new MarketplaceRegistryService(store) : null;
+        this.authStore = authStore;
+        this.readAuthentication = readAuthentication;
+        this.unsafeDevelopmentLan = unsafeDevelopmentLan;
+        this.tlsEnabled = Boolean(tls);
+        const handler = (request, response) => {
+            this.#handle(request, response).catch((error) => {
+                const failure = httpFailure(error);
+                if (!response.headersSent) sendError(response, failure.status, failure.code, failure.message);
                 else response.destroy();
             });
-        });
+        };
+        this.server = tls
+            ? https.createServer({ ...tls, maxHeaderSize: 16 * 1024 }, handler)
+            : http.createServer({ maxHeaderSize: 16 * 1024 }, handler);
         this.server.headersTimeout = 15_000;
         this.server.requestTimeout = 30_000;
         this.server.keepAliveTimeout = 5_000;
     }
 
     static async open(root, options = {}) {
-        const reader = await MarketplaceRegistryReader.open(root, options);
+        const readAuthentication = options.readAuthentication === true;
+        const reader = await MarketplaceRegistryReader.open(root, { ...options, readAuthentication });
         await reader.verify();
-        return new MarketplaceRegistryHttpServer(reader);
+        const store = options.writable === true ? await MarketplaceRegistryStore.open(root, options) : null;
+        const authStore = await RegistryAuthStore.open(reader.paths, options);
+        return new MarketplaceRegistryHttpServer(reader, { ...options, store, authStore, readAuthentication });
     }
 
     async listen({ host = "127.0.0.1", port = 8080 } = {}) {
-        assertLoopbackHost(host);
+        assertHostSecurity(host, {
+            tlsEnabled: this.tlsEnabled,
+            readAuthentication: this.readAuthentication,
+            unsafeDevelopmentLan: this.unsafeDevelopmentLan,
+        });
         if (!Number.isSafeInteger(port) || port < 0 || port > 65535) throw new TypeError("Marketplace registry port must be an integer from 0 through 65535.");
         await new Promise((resolve, reject) => {
             const onError = (error) => {
@@ -149,14 +215,146 @@ export class MarketplaceRegistryHttpServer {
     }
 
     async close() {
-        if (!this.server.listening) return;
-        await new Promise((resolve, reject) => this.server.close((error) => error ? reject(error) : resolve()));
+        if (this.server.listening) await new Promise((resolve, reject) => this.server.close((error) => error ? reject(error) : resolve()));
+        await this.store?.close();
+    }
+
+    async #actor(request, scope) {
+        const authorization = request.headers.authorization;
+        if (typeof authorization !== "string" || !authorization.startsWith("Bearer ") || authorization.length > 8192) {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.AUTHENTICATION_REQUIRED, "Registry bearer authentication is required.");
+        }
+        return this.authStore.authenticate(authorization.slice(7), { scope });
+    }
+
+    async #adminActor(request, scope) {
+        const actor = await this.#actor(request, scope);
+        if (actor.subject !== "admin") {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.RIGHTS_DENIED, "Registry operation requires an administrator token.");
+        }
+        return actor;
     }
 
     async #handle(request, response) {
         const parts = parseRequestPath(request.url);
         if (!parts) {
             sendError(response, 400, "INVALID_PATH", "Request path is not canonical.");
+            return;
+        }
+        const publicRead = parts.join("/") === ".well-known/cev-sim-marketplace" || parts.join("/") === "healthz";
+        if (this.readAuthentication && !publicRead && (request.method === "GET" || request.method === "HEAD")) {
+            try { await this.#actor(request, "read"); } catch { sendError(response, 401, "AUTHENTICATION_REQUIRED", "Bearer authentication is required.", { "WWW-Authenticate": "Bearer" }); return; }
+        }
+        if (request.method === "POST" && parts.length === 3 && parts[0] === "v1" && parts[1] === "artifacts") {
+            if (!this.service) { sendError(response, 405, "READ_ONLY", "Registry is read-only."); return; }
+            let actor;
+            try { actor = await this.#actor(request, "publish:blob"); } catch { sendError(response, 403, "RIGHTS_DENIED", "Artifact publication is not authorized."); return; }
+            const contentKind = parts[2];
+            const size = Number(request.headers["content-length"]);
+            const result = await this.service.admitArtifact(request, { contentKind, sizeBytes: Number.isSafeInteger(size) ? size : undefined, actor });
+            const bytes = jsonBytes(result);
+            sendBytes(request, response, { bytes, etag: sha256(bytes), contentType: JSON_TYPE, cacheControl: "no-store", status: 201 });
+            return;
+        }
+        if (request.method === "PUT" && parts.join("/") === "v1/items") {
+            if (!this.service) { sendError(response, 405, "READ_ONLY", "Registry is read-only."); return; }
+            let actor;
+            try { actor = await this.#actor(request, "publish:item"); } catch { sendError(response, 403, "RIGHTS_DENIED", "Item publication is not authorized."); return; }
+            const result = await this.service.admitItem(await requestBytes(request, MARKETPLACE_LIMITS.jsonBytes), { actor });
+            const bytes = jsonBytes(result);
+            sendBytes(request, response, { bytes, etag: sha256(bytes), contentType: JSON_TYPE, cacheControl: "no-store", status: 201 });
+            return;
+        }
+        if (request.method === "PUT" && parts.join("/") === "v1/releases") {
+            if (!this.service) { sendError(response, 405, "READ_ONLY", "Registry is read-only."); return; }
+            let actor;
+            try { actor = await this.#actor(request, "publish:release"); } catch { sendError(response, 403, "RIGHTS_DENIED", "Release publication is not authorized."); return; }
+            const track = request.headers["x-cev-marketplace-track"] ?? null;
+            const result = await this.service.admitReleaseEnvelope(await requestBytes(request, MARKETPLACE_LIMITS.jsonBytes), { actor, track });
+            const bytes = jsonBytes(result);
+            sendBytes(request, response, { bytes, etag: sha256(bytes), contentType: JSON_TYPE, cacheControl: "no-store", status: 201 });
+            return;
+        }
+        if (request.method === "PUT" && parts.join("/") === "v1/publishers") {
+            if (!this.service) { sendError(response, 405, "READ_ONLY", "Registry is read-only."); return; }
+            const actor = await this.#adminActor(request, "manage:publisher");
+            const result = await this.service.registerPublisher(await requestBytes(request, MARKETPLACE_LIMITS.jsonBytes), { actor });
+            const bytes = jsonBytes(result);
+            sendBytes(request, response, { bytes, etag: sha256(bytes), contentType: JSON_TYPE, cacheControl: "no-store", status: 201 });
+            return;
+        }
+        if (request.method === "POST" && parts.length === 4 && parts[0] === "v1" && parts[1] === "publishers" && parts[3] === "keys") {
+            if (!this.service) { sendError(response, 405, "READ_ONLY", "Registry is read-only."); return; }
+            assertMarketplaceId(parts[2], "publisherId");
+            const actor = await this.#adminActor(request, "manage:publisher");
+            const result = await this.service.addPublisherKey(parts[2], await requestJson(request), { actor });
+            const bytes = jsonBytes(result);
+            sendBytes(request, response, { bytes, etag: sha256(bytes), contentType: JSON_TYPE, cacheControl: "no-store", status: 201 });
+            return;
+        }
+        if (request.method === "PUT" && parts.length === 6 && parts[0] === "v1" && parts[1] === "publishers" && parts[3] === "keys" && parts[5] === "status") {
+            if (!this.service) { sendError(response, 405, "READ_ONLY", "Registry is read-only."); return; }
+            assertMarketplaceId(parts[2], "publisherId");
+            assertSha256(parts[4], "keyId");
+            const actor = await this.#adminActor(request, "manage:publisher");
+            const body = await requestJson(request);
+            if (!body || Object.keys(body).length !== 1 || !Object.hasOwn(body, "status")) throw new TypeError("Key status body is invalid.");
+            const result = await this.service.setPublisherKeyStatus(parts[2], parts[4], body.status, { actor });
+            const bytes = jsonBytes(result);
+            sendBytes(request, response, { bytes, etag: sha256(bytes), contentType: JSON_TYPE, cacheControl: "no-store" });
+            return;
+        }
+        if (request.method === "POST" && parts.length === 6 && parts[0] === "v1" && parts[1] === "publishers" && parts[3] === "keys" && parts[5] === "compromise") {
+            if (!this.service) { sendError(response, 405, "READ_ONLY", "Registry is read-only."); return; }
+            assertMarketplaceId(parts[2], "publisherId");
+            assertSha256(parts[4], "keyId");
+            const actor = await this.#adminActor(request, "manage:advisory");
+            const result = await this.service.compromisePublisherKey(parts[2], parts[4], { ...await requestJson(request), actor });
+            const bytes = jsonBytes(result);
+            sendBytes(request, response, { bytes, etag: sha256(bytes), contentType: JSON_TYPE, cacheControl: "no-store" });
+            return;
+        }
+        if (request.method === "POST" && parts.join("/") === "v1/tokens") {
+            await this.#adminActor(request, "manage:token");
+            const result = await this.authStore.createToken(await requestJson(request));
+            const bytes = jsonBytes(result);
+            sendBytes(request, response, { bytes, etag: sha256(bytes), contentType: JSON_TYPE, cacheControl: "no-store", status: 201 });
+            return;
+        }
+        if (request.method === "DELETE" && parts.length === 3 && parts[0] === "v1" && parts[1] === "tokens") {
+            await this.#adminActor(request, "manage:token");
+            assertCanonicalUuid(parts[2], "tokenId");
+            const revoked = await this.authStore.revokeToken(parts[2]);
+            const bytes = jsonBytes({ revoked });
+            sendBytes(request, response, { bytes, etag: sha256(bytes), contentType: JSON_TYPE, cacheControl: "no-store" });
+            return;
+        }
+        if (request.method === "PUT" && parts.length === 5 && parts[0] === "v1" && parts[1] === "items" && parts[3] === "tracks") {
+            if (!this.service) { sendError(response, 405, "READ_ONLY", "Registry is read-only."); return; }
+            assertMarketplaceId(parts[2], "itemId");
+            const actor = await this.#actor(request, "manage:track");
+            const body = await requestJson(request);
+            const result = await this.service.setTrack(parts[2], parts[4], body.releaseVersion, { actor });
+            const bytes = jsonBytes(result);
+            sendBytes(request, response, { bytes, etag: sha256(bytes), contentType: JSON_TYPE, cacheControl: "no-store" });
+            return;
+        }
+        if (request.method === "PUT" && parts.length === 4 && parts[0] === "v1" && parts[1] === "items" && parts[3] === "yanks") {
+            if (!this.service) { sendError(response, 405, "READ_ONLY", "Registry is read-only."); return; }
+            assertMarketplaceId(parts[2], "itemId");
+            const actor = await this.#actor(request, "manage:yank");
+            const body = await requestJson(request);
+            const result = await this.service.yankRelease({ itemId: parts[2], ...body }, { actor });
+            const bytes = jsonBytes(result);
+            sendBytes(request, response, { bytes, etag: sha256(bytes), contentType: JSON_TYPE, cacheControl: "no-store" });
+            return;
+        }
+        if (request.method === "PUT" && parts.join("/") === "v1/advisories") {
+            if (!this.service) { sendError(response, 405, "READ_ONLY", "Registry is read-only."); return; }
+            const actor = await this.#actor(request, "manage:advisory");
+            const result = await this.service.admitAdvisory(await requestBytes(request, MARKETPLACE_LIMITS.jsonBytes), { actor });
+            const bytes = jsonBytes(result);
+            sendBytes(request, response, { bytes, etag: sha256(bytes), contentType: JSON_TYPE, cacheControl: "no-store", status: 201 });
             return;
         }
         const blobRoute = parts.length === 4 && parts[0] === "v1" && parts[1] === "blobs" && parts[2] === "sha256";
@@ -194,11 +392,25 @@ export class MarketplaceRegistryHttpServer {
             sendBytes(request, response, { ...result, etag: result.target.hashes.sha256, contentType: "application/vnd.cev-sim.marketplace-item+json" });
             return;
         }
+        if (parts.length === 3 && parts[0] === "v1" && parts[1] === "publishers") {
+            try { assertMarketplaceId(parts[2], "publisherId"); } catch { sendError(response, 400, "INVALID_PUBLISHER_ID", "Publisher ID is invalid."); return; }
+            const result = await this.reader.readPublishedPublisher(parts[2]);
+            if (!result) { sendError(response, 404, "NOT_FOUND", "Marketplace publisher was not found."); return; }
+            sendBytes(request, response, { ...result, etag: result.target.hashes.sha256, contentType: "application/vnd.cev-sim.marketplace-publisher+json" });
+            return;
+        }
+        if (parts.length === 3 && parts[0] === "v1" && parts[1] === "advisories") {
+            try { assertMarketplaceId(parts[2], "advisoryId"); } catch { sendError(response, 400, "INVALID_ADVISORY_ID", "Advisory ID is invalid."); return; }
+            const result = await this.reader.readPublishedAdvisory(parts[2]);
+            if (!result) { sendError(response, 404, "NOT_FOUND", "Marketplace advisory was not found."); return; }
+            sendBytes(request, response, { ...result, etag: result.target.hashes.sha256, contentType: "application/vnd.cev-sim.marketplace-advisory+json" });
+            return;
+        }
         if (parts.length === 5 && parts[0] === "v1" && parts[1] === "items" && parts[3] === "releases") {
             try { assertMarketplaceId(parts[2], "itemId"); assertReleaseVersion(parts[4], "releaseVersion"); } catch { sendError(response, 400, "INVALID_RELEASE_ID", "Release identity is invalid."); return; }
             const result = await this.reader.readPublishedRelease(parts[2], parts[4]);
             if (!result) { sendError(response, 404, "NOT_FOUND", "Marketplace release was not found."); return; }
-            sendBytes(request, response, { ...result, etag: result.target.hashes.sha256, contentType: "application/vnd.cev-sim.marketplace-release+json" });
+            sendBytes(request, response, { ...result, etag: result.target.hashes.sha256, contentType: "application/vnd.dsse.envelope.v1+json" });
             return;
         }
         if (blobRoute) {

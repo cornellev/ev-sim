@@ -15,6 +15,7 @@ test("MKT-05 previews, confirms, refreshes, and reads one complete verified regi
     const registryRoot = path.join(parent, "registry");
     await MarketplaceRegistryStore.initialize(registryRoot, {
         offlineRootKeyPath: path.join(parent, "root.pem"),
+        unsafeUnsignedDevelopment: true,
     });
     const registry = await MarketplaceRegistryHttpServer.open(registryRoot);
     t.after(() => registry.close());
@@ -109,7 +110,7 @@ test("MKT-05 refresh verifies a continuous root rotation without rewriting pinne
     const registryRoot = path.join(parent, "registry");
     const oldRootKey = path.join(parent, "old-root.pem");
     const newRootKey = path.join(parent, "new-root.pem");
-    await MarketplaceRegistryStore.initialize(registryRoot, { offlineRootKeyPath: oldRootKey });
+    await MarketplaceRegistryStore.initialize(registryRoot, { offlineRootKeyPath: oldRootKey, unsafeUnsignedDevelopment: true });
     const registry = await MarketplaceRegistryHttpServer.open(registryRoot);
     t.after(() => registry.close());
     const address = await registry.listen({ port: 0 });

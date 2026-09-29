@@ -9,7 +9,9 @@
     "registryId": { "$ref": "common.schema.json#/$defs/uuid" },
     "revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
     "generatedAt": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "releaseAuthority": { "enum": ["publisher-dsse", "development-unsigned"] },
     "items": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/itemSummary" } },
+    "publishers": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/publisherSummary" } },
     "releases": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/releaseSummary" } },
     "tracks": {
       "type": "array",

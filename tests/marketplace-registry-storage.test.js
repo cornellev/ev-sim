@@ -40,6 +40,7 @@ test("MKT-03 initialization is atomic, private, complete, and idempotent", async
     const created = await MarketplaceRegistryStore.initialize(root, {
         registryId: "123e4567-e89b-12d3-a456-426614174000",
         now: () => new Date("2026-09-27T12:00:00.000Z"),
+        unsafeUnsignedDevelopment: true,
     });
     const repeated = await MarketplaceRegistryStore.initialize(root);
     assert.deepEqual(repeated, created);
@@ -59,7 +60,7 @@ test("MKT-03 initialization is atomic, private, complete, and idempotent", async
 
 test("MKT-03 writer ownership rejects live writers and safely reclaims a dead same-host owner", async (t) => {
     const { root } = await workspace(t);
-    await MarketplaceRegistryStore.initialize(root);
+    await MarketplaceRegistryStore.initialize(root, { unsafeUnsignedDevelopment: true });
     const first = await MarketplaceRegistryStore.open(root);
     await assert.rejects(MarketplaceRegistryStore.open(root), (error) => error.code === "CONFLICT");
     await first.close();
@@ -88,7 +89,7 @@ test("MKT-03 journal recovery completes forward at every durable commit boundary
     ];
     for (const boundary of boundaries) {
         const { root } = await workspace(t);
-        await MarketplaceRegistryStore.initialize(root);
+        await MarketplaceRegistryStore.initialize(root, { unsafeUnsignedDevelopment: true });
         let store = await MarketplaceRegistryStore.open(root);
         const service = new MarketplaceRegistryService(store, {
             faults: { [boundary]: () => { throw new Error(`fault:${boundary}`); } },
@@ -108,7 +109,7 @@ test("MKT-03 journal recovery completes forward at every durable commit boundary
 
 test("MKT-03 rejects hostile symlink nodes instead of following them", async (t) => {
     const { parent, root } = await workspace(t);
-    await MarketplaceRegistryStore.initialize(root);
+    await MarketplaceRegistryStore.initialize(root, { unsafeUnsignedDevelopment: true });
     const paths = registryPaths(root);
     await fs.rmdir(paths.blobs);
     await fs.symlink(parent, paths.blobs);

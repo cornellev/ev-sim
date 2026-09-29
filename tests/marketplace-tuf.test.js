@@ -21,7 +21,7 @@ async function initializedRegistry(t, prefix = "cev-mkt-tuf-") {
     t.after(() => fs.rm(parent, { recursive: true, force: true }));
     const root = path.join(parent, "registry");
     const offlineRootKey = path.join(parent, "offline-root.pem");
-    const registry = await MarketplaceRegistryStore.initialize(root, { offlineRootKeyPath: offlineRootKey });
+    const registry = await MarketplaceRegistryStore.initialize(root, { offlineRootKeyPath: offlineRootKey, unsafeUnsignedDevelopment: true });
     return { parent, root, offlineRootKey, registry };
 }
 
@@ -41,7 +41,7 @@ test("MKT-04 bootstraps external Ed25519 custody and an interoperable empty TUF 
 
     const paths = registryPaths(root);
     assert.deepEqual((await fs.readdir(paths.tufOnlineKeys)).sort(), [
-        "advisories.pem", "catalog.pem", "items.pem", "releases.pem", "snapshot.pem", "timestamp.pem",
+        "advisories.pem", "catalog.pem", "items.pem", "publishers.pem", "releases.pem", "snapshot.pem", "timestamp.pem",
     ]);
     for (const name of await fs.readdir(paths.tufOnlineKeys)) {
         assert.equal((await fs.stat(path.join(paths.tufOnlineKeys, name))).mode & 0o777, 0o600);
@@ -54,7 +54,7 @@ test("MKT-04 bootstraps external Ed25519 custody and an interoperable empty TUF 
         rootVersion: 1,
         timestampVersion: 1,
         snapshotVersion: 1,
-        roleVersions: { targets: 1, catalog: 1, items: 1, releases: 1, advisories: 1 },
+        roleVersions: { targets: 1, catalog: 1, items: 1, publishers: 1, releases: 1, advisories: 1 },
         catalogRevision: 1,
         catalogSha256: state.roles.catalog.metadata.signed.targets["catalog/catalog.json"].hashes.sha256,
     });
@@ -104,7 +104,7 @@ test("MKT-04 publishes raw canonical item and release targets and refreshes only
 
     const before = await service.verifyRegistry();
     assert.equal(before.tuf.rootVersion, 1);
-    assert.deepEqual(before.tuf.roleVersions, { targets: 1, catalog: 3, items: 2, releases: 2, advisories: 1 });
+    assert.deepEqual(before.tuf.roleVersions, { targets: 1, catalog: 3, items: 2, publishers: 1, releases: 2, advisories: 1 });
     const releaseTarget = await store.tufRepository.readPublishedState()
         .then((state) => state.roles.releases.metadata.signed.targets[`releases/${aligned.release.itemId}/${aligned.release.releaseVersion}.json`]);
     assert.ok(releaseTarget);
@@ -130,7 +130,7 @@ test("MKT-04 upgrades a populated MKT-03 root without changing its registry iden
     const parent = await fs.mkdtemp(path.join(os.tmpdir(), "cev-mkt-upgrade-"));
     t.after(() => fs.rm(parent, { recursive: true, force: true }));
     const root = path.join(parent, "registry");
-    const registry = await MarketplaceRegistryStore.initialize(root);
+    const registry = await MarketplaceRegistryStore.initialize(root, { unsafeUnsignedDevelopment: true });
     let store = await MarketplaceRegistryStore.open(root);
     await new MarketplaceRegistryService(store).admitItem(marketplaceDocumentBytes(item()));
     await store.close();
@@ -157,7 +157,7 @@ test("MKT-04 resumes catalog publication after every durable TUF visibility boun
         const parent = await fs.mkdtemp(path.join(os.tmpdir(), `cev-mkt-tuf-${boundary}-`));
         t.after(() => fs.rm(parent, { recursive: true, force: true }));
         const root = path.join(parent, "registry");
-        await MarketplaceRegistryStore.initialize(root, { offlineRootKeyPath: path.join(parent, "root.pem") });
+        await MarketplaceRegistryStore.initialize(root, { offlineRootKeyPath: path.join(parent, "root.pem"), unsafeUnsignedDevelopment: true });
         let injected = false;
         let store = await MarketplaceRegistryStore.open(root, {
             tufFaults: {

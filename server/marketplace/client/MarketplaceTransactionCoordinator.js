@@ -116,6 +116,7 @@ export class MarketplaceTransactionCoordinator {
         receiptStore,
         artifactStore,
         adapterRegistry,
+        provenanceStore = null,
         now = () => new Date(),
         fault = null,
     }) {
@@ -126,6 +127,7 @@ export class MarketplaceTransactionCoordinator {
         this.receiptStore = receiptStore;
         this.artifactStore = artifactStore;
         this.adapterRegistry = adapterRegistry;
+        this.provenanceStore = provenanceStore;
         this.now = now;
         this.fault = fault;
     }
@@ -483,6 +485,26 @@ export class MarketplaceTransactionCoordinator {
         }
     }
 
+    async #publishExecutableProvenance(prepared) {
+        if (!this.provenanceStore || !prepared.finalPlan || !prepared.preflight) return;
+        for (const entry of prepared.finalPlan.releases) {
+            if (entry.disposition === "artifact-only") continue;
+            const baseOrigin = {
+                sourceId: prepared.preflight.source.sourceId,
+                registryId: prepared.preflight.source.registryId,
+                publisherId: entry.release.publisherId,
+                release: exactRef(entry.release),
+            };
+            if (entry.release.contentKind === "plugin" && entry.inspection?.identity?.packageHash) {
+                await this.provenanceStore.record(entry.inspection.identity.packageHash, { ...baseOrigin, role: "direct" });
+            }
+            for (const plugin of entry.release.embeddedPlugins ?? []) {
+                await this.provenanceStore.record(plugin.packageHash, { ...baseOrigin, role: "embedded" });
+            }
+        }
+        await this.fault?.("after-provenance-publication", { journal: prepared.journal });
+    }
+
     async #removeAdapterOwnership(prepared) {
         let index = 0;
         for (const entry of prepared.journal.adapterRemovals ?? []) {
@@ -538,6 +560,7 @@ export class MarketplaceTransactionCoordinator {
                 await this.ownershipStore.commitTarget({ base: currentOwnership, target: legacyOwnershipTarget });
                 await this.fault?.("after-ownership-publication", { journal: prepared.journal });
             }
+            await this.#publishExecutableProvenance(prepared);
             if (currentHash === prepared.journal.installedBase.sha256) {
                 await this.installedStore.commitTarget({ base: current, target: prepared.target });
                 await this.fault?.("after-installed", { journal: prepared.journal });
@@ -550,6 +573,7 @@ export class MarketplaceTransactionCoordinator {
                 await this.#publishReceipts(prepared);
                 await this.#commitAdapters(prepared);
             }
+            await this.#publishExecutableProvenance(prepared);
             if (currentOwnershipHash === prepared.journal.ownershipBase?.sha256) {
                 await this.ownershipStore.commitTarget({ base: currentOwnership, target: prepared.ownershipTarget });
                 await this.fault?.("after-ownership-publication", { journal: prepared.journal });

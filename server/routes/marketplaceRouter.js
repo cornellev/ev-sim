@@ -52,6 +52,7 @@ function statusFor(error) {
     case MARKETPLACE_ERROR_CODES.CONFLICT:
         return 409;
     case MARKETPLACE_ERROR_CODES.SOURCE_UNTRUSTED:
+    case MARKETPLACE_ERROR_CODES.AUTHENTICATION_REQUIRED:
     case MARKETPLACE_ERROR_CODES.METADATA_EXPIRED:
     case MARKETPLACE_ERROR_CODES.INCOMPATIBLE:
     case MARKETPLACE_ERROR_CODES.RIGHTS_DENIED:
@@ -60,6 +61,7 @@ function statusFor(error) {
         return 412;
     case MARKETPLACE_ERROR_CODES.DOCUMENT_INVALID:
     case MARKETPLACE_ERROR_CODES.UNSUPPORTED_SCHEMA:
+    case MARKETPLACE_ERROR_CODES.UPGRADE_REQUIRED:
     case MARKETPLACE_ERROR_CODES.SIGNATURE_INVALID:
     case MARKETPLACE_ERROR_CODES.ARTIFACT_HASH_MISMATCH:
         return 422;
@@ -101,7 +103,7 @@ export function createMarketplaceRouter(service, {
     }));
 
     router.post("/install-plans", handler(async (request, response) => {
-        const body = exactBody(request.body, ["sourceId", "itemId", "releaseVersion"]);
+        const body = exactBody(request.body, ["sourceId", "itemId", "releaseVersion"], ["intent", "allowYanked"]);
         response.status(201).json(await service.createInstallPlan(body));
     }));
 
@@ -182,6 +184,73 @@ export function createMarketplaceRouter(service, {
     router.get("/installed", handler(async (request, response) => {
         exactQuery(request, []);
         response.json(await service.listInstalled());
+    }));
+
+    router.get("/updates", handler(async (request, response) => {
+        const query = exactQuery(request, ["track"]);
+        response.json(await service.listUpdates({ track: query.track ?? "stable" }));
+    }));
+
+    router.get("/advisories", handler(async (request, response) => {
+        exactQuery(request, []);
+        response.json(await service.listAdvisories());
+    }));
+
+    router.get("/policy", handler(async (request, response) => {
+        exactQuery(request, []);
+        response.json(await service.getPolicy());
+    }));
+
+    router.get("/policy/events", handler(async (request, response) => {
+        exactQuery(request, []);
+        response.status(200).set({
+            "Content-Type": "text/event-stream; charset=utf-8",
+            "Cache-Control": "no-store",
+            Connection: "keep-alive",
+            "X-Accel-Buffering": "no",
+        });
+        response.flushHeaders?.();
+        let closed = false;
+        let heartbeat = null;
+        let unsubscribe = () => {};
+        let lastRevision = -1;
+        const close = () => {
+            if (closed) return;
+            closed = true;
+            clearInterval(heartbeat);
+            unsubscribe();
+            if (!response.writableEnded) response.end();
+        };
+        const send = (revision) => {
+            if (closed || response.writableEnded || revision <= lastRevision) return;
+            lastRevision = revision;
+            response.write(`id: ${revision}\nevent: policy\ndata: ${JSON.stringify({ revision })}\n\n`);
+        };
+        unsubscribe = service.subscribePolicy(send);
+        send((await service.getPolicy()).revision);
+        heartbeat = setInterval(() => {
+            if (!closed && !response.writableEnded) response.write(": heartbeat\n\n");
+        }, 25_000);
+        heartbeat.unref?.();
+        request.once("close", close);
+    }));
+
+    router.put("/policy/publisher-approvals", handler(async (request, response) => {
+        const body = exactBody(request.body, ["registryId", "publisherId", "approved", "expectedRevision"]);
+        if (typeof body.approved !== "boolean") invalid("$.approved", "expected boolean");
+        bodyRevision(body.expectedRevision);
+        response.json(await service.setPublisherApproval(body));
+    }));
+
+    router.put("/policy/operator-overrides", handler(async (request, response) => {
+        const body = exactBody(request.body, ["packageHash", "reason", "expectedRevision"]);
+        bodyRevision(body.expectedRevision);
+        response.json(await service.setOperatorOverride(body));
+    }));
+
+    router.post("/policy/packages/:packageHash/authorize", handler(async (request, response) => {
+        exactBody(request.body ?? {}, []);
+        response.json(await service.authorizePackage(request.params.packageHash));
     }));
 
     router.get("/installed-ownership", handler(async (request, response) => {

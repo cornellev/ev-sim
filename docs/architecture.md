@@ -527,7 +527,7 @@ and Python while keeping TCP distribution and non-browser PBR execution unavaila
 
 The `MKT-*` program adds a local Marketplace control plane and a separately
 hosted private-LAN registry. Browser code talks only to the local simulator
-backend. The backend will eventually talk only to explicitly configured and
+backend. The backend talks only to explicitly configured and
 trusted registry origins and will own TUF verification, caching, credentials,
 artifact validation, and installation transactions.
 
@@ -585,18 +585,18 @@ item/release admission, listing, verification, and dry-run GC planning.
 targets and revision snapshots before atomically replacing
 `catalog/current.json`, the registry's internal authoring visibility point.
 
-MKT-04 adds `TufRepository.js` and `TufTransaction.js`. Canonical catalog,
-item, and raw release JSON are consistent-snapshot TUF targets; the advisory
-delegation is present but empty. TUF publication journals exact signed bytes,
+MKT-04 adds `TufRepository.js` and `TufTransaction.js`. MKT-13 extends their
+consistent-snapshot target set with publisher records, release DSSE envelopes,
+and advisories. TUF publication journals exact signed bytes,
 publishes immutable targets and versioned metadata, and atomically replaces
 `tuf/metadata/timestamp.json` as the only public visibility point. Root
 rotation publishes a two-key overlap root and a final new-only root while
-retaining continuous numbered history. Publisher DSSE remains owned by
-MKT-13, and advisory admission/enforcement remains owned by MKT-14.
+retaining continuous numbered history. Publisher-signature verification is a
+second check over the TUF-authenticated envelope target.
 
 `MarketplaceRegistryReader` resolves all public aliases through the published
 timestamp/snapshot/delegation chain without acquiring `.writer-lock`.
-`MarketplaceRegistryHttpServer` is a standalone `node:http` loopback service;
+`MarketplaceRegistryHttpServer` is a standalone HTTP/HTTPS service;
 it is reachable only through the registry CLI and is not imported or mounted
 by `server/App.js`. It serves strict discovery, catalog, item, release, blob,
 TUF, health, and readiness reads. `catalog/current.json` is consulted only for
@@ -640,9 +640,9 @@ verified artifact CAS/quarantine, installed membership, immutable receipts,
 and journaled install/removal transactions. `installed.json` is the final
 transaction visibility point; job completion is durable before journal
 cleanup. The browser can request these operations only through the backend and
-cannot activate production content in MKT-07. `publisherId` is shown as a
-declared publisher; the displayed signer
-keys belong to the registry's TUF `releases` distribution role. Marketplace
+cannot activate production content in MKT-07. MKT-13 binds `publisherId` and
+the displayed signer/key status to the verified publisher target; TUF roles
+remain the registry distribution authority. Marketplace
 navigation exists only after the enabled status probe succeeds, so disabled
 startup still constructs no marketplace service or storage.
 
@@ -719,6 +719,31 @@ reachable through that order. Direct removal changes only the direct edge;
 collection edges cascade when their collection loses its final owner. Receipts,
 artifact cache, plugin CAS/runtime bytes, authoring records, and visual roots
 remain immutable or retained.
+
+MKT-13 adds publisher/authentication/update policy without entering the shared
+simulation kernel. `PublisherSignatures.js` binds exact canonical release bytes
+with Ed25519 DSSE. `RegistryAuthStore` persists only token digests and scoped
+actors; publisher targets, track/yank/advisory mutations, and timestamp-last
+compromise response establish registry authority. Non-loopback registry binds
+require HTTPS plus read authentication; mTLS is additive to bearer auth.
+
+`MarketplacePolicyStore` is the durable rollback/advisory authority,
+`MarketplaceExecutableProvenanceStore` binds package hashes to exact signed
+origins, and `MarketplaceExecutablePolicy` supplies the loading callback.
+Provenance publishes before installed membership. Source removal cannot remove
+policy or rollback floors. `PluginLoader` checks after structural verification
+and before import; Node/browser module sources and browser file delivery check
+again. Storage run resolution, server and browser authoring, sensor authoring,
+and direct headless option plumbing use that callback. Active code is not
+unloaded; policy revision requires revalidation before reset/new admission.
+
+`MarketplaceUpdateModel` selects only within exact source UUID, registry UUID,
+and item ID. `MarketplaceUpdateComparator` hashes old/new capabilities,
+executables, compatibility, rights, and mappings into the final plan. The
+ordinary transaction coordinator installs the candidate beside the old exact
+release and never mutates old receipts, authored records, locks, or live
+sessions. All policy, provenance, track, signer, and update state remains
+outside semantic/package/run/environment identities.
 
 ## External Integration
 

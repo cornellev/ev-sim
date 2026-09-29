@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { MarketplaceService } from "../server/marketplace/client/MarketplaceService.js";
+import { MarketplaceExecutableProvenanceStore } from "../server/marketplace/client/MarketplaceExecutableProvenanceStore.js";
 import { marketplaceClientPaths } from "../server/marketplace/client/MarketplaceClientLayout.js";
 import { PluginStore } from "../server/storage/PluginStore.js";
 import { createPopulatedClientRegistry } from "./helpers/marketplaceClientRegistry.js";
@@ -17,6 +18,7 @@ import {
 const RECOVERY_BOUNDARIES = [
     "after-member-operation",
     "after-member-receipt",
+    "after-provenance-publication",
     "after-ownership-publication",
     "after-installed-publication",
     "after-receipt",
@@ -84,6 +86,7 @@ test("MKT-07 recovery is idempotent after every durable transaction visibility b
             const installed = await recovered.listInstalled();
             assert.equal(installed.revision, 1);
             assert.equal(installed.installations.length, 1);
+            assert.equal((await (await MarketplaceExecutableProvenanceStore.open(dataDir)).snapshot()).packages.length, 1);
             assert.equal(commits.length, 1, "adapter commit must be idempotent for the transaction ID");
 
             await recovered.close();

@@ -39,13 +39,17 @@ cache/<sourceId>/current.json
 cache/<sourceId>/snapshots/<snapshotId>/
   manifest.json
   roots/<version>.root.json
-  metadata/{root,timestamp,snapshot,targets,catalog,items,releases,advisories}.json
+  metadata/{root,timestamp,snapshot,targets,catalog,items,publishers,releases,advisories}.json
   targets/catalog/catalog.json
   targets/items/<itemId>.json
+  targets/publishers/<publisherId>.json
   targets/releases/<itemId>/<releaseVersion>.json
+  targets/advisories/<advisoryId>.json
 cache/<sourceId>/staging/<operationId>/
 installed.json
 ownership.json
+policy.json
+executable-provenance.json
 plans/sha256/<planHash>.json
 jobs/<jobId>/{snapshot.json,work/}
 jobs/<jobId>/work/asset-packages/<preparationHash>/{preparation.json,generated/}
@@ -57,7 +61,10 @@ transactions/<transactionId>/{journal.json,writes/,completions/<operationId>.jso
 ```
 
 Directories use mode `0700`; files use mode `0600`. Credential documents are
-immutable and contain only a bounded bearer token. API responses replace the
+immutable and may contain a bounded bearer token, private CA bundle, and
+optional client certificate/private key. The fixed-origin Node transport uses
+that material directly for HTTPS/mTLS; it is never projected into source,
+cache, policy, health, log, or browser responses. API responses replace the
 internal `credentialRef` with `credentialConfigured`; logs, health, cache
 manifests, and public errors never contain tokens, authorization headers,
 registry response bodies, or nested causes.
@@ -75,10 +82,12 @@ unexpected nodes, noncanonical documents, and trust mismatches fail closed.
 
 Refresh uses `tuf-js@6.0.0` with a fixed-origin fetcher and only the declared
 TUF metadata and consistent-target paths. It verifies root history, timestamp,
-snapshot, top-level targets, terminating catalog/item/release/advisory
+snapshot, top-level targets, terminating catalog/item/publisher/release/advisory
 delegations, canonical target bytes, exact delegated target sets, and every
-catalog summary. It eagerly downloads the catalog and every referenced item
-and release document. MKT-05 does not cache artifacts, previews, plugin
+catalog summary. It eagerly downloads the catalog and every referenced item,
+publisher, release envelope, and advisory. A release payload is verified
+against its TUF-authenticated publisher key before its catalog summary is
+accepted. MKT-05 does not cache artifacts, previews, plugin
 packages, vehicles, run packages, or other payload bytes.
 
 The complete staged tree is fsynced and made owner-only before it is renamed to
@@ -122,8 +131,43 @@ item and selected release, exact tracks, releases, yanks, health, and an
 ephemeral verification summary. That summary names the registry UUID, pinned
 root fingerprint, verification time, root version, and authorized TUF
 `releases` role/version/expiry/key IDs. These are registry distribution signer
-details. `publisherId` is a declared publisher identifier; publisher DSSE does
-not exist until MKT-13.
+details. `publisherId` is bound to the verified publisher target and the DSSE
+signing key shown by release detail.
+
+## MKT-13 policy, provenance, and updates
+
+`MarketplacePolicyStore` retains, per registry UUID, the highest verified
+timestamp/snapshot identity, immutable advisory bytes and hashes, effective
+yanks/blocks/clears, publisher approvals, and local operator overrides. Policy
+ingestion occurs before a refreshed cache pointer is published. Removing or
+disabling a source removes neither rollback floors nor retained policy.
+
+`MarketplaceExecutableProvenanceStore` maps each canonical plugin
+`packageHash` to exact signed source/registry/publisher/release origins. Install
+transactions record provenance before installed membership can become visible.
+`MarketplaceExecutablePolicy` treats manual-only ownership as the explicit
+local trust path; Marketplace provenance requires an approved publisher and no
+effective block. Another source, manual co-ownership, restart, or source
+removal cannot evade a canonical package block. Local allow overrides require
+a reason and remain nonsemantic.
+
+`MarketplaceUpdateModel` groups installed releases by exact
+`sourceId + registryId + itemId`. Its candidate is the greater stable/beta
+track release in that same verified identity and must be neither yanked nor
+blocked. Preflight pins old receipt hashes and installed revision plus the
+candidate snapshot and policy revision. Final planning reopens the old exact
+artifact and hashes capability, executable, compatibility, rights, and mapping
+deltas into the final plan. Commit revalidates every pin and adds the candidate
+as a new direct owner through the normal journal; it never removes or rewrites
+the old release, receipt, mapping, authoring record, lock, or active session.
+
+Additional local routes expose `GET /updates`, `GET /advisories`,
+`GET /policy`, revisioned publisher approvals and operator overrides, and
+`POST /policy/packages/:packageHash/authorize` for loading boundaries.
+`GET /policy/events` streams policy revisions. Open browser authoring sessions
+reauthorize their loaded package hashes on each revision and raise the global,
+accessible reload-required banner when a package becomes blocked; existing
+evaluation is not forcibly unloaded, but further activation or reset is denied.
 
 ## Preview proxy
 
@@ -146,7 +190,8 @@ accessible preview placeholder.
 ## Browser workspace
 
 The browser probes the enabled-only status route before exposing Marketplace
-navigation. Discover, Installed, and Sources are explicit workspace tabs.
+navigation. Discover, Updates, Installed, Security, and Sources are explicit
+workspace tabs.
 Descriptions and changelogs use pinned CommonMark rendering with raw HTML and
 images suppressed; only HTTP(S) links are admitted and external links use
 `noopener noreferrer`. Compatibility shows both declared requirements and the
@@ -159,7 +204,11 @@ dismissed or cancelled. Installed shows exact release/source/registry/digest
 identity, dependency locks, mappings, receipt history, status, and
 membership-only removal. Plugin review names its package, runtime, and UI
 hashes; CAS/library/owner actions; coexisting packages; required capabilities;
-and the fact that no runtime grants are added. Plugin receipts render those
+and the fact that no runtime grants are added. Update review shows the hashed
+capability, executable, compatibility, rights, and mapping comparison. Yanked
+exact installation requires explicit acknowledgement; blocked releases expose
+no install control. Security retains advisories and approvals after source
+removal. Plugin receipts render those
 exact mapping fields instead of raw JSON.
 
 Source mutations use the current source revision. A conflict reloads current

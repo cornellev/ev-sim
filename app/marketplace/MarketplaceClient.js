@@ -168,6 +168,39 @@ export function listMarketplaceInstalled({ signal } = {}) {
     return requestJson("/api/marketplace/installed", { signal });
 }
 
+export function listMarketplaceUpdates({ track = "stable", signal } = {}) {
+    const query = new URLSearchParams({ track });
+    return requestJson(`/api/marketplace/updates?${query}`, { signal });
+}
+
+export function listMarketplaceAdvisories({ signal } = {}) {
+    return requestJson("/api/marketplace/advisories", { signal });
+}
+
+export function getMarketplacePolicy({ signal } = {}) {
+    return requestJson("/api/marketplace/policy", { signal });
+}
+
+export function subscribeMarketplacePolicy({ onPolicy, onError } = {}) {
+    const events = new EventSource("/api/marketplace/policy/events");
+    events.addEventListener("policy", (event) => {
+        try { onPolicy?.(JSON.parse(event.data)); }
+        catch (error) { onError?.(error); }
+    });
+    events.addEventListener("error", (event) => {
+        if (events.readyState !== EventSource.CLOSED) onError?.(event);
+    });
+    return () => events.close();
+}
+
+export function setMarketplacePublisherApproval(input, { signal } = {}) {
+    return requestJson("/api/marketplace/policy/publisher-approvals", { method: "PUT", body: input, signal });
+}
+
+export function setMarketplaceOperatorOverride(input, { signal } = {}) {
+    return requestJson("/api/marketplace/policy/operator-overrides", { method: "PUT", body: input, signal });
+}
+
 export function listMarketplaceInstalledOwnership({ signal } = {}) {
     return requestJson("/api/marketplace/installed-ownership", { signal });
 }

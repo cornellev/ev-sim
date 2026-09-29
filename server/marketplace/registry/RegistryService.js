@@ -1,6 +1,7 @@
 import { createReadStream, promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import semver from "semver";
 
 import {
     createArtifactStagingArea,
@@ -16,7 +17,9 @@ import {
 } from "../MarketplaceContract.js";
 import {
     assertMarketplaceCatalog,
+    assertMarketplaceAdvisory,
     assertMarketplaceItem,
+    assertMarketplacePublisher,
     assertMarketplaceRelease,
     hashMarketplaceRelease,
     marketplaceDocumentBytes,
@@ -25,12 +28,23 @@ import {
 import { MARKETPLACE_ERROR_CODES, marketplaceError } from "../MarketplaceErrors.js";
 import { canonicalMarketplaceBytes, hashMarketplaceBytes } from "../MarketplaceJson.js";
 import {
+    parseReleaseEnvelope,
+    publisherKeyId,
+    publisherKeyObject,
+    verifyMarketplaceReleaseEnvelope,
+} from "../PublisherSignatures.js";
+import {
     advanceCatalog,
+    appendCatalogAdvisory,
     appendCatalogRelease,
+    appendCatalogYank,
     catalogBytesAndHash,
     projectItemSummary,
+    projectPublisherSummary,
     projectReleaseSummary,
+    removeCatalogTracksForRelease,
     setCatalogTrack,
+    upsertCatalogPublisher,
     upsertCatalogItem,
 } from "./RegistryCatalog.js";
 import {
@@ -43,7 +57,9 @@ import {
 import {
     blobPath,
     blobRecordPath,
+    advisoryTargetPath,
     itemTargetPath,
+    publisherTargetPath,
     releaseTargetPath,
     resolveRegistryPath,
 } from "./RegistryLayout.js";
@@ -57,6 +73,7 @@ import {
 } from "./RegistryFs.js";
 import { prepareCatalogTransaction } from "./RegistryTransaction.js";
 import { inspectPreviewBytes } from "./PreviewMedia.js";
+import { RegistryPublisherStore } from "./RegistryPublisherStore.js";
 
 function conflict(message) {
     return marketplaceError(MARKETPLACE_ERROR_CODES.CONFLICT, message);
@@ -191,6 +208,24 @@ function targetDescriptor(relativePath, bytes) {
     });
 }
 
+function requireActorScope(actor, scope, { publisherId = null, itemId = null, admin = false } = {}) {
+    if (!actor || !Array.isArray(actor.scopes) || !actor.scopes.includes(scope)) {
+        throw marketplaceError(MARKETPLACE_ERROR_CODES.AUTHENTICATION_REQUIRED, "Authenticated registry actor lacks the required scope.");
+    }
+    if (admin && actor.subject !== "admin") {
+        throw marketplaceError(MARKETPLACE_ERROR_CODES.RIGHTS_DENIED, "Registry operation requires an administrator token.");
+    }
+    if (actor.subject !== "admin") {
+        if (publisherId !== null && actor.publisherId !== publisherId) {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.RIGHTS_DENIED, "Registry actor does not own the publisher identity.");
+        }
+        if (itemId !== null && !actor.namespaces?.some((namespace) => itemId === namespace || itemId.startsWith(`${namespace}.`))) {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.RIGHTS_DENIED, "Registry actor does not own the item namespace.");
+        }
+    }
+    return actor;
+}
+
 function requireKind(document, kind) {
     if (document.kind !== kind) {
         throw marketplaceError(MARKETPLACE_ERROR_CODES.DOCUMENT_INVALID, `Expected ${kind}; received ${document.kind}.`, { path: "$.kind" });
@@ -202,19 +237,47 @@ function releaseKey(release) {
     return `${release.itemId}\u0000${release.releaseVersion}`;
 }
 
-async function verifyEmbeddedPluginReferences(paths, release, indexedReleases, fail) {
+function publisherOwnsItem(publisher, itemId) {
+    return publisher.namespaces.some((namespace) => itemId === namespace || itemId.startsWith(`${namespace}.`));
+}
+
+function exactReleaseReference(summary) {
+    return Object.freeze({
+        itemId: summary.itemId,
+        releaseVersion: summary.releaseVersion,
+        artifactSha256: summary.artifact.sha256,
+    });
+}
+
+async function readCatalogRelease(store, catalog, summary, { requireActive = false } = {}) {
+    const bytes = await store.readTargetBytes(summary.target);
+    if (!summary.publisherKeyId) {
+        if (catalog.releaseAuthority !== "development-unsigned") {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.UPGRADE_REQUIRED, "Unsigned Marketplace release state is not trusted by this registry.");
+        }
+        return assertMarketplaceRelease(parseMarketplaceDocument(bytes));
+    }
+    const publisher = await new RegistryPublisherStore(store).getPublisher(summary.publisherId, catalog);
+    if (!publisher) throw recovery("Signed release has no publisher target.", summary.target.path);
+    const verified = verifyMarketplaceReleaseEnvelope(bytes, publisher, { requireActive });
+    if (verified.keyId !== summary.publisherKeyId || hashMarketplaceBytes(verified.payloadBytes) !== summary.releaseHash) {
+        throw recovery("Signed release identity does not match its catalog summary.", summary.target.path);
+    }
+    return verified.release;
+}
+
+async function verifyEmbeddedPluginReferences(store, catalog, release, indexedReleases, fail) {
     for (const embedded of release.embeddedPlugins ?? []) {
         const admitted = indexedReleases.get(releaseKey(embedded.release));
         if (!admitted || admitted.artifact.sha256 !== embedded.release.artifactSha256) {
             throw fail(`Embedded plugin release ${embedded.release.itemId}@${embedded.release.releaseVersion} is not admitted with the exact artifact.`);
         }
-        const target = await readRegularBytes(resolveRegistryPath(paths, admitted.target.path));
-        const pluginRelease = assertMarketplaceRelease(parseMarketplaceDocument(target));
+        const pluginRelease = await readCatalogRelease(store, catalog, admitted);
         if (pluginRelease.contentKind !== "plugin" || pluginRelease.artifact.sha256 !== embedded.release.artifactSha256) {
             throw fail(`Embedded plugin reference ${embedded.pluginId} does not name an admitted plugin artifact.`);
         }
-        const record = await readBlobRecord(paths, pluginRelease.artifact.sha256);
-        await verifyBlobRecordAndFile(paths, record);
+        const record = await readBlobRecord(store.paths, pluginRelease.artifact.sha256);
+        await verifyBlobRecordAndFile(store.paths, record);
         const identity = record.usage?.inspection?.identity;
         if (record.usage?.type !== "artifact" || record.usage.contentKind !== "plugin"
             || identity?.pluginId !== embedded.pluginId
@@ -265,6 +328,7 @@ export class MarketplaceRegistryService {
         this.now = now;
         this.artifactRegistry = artifactRegistry;
         this.faults = faults;
+        this.publisherStore = store ? new RegistryPublisherStore(store) : null;
     }
 
     async validateArtifact(input, {
@@ -380,6 +444,174 @@ export class MarketplaceRegistryService {
         }
     }
 
+    async registerPublisher(rawBytes, { actor } = {}) {
+        requireActorScope(actor, "manage:publisher", { admin: true });
+        const publisher = assertMarketplacePublisher(parseMarketplaceDocument(rawBytes));
+        const bytes = marketplaceDocumentBytes(publisher);
+        const publisherHash = hashMarketplaceBytes(bytes);
+        for (const key of publisher.keys) {
+            if (publisherKeyId(publisherKeyObject(key.publicKey)) !== key.keyId) throw conflict("Publisher key ID does not match its public key.");
+        }
+        return this.store.mutate(async () => {
+            const catalog = await this.store.readCatalog();
+            const existing = await this.publisherStore.getPublisher(publisher.publisherId, catalog);
+            if (existing) {
+                if (Buffer.from(marketplaceDocumentBytes(existing)).equals(bytes)) {
+                    return Object.freeze({ publisherId: publisher.publisherId, publisherHash, revision: catalog.revision, created: false });
+                }
+                throw conflict("Publisher identity already exists; use publisher key lifecycle operations.");
+            }
+            for (const current of await this.publisherStore.listPublishers(catalog)) {
+                for (const namespace of publisher.namespaces) {
+                    if (current.namespaces.some((owned) => namespace === owned || namespace.startsWith(`${owned}.`) || owned.startsWith(`${namespace}.`))) {
+                        throw conflict(`Publisher namespace ${namespace} overlaps an existing publisher namespace.`);
+                    }
+                }
+            }
+            const relativePath = publisherTargetPath(publisher.publisherId, publisherHash);
+            const target = targetDescriptor(relativePath, bytes);
+            let next = upsertCatalogPublisher(catalog, projectPublisherSummary(publisher, target));
+            next = advanceCatalog(next, this.now);
+            const prepared = await prepareCatalogTransaction({
+                paths: this.store.paths,
+                operation: "register-publisher",
+                baseCatalog: catalog,
+                targetCatalog: next,
+                writes: [{ destinationPath: relativePath, bytes }],
+                faults: this.faults,
+            });
+            await this.store.commitCatalogMutation(prepared, next);
+            return Object.freeze({ publisherId: publisher.publisherId, publisherHash, revision: next.revision, created: true });
+        });
+    }
+
+    async #replacePublisher(publisherId, operation, mutate, { actor } = {}) {
+        requireActorScope(actor, "manage:publisher", { admin: true });
+        return this.store.mutate(async () => {
+            const catalog = await this.store.readCatalog();
+            const current = await this.publisherStore.getPublisher(publisherId, catalog);
+            if (!current) throw conflict("Publisher identity is not registered.");
+            const nextPublisher = assertMarketplacePublisher(mutate(structuredClone(current)));
+            if (nextPublisher.publisherId !== publisherId) throw conflict("Publisher identity is immutable.");
+            const bytes = marketplaceDocumentBytes(nextPublisher);
+            const publisherHash = hashMarketplaceBytes(bytes);
+            const currentSummary = catalog.publishers.find((entry) => entry.publisherId === publisherId);
+            if (currentSummary.target.sha256 === publisherHash) {
+                return Object.freeze({ publisherId, publisherHash, revision: catalog.revision, changed: false });
+            }
+            const relativePath = publisherTargetPath(publisherId, publisherHash);
+            const target = targetDescriptor(relativePath, bytes);
+            let next = upsertCatalogPublisher(catalog, projectPublisherSummary(nextPublisher, target));
+            next = advanceCatalog(next, this.now);
+            const prepared = await prepareCatalogTransaction({
+                paths: this.store.paths,
+                operation,
+                baseCatalog: catalog,
+                targetCatalog: next,
+                writes: [{ destinationPath: relativePath, bytes }],
+                faults: this.faults,
+            });
+            await this.store.commitCatalogMutation(prepared, next);
+            return Object.freeze({ publisherId, publisherHash, revision: next.revision, changed: true });
+        });
+    }
+
+    async addPublisherKey(publisherId, key, options = {}) {
+        return this.#replacePublisher(publisherId, "add-publisher-key", (publisher) => {
+            if (publisher.keys.some((entry) => entry.keyId === key.keyId)) throw conflict("Publisher key ID already exists.");
+            publisher.keys.push(structuredClone(key));
+            publisher.keys.sort((left, right) => left.keyId.localeCompare(right.keyId));
+            return publisher;
+        }, options);
+    }
+
+    async setPublisherKeyStatus(publisherId, keyId, status, options = {}) {
+        if (!new Set(["retired", "revoked"]).has(status)) throw conflict("Publisher keys may only transition to retired or revoked.");
+        return this.#replacePublisher(publisherId, "set-publisher-key-status", (publisher) => {
+            const key = publisher.keys.find((entry) => entry.keyId === keyId);
+            if (!key) throw conflict("Publisher key ID is not registered.");
+            if (key.status === "revoked" && status !== "revoked") throw conflict("Revoked publisher keys cannot be reactivated.");
+            if (key.status === "retired" && status !== "retired" && status !== "revoked") throw conflict("Retired publisher keys cannot be reactivated.");
+            key.status = status;
+            key.statusChangedAt = this.now().toISOString();
+            return publisher;
+        }, options);
+    }
+
+    async compromisePublisherKey(publisherId, keyId, {
+        actor,
+        advisoryId,
+        rationale,
+        remediation = "Install a release signed by a new active publisher key.",
+        severity = "critical",
+    } = {}) {
+        requireActorScope(actor, "manage:advisory", { admin: true });
+        requireActorScope(actor, "manage:publisher", { admin: true });
+        return this.store.mutate(async () => {
+            const catalog = await this.store.readCatalog();
+            if (catalog.advisories.some((entry) => entry.advisoryId === advisoryId)) throw conflict("Compromise advisory identity already exists.");
+            const publisher = await this.publisherStore.getPublisher(publisherId, catalog);
+            if (!publisher) throw conflict("Publisher identity is not registered.");
+            const key = publisher.keys.find((entry) => entry.keyId === keyId);
+            if (!key) throw conflict("Publisher key ID is not registered.");
+            key.status = "revoked";
+            key.statusChangedAt = this.now().toISOString();
+            const affectedReleases = catalog.releases.filter((entry) => entry.publisherId === publisherId && entry.publisherKeyId === keyId);
+            if (affectedReleases.length < 1) throw conflict("Publisher key has no admitted releases to compromise.");
+            const subjects = [];
+            const subjectKeys = new Set();
+            const addSubject = (subject, subjectKey) => {
+                if (!subjectKeys.has(subjectKey)) { subjectKeys.add(subjectKey); subjects.push(subject); }
+            };
+            for (const release of affectedReleases) {
+                addSubject({ itemId: release.itemId, releaseVersion: release.releaseVersion }, `release:${release.itemId}@${release.releaseVersion}`);
+                addSubject({ artifactSha256: release.artifact.sha256 }, `artifact:${release.artifact.sha256}`);
+                if (release.executable) addSubject({ packageHash: release.executable.packageHash }, `package:${release.executable.packageHash}`);
+                for (const plugin of release.embeddedPlugins ?? []) addSubject({ packageHash: plugin.packageHash }, `package:${plugin.packageHash}`);
+                if (release.contentKind === "plugin") {
+                    const record = await readBlobRecord(this.store.paths, release.artifact.sha256);
+                    const packageHash = record.usage?.inspection?.identity?.packageHash;
+                    if (packageHash) addSubject({ packageHash }, `package:${packageHash}`);
+                }
+            }
+            const advisory = assertMarketplaceAdvisory({
+                kind: MARKETPLACE_KINDS.advisory,
+                version: 1,
+                advisoryId,
+                publisherId,
+                issuedAt: this.now().toISOString(),
+                affected: subjects,
+                severity,
+                rationale,
+                remediation,
+                action: "block",
+            });
+            const publisherBytes = marketplaceDocumentBytes(assertMarketplacePublisher(publisher));
+            const publisherHash = hashMarketplaceBytes(publisherBytes);
+            const publisherPath = publisherTargetPath(publisherId, publisherHash);
+            const advisoryBytes = marketplaceDocumentBytes(advisory);
+            const advisoryHash = hashMarketplaceBytes(advisoryBytes);
+            const advisoryPath = advisoryTargetPath(advisoryId, advisoryHash);
+            let next = upsertCatalogPublisher(catalog, projectPublisherSummary(publisher, targetDescriptor(publisherPath, publisherBytes)));
+            next = appendCatalogAdvisory(next, { advisoryId, target: targetDescriptor(advisoryPath, advisoryBytes) });
+            for (const release of affectedReleases) next = removeCatalogTracksForRelease(next, release.itemId, release.releaseVersion);
+            next = advanceCatalog(next, this.now);
+            const prepared = await prepareCatalogTransaction({
+                paths: this.store.paths,
+                operation: "compromise-publisher-key",
+                baseCatalog: catalog,
+                targetCatalog: next,
+                writes: [
+                    { destinationPath: publisherPath, bytes: publisherBytes },
+                    { destinationPath: advisoryPath, bytes: advisoryBytes },
+                ],
+                faults: this.faults,
+            });
+            await this.store.commitCatalogMutation(prepared, next);
+            return Object.freeze({ publisherId, keyId, advisoryId, affectedReleases: affectedReleases.length, revision: next.revision });
+        });
+    }
+
     async #verifyItemPreviews(item) {
         for (const preview of item.previews) {
             const record = await readBlobRecord(this.store.paths, preview.sha256);
@@ -391,13 +623,18 @@ export class MarketplaceRegistryService {
         }
     }
 
-    async admitItem(rawBytes) {
+    async admitItem(rawBytes, { actor = null } = {}) {
         const item = assertMarketplaceItem(requireKind(parseMarketplaceDocument(rawBytes), MARKETPLACE_KINDS.item));
         const bytes = marketplaceDocumentBytes(item);
         const itemHash = hashMarketplaceBytes(bytes);
         await this.#verifyItemPreviews(item);
         return this.store.mutate(async () => {
             const catalog = await this.store.readCatalog();
+            if (catalog.releaseAuthority !== "development-unsigned") {
+                const publisher = await this.publisherStore.getPublisher(item.publisherId, catalog);
+                if (!publisher || !publisherOwnsItem(publisher, item.itemId)) throw conflict("Item publisher does not own its namespace.");
+                requireActorScope(actor, "publish:item", { publisherId: item.publisherId, itemId: item.itemId });
+            }
             const existingSummary = catalog.items.find((entry) => entry.itemId === item.itemId);
             if (existingSummary) {
                 if (existingSummary.publisherId !== item.publisherId || existingSummary.contentKind !== item.contentKind) {
@@ -424,10 +661,36 @@ export class MarketplaceRegistryService {
         });
     }
 
-    async admitRelease(rawBytes, { track = null } = {}) {
+    async admitRelease(rawBytes, { track = null, actor = null } = {}) {
         if (track !== null && !["stable", "beta"].includes(track)) throw marketplaceError(MARKETPLACE_ERROR_CODES.CONFIG_INVALID, "Release track must be stable or beta.");
         const release = assertMarketplaceRelease(requireKind(parseMarketplaceDocument(rawBytes), MARKETPLACE_KINDS.release));
         const bytes = marketplaceDocumentBytes(release);
+        const catalog = await this.store.readCatalog();
+        if (catalog.releaseAuthority !== "development-unsigned") {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.UPGRADE_REQUIRED, "Unsigned release admission is disabled; provision publisher authority and submit a DSSE envelope.");
+        }
+        return this.#admitVerifiedRelease(release, bytes, { track, actor, publisherKeyId: null, operation: "admit-release" });
+    }
+
+    async admitReleaseEnvelope(rawEnvelopeBytes, { actor, track = null } = {}) {
+        if (track !== null && !["stable", "beta"].includes(track)) throw marketplaceError(MARKETPLACE_ERROR_CODES.CONFIG_INVALID, "Release track must be stable or beta.");
+        const parsed = parseReleaseEnvelope(rawEnvelopeBytes);
+        const catalog = await this.store.readCatalog();
+        const publisher = await this.publisherStore.getPublisher(parsed.release.publisherId, catalog);
+        if (!publisher) throw conflict("Release publisher is not registered.");
+        if (!publisherOwnsItem(publisher, parsed.release.itemId)) throw conflict("Release publisher does not own its item namespace.");
+        requireActorScope(actor, "publish:release", { publisherId: publisher.publisherId, itemId: parsed.release.itemId });
+        if (track !== null) requireActorScope(actor, "manage:track", { publisherId: publisher.publisherId, itemId: parsed.release.itemId });
+        const verified = verifyMarketplaceReleaseEnvelope(rawEnvelopeBytes, publisher, { requireActive: true });
+        return this.#admitVerifiedRelease(verified.release, verified.bytes, {
+            track,
+            actor,
+            publisherKeyId: verified.keyId,
+            operation: "admit-release-envelope",
+        });
+    }
+
+    async #admitVerifiedRelease(release, targetBytes, { track, actor, publisherKeyId, operation }) {
         const releaseHash = hashMarketplaceRelease(release);
         const record = await readBlobRecord(this.store.paths, release.artifact.sha256);
         await verifyBlobRecordAndFile(this.store.paths, record);
@@ -435,9 +698,25 @@ export class MarketplaceRegistryService {
             || record.mediaType !== release.artifact.mediaType || record.sizeBytes !== release.artifact.sizeBytes) {
             throw conflict("Release artifact does not match its admitted CAS record.");
         }
+        if (publisherKeyId && release.contentKind === "plugin") {
+            const identity = record.usage?.inspection?.identity;
+            if (!release.executable || release.executable.pluginId !== identity?.pluginId
+                || release.executable.packageHash !== identity?.packageHash
+                || release.executable.runtimeHash !== identity?.runtimeHash) {
+                throw conflict("Signed plugin release executable identity does not match its admitted artifact.");
+            }
+        }
         this.artifactRegistry.validate(release.contentKind, record.usage.inspection, release);
         return this.store.mutate(async () => {
             const catalog = await this.store.readCatalog();
+            if (publisherKeyId) {
+                const currentPublisher = await this.publisherStore.getPublisher(release.publisherId, catalog);
+                const verified = verifyMarketplaceReleaseEnvelope(targetBytes, currentPublisher, { requireActive: true });
+                if (verified.keyId !== publisherKeyId || hashMarketplaceBytes(verified.payloadBytes) !== releaseHash) {
+                    throw conflict("Release envelope changed before admission.");
+                }
+                requireActorScope(actor, "publish:release", { publisherId: release.publisherId, itemId: release.itemId });
+            }
             const item = catalog.items.find((entry) => entry.itemId === release.itemId);
             if (!item) throw conflict("Release item must be admitted first.");
             if (item.publisherId !== release.publisherId || item.contentKind !== release.contentKind) {
@@ -450,20 +729,26 @@ export class MarketplaceRegistryService {
                     throw conflict(`Exact dependency ${dependency.itemId}@${dependency.releaseVersion} is not admitted.`);
                 }
             }
-            await verifyEmbeddedPluginReferences(this.store.paths, release, indexedReleases, conflict);
+            await verifyEmbeddedPluginReferences(this.store, catalog, release, indexedReleases, conflict);
             const existing = indexedReleases.get(releaseKey(release));
-            if (existing && existing.releaseHash !== releaseHash) {
+            if (existing && (existing.releaseHash !== releaseHash || (existing.publisherKeyId ?? null) !== publisherKeyId)) {
                 throw conflict(`Release tuple ${release.itemId}@${release.releaseVersion} is immutable.`);
             }
             const relativePath = releaseTargetPath(release.itemId, release.releaseVersion, releaseHash);
             let next = catalog;
             const writes = [];
             if (!existing) {
-                const target = targetDescriptor(relativePath, bytes);
-                next = appendCatalogRelease(next, projectReleaseSummary(release, releaseHash, target));
-                writes.push({ destinationPath: relativePath, bytes });
+                const target = targetDescriptor(relativePath, targetBytes);
+                next = appendCatalogRelease(next, projectReleaseSummary(release, releaseHash, target, { publisherKeyId }));
+                writes.push({ destinationPath: relativePath, bytes: targetBytes });
             }
-            if (track !== null) next = setCatalogTrack(next, release.itemId, track, release.releaseVersion);
+            if (track !== null) {
+                const yanked = next.yanks.some((entry) => entry.release.itemId === release.itemId
+                    && entry.release.releaseVersion === release.releaseVersion
+                    && entry.release.artifactSha256 === release.artifact.sha256);
+                if (yanked) throw conflict("Yanked releases cannot be assigned to a track.");
+                next = setCatalogTrack(next, release.itemId, track, release.releaseVersion);
+            }
             if (exactBytesEqual(catalogWithoutRevision(catalog), catalogWithoutRevision(next))) {
                 return Object.freeze({
                     itemId: release.itemId,
@@ -476,7 +761,7 @@ export class MarketplaceRegistryService {
             next = advanceCatalog(next, this.now);
             const prepared = await prepareCatalogTransaction({
                 paths: this.store.paths,
-                operation: "admit-release",
+                operation,
                 baseCatalog: catalog,
                 targetCatalog: next,
                 writes,
@@ -504,7 +789,7 @@ export class MarketplaceRegistryService {
         const catalog = await this.store.readCatalog();
         const summary = catalog.releases.find((entry) => entry.itemId === itemId && entry.releaseVersion === releaseVersion);
         if (!summary) return null;
-        return (await this.store.readTarget(summary.target)).document;
+        return readCatalogRelease(this.store, catalog, summary);
     }
 
     async listItems() {
@@ -513,6 +798,138 @@ export class MarketplaceRegistryService {
 
     async listReleases() {
         return (await this.store.readCatalog()).releases;
+    }
+
+    async listPublishers() {
+        return this.publisherStore.listPublishers();
+    }
+
+    async setTrack(itemId, track, releaseVersion, { actor } = {}) {
+        if (!["stable", "beta"].includes(track)) throw marketplaceError(MARKETPLACE_ERROR_CODES.CONFIG_INVALID, "Release track must be stable or beta.");
+        return this.store.mutate(async () => {
+            const catalog = await this.store.readCatalog();
+            const release = catalog.releases.find((entry) => entry.itemId === itemId && entry.releaseVersion === releaseVersion);
+            if (!release) throw conflict("Track release is not admitted.");
+            requireActorScope(actor, "manage:track", { publisherId: release.publisherId, itemId });
+            if (track === "stable" && semver.prerelease(releaseVersion) !== null) throw conflict("Stable tracks cannot select prereleases.");
+            if (catalog.yanks.some((entry) => entry.release.itemId === itemId
+                && entry.release.releaseVersion === releaseVersion
+                && entry.release.artifactSha256 === release.artifact.sha256)) throw conflict("Yanked releases cannot be assigned to a track.");
+            let next = setCatalogTrack(catalog, itemId, track, releaseVersion);
+            if (exactBytesEqual(catalogWithoutRevision(catalog), catalogWithoutRevision(next))) {
+                return Object.freeze({ itemId, track, releaseVersion, revision: catalog.revision, changed: false });
+            }
+            next = advanceCatalog(next, this.now);
+            const prepared = await prepareCatalogTransaction({
+                paths: this.store.paths,
+                operation: "set-track",
+                baseCatalog: catalog,
+                targetCatalog: next,
+                writes: [],
+                faults: this.faults,
+            });
+            await this.store.commitCatalogMutation(prepared, next);
+            return Object.freeze({ itemId, track, releaseVersion, revision: next.revision, changed: true });
+        });
+    }
+
+    async yankRelease({ itemId, releaseVersion, artifactSha256, reason }, { actor } = {}) {
+        if (typeof reason !== "string" || reason.length < 1 || reason.length > 4096) throw conflict("Yank reason is required.");
+        return this.store.mutate(async () => {
+            const catalog = await this.store.readCatalog();
+            const release = catalog.releases.find((entry) => entry.itemId === itemId && entry.releaseVersion === releaseVersion
+                && entry.artifact.sha256 === artifactSha256);
+            if (!release) throw conflict("Exact release is not admitted.");
+            requireActorScope(actor, "manage:yank", { publisherId: release.publisherId, itemId });
+            if (catalog.yanks.some((entry) => entry.release.itemId === itemId
+                && entry.release.releaseVersion === releaseVersion && entry.release.artifactSha256 === artifactSha256)) {
+                throw conflict("Exact release is already yanked.");
+            }
+            let next = appendCatalogYank(catalog, {
+                release: exactReleaseReference(release),
+                reason,
+                yankedAt: this.now().toISOString(),
+            });
+            next = removeCatalogTracksForRelease(next, itemId, releaseVersion);
+            next = advanceCatalog(next, this.now);
+            const prepared = await prepareCatalogTransaction({
+                paths: this.store.paths,
+                operation: "yank-release",
+                baseCatalog: catalog,
+                targetCatalog: next,
+                writes: [],
+                faults: this.faults,
+            });
+            await this.store.commitCatalogMutation(prepared, next);
+            return Object.freeze({ release: exactReleaseReference(release), revision: next.revision });
+        });
+    }
+
+    async #subjectPublisher(catalog, subject) {
+        if (subject.itemId) {
+            return catalog.releases.find((entry) => entry.itemId === subject.itemId
+                && entry.releaseVersion === subject.releaseVersion)?.publisherId ?? null;
+        }
+        if (subject.artifactSha256) {
+            return catalog.releases.find((entry) => entry.artifact.sha256 === subject.artifactSha256)?.publisherId ?? null;
+        }
+        for (const release of catalog.releases) {
+            if (release.embeddedPlugins?.some((plugin) => plugin.packageHash === subject.packageHash)) return release.publisherId;
+            if (release.executable?.packageHash === subject.packageHash) return release.publisherId;
+            if (release.contentKind === "plugin") {
+                const record = await readBlobRecord(this.store.paths, release.artifact.sha256);
+                if (record.usage?.inspection?.identity?.packageHash === subject.packageHash) return release.publisherId;
+            }
+        }
+        return null;
+    }
+
+    async admitAdvisory(rawBytes, { actor, compromiseResponse = false } = {}) {
+        const advisory = assertMarketplaceAdvisory(parseMarketplaceDocument(rawBytes));
+        if (["block", "clear"].includes(advisory.action) || compromiseResponse) {
+            requireActorScope(actor, "manage:advisory", { admin: true });
+        } else {
+            requireActorScope(actor, "manage:advisory", { publisherId: advisory.publisherId });
+        }
+        const bytes = marketplaceDocumentBytes(advisory);
+        const advisoryHash = hashMarketplaceBytes(bytes);
+        return this.store.mutate(async () => {
+            const catalog = await this.store.readCatalog();
+            const existing = catalog.advisories.find((entry) => entry.advisoryId === advisory.advisoryId);
+            if (existing) {
+                if (existing.target.sha256 === advisoryHash) return Object.freeze({ advisoryId: advisory.advisoryId, revision: catalog.revision, created: false });
+                throw conflict("Advisory identity is immutable.");
+            }
+            for (const subject of advisory.affected) {
+                const owner = await this.#subjectPublisher(catalog, subject);
+                if (!owner) throw conflict("Advisory subject is not admitted by this registry.");
+                if (!compromiseResponse && owner !== advisory.publisherId) throw conflict("Advisory subject does not belong to its declared publisher.");
+            }
+            for (const superseded of advisory.supersedes ?? []) {
+                if (!catalog.advisories.some((entry) => entry.advisoryId === superseded)) throw conflict("Advisory supersedes an unknown advisory.");
+            }
+            const relativePath = advisoryTargetPath(advisory.advisoryId, advisoryHash);
+            const target = targetDescriptor(relativePath, bytes);
+            let next = appendCatalogAdvisory(catalog, { advisoryId: advisory.advisoryId, target });
+            next = advanceCatalog(next, this.now);
+            const prepared = await prepareCatalogTransaction({
+                paths: this.store.paths,
+                operation: "admit-advisory",
+                baseCatalog: catalog,
+                targetCatalog: next,
+                writes: [{ destinationPath: relativePath, bytes }],
+                faults: this.faults,
+            });
+            await this.store.commitCatalogMutation(prepared, next);
+            return Object.freeze({ advisoryId: advisory.advisoryId, advisoryHash, revision: next.revision, created: true });
+        });
+    }
+
+    async listAdvisories() {
+        const catalog = await this.store.readCatalog();
+        const advisories = [];
+        for (const summary of catalog.advisories) advisories.push((await this.store.readTarget(summary.target)).document);
+        return advisories;
     }
 
     async listBlobs() {
@@ -529,6 +946,17 @@ export class MarketplaceRegistryService {
     }
 
     async #verifyCatalogContents(catalog) {
+        if (!catalog.releaseAuthority) {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.UPGRADE_REQUIRED, "Registry catalog predates publisher-signed release authority.");
+        }
+        for (const summary of catalog.publishers ?? []) {
+            const { document } = await this.store.readTarget(summary.target);
+            const publisher = assertMarketplacePublisher(document);
+            const projected = projectPublisherSummary(publisher, summary.target);
+            if (!exactBytesEqual(canonicalMarketplaceBytes(projected), canonicalMarketplaceBytes(summary))) {
+                throw recovery("Catalog publisher summary does not match its canonical target.", summary.target.path);
+            }
+        }
         for (const summary of catalog.items) {
             const { document, bytes } = await this.store.readTarget(summary.target);
             const item = assertMarketplaceItem(document);
@@ -541,9 +969,10 @@ export class MarketplaceRegistryService {
         }
         const releases = new Map(catalog.releases.map((entry) => [releaseKey(entry), entry]));
         for (const summary of catalog.releases) {
-            const { document } = await this.store.readTarget(summary.target);
-            const release = assertMarketplaceRelease(document);
-            const projected = projectReleaseSummary(release, hashMarketplaceRelease(release), summary.target);
+            const release = await readCatalogRelease(this.store, catalog, summary);
+            const projected = projectReleaseSummary(release, hashMarketplaceRelease(release), summary.target, {
+                publisherKeyId: summary.publisherKeyId ?? null,
+            });
             if (!exactBytesEqual(canonicalMarketplaceBytes(projected), canonicalMarketplaceBytes(summary))) {
                 throw recovery("Catalog release summary does not match its canonical target.", summary.target.path);
             }
@@ -558,11 +987,17 @@ export class MarketplaceRegistryService {
                 if (!admitted || admitted.artifact.sha256 !== dependency.artifactSha256) throw recovery("Release dependency is unavailable.", summary.target.path);
             }
             await verifyEmbeddedPluginReferences(
-                this.store.paths,
+                this.store,
+                catalog,
                 release,
                 releases,
                 (message) => recovery(message, summary.target.path),
             );
+        }
+        for (const summary of catalog.advisories) {
+            const { document } = await this.store.readTarget(summary.target);
+            const advisory = assertMarketplaceAdvisory(document);
+            if (advisory.advisoryId !== summary.advisoryId) throw recovery("Catalog advisory summary does not match its target.", summary.target.path);
         }
     }
 
@@ -598,26 +1033,20 @@ export class MarketplaceRegistryService {
         }
         for (const revision of revisions) await this.#verifyCatalogContents(revision.document);
         const referencedTargets = new Set(revisions.flatMap((revision) => [
+            ...(revision.document.publishers ?? []).map((entry) => entry.target.path),
             ...revision.document.items.map((entry) => entry.target.path),
             ...revision.document.releases.map((entry) => entry.target.path),
+            ...revision.document.advisories.map((entry) => entry.target.path),
         ]));
         const targetFiles = [
+            ...await walkRegularFiles(this.store.paths.publisherTargets),
             ...await walkRegularFiles(this.store.paths.itemTargets),
             ...await walkRegularFiles(this.store.paths.releaseTargets),
+            ...await walkRegularFiles(this.store.paths.advisoryTargets),
         ];
         for (const file of targetFiles) {
             const relative = path.relative(this.store.paths.root, file).split(path.sep).join("/");
-            const bytes = await readRegularBytes(file);
-            const document = parseMarketplaceDocument(bytes);
-            if (!exactBytesEqual(bytes, marketplaceDocumentBytes(document))) throw recovery("Immutable target is not canonical.", relative);
-            const expected = document.kind === MARKETPLACE_KINDS.item
-                ? itemTargetPath(document.itemId, hashMarketplaceBytes(bytes))
-                : document.kind === MARKETPLACE_KINDS.release
-                    ? releaseTargetPath(document.itemId, document.releaseVersion, hashMarketplaceRelease(document))
-                    : null;
-            if (expected !== relative || !referencedTargets.has(relative)) {
-                throw recovery("Immutable target path is invalid or is not retained by a catalog revision.", relative);
-            }
+            if (!referencedTargets.has(relative)) throw recovery("Immutable target is not retained by a catalog revision.", relative);
         }
         if (targetFiles.length !== referencedTargets.size) throw recovery("A retained catalog target is missing from immutable storage.");
         const records = await this.listBlobs();
@@ -664,14 +1093,10 @@ export class MarketplaceRegistryService {
     async planGarbageCollection({ graceMs }) {
         if (!Number.isFinite(graceMs) || graceMs < 0) throw new TypeError("GC graceMs must be non-negative.");
         const marked = new Set();
-        const releaseFiles = await walkRegularFiles(this.store.paths.releaseTargets);
-        for (const file of releaseFiles) {
-            const release = assertMarketplaceRelease(parseMarketplaceDocument(await readRegularBytes(file)));
-            marked.add(release.artifact.sha256);
-        }
         const revisionFiles = (await listRegularNames(this.store.paths.catalogRevisions)).map((name) => path.join(this.store.paths.catalogRevisions, name));
         for (const file of revisionFiles) {
             const revision = assertMarketplaceCatalog(parseMarketplaceDocument(await readRegularBytes(file)));
+            revision.releases.forEach((release) => marked.add(release.artifact.sha256));
             for (const summary of revision.items) {
                 const item = assertMarketplaceItem((await this.store.readTarget(summary.target)).document);
                 item.previews.forEach((preview) => marked.add(preview.sha256));

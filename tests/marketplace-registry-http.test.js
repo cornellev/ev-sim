@@ -44,7 +44,7 @@ async function populatedRegistry(t) {
     const root = path.join(parent, "registry");
     const oldRootKey = path.join(parent, "old-root.pem");
     const newRootKey = path.join(parent, "new-root.pem");
-    await MarketplaceRegistryStore.initialize(root, { offlineRootKeyPath: oldRootKey });
+    await MarketplaceRegistryStore.initialize(root, { offlineRootKeyPath: oldRootKey, unsafeUnsignedDevelopment: true });
     const store = await MarketplaceRegistryStore.open(root);
     const service = new MarketplaceRegistryService(store);
     const resource = await pluginFixtureResource();
@@ -183,7 +183,7 @@ test("MKT-04 concurrent readers see only the old or new timestamp publication", 
     const parent = await fs.mkdtemp(path.join(os.tmpdir(), "cev-mkt-http-atomic-"));
     t.after(() => fs.rm(parent, { recursive: true, force: true }));
     const root = path.join(parent, "registry");
-    await MarketplaceRegistryStore.initialize(root, { offlineRootKeyPath: path.join(parent, "root.pem") });
+    await MarketplaceRegistryStore.initialize(root, { offlineRootKeyPath: path.join(parent, "root.pem"), unsafeUnsignedDevelopment: true });
     let reachedBoundary;
     let releaseBoundary;
     const boundary = new Promise((resolve) => { reachedBoundary = resolve; });

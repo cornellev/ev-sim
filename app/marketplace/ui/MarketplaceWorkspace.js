@@ -20,6 +20,11 @@ import {
     getMarketplaceReceipt,
     listMarketplaceInstalled,
     listMarketplaceInstalledOwnership,
+    listMarketplaceUpdates,
+    listMarketplaceAdvisories,
+    getMarketplacePolicy,
+    setMarketplacePublisherApproval,
+    setMarketplaceOperatorOverride,
     listMarketplaceInstallJobOperations,
     listMarketplaceSources,
     MarketplaceApiError,
@@ -284,6 +289,21 @@ function RunTemplatePlanReview({ entry }) {
     </MetadataList>;
 }
 
+function UpdateComparison({ value }) {
+    if (!value) return null;
+    return <section className={styles.detailSection} aria-label="Update comparison">
+        <h4>Update comparison</h4>
+        <MetadataList>
+            <MetadataField label="Capabilities added">{value.capabilities.added.join(", ") || "None"}</MetadataField>
+            <MetadataField label="Capabilities removed">{value.capabilities.removed.join(", ") || "None"}</MetadataField>
+            <MetadataField label="Executables added / removed / changed">{value.executables.added.length} / {value.executables.removed.length} / {value.executables.changed.length}</MetadataField>
+            <MetadataField label="Compatibility regression">{value.compatibility.regression ? "Yes" : "No"}</MetadataField>
+            <MetadataField label="Denied candidate rights">{value.rights.denied.length || "None"}</MetadataField>
+            <MetadataField label="Mapping changes">{value.mappings.installed.length} existing · {value.mappings.candidate.length} candidate</MetadataField>
+        </MetadataList>
+    </section>;
+}
+
 function InstallDialog({ target, onClose, onInstalled, onOpenEnvironment, onOpenRunConfig }) {
     const [plan, setPlan] = useState(null);
     const [view, setView] = useState(null);
@@ -306,6 +326,8 @@ function InstallDialog({ target, onClose, onInstalled, onOpenEnvironment, onOpen
             sourceId: target.source.sourceId,
             itemId: target.item.itemId,
             releaseVersion: target.selectedRelease.releaseVersion,
+            ...(target.updateIntent ? { intent: target.updateIntent } : {}),
+            ...(target.allowYanked ? { allowYanked: true } : {}),
         }, { signal: controller.signal }).then(setPlan).catch((caught) => {
             if (caught.name !== "AbortError") setError(marketplaceApiErrorMessage(caught));
         }).finally(() => setBusy(false));
@@ -394,7 +416,7 @@ function InstallDialog({ target, onClose, onInstalled, onOpenEnvironment, onOpen
         <DialogSurface
             open
             onOpenChange={(open) => { if (!open && !locked) { if (view && cancellable) cancel(); else onClose(); } }}
-            title={`Install ${target.item.displayName}`}
+            title={`${target.updateIntent ? "Update" : "Install"} ${target.item.displayName}`}
             description="Review verified metadata first. No local content changes occur until the explicit commit step."
             className={styles.installDialog}
             footer={footer}
@@ -406,7 +428,7 @@ function InstallDialog({ target, onClose, onInstalled, onOpenEnvironment, onOpen
                     <section><h3>1. Verified metadata</h3><MetadataList><MetadataField label="Plan hash">{plan.planHash}</MetadataField><MetadataField label="Registry">{plan.preflight.source.registryId}</MetadataField><MetadataField label="Snapshot">{plan.preflight.source.snapshotId}</MetadataField><MetadataField label="Download">{formatBytes(plan.preflight.totalDownloadBytes)}</MetadataField><MetadataField label="Host profile">{plan.preflight.hostProfileHash}</MetadataField></MetadataList><ul className={styles.plainList}>{plan.preflight.releases.map((entry) => <li key={`${entry.release.itemId}:${entry.release.releaseVersion}`}>{entry.release.itemId}@{entry.release.releaseVersion}<small>{entry.release.artifact.sha256}</small></li>)}</ul></section>
                     {view && <section><h3>2. Download and inspection</h3><p className={styles.muted}>{phase}</p><progress max={Math.max(1, progress.bytesTotal)} value={progress.bytesComplete} aria-label="Installation download progress" /><p className={styles.muted}>{progress.artifactsComplete}/{progress.artifactsTotal} artifacts · {formatBytes(progress.bytesComplete)} / {formatBytes(progress.bytesTotal)}</p>{(progress.totalOperations ?? progress.operationsTotal ?? 0) > 0 && <><progress max={progress.totalOperations ?? progress.operationsTotal} value={progress.completedOperations ?? progress.operationsComplete} aria-label="Installation operation progress" /><p className={styles.muted}>{progress.completedOperations ?? progress.operationsComplete}/{progress.totalOperations ?? progress.operationsTotal} durable operations</p></>}</section>}
                     {operations.length > 0 && <section><h3>Member operations</h3><ul className={styles.plainList}>{operations.map((operation) => <li key={operation.operationId}>{operation.itemId}@{operation.releaseVersion} · {operation.disposition} · {operation.status}{operation.collectionGroups?.filter(Boolean).length ? ` · ${operation.collectionGroups.filter(Boolean).join(", ")}` : ""}</li>)}</ul></section>}
-                    {finalPlan && <section><h3>3. Review local changes</h3>{finalPlan.blockingIssues.length ? <StatusMessage tone="danger" title="Commit is blocked">{finalPlan.blockingIssues.join(" · ")}</StatusMessage> : <StatusMessage tone="success" title="Ready for explicit commit">No blocking rights or mapping conflicts were reported.</StatusMessage>}<CollectionPlanReview finalPlan={finalPlan} />{finalPlan.releases.map((entry) => <article className={styles.planRelease} key={`${entry.release.itemId}:${entry.release.releaseVersion}`}><strong>{entry.release.itemId}@{entry.release.releaseVersion}</strong>{entry.adapterId === "plugin@1" ? <PluginPlanReview entry={entry} /> : entry.adapterId === "asset-pack@1" ? <AssetPackagePlanReview entry={entry} /> : entry.adapterId === "environment@1" ? <EnvironmentPackagePlanReview entry={entry} /> : entry.adapterId === "run-template@1" ? <RunTemplatePlanReview entry={entry} /> : <GenericPlanReview entry={entry} />}</article>)}</section>}
+                    {finalPlan && <section><h3>3. Review local changes</h3>{finalPlan.blockingIssues.length ? <StatusMessage tone="danger" title="Commit is blocked">{finalPlan.blockingIssues.join(" · ")}</StatusMessage> : <StatusMessage tone="success" title="Ready for explicit commit">No blocking rights or mapping conflicts were reported.</StatusMessage>}<UpdateComparison value={finalPlan.updateComparison} /><CollectionPlanReview finalPlan={finalPlan} />{finalPlan.releases.map((entry) => <article className={styles.planRelease} key={`${entry.release.itemId}:${entry.release.releaseVersion}`}><strong>{entry.release.itemId}@{entry.release.releaseVersion}</strong>{entry.adapterId === "plugin@1" ? <PluginPlanReview entry={entry} /> : entry.adapterId === "asset-pack@1" ? <AssetPackagePlanReview entry={entry} /> : entry.adapterId === "environment@1" ? <EnvironmentPackagePlanReview entry={entry} /> : entry.adapterId === "run-template@1" ? <RunTemplatePlanReview entry={entry} /> : <GenericPlanReview entry={entry} />}</article>)}</section>}
                     {phase === "complete" && <StatusMessage tone="success" title="Installation complete">{completedPlugin
                         ? `${completedPlugin.pluginId}@${completedPlugin.version} (${completedPlugin.packageHash}) was added to the Plugin Library.`
                         : "Installed membership and immutable receipts are now visible."}</StatusMessage>}
@@ -420,6 +442,7 @@ function InstallDialog({ target, onClose, onInstalled, onOpenEnvironment, onOpen
 }
 
 function ReleaseDetail({ detail, loading, error, onRetry, releaseVersion, onReleaseVersion, onInstall }) {
+    const [acknowledgeYank, setAcknowledgeYank] = useState(false);
     if (loading) return <div className={styles.centerState}><AsyncState title="Loading release" /></div>;
     if (error) return <div className={styles.centerState}><AsyncState status="error" title="Could not load release" detail={error} onRetry={onRetry} /></div>;
     if (!detail) return <div className={styles.centerState}><AsyncState status="empty" title="Select an item" detail="Choose a verified catalog item to inspect its release." /></div>;
@@ -451,14 +474,18 @@ function ReleaseDetail({ detail, loading, error, onRetry, releaseVersion, onRele
                         {detail.releases.map((entry) => <option key={entry.releaseVersion} value={entry.releaseVersion}>{entry.releaseVersion}</option>)}
                     </NativeSelect>
                 </Field>
-                <Button disabled={!detail.eligibility?.canInstall} aria-describedby="marketplace-install-disabled" onClick={() => onInstall(detail)}>{actionLabel}</Button>
+                <Button disabled={!detail.eligibility?.canInstall || (isYanked && !acknowledgeYank)} aria-describedby="marketplace-install-disabled" onClick={() => onInstall({ ...detail, allowYanked: isYanked })}>{actionLabel}</Button>
             </div>
             <p id="marketplace-install-disabled" className={styles.muted}>{detail.eligibility?.lifecycleAvailable
                 ? detail.eligibility.canInstall ? "A verified preflight is required before download." : "This release is not eligible for the requested lifecycle."
                 : lifecycleMilestone(item.contentKind)}</p>
             {isYanked && <StatusMessage tone="danger" title="This exact release is yanked">{detail.yanks.find((entry) => entry.release.releaseVersion === release.releaseVersion)?.reason}</StatusMessage>}
+            {isYanked && <Switch label="I understand this exact release is yanked" checked={acknowledgeYank} onCheckedChange={setAcknowledgeYank} />}
+            {detail.policy?.blocked && <StatusMessage tone="danger" title="Installation is blocked">{detail.advisories.map((entry) => entry.rationale).join(" · ")}</StatusMessage>}
             <MetadataList>
                 <MetadataField label="Declared publisher">{release.publisherId}</MetadataField>
+                <MetadataField label="Verified signer">{detail.publisher?.keyId ?? "Legacy unsigned state"}</MetadataField>
+                <MetadataField label="Signer status">{detail.publisher?.keyStatus ?? "Unavailable"}</MetadataField>
                 <MetadataField label="License">{release.licenseExpression}</MetadataField>
                 <MetadataField label="Track">{Object.entries(detail.tracks).filter(([, version]) => version === release.releaseVersion).map(([track]) => track).join(", ") || "Untracked"}</MetadataField>
                 <MetadataField label="Artifact">{release.artifact.sha256}</MetadataField>
@@ -480,7 +507,7 @@ function ReleaseDetail({ detail, loading, error, onRetry, releaseVersion, onRele
             </section>
             <section className={styles.detailSection}>
                 <h3>Verified distribution</h3>
-                <p className={styles.muted}>The registry TUF role authenticated these bytes. Publisher DSSE is not part of MKT-06.</p>
+                <p className={styles.muted}>TUF authenticates registry targets. Signed releases are additionally verified through their publisher DSSE envelope.</p>
                 <MetadataList>
                     <MetadataField label="Registry ID">{verification.registryId}</MetadataField>
                     <MetadataField label="Pinned root SHA-256">{verification.trustedRootFingerprint}</MetadataField>
@@ -836,6 +863,102 @@ function InstalledTab({ onOpenEnvironment, onOpenRunConfig }) {
     );
 }
 
+function UpdatesTab({ onOpenEnvironment, onOpenRunConfig }) {
+    const [track, setTrack] = useState("stable");
+    const [updates, setUpdates] = useState(null);
+    const [error, setError] = useState(null);
+    const [installTarget, setInstallTarget] = useState(null);
+    const load = useCallback(() => listMarketplaceUpdates({ track }).then((value) => { setUpdates(value); setError(null); }).catch((caught) => setError(marketplaceApiErrorMessage(caught))), [track]);
+    useEffect(() => {
+        const timer = setTimeout(load, 0);
+        return () => clearTimeout(timer);
+    }, [load]);
+    const review = async (update) => {
+        try {
+            const detail = await getMarketplaceItem(update.identity.sourceId, update.identity.itemId, { releaseVersion: update.candidate.release.releaseVersion });
+            setInstallTarget({
+                ...detail,
+                updateIntent: {
+                    kind: "update",
+                    track: update.track,
+                    from: {
+                        sourceId: update.identity.sourceId,
+                        registryId: update.identity.registryId,
+                        release: update.from.release,
+                    },
+                },
+            });
+        } catch (caught) { setError(marketplaceApiErrorMessage(caught)); }
+    };
+    return <div className={styles.sources}>
+        <header className={styles.sourcesHeader}><div><h2>Available updates</h2><p>Updates install side by side. Existing releases, receipts, mappings, and active sessions are unchanged.</p></div><div className={styles.sourceActions}><NativeSelect aria-label="Update track" value={track} onChange={(event) => setTrack(event.target.value)}><option value="stable">Stable</option><option value="beta">Beta</option></NativeSelect><Button size="compact" onClick={load}><IconRefresh size={14} aria-hidden="true" /> Refresh</Button></div></header>
+        {error && <StatusMessage tone="danger" title="Could not load updates">{error}</StatusMessage>}
+        {!updates ? <AsyncState title="Loading updates" /> : updates.length === 0 ? <AsyncState status="empty" title="No updates available" detail="Candidates must match the exact source, registry, and item identity." /> : <div className={styles.sourceGrid}>{updates.map((update) => <article className={styles.sourceCard} key={`${update.identity.sourceId}:${update.identity.itemId}`}><header><div><h2>{update.identity.itemId}</h2><p>{update.from.release.releaseVersion} → {update.candidate.release.releaseVersion}</p></div><span className={styles.health} data-tone="success">{update.track}</span></header><MetadataList><MetadataField label="Source ID">{update.identity.sourceId}</MetadataField><MetadataField label="Registry ID">{update.identity.registryId}</MetadataField><MetadataField label="Retained versions">{update.retained.map((entry) => entry.release.releaseVersion).join(", ")}</MetadataField><MetadataField label="Candidate artifact">{update.candidate.release.artifact.sha256}</MetadataField></MetadataList><div className={styles.sourceActions}><Button variant="primary" size="compact" onClick={() => review(update)}>Review update</Button></div></article>)}</div>}
+        <InstallDialog target={installTarget} onClose={() => setInstallTarget(null)} onInstalled={load} onOpenEnvironment={onOpenEnvironment} onOpenRunConfig={onOpenRunConfig} />
+    </div>;
+}
+
+function SecurityTab() {
+    const [policy, setPolicy] = useState(null);
+    const [advisories, setAdvisories] = useState(null);
+    const [installed, setInstalled] = useState(null);
+    const [overridePackageHash, setOverridePackageHash] = useState("");
+    const [overrideReason, setOverrideReason] = useState("");
+    const [error, setError] = useState(null);
+    const load = useCallback(async () => {
+        try {
+            const [nextPolicy, nextAdvisories, nextInstalled] = await Promise.all([
+                getMarketplacePolicy(), listMarketplaceAdvisories(), listMarketplaceInstalled(),
+            ]);
+            setPolicy(nextPolicy); setAdvisories(nextAdvisories); setInstalled(nextInstalled); setError(null);
+        } catch (caught) { setError(marketplaceApiErrorMessage(caught)); }
+    }, []);
+    useEffect(() => {
+        const timer = setTimeout(load, 0);
+        return () => clearTimeout(timer);
+    }, [load]);
+    const approval = async (registryId, publisherId, approved) => {
+        try {
+            setPolicy(await setMarketplacePublisherApproval({ registryId, publisherId, approved, expectedRevision: policy.revision }));
+        } catch (caught) { setError(marketplaceApiErrorMessage(caught)); }
+    };
+    const allowPackage = async () => {
+        try {
+            const next = await setMarketplaceOperatorOverride({
+                packageHash: overridePackageHash,
+                reason: overrideReason,
+                expectedRevision: policy.revision,
+            });
+            setPolicy(next);
+            setOverridePackageHash("");
+            setOverrideReason("");
+        } catch (caught) { setError(marketplaceApiErrorMessage(caught)); }
+    };
+    const affectedInstalled = (record) => {
+        const registryPolicy = policy.registries.find((entry) => entry.registryId === record.registryId);
+        return installed.installations.filter((installation) => {
+            if (installation.registryId !== record.registryId) return false;
+            const origin = registryPolicy?.releases.find((release) => release.itemId === installation.release.itemId
+                && release.releaseVersion === installation.release.releaseVersion
+                && release.artifactSha256 === installation.release.artifactSha256);
+            return record.advisory.affected.some((subject) => (
+                (subject.itemId === installation.release.itemId && subject.releaseVersion === installation.release.releaseVersion)
+                || subject.artifactSha256 === installation.release.artifactSha256
+                || (subject.packageHash && origin?.packageHashes.includes(subject.packageHash))
+            ));
+        });
+    };
+    return <div className={styles.sources}>
+        <header className={styles.sourcesHeader}><div><h2>Security policy</h2><p>Verified advisories and rollback floors remain after a source is disabled or removed.</p></div><Button size="compact" onClick={load}><IconRefresh size={14} aria-hidden="true" /> Refresh</Button></header>
+        {error && <StatusMessage tone="danger" title="Security policy operation failed">{error}</StatusMessage>}
+        {!policy || !advisories || !installed ? <AsyncState title="Loading security policy" /> : <div className={styles.sourceGrid}>
+            {policy.registries.map((entry) => <article className={styles.sourceCard} key={entry.registryId}><header><div><h2>{entry.registryId}</h2><p>Timestamp floor {entry.highestTimestampVersion}</p></div><span className={styles.health}>{entry.advisories.length} advisories</span></header><MetadataList><MetadataField label="Retained sources">{entry.sourceIds.join(", ") || "None"}</MetadataField><MetadataField label="Snapshot floor">{entry.highestSnapshotSha256 || "None"}</MetadataField></MetadataList><h3>Publisher approvals</h3>{entry.publishers.length ? <ul className={styles.plainList}>{entry.publishers.map((publisherId) => { const approved = entry.approvedPublishers?.includes(publisherId); return <li key={publisherId}><span>{publisherId}</span><Button size="compact" onClick={() => approval(entry.registryId, publisherId, !approved)}>{approved ? "Revoke approval" : "Approve publisher"}</Button></li>; })}</ul> : <p className={styles.muted}>No signed publishers retained.</p>}</article>)}
+            {advisories.map((record) => { const affected = affectedInstalled(record); return <article className={styles.sourceCard} key={`${record.registryId}:${record.advisory.advisoryId}`}><header><div><h2>{record.advisory.advisoryId}</h2><p>{record.advisory.publisherId}</p></div><span className={styles.health} data-tone={record.advisory.action === "block" ? "danger" : "warning"}>{record.advisory.action}</span></header><p>{record.advisory.rationale}</p><MetadataList><MetadataField label="Severity">{record.advisory.severity}</MetadataField><MetadataField label="Issued">{formatDate(record.advisory.issuedAt)}</MetadataField><MetadataField label="Subjects">{record.advisory.affected.map((subject) => subject.packageHash ?? subject.artifactSha256 ?? `${subject.itemId}@${subject.releaseVersion}`).join(", ")}</MetadataField><MetadataField label="Affected installed content">{affected.length ? affected.map((entry) => `${entry.release.itemId}@${entry.release.releaseVersion}`).join(", ") : "None"}</MetadataField><MetadataField label="Record hash">{record.hash}</MetadataField></MetadataList></article>; })}
+            <article className={styles.sourceCard} aria-label="Local operator overrides"><header><div><h2>Local overrides</h2><p>Allow decisions are local and nonsemantic. A reason is required.</p></div><span className={styles.health} data-tone="warning">{policy.overrides.length}</span></header>{policy.overrides.length ? <ul className={styles.plainList}>{policy.overrides.map((entry) => <li key={entry.packageHash}><strong>{entry.packageHash}</strong><span>{entry.reason} · {formatDate(entry.createdAt)}</span></li>)}</ul> : <p className={styles.muted}>No local package overrides.</p>}<div className={styles.sourceForm}><Field label="Package SHA-256"><TextInput value={overridePackageHash} onChange={(event) => setOverridePackageHash(event.target.value)} /></Field><Field label="Override reason"><TextInput value={overrideReason} onChange={(event) => setOverrideReason(event.target.value)} /></Field></div><Button size="compact" disabled={!/^[a-f0-9]{64}$/u.test(overridePackageHash) || !overrideReason.trim()} onClick={allowPackage}>Allow blocked package locally</Button></article>
+        </div>}
+    </div>;
+}
+
 export default function MarketplaceWorkspace({ onOpenWorkspace, onOpenEnvironment, onOpenRunConfig }) {
     const [tab, setTab] = useState("discover");
     return (
@@ -846,11 +969,13 @@ export default function MarketplaceWorkspace({ onOpenWorkspace, onOpenEnvironmen
                 onOpenWorkspace={onOpenWorkspace}
                 className={styles.workspace}
                 contentClassName={styles.workspaceContent}
-                actions={<TabsList aria-label="Marketplace sections"><TabsTrigger value="discover">Discover</TabsTrigger><TabsTrigger value="installed">Installed</TabsTrigger><TabsTrigger value="sources">Sources</TabsTrigger></TabsList>}
+                actions={<TabsList aria-label="Marketplace sections"><TabsTrigger value="discover">Discover</TabsTrigger><TabsTrigger value="updates">Updates</TabsTrigger><TabsTrigger value="installed">Installed</TabsTrigger><TabsTrigger value="security">Security</TabsTrigger><TabsTrigger value="sources">Sources</TabsTrigger></TabsList>}
             >
                 <h1 className={styles.srOnly}>Marketplace</h1>
                 <TabsContent value="discover" className={styles.tabContent}><DiscoverTab onOpenEnvironment={onOpenEnvironment} onOpenRunConfig={onOpenRunConfig} /></TabsContent>
+                <TabsContent value="updates" className={styles.tabContent}><UpdatesTab onOpenEnvironment={onOpenEnvironment} onOpenRunConfig={onOpenRunConfig} /></TabsContent>
                 <TabsContent value="installed" className={styles.tabContent}><InstalledTab onOpenEnvironment={onOpenEnvironment} onOpenRunConfig={onOpenRunConfig} /></TabsContent>
+                <TabsContent value="security" className={styles.tabContent}><SecurityTab /></TabsContent>
                 <TabsContent value="sources" className={styles.tabContent}><SourcesTab /></TabsContent>
             </WorkspaceFrame>
         </TabsRoot>

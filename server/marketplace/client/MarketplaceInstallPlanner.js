@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
+import semver from "semver";
 
 import { compareUtf8 } from "../../../app/math/compareUtf8.js";
 import { hashMarketplaceRelease } from "../MarketplaceContracts.js";
@@ -19,6 +20,7 @@ import {
 } from "./MarketplaceCompatibility.js";
 import { marketplaceClientPaths } from "./MarketplaceClientLayout.js";
 import { resolveInstallGraph } from "./MarketplaceDependencyResolver.js";
+import { MarketplaceUpdateComparator } from "./MarketplaceUpdateComparator.js";
 import {
     MARKETPLACE_INSTALL_DOCUMENT_VERSION,
     MARKETPLACE_INSTALL_KINDS,
@@ -53,6 +55,13 @@ function yankedSet(catalog) {
     )));
 }
 
+function executablePackageHashes(release) {
+    return [
+        ...(release.executable ? [release.executable.packageHash] : []),
+        ...(release.embeddedPlugins?.map((plugin) => plugin.packageHash) ?? []),
+    ];
+}
+
 function normalizePlan(adapterPlan) {
     if (!adapterPlan || typeof adapterPlan !== "object" || Array.isArray(adapterPlan)) {
         throw marketplaceError(MARKETPLACE_ERROR_CODES.DOCUMENT_INVALID, "Artifact adapter plan must be an object.");
@@ -78,6 +87,8 @@ export class MarketplaceInstallPlanner {
         cache,
         installedStore,
         ownershipStore = null,
+        receiptStore = null,
+        policyStore = null,
         artifactStore,
         adapterRegistry,
         hostProfileProvider,
@@ -88,6 +99,8 @@ export class MarketplaceInstallPlanner {
         this.cache = cache;
         this.installedStore = installedStore;
         this.ownershipStore = ownershipStore;
+        this.receiptStore = receiptStore;
+        this.policyStore = policyStore;
         this.artifactStore = artifactStore;
         this.adapterRegistry = adapterRegistry;
         this.hostProfileProvider = hostProfileProvider;
@@ -124,7 +137,7 @@ export class MarketplaceInstallPlanner {
         return Object.freeze({ planHash: hash, plan: validated });
     }
 
-    async createPreflight({ sourceId, itemId, releaseVersion }) {
+    async createPreflight({ sourceId, itemId, releaseVersion, intent = { kind: "install" }, allowYanked = false }) {
         assertCanonicalUuid(sourceId, "sourceId");
         assertMarketplaceId(itemId, "itemId");
         assertReleaseVersion(releaseVersion, "releaseVersion");
@@ -143,6 +156,19 @@ export class MarketplaceInstallPlanner {
             releases: current.documents.releases,
             releasePolicy: this.releasePolicy,
         });
+        if (this.policyStore) {
+            for (const { release } of resolved.releases) {
+                const summary = current.catalog.releases.find((entry) => entry.itemId === release.itemId && entry.releaseVersion === release.releaseVersion);
+                const policy = await this.policyStore.evaluateRelease({
+                    registryId: source.registryId,
+                    publisherId: release.publisherId,
+                    release,
+                    packageHashes: executablePackageHashes(release),
+                });
+                if (policy.blocked) throw marketplaceError(MARKETPLACE_ERROR_CODES.RELEASE_BLOCKED, `Marketplace release ${release.itemId}@${release.releaseVersion} is blocked.`);
+                if (summary?.publisherKeyId && !policy.approved) throw marketplaceError(MARKETPLACE_ERROR_CODES.RIGHTS_DENIED, `Marketplace publisher ${release.publisherId} is not approved.`);
+            }
+        }
         for (const { release } of resolved.releases) {
             const limit = artifactByteLimitFor(release.contentKind);
             if (release.artifact.sizeBytes > limit) {
@@ -157,6 +183,40 @@ export class MarketplaceInstallPlanner {
             this.ownershipStore.verifyAgainstInstalled(ownership, installed);
         }
         const yanks = yankedSet(current.catalog);
+        let normalizedIntent = { kind: "install" };
+        if (intent?.kind === "update") {
+            const from = intent.from;
+            if (!from || !["stable", "beta"].includes(intent.track) || from.sourceId !== sourceId || from.registryId !== source.registryId
+                || from.release?.itemId !== itemId) {
+                throw marketplaceError(MARKETPLACE_ERROR_CODES.DOCUMENT_INVALID, "Marketplace update intent must preserve exact source, registry, and item identity.");
+            }
+            const installation = installed.installations.find((entry) => entry.sourceId === from.sourceId
+                && entry.registryId === from.registryId
+                && entry.release.itemId === from.release.itemId
+                && entry.release.releaseVersion === from.release.releaseVersion
+                && entry.release.artifactSha256 === from.release.artifactSha256);
+            if (!installation) throw marketplaceError(MARKETPLACE_ERROR_CODES.CONFLICT, "Marketplace update source installation is stale or missing.");
+            const trackTarget = current.catalog.tracks.find((entry) => entry.itemId === itemId && entry.track === intent.track);
+            const candidateSummary = current.catalog.releases.find((entry) => entry.itemId === itemId
+                && entry.releaseVersion === releaseVersion);
+            if (!trackTarget || trackTarget.releaseVersion !== releaseVersion || !candidateSummary
+                || candidateSummary.artifact.sha256 !== root.artifact.sha256
+                || !semver.gt(releaseVersion, from.release.releaseVersion)) {
+                throw marketplaceError(MARKETPLACE_ERROR_CODES.CONFLICT, "Marketplace update candidate is not the exact newer signed track target.");
+            }
+            normalizedIntent = {
+                kind: "update",
+                track: intent.track,
+                from: {
+                    sourceId: from.sourceId,
+                    registryId: from.registryId,
+                    release: structuredClone(from.release),
+                    receiptHashes: [...installation.receiptHashes].sort(compareUtf8),
+                },
+            };
+        } else if (intent?.kind !== "install") {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.DOCUMENT_INVALID, "Marketplace install intent must be install or update.");
+        }
         const summaryHashes = new Map(current.catalog.releases.map((release) => [
             `${release.itemId}\u0000${release.releaseVersion}`,
             release.releaseHash,
@@ -178,6 +238,13 @@ export class MarketplaceInstallPlanner {
                 warnings: yanked ? [`Exact release ${release.itemId}@${release.releaseVersion} is yanked.`] : [],
             };
         });
+        const rootEntry = releases.at(-1);
+        if (rootEntry.yanked && !allowYanked) {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.RELEASE_YANKED, "Exact Marketplace release is yanked; explicit acknowledgement is required.");
+        }
+        if (normalizedIntent.kind === "update" && rootEntry.yanked) {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.RELEASE_YANKED, "Marketplace update candidates cannot be yanked.");
+        }
         const artifactsByDigest = new Map();
         for (const { release } of resolved.releases) {
             const current = artifactsByDigest.get(release.artifact.sha256);
@@ -211,6 +278,9 @@ export class MarketplaceInstallPlanner {
             hostProfile,
             hostProfileHash,
             warnings: resolved.warnings,
+            intent: normalizedIntent,
+            allowYanked: Boolean(allowYanked),
+            ...(this.policyStore ? { policyRevision: (await this.policyStore.snapshot()).revision } : {}),
         };
         return this.#publish(document, assertInstallPreflight);
     }
@@ -252,6 +322,12 @@ export class MarketplaceInstallPlanner {
             || source.trustedRootFingerprint !== preflight.source.trustedRootFingerprint || !source.enabled) {
             throw marketplaceError(MARKETPLACE_ERROR_CODES.CONFLICT, "Marketplace source identity changed after preflight.");
         }
+        const current = await this.cache.readCurrent(source);
+        if (!current || current.manifest.snapshotId !== preflight.source.snapshotId
+            || current.manifest.catalog.revision !== preflight.source.catalogRevision
+            || current.manifest.catalog.sha256 !== preflight.source.catalogSha256) {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.CONFLICT, "Marketplace source snapshot changed after preflight.");
+        }
         const pinned = await this.cache.readSnapshot(source, preflight.source.snapshotId);
         if (pinned.manifest.catalog.revision !== preflight.source.catalogRevision
             || pinned.manifest.catalog.sha256 !== preflight.source.catalogSha256) {
@@ -283,6 +359,12 @@ export class MarketplaceInstallPlanner {
             throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Marketplace preflight graph or installation intent changed.");
         }
         const installed = await this.installedStore.snapshot();
+        if (installed.revision !== preflight.installedRevision) {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.CONFLICT, "Marketplace installed state changed after preflight.");
+        }
+        if (this.policyStore && preflight.policyRevision !== (await this.policyStore.snapshot()).revision) {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.CONFLICT, "Marketplace executable policy changed after preflight.");
+        }
         if (this.ownershipStore) {
             const ownership = await this.ownershipStore.snapshot();
             this.ownershipStore.verifyAgainstInstalled(ownership, installed);
@@ -305,6 +387,17 @@ export class MarketplaceInstallPlanner {
             const policy = this.releasePolicy(release) ?? {};
             if (policy.blocked) {
                 throw marketplaceError(MARKETPLACE_ERROR_CODES.RELEASE_BLOCKED, `Marketplace release ${release.itemId}@${release.releaseVersion} is blocked.`);
+            }
+            if (this.policyStore) {
+                const summary = pinned.catalog.releases.find((candidate) => candidate.itemId === release.itemId && candidate.releaseVersion === release.releaseVersion);
+                const executablePolicy = await this.policyStore.evaluateRelease({
+                    registryId: preflight.source.registryId,
+                    publisherId: release.publisherId,
+                    release,
+                    packageHashes: executablePackageHashes(release),
+                });
+                if (executablePolicy.blocked) throw marketplaceError(MARKETPLACE_ERROR_CODES.RELEASE_BLOCKED, `Marketplace release ${release.itemId}@${release.releaseVersion} is blocked.`);
+                if (summary?.publisherKeyId && !executablePolicy.approved) throw marketplaceError(MARKETPLACE_ERROR_CODES.RIGHTS_DENIED, `Marketplace publisher ${release.publisherId} is not approved.`);
             }
             const disposition = entry.disposition ?? "requested";
             const adapter = disposition === "artifact-only"
@@ -370,6 +463,37 @@ export class MarketplaceInstallPlanner {
             ...preflight.warnings,
             ...releases.flatMap((entry) => entry.warnings),
         ])].sort(compareUtf8);
+        let update = null;
+        if (preflight.intent?.kind === "update") {
+            const from = preflight.intent.from;
+            const installedRelease = pinned.documents.releases.find((release) => release.itemId === from.release.itemId
+                && release.releaseVersion === from.release.releaseVersion
+                && release.artifact.sha256 === from.release.artifactSha256);
+            if (!installedRelease) throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Exact installed release is unavailable for update comparison.");
+            const artifactHandle = await this.artifactStore.get(installedRelease.artifact);
+            if (!artifactHandle) throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Exact installed artifact is unavailable for update comparison.");
+            const adapter = this.adapterRegistry.requireLifecycle(installedRelease.contentKind);
+            const context = Object.freeze({ installed, hostProfile, source: preflight.source, workDirectory, signal });
+            const inspection = await adapter.inspect(artifactHandle, context);
+            adapter.validate(inspection, installedRelease);
+            const adapterPlan = normalizePlan(await adapter.plan({ release: installedRelease, inspection, artifactHandle, context }));
+            const receiptMappings = [];
+            if (this.receiptStore) {
+                for (const receiptHash of from.receiptHashes) receiptMappings.push(...(await this.receiptStore.read(receiptHash)).mappings);
+            }
+            const candidate = releases.at(-1);
+            update = MarketplaceUpdateComparator.compare({
+                installedRelease,
+                candidateRelease: candidate.release,
+                installedInspection: inspection,
+                candidateInspection: candidate.inspection,
+                installedCompatibility: evaluateMarketplaceCompatibility(installedRelease.compatibility, hostProfile),
+                candidateCompatibility: candidate.compatibility,
+                installedAdapterPlan: adapterPlan,
+                candidateAdapterPlan: candidate.adapterPlan,
+                receiptMappings,
+            });
+        }
         return this.#publish({
             kind: MARKETPLACE_INSTALL_KINDS.finalPlan,
             version: MARKETPLACE_INSTALL_DOCUMENT_VERSION,
@@ -380,6 +504,8 @@ export class MarketplaceInstallPlanner {
             committable: blockingIssues.length === 0,
             blockingIssues,
             warnings,
+            ...(preflight.policyRevision !== undefined ? { policyRevision: preflight.policyRevision } : {}),
+            ...(update ? { updateComparison: update.comparison, updateComparisonHash: update.comparisonHash } : {}),
         }, assertInstallFinalPlan);
     }
 

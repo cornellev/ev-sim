@@ -71,6 +71,8 @@ export function marketplaceClientPaths(dataDir) {
         cache: path.join(root, "cache"),
         installed: path.join(root, "installed.json"),
         ownership: path.join(root, "ownership.json"),
+        policy: path.join(root, "policy.json"),
+        provenance: path.join(root, "executable-provenance.json"),
         plans: path.join(root, "plans", "sha256"),
         jobs: path.join(root, "jobs"),
         artifacts: path.join(root, "artifacts", "sha256"),
@@ -122,7 +124,10 @@ export function snapshotPaths(paths, sourceId, snapshotId) {
 
 export function assertCredentialDocument(value) {
     object(value, "$credential");
-    exactKeys(value, ["kind", "version", "type", "token"], "$credential");
+    const required = ["kind", "version", "type", "token"];
+    const allowed = new Set([...required, "privateCaCertificates", "clientCertificate", "clientPrivateKey"]);
+    for (const key of required) if (!Object.hasOwn(value, key)) invalid(`$credential.${key}`, "is required");
+    for (const key of Object.keys(value)) if (!allowed.has(key)) invalid(`$credential.${key}`, "is not allowed");
     if (value.kind !== MARKETPLACE_CREDENTIAL_KIND || value.version !== MARKETPLACE_CLIENT_DOCUMENT_VERSION) {
         invalid("$credential.kind", "unsupported credential document");
     }
@@ -131,6 +136,18 @@ export function assertCredentialDocument(value) {
         || /[\u0000-\u0020\u007f]/u.test(value.token)) {
         invalid("$credential.token", "expected a non-empty bearer token without control characters or whitespace");
     }
+    const certificates = value.privateCaCertificates ?? [];
+    if (!Array.isArray(certificates) || certificates.length > 16
+        || certificates.some((entry) => typeof entry !== "string" || !entry.includes("BEGIN CERTIFICATE") || Buffer.byteLength(entry) > 1024 ** 2)) {
+        invalid("$credential.privateCaCertificates", "expected at most 16 bounded PEM certificates");
+    }
+    const hasCertificate = value.clientCertificate !== undefined;
+    const hasKey = value.clientPrivateKey !== undefined;
+    if (hasCertificate !== hasKey) invalid("$credential.clientCertificate", "client certificate and private key must be supplied together");
+    if (hasCertificate && (typeof value.clientCertificate !== "string" || !value.clientCertificate.includes("BEGIN CERTIFICATE")
+        || Buffer.byteLength(value.clientCertificate) > 1024 ** 2)) invalid("$credential.clientCertificate", "expected a bounded PEM certificate");
+    if (hasKey && (typeof value.clientPrivateKey !== "string" || !value.clientPrivateKey.includes("PRIVATE KEY")
+        || Buffer.byteLength(value.clientPrivateKey) > 1024 ** 2)) invalid("$credential.clientPrivateKey", "expected a bounded PEM private key");
     return frozenClone(value);
 }
 
@@ -197,18 +214,25 @@ function assertTargetRecord(value, pathName, kind) {
         ? ["path", "sha256", "sizeBytes", "revision"]
         : kind === "item"
             ? ["path", "sha256", "sizeBytes", "itemId"]
-            : ["path", "sha256", "sizeBytes", "itemId", "releaseVersion", "releaseHash", "artifactSha256"];
+            : kind === "publisher"
+                ? ["path", "sha256", "sizeBytes", "publisherId"]
+                : kind === "advisory"
+                    ? ["path", "sha256", "sizeBytes", "advisoryId"]
+                    : ["path", "sha256", "sizeBytes", "itemId", "releaseVersion", "releaseHash", "artifactSha256", "publisherKeyId"];
     exactKeys(value, keys, pathName);
     assertTargetPath(value.path, `${pathName}.path`);
     assertSha256(value.sha256, `${pathName}.sha256`);
     nonNegativeInteger(value.sizeBytes, `${pathName}.sizeBytes`);
     if (kind === "catalog") positiveInteger(value.revision, `${pathName}.revision`);
+    else if (kind === "publisher") assertMarketplaceId(value.publisherId, `${pathName}.publisherId`);
+    else if (kind === "advisory") assertMarketplaceId(value.advisoryId, `${pathName}.advisoryId`);
     else {
         assertMarketplaceId(value.itemId, `${pathName}.itemId`);
         if (kind === "release") {
             assertReleaseVersion(value.releaseVersion, `${pathName}.releaseVersion`);
             assertSha256(value.releaseHash, `${pathName}.releaseHash`);
             assertSha256(value.artifactSha256, `${pathName}.artifactSha256`);
+            if (value.publisherKeyId !== null) assertSha256(value.publisherKeyId, `${pathName}.publisherKeyId`);
         }
     }
 }
@@ -218,7 +242,7 @@ export function assertCacheManifest(value) {
     exactKeys(value, [
         "kind", "version", "snapshotId", "sourceId", "registryId", "verifiedAt",
         "bootstrapRootVersion", "trustedRootFingerprint", "root", "timestamp", "snapshot",
-        "roles", "catalog", "items", "releases",
+        "roles", "catalog", "publishers", "items", "releases", "advisories",
     ], "$manifest");
     if (value.kind !== MARKETPLACE_CACHE_MANIFEST_KIND || value.version !== MARKETPLACE_CLIENT_DOCUMENT_VERSION) {
         invalid("$manifest.kind", "unsupported cache manifest");
@@ -233,12 +257,15 @@ export function assertCacheManifest(value) {
     assertMetadataRecord(value.timestamp, "$manifest.timestamp");
     assertMetadataRecord(value.snapshot, "$manifest.snapshot");
     object(value.roles, "$manifest.roles");
-    exactKeys(value.roles, ["targets", "catalog", "items", "releases", "advisories"], "$manifest.roles");
+    exactKeys(value.roles, ["targets", "catalog", "items", "publishers", "releases", "advisories"], "$manifest.roles");
     for (const [role, entry] of Object.entries(value.roles)) assertMetadataRecord(entry, `$manifest.roles.${role}`);
     assertTargetRecord(value.catalog, "$manifest.catalog", "catalog");
-    if (!Array.isArray(value.items) || !Array.isArray(value.releases)) invalid("$manifest", "expected item and release arrays");
+    if (!Array.isArray(value.publishers) || !Array.isArray(value.items) || !Array.isArray(value.releases)
+        || !Array.isArray(value.advisories)) invalid("$manifest", "expected publisher, item, release, and advisory arrays");
+    value.publishers.forEach((entry, index) => assertTargetRecord(entry, `$manifest.publishers.${index}`, "publisher"));
     value.items.forEach((entry, index) => assertTargetRecord(entry, `$manifest.items.${index}`, "item"));
     value.releases.forEach((entry, index) => assertTargetRecord(entry, `$manifest.releases.${index}`, "release"));
+    value.advisories.forEach((entry, index) => assertTargetRecord(entry, `$manifest.advisories.${index}`, "advisory"));
     return frozenClone(value);
 }
 

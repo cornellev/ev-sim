@@ -65,17 +65,26 @@ test("MKT-05 credentials are private immutable files and recovery removes only u
     const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "cev-mkt-credentials-"));
     t.after(() => fs.rm(dataDir, { recursive: true, force: true }));
     const credentials = await MarketplaceCredentialStore.open(dataDir);
-    const retained = await credentials.stageBearer("retained-token");
+    const credential = {
+        type: "bearer",
+        token: "retained-token",
+        privateCaCertificates: ["-----BEGIN CERTIFICATE-----\nPRIVATE-CA\n-----END CERTIFICATE-----"],
+        clientCertificate: "-----BEGIN CERTIFICATE-----\nCLIENT-CERTIFICATE\n-----END CERTIFICATE-----",
+        clientPrivateKey: "-----BEGIN PRIVATE KEY-----\nCLIENT-PRIVATE-KEY\n-----END PRIVATE KEY-----",
+    };
+    const retained = await credentials.stageCredential(credential);
     const orphan = await credentials.stageBearer("orphan-token");
     const sources = await MarketplaceSourceStore.open(dataDir);
     await sources.add({ ...source(IDS.first, IDS.registryFirst, 1, 41003), credentialRef: retained }, 0);
     assert.equal(await credentials.readBearer(retained), "retained-token");
+    assert.deepEqual(await credentials.readCredential(retained), credential);
     await credentials.recover([retained]);
     await assert.rejects(credentials.readBearer(orphan));
     const paths = marketplaceClientPaths(dataDir);
     assert.equal((await fs.stat(paths.credentials)).mode & 0o777, 0o700);
     assert.equal((await fs.stat(path.join(paths.credentials, `${retained}.json`))).mode & 0o777, 0o600);
     assert.doesNotMatch(await fs.readFile(paths.sources, "utf8"), /retained-token/u);
+    assert.doesNotMatch(await fs.readFile(paths.sources, "utf8"), /CLIENT-PRIVATE-KEY/u);
     await assert.rejects(credentials.stageBearer("contains space"), (error) => error.code === "DOCUMENT_INVALID");
 
     const hostile = path.join(paths.credentials, "00000000-0000-4000-8000-000000000009.json");

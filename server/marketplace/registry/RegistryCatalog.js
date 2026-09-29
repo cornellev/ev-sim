@@ -32,13 +32,15 @@ function sortedCompatibility(value) {
     return compatibility;
 }
 
-export function createEmptyCatalog(registryId, now = () => new Date()) {
+export function createEmptyCatalog(registryId, now = () => new Date(), { releaseAuthority = "publisher-dsse" } = {}) {
     return assertMarketplaceCatalog({
         kind: MARKETPLACE_KINDS.catalog,
         version: MARKETPLACE_SCHEMA_VERSION,
         registryId,
         revision: 1,
         generatedAt: now().toISOString(),
+        releaseAuthority,
+        publishers: [],
         items: [],
         releases: [],
         tracks: [],
@@ -60,17 +62,26 @@ export function projectItemSummary(item, target) {
     });
 }
 
-export function projectReleaseSummary(release, releaseHash, target) {
+export function projectPublisherSummary(publisher, target) {
+    return Object.freeze({
+        publisherId: publisher.publisherId,
+        target: structuredClone(target),
+    });
+}
+
+export function projectReleaseSummary(release, releaseHash, target, { publisherKeyId = null } = {}) {
     return Object.freeze({
         itemId: release.itemId,
         releaseVersion: release.releaseVersion,
         contentKind: release.contentKind,
         publisherId: release.publisherId,
+        ...(publisherKeyId ? { publisherKeyId } : {}),
         licenseExpression: release.licenseExpression,
         artifact: structuredClone(release.artifact),
         compatibility: sortedCompatibility(release.compatibility),
         capabilities: sortedStrings(release.capabilities),
         dependencies: structuredClone(release.dependencies).sort(byKeys("itemId", "releaseVersion", "artifactSha256")),
+        ...(release.executable ? { executable: structuredClone(release.executable) } : {}),
         ...(release.embeddedPlugins ? {
             embeddedPlugins: structuredClone(release.embeddedPlugins).sort(byKeys("pluginId", "packageHash")),
         } : {}),
@@ -81,12 +92,22 @@ export function projectReleaseSummary(release, releaseHash, target) {
 
 export function sortCatalog(catalog) {
     const sorted = structuredClone(catalog);
+    if (sorted.publishers) sorted.publishers.sort(byKeys("publisherId"));
     sorted.items.sort(byKeys("itemId"));
     sorted.releases.sort(byKeys("itemId", "releaseVersion"));
     sorted.tracks.sort(byKeys("itemId", "track"));
     sorted.yanks.sort((left, right) => byKeys("itemId", "releaseVersion", "artifactSha256")(left.release, right.release));
     sorted.advisories.sort(byKeys("advisoryId"));
     return assertMarketplaceCatalog(sorted);
+}
+
+export function upsertCatalogPublisher(catalog, summary) {
+    const next = structuredClone(catalog);
+    next.publishers ??= [];
+    const index = next.publishers.findIndex((entry) => entry.publisherId === summary.publisherId);
+    if (index < 0) next.publishers.push(structuredClone(summary));
+    else next.publishers[index] = structuredClone(summary);
+    return sortCatalog(next);
 }
 
 export function upsertCatalogItem(catalog, summary) {
@@ -110,6 +131,33 @@ export function setCatalogTrack(catalog, itemId, track, releaseVersion) {
     const value = { itemId, track, releaseVersion };
     if (index < 0) next.tracks.push(value);
     else next.tracks[index] = value;
+    return sortCatalog(next);
+}
+
+export function removeCatalogTracksForRelease(catalog, itemId, releaseVersion) {
+    const next = structuredClone(catalog);
+    next.tracks = next.tracks.filter((entry) => entry.itemId !== itemId || entry.releaseVersion !== releaseVersion);
+    return sortCatalog(next);
+}
+
+export function appendCatalogYank(catalog, yank) {
+    const next = structuredClone(catalog);
+    const duplicate = next.yanks.some((entry) => entry.release.itemId === yank.release.itemId
+        && entry.release.releaseVersion === yank.release.releaseVersion
+        && entry.release.artifactSha256 === yank.release.artifactSha256);
+    if (duplicate) throw new TypeError("Catalog release is already yanked.");
+    next.yanks.push(structuredClone(yank));
+    return sortCatalog(next);
+}
+
+export function appendCatalogAdvisory(catalog, summary) {
+    const next = structuredClone(catalog);
+    const duplicate = next.advisories.find((entry) => entry.advisoryId === summary.advisoryId);
+    if (duplicate) {
+        if (duplicate.target.sha256 !== summary.target.sha256) throw new TypeError("Catalog advisory identity is immutable.");
+        return sortCatalog(next);
+    }
+    next.advisories.push(structuredClone(summary));
     return sortCatalog(next);
 }
 

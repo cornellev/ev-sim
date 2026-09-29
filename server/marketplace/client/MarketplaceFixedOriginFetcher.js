@@ -1,5 +1,7 @@
 import { BaseFetcher } from "tuf-js";
 import { DownloadHTTPError } from "tuf-js/dist/error.js";
+import https from "node:https";
+import { Readable } from "node:stream";
 
 import { MARKETPLACE_CLIENT_LIMITS } from "../MarketplaceContract.js";
 import { MARKETPLACE_ERROR_CODES, marketplaceError } from "../MarketplaceErrors.js";
@@ -7,18 +9,52 @@ import { assertSourceUrl } from "../MarketplaceFormats.js";
 import { assertSha256 } from "../MarketplaceFormats.js";
 
 const DISCOVERY_PATH = "/.well-known/cev-sim-marketplace";
-const METADATA_PATH = /^\/tuf\/metadata\/(?:timestamp|[1-9][0-9]*\.(?:root|snapshot|targets|catalog|items|releases|advisories))\.json$/u;
-const TARGET_PATH = /^\/tuf\/targets\/(?:catalog\/[a-f0-9]{64}\.catalog\.json|items\/[a-f0-9]{64}\.[a-z][a-z0-9.-]*\.json|releases\/[a-z][a-z0-9.-]*\/[a-f0-9]{64}\.[0-9A-Za-z.-]+\.json|advisories\/[a-f0-9]{64}\.[a-z][a-z0-9.-]*\.json)$/u;
+const METADATA_PATH = /^\/tuf\/metadata\/(?:timestamp|[1-9][0-9]*\.(?:root|snapshot|targets|catalog|items|publishers|releases|advisories))\.json$/u;
+const TARGET_PATH = /^\/tuf\/targets\/(?:catalog\/[a-f0-9]{64}\.catalog\.json|(?:items|publishers|advisories)\/[a-f0-9]{64}\.[a-z][a-z0-9.-]*\.json|releases\/[a-z][a-z0-9.-]*\/[a-f0-9]{64}\.[0-9A-Za-z.-]+\.json)$/u;
 const NUMBERED_ROOT_PATH = /^\/tuf\/metadata\/([1-9][0-9]*)\.root\.json$/u;
 
 function unavailable(message, cause = null) {
     return marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_UNAVAILABLE, message, { cause });
 }
 
+function tlsFetch(credential) {
+    return (rawUrl, init = {}) => new Promise((resolve, reject) => {
+        const parsed = new URL(rawUrl);
+        if (parsed.protocol !== "https:") {
+            reject(new TypeError("Private CA and client-certificate credentials require HTTPS."));
+            return;
+        }
+        const request = https.request(parsed, {
+            method: init.method ?? "GET",
+            headers: init.headers,
+            signal: init.signal,
+            ca: credential.privateCaCertificates,
+            cert: credential.clientCertificate,
+            key: credential.clientPrivateKey,
+            rejectUnauthorized: true,
+            minVersion: "TLSv1.2",
+        }, (response) => {
+            const headers = new Headers();
+            for (const [name, value] of Object.entries(response.headers)) {
+                if (Array.isArray(value)) value.forEach((entry) => headers.append(name, entry));
+                else if (value !== undefined) headers.set(name, value);
+            }
+            resolve(new Response(Readable.toWeb(response), {
+                status: response.statusCode,
+                statusText: response.statusMessage,
+                headers,
+            }));
+        });
+        request.once("error", reject);
+        request.end();
+    });
+}
+
 export class MarketplaceFixedOriginFetcher extends BaseFetcher {
     constructor({
         baseUrl,
         bearerToken = null,
+        credential = null,
         fetchImpl = globalThis.fetch,
         signal = null,
         allowTuf = false,
@@ -31,8 +67,9 @@ export class MarketplaceFixedOriginFetcher extends BaseFetcher {
         if (typeof fetchImpl !== "function") throw new TypeError("A fetch implementation is required.");
         this.baseUrl = baseUrl;
         this.origin = new URL(baseUrl).origin;
-        this.bearerToken = bearerToken;
-        this.fetchImpl = fetchImpl;
+        this.bearerToken = credential?.token ?? bearerToken;
+        const usesPrivateTls = Boolean(credential?.privateCaCertificates?.length || credential?.clientCertificate);
+        this.fetchImpl = usesPrivateTls ? tlsFetch(credential) : fetchImpl;
         this.signal = signal;
         this.allowTuf = allowTuf;
         this.allowedPaths = new Set(allowedPaths);

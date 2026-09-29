@@ -312,6 +312,7 @@ export class StorageService {
     /** @param {string} [dataDir] Absolute path to the data directory. */
     constructor(dataDir = DEFAULT_DATA_DIR, options = {}) {
         this.dataDir = dataDir;
+        this.marketplaceExecutablePolicy = options.marketplaceExecutablePolicy ?? null;
         this.environmentsDir = path.join(dataDir, "environments");
         this.scriptsDir = path.join(dataDir, "scripts");
         this.runManifestsDir = path.join(dataDir, "run-manifests");
@@ -372,6 +373,14 @@ export class StorageService {
         this.headlessRunBundlesDir = path.join(dataDir, "headless-run-bundles");
         this._headlessQueueWriteChain = Promise.resolve();
         this._headlessAdmissionChain = Promise.resolve();
+    }
+
+    setMarketplaceExecutablePolicy(policy) {
+        if (policy !== null && typeof policy?.authorizePackage !== "function") {
+            throw new TypeError("Marketplace executable policy must authorize package hashes.");
+        }
+        this.marketplaceExecutablePolicy = policy;
+        return this;
     }
 
     get plugins() {
@@ -2205,10 +2214,15 @@ export class StorageService {
 
         const pluginSession = new PluginRunSession({
             moduleSource: resolvedPlugins.length > 0
-                ? new NodePluginModuleSource({ pluginStore: this.plugins })
+                ? new NodePluginModuleSource({
+                    pluginStore: this.plugins,
+                    authorizePackage: this.marketplaceExecutablePolicy?.authorizePackage.bind(this.marketplaceExecutablePolicy),
+                })
                 : null,
             plugins: resolvedPlugins,
             availableCapabilities: PLG03_RUNTIME_CAPABILITIES,
+            authorizePackage: this.marketplaceExecutablePolicy?.authorizePackage.bind(this.marketplaceExecutablePolicy),
+            subscribePolicy: this.marketplaceExecutablePolicy?.subscribe.bind(this.marketplaceExecutablePolicy),
         });
         try {
             await pluginSession.prepareDefinitions(pluginPackages);

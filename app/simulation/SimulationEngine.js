@@ -147,6 +147,8 @@ export class SimulationEngine {
                 const session = new PluginRunSession({
                     moduleSource: pluginModuleSource,
                     plugins: resolvedRun.plugins,
+                    authorizePackage: options.authorizePackage,
+                    subscribePolicy: options.subscribePolicy,
                     availableCapabilities: pluginRuntimeCapabilitiesForRun(resolvedRun, {
                         renderTarget: runtimeOptions.renderTarget ?? "browser",
                         backendSelections: runtimeOptions.backendSelections

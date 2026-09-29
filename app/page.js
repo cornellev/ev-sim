@@ -38,6 +38,7 @@ import {
 } from './ui';
 import { usePerspectiveViewActive } from './3d/camera/perspectiveViewBridge';
 import RevisionNotice from './revision/RevisionNoticeDialog';
+import { MARKETPLACE_RELOAD_REQUIRED_EVENT } from './plugin/browser/BrowserMarketplacePolicy';
 
 export default function Home() {
     return (
@@ -67,6 +68,7 @@ function HomeContent() {
     const [configInitialManifestId, setConfigInitialManifestId] = useState(null);
     const [experimentNavigation, setExperimentNavigation] = useState(null);
     const [marketplaceAvailable, setMarketplaceAvailable] = useState(false);
+    const [marketplaceReloadRequired, setMarketplaceReloadRequired] = useState(null);
     const perspectiveActive = usePerspectiveViewActive();
 
     useEffect(() => {
@@ -96,6 +98,12 @@ function HomeContent() {
                 setMarketplaceAvailable(false);
             });
         return () => controller.abort();
+    }, []);
+
+    useEffect(() => {
+        const receive = (event) => setMarketplaceReloadRequired(event.detail?.packageHashes ?? []);
+        window.addEventListener(MARKETPLACE_RELOAD_REQUIRED_EVENT, receive);
+        return () => window.removeEventListener(MARKETPLACE_RELOAD_REQUIRED_EVENT, receive);
     }, []);
 
     useEffect(() => getExperimentRunController().subscribe((snapshot) => {
@@ -450,6 +458,7 @@ function HomeContent() {
             )
         }
         </div>
+        {marketplaceReloadRequired && <div className="fixed left-1/2 top-4 z-[80] flex max-w-[720px] -translate-x-1/2 items-center gap-3 rounded-[4px] border border-red-300/30 bg-red-950/95 px-4 py-3 text-sm text-red-50 shadow-[0_16px_44px_rgba(0,0,0,0.4)]" role="alert" aria-live="assertive"><span><strong>Reload required.</strong> Marketplace policy now blocks plugin code used by this open editor. Existing evaluation was not unloaded, but further activation and reset are refused.</span><button type="button" className="rounded-[3px] border border-red-100/30 px-3 py-1 font-semibold hover:bg-red-100/10 focus:outline-none focus:ring-2 focus:ring-red-100" onClick={() => window.location.reload()}>Reload now</button></div>}
         <DesktopRequired />
         <RevisionNotice />
         </div>

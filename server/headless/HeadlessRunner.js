@@ -79,14 +79,21 @@ export class HeadlessRunner {
         sessionFactory = (options) => new HeadlessSession(options),
         hostConfig = null,
         limits = null,
+        authorizePackage = null,
+        subscribePolicy = null,
     } = {}) {
         this.pluginModuleSource = new NodePluginModuleSource({
             runtimeRoot: path.join(os.tmpdir(), "cev-sim-plugin-runtime", String(process.pid)),
+            authorizePackage,
         });
+        this.authorizePackage = authorizePackage;
+        this.subscribePolicy = subscribePolicy;
         this.hostConfig = hostConfig;
         this.limits = limits;
         this.episodeFactory = episodeFactory ?? ((options = {}) => new HeadlessEpisode({
             pluginModuleSource: this.pluginModuleSource,
+            authorizePackage: this.authorizePackage,
+            subscribePolicy: this.subscribePolicy,
             ...options,
         }));
         this.artifactSinkFactory = artifactSinkFactory;

@@ -1,10 +1,16 @@
+import { authorizeBrowserPackage } from "./BrowserMarketplacePolicy.js";
+
 function encodedPath(path) {
     return path.split("/").map(encodeURIComponent).join("/");
 }
 
 export class BrowserPluginModuleSource {
-    constructor({ baseUrl = "/api/storage/plugins" } = {}) {
+    constructor({
+        baseUrl = "/api/storage/plugins",
+        authorizePackage = typeof window === "undefined" ? null : authorizeBrowserPackage,
+    } = {}) {
         this.baseUrl = baseUrl.replace(/\/$/, "");
+        this.authorizePackage = authorizePackage;
     }
 
     runtimeUrl(verifiedPackage) {
@@ -27,12 +33,14 @@ export class BrowserPluginModuleSource {
     }
 
     async importRuntime(verifiedPackage) {
+        if (this.authorizePackage) await this.authorizePackage(verifiedPackage.resource.packageHash);
         return import(/* webpackIgnore: true */ /* turbopackIgnore: true */ this.runtimeUrl(verifiedPackage));
     }
 
     async importUi(verifiedPackage) {
         const url = this.uiUrl(verifiedPackage);
         if (!url) return null;
+        if (this.authorizePackage) await this.authorizePackage(verifiedPackage.resource.packageHash);
         return import(/* webpackIgnore: true */ /* turbopackIgnore: true */ url);
     }
 }

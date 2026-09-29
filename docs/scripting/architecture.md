@@ -73,6 +73,17 @@ programs, repeat programs, and `ScenarioRuntime` all receive the session
 registry explicitly. The default registry remains plugin-disabled and is never
 mutated by managed preparation.
 
+When Marketplace is enabled, server authoring and run resolution pass the
+nonsemantic `MarketplaceExecutablePolicy.authorizePackage()` callback through
+`createAuthoringRegistry`, `PluginLoader`, and `NodePluginModuleSource`.
+Browser authoring and sensor sessions use the local Marketplace authorization
+route, and browser module/file delivery checks again before import. The check
+uses canonical `packageHash` provenance and occurs before plugin code runs. A
+new block marks an open session reload-required; current evaluation is not
+forcibly unloaded, while reset or new admission requires revalidation. Policy
+and provenance never enter graph, compiled-artifact, binding, run, simulation,
+or episode hashes.
+
 ## Compiled Runtime
 
 `Compiler.js` walks backward from program output-role blocks, or from the current head if there are no output-role blocks. It validates reachable nodes (unbound `generic` is only an error when reachable), snapshots resolved port types, emits frozen node definitions with `version: 3`, and records success transitions plus a reverse transition table. Artifact ports never contain `generic`.

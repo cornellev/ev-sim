@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cev-sim.dev/schemas/marketplace/v1/bootstrap.schema.json",
+  "type": "object",
+  "required": ["kind", "version", "registryUrl", "registryId", "trustedRoot", "trustedRootSha256", "privateCaCertificates"],
+  "properties": {
+    "kind": { "const": "cev-sim.marketplace-bootstrap" },
+    "version": { "const": 1 },
+    "registryUrl": { "type": "string", "format": "source-url" },
+    "registryId": { "$ref": "common.schema.json#/$defs/uuid" },
+    "trustedRoot": { "type": "string", "minLength": 1, "maxLength": 1048576 },
+    "trustedRootSha256": { "$ref": "common.schema.json#/$defs/sha256" },
+    "privateCaCertificates": {
+      "type": "array",
+      "maxItems": 16,
+      "items": { "type": "string", "minLength": 1, "maxLength": 1048576 }
+    }
+  },
+  "additionalProperties": false
+}

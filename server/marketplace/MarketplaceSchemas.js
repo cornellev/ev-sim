@@ -2,11 +2,13 @@ import { readFileSync } from "node:fs";
 
 import Ajv2020 from "ajv/dist/2020.js";
 
-import { MARKETPLACE_KINDS } from "./MarketplaceContract.js";
+import { MARKETPLACE_ALL_KINDS } from "./MarketplaceContract.js";
 import { registerMarketplaceFormats } from "./MarketplaceFormats.js";
 
 const SCHEMA_NAMES = Object.freeze([
     "common",
+    "publisher",
+    "bootstrap",
     "item",
     "release",
     "catalog",
@@ -37,14 +39,16 @@ const ajv = registerMarketplaceFormats(new Ajv2020({
 for (const schema of Object.values(MARKETPLACE_SCHEMAS)) ajv.addSchema(schema);
 
 const SCHEMA_BY_KIND = Object.freeze({
-    [MARKETPLACE_KINDS.item]: "item",
-    [MARKETPLACE_KINDS.release]: "release",
-    [MARKETPLACE_KINDS.catalog]: "catalog",
-    [MARKETPLACE_KINDS.advisory]: "advisory",
-    [MARKETPLACE_KINDS.collection]: "collection",
-    [MARKETPLACE_KINDS.sources]: "sources",
-    [MARKETPLACE_KINDS.installed]: "installed",
-    [MARKETPLACE_KINDS.installReceipt]: "install-receipt",
+    [MARKETPLACE_ALL_KINDS.publisher]: "publisher",
+    [MARKETPLACE_ALL_KINDS.bootstrap]: "bootstrap",
+    [MARKETPLACE_ALL_KINDS.item]: "item",
+    [MARKETPLACE_ALL_KINDS.release]: "release",
+    [MARKETPLACE_ALL_KINDS.catalog]: "catalog",
+    [MARKETPLACE_ALL_KINDS.advisory]: "advisory",
+    [MARKETPLACE_ALL_KINDS.collection]: "collection",
+    [MARKETPLACE_ALL_KINDS.sources]: "sources",
+    [MARKETPLACE_ALL_KINDS.installed]: "installed",
+    [MARKETPLACE_ALL_KINDS.installReceipt]: "install-receipt",
 });
 
 export function marketplaceSchemaName(kind) {

@@ -21,8 +21,10 @@ import {
     registryPaths,
     resolveRegistryPath,
     tufCatalogTargetPath,
+    tufAdvisoryTargetPath,
     tufConsistentTargetPath,
     tufItemTargetPath,
+    tufPublisherTargetPath,
     tufReleaseTargetPath,
 } from "./RegistryLayout.js";
 import { TUF_ROLES, hashTufBytes } from "./TufMetadata.js";
@@ -37,6 +39,7 @@ function recovery(message, pathName = null) {
 function roleForTarget(targetPath) {
     if (targetPath === tufCatalogTargetPath()) return TUF_ROLES.CATALOG;
     if (targetPath.startsWith("items/")) return TUF_ROLES.ITEMS;
+    if (targetPath.startsWith("publishers/")) return TUF_ROLES.PUBLISHERS;
     if (targetPath.startsWith("releases/")) return TUF_ROLES.RELEASES;
     if (targetPath.startsWith("advisories/")) return TUF_ROLES.ADVISORIES;
     return null;
@@ -50,6 +53,11 @@ function logicalPathForConsistentTarget(relativePath) {
         try { assertMarketplaceId(match[2], "itemId"); } catch { return null; }
         return { logicalPath: tufItemTargetPath(match[2]), sha256: match[1] };
     }
+    match = /^publishers\/([a-f0-9]{64})\.([a-z0-9.-]+)\.json$/u.exec(relativePath);
+    if (match) {
+        try { assertMarketplaceId(match[2], "publisherId"); } catch { return null; }
+        return { logicalPath: tufPublisherTargetPath(match[2]), sha256: match[1] };
+    }
     match = /^releases\/([a-z0-9.-]+)\/([a-f0-9]{64})\.([0-9A-Za-z.-]+)\.json$/u.exec(relativePath);
     if (match) {
         try { assertMarketplaceId(match[1], "itemId"); assertReleaseVersion(match[3], "releaseVersion"); } catch { return null; }
@@ -58,17 +66,18 @@ function logicalPathForConsistentTarget(relativePath) {
     match = /^advisories\/([a-f0-9]{64})\.([a-z0-9.-]+)\.json$/u.exec(relativePath);
     if (match) {
         try { assertMarketplaceId(match[2], "advisoryId"); } catch { return null; }
-        return { logicalPath: `advisories/${match[2]}.json`, sha256: match[1] };
+        return { logicalPath: tufAdvisoryTargetPath(match[2]), sha256: match[1] };
     }
     return null;
 }
 
 export class MarketplaceRegistryReader {
-    constructor(paths, registry, tufRepository) {
+    constructor(paths, registry, tufRepository, { readAuthentication = false } = {}) {
         this.paths = paths;
         this.registry = registry;
         this.tufRepository = tufRepository;
         this.verifiedTimestampEtag = null;
+        this.readAuthentication = readAuthentication;
     }
 
     static async open(root, options = {}) {
@@ -86,7 +95,7 @@ export class MarketplaceRegistryReader {
         if (!Buffer.from(registryBytes).equals(Buffer.from(registryDocumentBytes(registry, assertRegistryDocument)))) {
             throw recovery("registry.json is not canonical.", paths.registry);
         }
-        return new MarketplaceRegistryReader(paths, registry, new TufRepository(paths, registry, options));
+        return new MarketplaceRegistryReader(paths, registry, new TufRepository(paths, registry, options), options);
     }
 
     async verify(options = {}) {
@@ -138,6 +147,14 @@ export class MarketplaceRegistryReader {
         return this.readPublishedTarget(tufReleaseTargetPath(itemId, releaseVersion));
     }
 
+    async readPublishedPublisher(publisherId) {
+        return this.readPublishedTarget(tufPublisherTargetPath(publisherId));
+    }
+
+    async readPublishedAdvisory(advisoryId) {
+        return this.readPublishedTarget(tufAdvisoryTargetPath(advisoryId));
+    }
+
     async openBlob(digest) {
         const recordFile = resolveRegistryPath(this.paths, blobRecordPath(digest));
         const recordStat = await fs.lstat(recordFile).catch((error) => error.code === "ENOENT" ? null : Promise.reject(error));
@@ -165,7 +182,7 @@ export class MarketplaceRegistryReader {
     }
 
     async readTufMetadata(filename) {
-        if (!/^(?:timestamp|[1-9][0-9]*\.(?:root|targets|catalog|items|releases|advisories|snapshot))\.json$/u.test(filename)) return null;
+        if (!/^(?:timestamp|[1-9][0-9]*\.(?:root|targets|catalog|items|publishers|releases|advisories|snapshot))\.json$/u.test(filename)) return null;
         if (filename !== "timestamp.json") {
             const [rawVersion, role] = filename.split(".");
             const version = Number(rawVersion);
@@ -227,7 +244,7 @@ export class MarketplaceRegistryReader {
                 bootstrapRootPath: `/tuf/metadata/${root.version}.root.json`,
                 bootstrapRootSha256: rootSha256,
             },
-            authentication: { required: false, schemes: [] },
+            authentication: this.readAuthentication ? { required: true, schemes: ["bearer"] } : { required: false, schemes: [] },
             limits: {
                 ...MARKETPLACE_LIMITS,
                 maxRangeBytes: REGISTRY_HTTP_MAX_RANGE_BYTES,

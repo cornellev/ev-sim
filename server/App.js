@@ -92,6 +92,7 @@ app.prepare().then(async () => {
                 }),
             }),
         });
+        storageService.setMarketplaceExecutablePolicy(marketplaceService.executablePolicy);
         server.locals.marketplaceService = marketplaceService;
     }
     const cosmosClipJob = new CosmosClipJob({

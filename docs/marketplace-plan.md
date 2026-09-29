@@ -21,8 +21,8 @@ hosted private-LAN registry. It is not headless PR 13 and does not extend the
 | MKT-10: portable environments | Implemented; acceptance pending | Core local gates pass; browser remainder waived for this run; supported-Node and hosted CI evidence pending | Unmerged |
 | MKT-11: complete editable run templates | Implemented; acceptance pending | Full local and serial Marketplace gates pass; supported-Node and hosted CI evidence pending | Unmerged |
 | MKT-12: collections | Implemented; acceptance pending | Focused contract, graph, ownership, registry, integration, API, job, and recovery suites pass; full gates pending | Unmerged |
-| MKT-13: publishers, authentication, secure LAN | Not started | Not run | Unmerged |
-| MKT-14: LAN discovery, updates, advisories | Not started | Not run | Unmerged |
+| MKT-13: updates, tracks, yanks, and advisory UX | Implemented; acceptance pending | Local focused, full repository, fixtures, release, and serial UI/a11y gates pass; supported-Node build/distribution and hosted CI pending | Unmerged |
+| MKT-14: LAN discovery and remaining operations | Superseded in part by MKT-13 | Not run | Unmerged |
 | MKT-15: scale, recovery, and operations | Not started | Not run | Unmerged |
 | MKT-16: candidate acceptance and release | Not started | Not run | Unmerged |
 
@@ -691,24 +691,118 @@ Environment Editor/workspace timeout failures and a Marketplace timeout under
 contention; the serial Marketplace keyboard/Axe case passes. Hosted CI and
 merge evidence also remain open, so MKT-12 is not marked verified or merged.
 
-### MKT-13 — Publisher identity, authenticated publishing, and secure LAN
+### MKT-13 — Updates, tracks, yanks, and advisory UX
 
-Add Ed25519 key generation/DSSE signing, publisher registration/revocation,
-hashed scoped tokens, authenticated upload/finalization, TLS and optional mTLS.
-Permit non-loopback only with TLS and read authentication; retain an explicit
-unsafe-development override.
+The attached roadmap supersedes the former split between MKT-13 publisher/LAN
+prerequisites and MKT-14 update policy. MKT-13 now closes the missing publisher,
+authentication, TLS, and execution-policy prerequisites and implements manual,
+side-by-side updates. Selection identity is always
+`sourceId + registryId + itemId + exact release`; no registry or source can
+redirect an installed item to a different identity.
 
-Gate: signatures bind exact release/artifact bytes; revoked publishers and
-wrong scopes fail; tokens are constant-time checked and never logged.
+Unsigned pre-MKT-13 catalogs have no `releaseAuthority` marker and fail with
+`UPGRADE_REQUIRED`. Operators provision a new registry UUID, publisher, and
+trust root and republish signed envelopes. Existing installed ledgers,
+receipts, authoring records, manual plugin ownership, and CAS bytes are not
+deleted or rewritten. `development-unsigned` exists only as an explicit
+in-process fixture option and is not exposed by the production CLI.
 
-### MKT-14 — LAN discovery, updates, yanks, and advisories
+## MKT-13 work packages
 
-Advertise `_cev-market._tcp`, show discoveries only as untrusted candidates,
-detect signed stable/beta updates, install new exact releases, and enforce
-signed yanks/advisories/blocks without automatic update or activation.
+- [x] WP-00: freeze commit `8f43c02`, the 114-test Marketplace baseline,
+  existing fixture/hash authorities, and the feature-flag boundary.
+- [x] WP-01: add publisher/bootstrap schemas, Ed25519 key identity, canonical
+  DSSE PAE/sign/parse/verify, signed direct-plugin identity, advisory
+  `packageHash`/`clear`/`supersedes`, and publisher catalog targets.
+- [x] WP-02: add digest-only bearer storage, constant-time verification,
+  exact scopes/namespaces/revocation, HTTPS/mTLS listener support, private CA
+  and client-certificate transport, and secure non-loopback bind rules.
+- [x] WP-03: add publisher/key/token administration, authenticated blob/item/
+  envelope admission, immutable envelope targets, publisher TUF delegation,
+  and key/sign/token CLI operations.
+- [x] WP-04: add atomic track moves, immutable yanks, advisory admission,
+  publisher compromise response, affected executable package enumeration, and
+  timestamp-last TUF publication.
+- [x] WP-05: verify publisher and advisory target sets client-side; persist
+  rollback floors, immutable advisories, yanks, approvals, and overrides before
+  cache visibility; retain policy after source removal.
+- [x] WP-06: persist canonical package provenance before installed visibility,
+  evaluate release/package policy, project installed status at read time, and
+  keep overrides local and nonsemantic.
+- [x] WP-07: authorize after package verification and before module import;
+  enforce again in Node/browser module sources, browser file delivery,
+  authoring, run resolution, and direct headless option plumbing; active
+  sessions retain admission and refuse reset after a policy revision until
+  explicit revalidation.
+- [x] WP-08: discover updates only within exact source/registry/item identity;
+  pin installed receipts/revisions and candidate track/snapshot; reopen the old
+  artifact; compare capabilities, executable identities, compatibility,
+  rights, and mappings; hash the comparison into the final plan.
+- [x] WP-09: install updates through the existing journal as a new exact direct
+  owner, preserve the old release and every receipt/mapping/session, hash
+  `allowYanked`, and revalidate source, policy, installed revision, plan, and
+  host profile before commit.
+- [x] WP-10: add Updates and Security tabs, update comparison, publisher/key
+  status, yanked acknowledgement, blocked-release suppression, retained
+  advisories, approvals, overrides, and installed `yanked|blocked` projection.
+- [x] WP-11: reject unmarked unsigned state and add focused hostile coverage
+  for DSSE mutation, scopes/namespaces/revocation, retired keys, rollback,
+  offline block retention, exact update identity, and pre-import denial.
+- [ ] WP-12: complete supported-Node build/distribution, hosted-CI, and merge
+  evidence. Local focused, full repository, fixture, release, and serial
+  browser/a11y evidence is below.
 
-Gate: discovery never grants trust; advisory state is rollback protected;
-updates preserve old receipts and local content.
+Gate: signatures bind exact canonical release and artifact identities; inactive
+keys cannot admit new releases while historical verification remains possible;
+rollback-protected package blocks survive restart/offline/source removal;
+updates are manual and result in either only the old exact release or both old
+and new exact releases.
+
+### MKT-13 local evidence
+
+Implementation began on 2026-09-29 from commit `8f43c02`. The pre-change
+Marketplace gate passed 114/114. The baseline installed/receipt schemas,
+canonical Marketplace fixture, compatibility fixture, and headless
+characterization remain the MKT-12 frozen values recorded above. The feature
+continues to be constructed and mounted only behind
+`CEV_SIM_MARKETPLACE_ENABLED`.
+
+This host is macOS arm64 with Node `v22.14.0` and npm `11.4.1`, below the
+required Node `22.22.2` acceptance patch. Current local evidence:
+
+- `tests/marketplace-mkt13.test.js`: 7/7 passed, covering DSSE tampering,
+  digest-only scoped tokens, signed admission/retirement/yank, offline policy,
+  authorized clear, rollback, exact update identity, and comparison hashing.
+- focused registry, TUF, trust-client, source-store, contract, and plugin-loader
+  suites passed; authorization failure occurs before runtime import.
+- `npm run test:marketplace`: 122/122 passed.
+- `npm test`: 1,860 passed, 6 skipped, and zero failed out of 1,866 tests.
+- `npm run lint`: zero errors and the pre-existing `MapSurface.js`
+  `assetEpoch` hook warning.
+- `npm run fixtures:headless` and `npm run fixtures:environment-editor`
+  passed without a committed fixture delta. The headless characterization SHA-256
+  remains `60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`.
+- `npm run release:check` and `npm run dist:headless` passed. The staged npm,
+  wheel, and sdist SHA-256 values were respectively
+  `8892ccd574a5e4541aa3e087849eab8f75c23cc2f0ee137cc639e2e6344237f5`,
+  `706e91522bf6a47debec9aee80181bce49720086df25a15269fc7eaaf42a235a`,
+  and `59cffac85dd01b0395b3a50c087bb5a1668bf21dd697c12f04b71712b20b541e`.
+- `npx playwright test tests/ui/marketplace.spec.js --workers=1` passed 6/6;
+  a final focused MKT-13 plus Axe/reload-banner run passed 2/2.
+- `git diff --check` passed.
+
+`npm run build` remains unverified because this host's sandbox denies the
+Turbopack worker process/port operation. `npm run dist:verify` fails closed at
+the clean npm install with `EBADENGINE`: the package requires Node
+`>=22.22.2 <23`, while this host supplies Node `22.14.0`. Supported-Node build
+and distribution verification, hosted CI, and merge evidence remain open; the
+milestone is implemented but not accepted or merged.
+
+### MKT-14 — LAN discovery and remaining operations
+
+The previous MKT-14 update/yank/advisory scope moved into MKT-13. Authenticated
+DNS-SD discovery, if retained, remains a separate future milestone and can only
+produce untrusted candidates; it cannot add a source or grant trust.
 
 ### MKT-15 — Scale, recovery, observability, and operations
 
@@ -907,8 +1001,9 @@ Final local evidence on 2026-09-27:
 - `git diff --check`: passed.
 
 Hosted CI has no run or link because the implementation is not committed or
-pushed. MKT-04 remains unmerged until that evidence exists. MKT-04 intentionally
-keeps publisher DSSE in MKT-13 and advisory policy in MKT-14. No PLG, ED, VIS,
+pushed. MKT-04 remains unmerged until that evidence exists. At that acceptance
+point MKT-04 deferred publisher DSSE and advisory policy; the 2026-09-29
+replacement decision assigns both to MKT-13. No PLG, ED, VIS,
 headless, or run-manifest contract or acceptance evidence changed, so no other
 roadmap was updated.
 
@@ -1244,6 +1339,30 @@ Local evidence on 2026-09-28:
 
 ## Decision log
 
+### 2026-09-29 — Replace the old MKT-13/MKT-14 split and fail closed on unsigned state
+
+The attached roadmap is the implementation authority: MKT-13 owns manual
+side-by-side updates, tracks, yanks, advisory policy and UX, plus the publisher,
+authentication, TLS, and executable-policy prerequisites missing from the
+current branch. Automatic update, activation, migration, cleanup, and
+cross-registry selection remain prohibited.
+
+Catalogs created for publisher operation declare
+`releaseAuthority: "publisher-dsse"`. A catalog with no authority marker is
+pre-MKT-13 state and returns `UPGRADE_REQUIRED`; TUF-only authenticity is not
+grandfathered into publisher or execution trust. Operators create a new signed
+registry identity and republish. Old installed entries, receipts, authoring
+records, plugin/manual ownership, and CAS bytes remain untouched. Retired and
+revoked public keys remain in immutable publisher history for signature
+verification, while only active keys admit new envelopes.
+
+Update selection and commit bind the configured source UUID, registry UUID,
+item ID, old exact release/receipt set, signed track target, policy revision,
+host profile, and final comparison hash. Commit only adds the candidate as a
+new exact direct owner. Policy/provenance state is local operational data and
+does not enter any simulator, world, plugin-package, run, episode, trajectory,
+artifact, environment, installed, or receipt hash authority.
+
 ### 2026-09-29 — Keep collection ownership private and publish installed visibility last
 
 A collection artifact duplicates its direct ordered presentation members in
@@ -1373,8 +1492,8 @@ MKT-07 supplies coordinator infrastructure only. Plugin, vehicle,
 run-template, and run-package production adapters still expose no lifecycle
 operations; MKT-08/09 own them. Installed membership, plans, jobs, receipts,
 artifact records, and quarantine remain operational and do not enter any
-simulator, environment, package, run, or episode hash. Publisher DSSE remains
-MKT-13, advisory ingestion remains MKT-14, and resumable downloads, quotas,
+simulator, environment, package, run, or episode hash. Publisher DSSE and
+advisory ingestion are now MKT-13; resumable downloads, quotas,
 and garbage collection remain MKT-15.
 
 ### 2026-09-27 — Keep MKT-06 reads reverified, read-only, and source-specific
@@ -1422,8 +1541,9 @@ MKT-04 signs and distributes the existing canonical release JSON bytes as TUF
 targets. It does not introduce a partial publisher envelope: Ed25519 DSSE,
 publisher authorization, authentication, and secure LAN hosting remain one
 coherent MKT-13 boundary. The terminating advisory delegation is initialized,
-signed, and verifiable but empty; advisory admission, yank/block policy, and
-client enforcement remain MKT-14.
+signed, and verifiable but empty. The 2026-09-29 replacement decision later
+assigns advisory admission, yank/block policy, and client enforcement to
+MKT-13.
 
 `catalog/current.json` remains the internal authoring switch established by
 MKT-03. Public readers resolve only through the atomic TUF `timestamp.json`

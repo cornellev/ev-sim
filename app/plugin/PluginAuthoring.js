@@ -53,6 +53,7 @@ export async function createAuthoringRegistry({
     moduleSource,
     simulatorVersion = "0.1.0",
     availableCapabilities = PLUGIN_CAPABILITIES,
+    authorizePackage = null,
 } = {}) {
     if (typeof getPackage !== "function") throw new Error("createAuthoringRegistry requires getPackage.");
     if (!moduleSource || typeof moduleSource.importRuntime !== "function") {
@@ -65,7 +66,7 @@ export async function createAuthoringRegistry({
         simulatorVersion,
         availableCapabilities: [...availableCapabilities],
     });
-    const loader = new PluginLoader({ moduleSource, host });
+    const loader = new PluginLoader({ moduleSource, host, authorizePackage });
     const unresolvedTypes = [];
     const errors = [];
     for (const lock of normalizedLocks) {

@@ -28,6 +28,12 @@
             "required": ["artifactSha256"],
             "properties": { "artifactSha256": { "$ref": "common.schema.json#/$defs/sha256" } },
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": ["packageHash"],
+            "properties": { "packageHash": { "$ref": "common.schema.json#/$defs/sha256" } },
+            "additionalProperties": false
           }
         ]
       }
@@ -35,7 +41,12 @@
     "severity": { "enum": ["low", "moderate", "high", "critical"] },
     "rationale": { "type": "string", "minLength": 1, "maxLength": 16384 },
     "remediation": { "type": "string", "minLength": 1, "maxLength": 16384 },
-    "action": { "enum": ["warn", "yank", "block"] }
+    "action": { "enum": ["warn", "yank", "block", "clear"] },
+    "supersedes": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "common.schema.json#/$defs/marketplaceId" }
+    }
   },
   "additionalProperties": false
 }

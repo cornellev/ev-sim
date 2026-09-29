@@ -3,6 +3,7 @@ import semver from "semver";
 import { compareUtf8 } from "../../app/math/compareUtf8.js";
 
 import {
+    MARKETPLACE_AUTHORITY_KINDS,
     MARKETPLACE_KINDS,
     MARKETPLACE_LIMITS,
     MARKETPLACE_SCHEMA_VERSION,
@@ -58,6 +59,9 @@ function assertRelease(value, path = "$") {
     if (value.contentKind !== "plugin" && value.capabilities.length > 0) {
         invalid(`${path}.capabilities`, "only plugin releases may declare plugin capabilities");
     }
+    if (value.executable && value.contentKind !== "plugin") {
+        invalid(`${path}.executable`, "only plugin releases may declare a direct executable identity");
+    }
     unique(value.dependencies, releaseKey, `${path}.dependencies`, "dependency release");
     if (value.dependencies.some((entry) => releaseKey(entry) === releaseKey(value))) {
         invalid(`${path}.dependencies`, "release cannot depend on itself");
@@ -78,6 +82,8 @@ function assertRelease(value, path = "$") {
 }
 
 function assertCatalog(value) {
+    const publishers = value.publishers ?? [];
+    unique(publishers, (entry) => entry.publisherId, "$.publishers", "publisher ID");
     unique(value.items, (entry) => entry.itemId, "$.items", "item ID");
     unique(value.releases, releaseKey, "$.releases", "release tuple");
     const items = new Map(value.items.map((entry) => [entry.itemId, entry]));
@@ -111,6 +117,12 @@ function assertCatalog(value) {
 
 function assertSemantic(value) {
     switch (value.kind) {
+    case MARKETPLACE_AUTHORITY_KINDS.publisher:
+        unique(value.namespaces, (entry) => entry, "$.namespaces", "publisher namespace");
+        unique(value.keys, (entry) => entry.keyId, "$.keys", "publisher key ID");
+        return;
+    case MARKETPLACE_AUTHORITY_KINDS.bootstrap:
+        return;
     case MARKETPLACE_KINDS.item:
         return;
     case MARKETPLACE_KINDS.release:
@@ -122,7 +134,13 @@ function assertSemantic(value) {
     case MARKETPLACE_KINDS.advisory:
         unique(value.affected, (entry) => entry.itemId
             ? `release:${releaseKey(entry)}`
-            : `artifact:${entry.artifactSha256}`, "$.affected", "affected reference");
+            : entry.artifactSha256
+                ? `artifact:${entry.artifactSha256}`
+                : `package:${entry.packageHash}`, "$.affected", "affected reference");
+        unique(value.supersedes ?? [], (entry) => entry, "$.supersedes", "superseded advisory");
+        if (value.action === "clear" && !(value.supersedes?.length > 0)) {
+            invalid("$.supersedes", "clear advisories must supersede at least one advisory");
+        }
         return;
     case MARKETPLACE_KINDS.collection:
         unique(value.members, (entry) => exactReleaseKey(entry.release), "$.members", "collection release");
@@ -201,6 +219,8 @@ function expectedKind(value, kind) {
 }
 
 export const assertMarketplaceItem = (value) => expectedKind(value, MARKETPLACE_KINDS.item);
+export const assertMarketplacePublisher = (value) => expectedKind(value, MARKETPLACE_AUTHORITY_KINDS.publisher);
+export const assertMarketplaceBootstrap = (value) => expectedKind(value, MARKETPLACE_AUTHORITY_KINDS.bootstrap);
 export const assertMarketplaceRelease = (value) => expectedKind(value, MARKETPLACE_KINDS.release);
 export const assertMarketplaceCatalog = (value) => expectedKind(value, MARKETPLACE_KINDS.catalog);
 export const assertMarketplaceAdvisory = (value) => expectedKind(value, MARKETPLACE_KINDS.advisory);

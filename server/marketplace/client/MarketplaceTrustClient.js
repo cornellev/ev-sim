@@ -8,7 +8,9 @@ import { Updater } from "tuf-js";
 import { MARKETPLACE_CLIENT_LIMITS } from "../MarketplaceContract.js";
 import {
     assertMarketplaceCatalog,
+    assertMarketplaceAdvisory,
     assertMarketplaceItem,
+    assertMarketplacePublisher,
     assertMarketplaceRelease,
     hashMarketplaceRelease,
     marketplaceDocumentBytes,
@@ -17,7 +19,8 @@ import {
 import { MARKETPLACE_ERROR_CODES, MarketplaceError, marketplaceError } from "../MarketplaceErrors.js";
 import { assertSourceUrl } from "../MarketplaceFormats.js";
 import { hashMarketplaceBytes } from "../MarketplaceJson.js";
-import { projectItemSummary, projectReleaseSummary } from "../registry/RegistryCatalog.js";
+import { verifyMarketplaceReleaseEnvelope } from "../PublisherSignatures.js";
+import { projectItemSummary, projectPublisherSummary, projectReleaseSummary } from "../registry/RegistryCatalog.js";
 import {
     assertRegistryDiscoveryDocument,
     hashRegistryBytes,
@@ -32,7 +35,9 @@ import {
 } from "../registry/RegistryFs.js";
 import {
     tufCatalogTargetPath,
+    tufAdvisoryTargetPath,
     tufItemTargetPath,
+    tufPublisherTargetPath,
     tufReleaseTargetPath,
 } from "../registry/RegistryLayout.js";
 import {
@@ -136,6 +141,16 @@ async function readTarget(snapshotRoot, target, assertion, label) {
     return { bytes, document: canonicalDocument(bytes, assertion, label), descriptor };
 }
 
+async function readRawTarget(snapshotRoot, target, label) {
+    const descriptor = targetDescriptor(target);
+    const filePath = path.join(snapshotRoot, "targets", ...descriptor.path.split("/"));
+    const bytes = await readRegularBytes(filePath, { maxBytes: TUF_METADATA_MAX_BYTES });
+    if (bytes.byteLength !== descriptor.sizeBytes || hashMarketplaceBytes(bytes) !== descriptor.sha256) {
+        throw signature(`${label} does not match its TUF target descriptor.`);
+    }
+    return { bytes, descriptor };
+}
+
 function assertNotExpired(entries, now) {
     const expired = entries.some((entry) => new Date(entry.metadata.signed.expires).getTime() <= now.getTime());
     return expired;
@@ -196,9 +211,6 @@ export async function verifyClientSnapshot(snapshotRoot, source, {
         verifyTufDelegate(role === TUF_ROLES.TARGETS ? trusted.metadata : roles.targets.metadata, role, roles[role].metadata);
     }
     verifyTufDelegationContract(roles.targets.metadata);
-    if (Object.keys(roles.advisories.metadata.signed.targets).length !== 0) {
-        throw signature("Marketplace advisory delegation must be empty.");
-    }
 
     const catalogTargets = roles.catalog.metadata.signed.targets;
     if (!sameStringSet(Object.keys(catalogTargets), [tufCatalogTargetPath()])) {
@@ -207,13 +219,35 @@ export async function verifyClientSnapshot(snapshotRoot, source, {
     const catalogEntry = await readTarget(snapshotRoot, catalogTargets[tufCatalogTargetPath()], assertMarketplaceCatalog, "Marketplace catalog");
     const catalog = catalogEntry.document;
     if (catalog.registryId !== source.registryId) throw signature("Marketplace catalog registry UUID is invalid.");
+    if (!catalog.releaseAuthority) {
+        throw marketplaceError(MARKETPLACE_ERROR_CODES.UPGRADE_REQUIRED, "Marketplace source uses unsigned catalog state; provision and trust a new signed registry identity.");
+    }
+    const expectedPublishers = (catalog.publishers ?? []).map((entry) => tufPublisherTargetPath(entry.publisherId));
     const expectedItems = catalog.items.map((entry) => tufItemTargetPath(entry.itemId));
     const expectedReleases = catalog.releases.map((entry) => tufReleaseTargetPath(entry.itemId, entry.releaseVersion));
-    if (!sameStringSet(Object.keys(roles.items.metadata.signed.targets), expectedItems)
-        || !sameStringSet(Object.keys(roles.releases.metadata.signed.targets), expectedReleases)) {
-        throw signature("TUF item or release target set does not exactly match the catalog.");
+    const expectedAdvisories = catalog.advisories.map((entry) => tufAdvisoryTargetPath(entry.advisoryId));
+    if (!sameStringSet(Object.keys(roles.publishers.metadata.signed.targets), expectedPublishers)
+        || !sameStringSet(Object.keys(roles.items.metadata.signed.targets), expectedItems)
+        || !sameStringSet(Object.keys(roles.releases.metadata.signed.targets), expectedReleases)
+        || !sameStringSet(Object.keys(roles.advisories.metadata.signed.targets), expectedAdvisories)) {
+        throw signature("TUF publisher, item, release, or advisory target set does not exactly match the catalog.");
     }
 
+    const publishers = [];
+    const publisherDocuments = [];
+    const publishersById = new Map();
+    for (const summary of catalog.publishers ?? []) {
+        const logicalPath = tufPublisherTargetPath(summary.publisherId);
+        const entry = await readTarget(snapshotRoot, roles.publishers.metadata.signed.targets[logicalPath], assertMarketplacePublisher, `Marketplace publisher ${summary.publisherId}`);
+        if (entry.document.publisherId !== summary.publisherId
+            || !isDeepStrictEqual(projectPublisherSummary(entry.document, summary.target), summary)
+            || entry.descriptor.sha256 !== summary.target.sha256 || entry.descriptor.sizeBytes !== summary.target.sizeBytes) {
+            throw signature(`Marketplace publisher ${summary.publisherId} does not match its catalog summary.`);
+        }
+        publishers.push({ ...entry.descriptor, publisherId: summary.publisherId });
+        publisherDocuments.push(entry.document);
+        publishersById.set(summary.publisherId, entry.document);
+    }
     const items = [];
     const itemDocuments = [];
     for (const summary of catalog.items) {
@@ -230,21 +264,48 @@ export async function verifyClientSnapshot(snapshotRoot, source, {
     const releaseDocuments = [];
     for (const summary of catalog.releases) {
         const logicalPath = tufReleaseTargetPath(summary.itemId, summary.releaseVersion);
-        const entry = await readTarget(snapshotRoot, roles.releases.metadata.signed.targets[logicalPath], assertMarketplaceRelease, `Marketplace release ${summary.itemId}@${summary.releaseVersion}`);
-        const releaseHash = hashMarketplaceRelease(entry.document);
-        if (entry.document.itemId !== summary.itemId || entry.document.releaseVersion !== summary.releaseVersion
-            || !isDeepStrictEqual(projectReleaseSummary(entry.document, releaseHash, summary.target), summary)
-            || entry.descriptor.sha256 !== summary.target.sha256 || entry.descriptor.sizeBytes !== summary.target.sizeBytes) {
+        const raw = await readRawTarget(snapshotRoot, roles.releases.metadata.signed.targets[logicalPath], `Marketplace release ${summary.itemId}@${summary.releaseVersion}`);
+        let document;
+        if (summary.publisherKeyId) {
+            const publisher = publishersById.get(summary.publisherId);
+            if (!publisher) throw signature(`Marketplace release ${summary.itemId}@${summary.releaseVersion} has no verified publisher.`);
+            const verified = verifyMarketplaceReleaseEnvelope(raw.bytes, publisher);
+            if (verified.keyId !== summary.publisherKeyId) throw signature(`Marketplace release ${summary.itemId}@${summary.releaseVersion} has the wrong signer.`);
+            document = verified.release;
+        } else {
+            if (catalog.releaseAuthority !== "development-unsigned") {
+                throw marketplaceError(MARKETPLACE_ERROR_CODES.UPGRADE_REQUIRED, "Unsigned Marketplace release state cannot be refreshed.");
+            }
+            document = canonicalDocument(raw.bytes, assertMarketplaceRelease, `Marketplace release ${summary.itemId}@${summary.releaseVersion}`);
+        }
+        const releaseHash = hashMarketplaceRelease(document);
+        if (document.itemId !== summary.itemId || document.releaseVersion !== summary.releaseVersion
+            || !isDeepStrictEqual(projectReleaseSummary(document, releaseHash, summary.target, { publisherKeyId: summary.publisherKeyId ?? null }), summary)
+            || raw.descriptor.sha256 !== summary.target.sha256 || raw.descriptor.sizeBytes !== summary.target.sizeBytes) {
             throw signature(`Marketplace release ${summary.itemId}@${summary.releaseVersion} does not match its catalog summary.`);
         }
         releases.push({
-            ...entry.descriptor,
+            ...raw.descriptor,
             itemId: summary.itemId,
             releaseVersion: summary.releaseVersion,
             releaseHash,
-            artifactSha256: entry.document.artifact.sha256,
+            artifactSha256: document.artifact.sha256,
+            publisherKeyId: summary.publisherKeyId ?? null,
         });
-        releaseDocuments.push(entry.document);
+        releaseDocuments.push(document);
+    }
+
+    const advisories = [];
+    const advisoryDocuments = [];
+    for (const summary of catalog.advisories) {
+        const logicalPath = tufAdvisoryTargetPath(summary.advisoryId);
+        const entry = await readTarget(snapshotRoot, roles.advisories.metadata.signed.targets[logicalPath], assertMarketplaceAdvisory, `Marketplace advisory ${summary.advisoryId}`);
+        if (entry.document.advisoryId !== summary.advisoryId
+            || entry.descriptor.sha256 !== summary.target.sha256 || entry.descriptor.sizeBytes !== summary.target.sizeBytes) {
+            throw signature(`Marketplace advisory ${summary.advisoryId} does not match its catalog summary.`);
+        }
+        advisories.push({ ...entry.descriptor, advisoryId: summary.advisoryId });
+        advisoryDocuments.push(entry.document);
     }
 
     const requiredMetadata = [trusted, timestamp, snapshot, ...Object.values(roles)];
@@ -266,8 +327,10 @@ export async function verifyClientSnapshot(snapshotRoot, source, {
         snapshot: metadataRecord(snapshot),
         roles: Object.fromEntries(SNAPSHOT_ROLES.map((role) => [role, metadataRecord(roles[role])])),
         catalog: { ...catalogEntry.descriptor, revision: catalog.revision },
+        publishers,
         items,
         releases,
+        advisories,
     });
     if (expectedManifest) {
         const comparable = { ...manifest, verifiedAt: expectedManifest.verifiedAt, snapshotId: expectedManifest.snapshotId };
@@ -295,7 +358,9 @@ export async function verifyClientSnapshot(snapshotRoot, source, {
         verification,
         documents: Object.freeze({
             items: Object.freeze(itemDocuments),
+            publishers: Object.freeze(publisherDocuments),
             releases: Object.freeze(releaseDocuments),
+            advisories: Object.freeze(advisoryDocuments),
         }),
     });
 }
@@ -310,7 +375,8 @@ export class MarketplaceTrustClient {
         assertSourceUrl(baseUrl);
         const fetcher = new MarketplaceFixedOriginFetcher({
             baseUrl,
-            bearerToken: credential?.token ?? credential,
+            credential: typeof credential === "object" ? credential : null,
+            bearerToken: typeof credential === "string" ? credential : null,
             fetchImpl: this.fetchImpl,
             signal,
         });
@@ -352,7 +418,7 @@ export class MarketplaceTrustClient {
         }
     }
 
-    async refreshSource({ source, bearerToken = null, bootstrapRootBytes, staging, previousSnapshotRoot = null, signal = null }) {
+    async refreshSource({ source, credential = null, bearerToken = null, bootstrapRootBytes, staging, previousSnapshotRoot = null, signal = null }) {
         const operationNow = this.now();
         await ensureDirectory(staging.root);
         if (previousSnapshotRoot) {
@@ -368,6 +434,7 @@ export class MarketplaceTrustClient {
         await ensureDirectory(staging.targets);
         const fetcher = new MarketplaceFixedOriginFetcher({
             baseUrl: source.baseUrl,
+            credential,
             bearerToken,
             fetchImpl: this.fetchImpl,
             signal,
@@ -411,11 +478,14 @@ export class MarketplaceTrustClient {
                 assertMarketplaceCatalog,
                 "Marketplace catalog",
             );
+            for (const publisher of catalog.publishers ?? []) await download(tufPublisherTargetPath(publisher.publisherId));
+            if ((catalog.publishers ?? []).length === 0) await updater.getTargetInfo("publishers/cev.empty.json");
             for (const item of catalog.items) await download(tufItemTargetPath(item.itemId));
             if (catalog.items.length === 0) await updater.getTargetInfo("items/cev.empty.json");
             for (const release of catalog.releases) await download(tufReleaseTargetPath(release.itemId, release.releaseVersion));
             if (catalog.releases.length === 0) await updater.getTargetInfo("releases/cev.empty/0.0.0.json");
-            await updater.getTargetInfo("advisories/cev.empty.json");
+            for (const advisory of catalog.advisories) await download(tufAdvisoryTargetPath(advisory.advisoryId));
+            if (catalog.advisories.length === 0) await updater.getTargetInfo("advisories/cev.empty.json");
             const bootstrap = parseTufMetadata(bootstrapRootBytes, MetadataKind.Root);
             const result = await verifyClientSnapshot(staging.root, source, {
                 now: operationNow,

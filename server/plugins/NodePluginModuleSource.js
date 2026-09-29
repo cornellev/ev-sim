@@ -31,10 +31,11 @@ async function collectRegularFiles(root, prefix = "") {
 }
 
 export class NodePluginModuleSource {
-    constructor({ pluginStore, runtimeRoot = pluginStore?.runtimeDir } = {}) {
+    constructor({ pluginStore, runtimeRoot = pluginStore?.runtimeDir, authorizePackage = null } = {}) {
         if (!runtimeRoot) throw new Error("NodePluginModuleSource requires a runtime root or PluginStore.");
         this.runtimeRoot = runtimeRoot;
         this.materializations = new Map();
+        this.authorizePackage = authorizePackage;
     }
 
     async _materialize(verified) {
@@ -116,6 +117,7 @@ export class NodePluginModuleSource {
 
     async importRuntime(input) {
         const verified = input?.resource ? input : verifyPluginPackage(input);
+        if (this.authorizePackage) await this.authorizePackage(verified.resource.packageHash, verified);
         const root = await this._materialize(verified);
         const entry = path.join(root, "files", ...verified.document.entry.runtime.split("/"));
         return import(pathToFileURL(entry).href);

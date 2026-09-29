@@ -35,12 +35,11 @@ export class MarketplaceCredentialStore {
         return new MarketplaceCredentialStore(paths);
     }
 
-    async stageBearer(token) {
+    async stageCredential(credential) {
         const document = assertCredentialDocument({
             kind: MARKETPLACE_CREDENTIAL_KIND,
             version: MARKETPLACE_CLIENT_DOCUMENT_VERSION,
-            type: "bearer",
-            token,
+            ...credential,
         });
         const credentialRef = randomUUID();
         await writeExclusiveDurable(
@@ -50,7 +49,11 @@ export class MarketplaceCredentialStore {
         return credentialRef;
     }
 
-    async readBearer(credentialRef) {
+    stageBearer(token) {
+        return this.stageCredential({ type: "bearer", token });
+    }
+
+    async readCredential(credentialRef) {
         if (credentialRef === null || credentialRef === undefined) return null;
         const filePath = credentialPath(this.paths, credentialRef);
         const stat = await lstatOrNull(filePath);
@@ -63,7 +66,12 @@ export class MarketplaceCredentialStore {
         if (!Buffer.from(bytes).equals(Buffer.from(canonical))) {
             throw recovery("Marketplace credential document is not canonical.", filePath);
         }
-        return document.token;
+        const { kind: _kind, version: _version, ...credential } = document;
+        return credential;
+    }
+
+    async readBearer(credentialRef) {
+        return (await this.readCredential(credentialRef))?.token ?? null;
     }
 
     async remove(credentialRef) {

@@ -111,6 +111,22 @@ function assertExactReleaseRef(value, path) {
     assertSha256(value.artifactSha256, `${path}.artifactSha256`);
 }
 
+function assertPlanIntent(value, path) {
+    object(value, path);
+    if (value.kind === "install") {
+        exactKeys(value, ["kind"], [], path);
+        return;
+    }
+    if (value.kind !== "update") invalid(`${path}.kind`, "expected install or update");
+    exactKeys(value, ["kind", "track", "from"], [], path);
+    if (!["stable", "beta"].includes(value.track)) invalid(`${path}.track`, "expected stable or beta");
+    exactKeys(value.from, ["sourceId", "registryId", "release", "receiptHashes"], [], `${path}.from`);
+    assertCanonicalUuid(value.from.sourceId, `${path}.from.sourceId`);
+    assertCanonicalUuid(value.from.registryId, `${path}.from.registryId`);
+    assertExactReleaseRef(value.from.release, `${path}.from.release`);
+    strings(value.from.receiptHashes, `${path}.from.receiptHashes`, { hashes: true });
+}
+
 function assertInstallIntent(value, path) {
     if (value.disposition === undefined && value.owners === undefined) return;
     if (!["requested", "collection", "artifact-only"].includes(value.disposition)) {
@@ -224,10 +240,13 @@ export function assertInstallPreflight(value) {
     exactKeys(value, [
         "kind", "version", "source", "root", "releases", "artifacts", "totalDownloadBytes",
         "installedRevision", "hostProfile", "hostProfileHash", "warnings",
-    ], [], "$preflight");
+    ], ["intent", "allowYanked", "policyRevision"], "$preflight");
     assertKind(value, MARKETPLACE_INSTALL_KINDS.preflight, "$preflight");
     assertSourcePin(value.source, "$preflight.source");
     assertExactReleaseRef(value.root, "$preflight.root");
+    if (value.intent !== undefined) assertPlanIntent(value.intent, "$preflight.intent");
+    if (value.allowYanked !== undefined && typeof value.allowYanked !== "boolean") invalid("$preflight.allowYanked", "expected boolean");
+    if (value.policyRevision !== undefined) nonNegative(value.policyRevision, "$preflight.policyRevision");
     if (!Array.isArray(value.releases) || value.releases.length < 1) invalid("$preflight.releases", "expected releases");
     value.releases.forEach((entry, index) => assertPreflightRelease(entry, `$preflight.releases.${index}`));
     const releaseKeys = new Set();
@@ -292,11 +311,22 @@ export function assertInstallFinalPlan(value) {
     exactKeys(value, [
         "kind", "version", "preflightHash", "installedRevision", "hostProfileHash", "releases",
         "committable", "blockingIssues", "warnings",
-    ], [], "$finalPlan");
+    ], ["policyRevision", "updateComparison", "updateComparisonHash"], "$finalPlan");
     assertKind(value, MARKETPLACE_INSTALL_KINDS.finalPlan, "$finalPlan");
     assertSha256(value.preflightHash, "$finalPlan.preflightHash");
     nonNegative(value.installedRevision, "$finalPlan.installedRevision");
     assertSha256(value.hostProfileHash, "$finalPlan.hostProfileHash");
+    if (value.policyRevision !== undefined) nonNegative(value.policyRevision, "$finalPlan.policyRevision");
+    if ((value.updateComparison === undefined) !== (value.updateComparisonHash === undefined)) {
+        invalid("$finalPlan.updateComparison", "comparison and hash must be present together");
+    }
+    if (value.updateComparison !== undefined) {
+        object(value.updateComparison, "$finalPlan.updateComparison");
+        assertSha256(value.updateComparisonHash, "$finalPlan.updateComparisonHash");
+        if (hashMarketplaceBytes(canonicalMarketplaceBytes(value.updateComparison)) !== value.updateComparisonHash) {
+            invalid("$finalPlan.updateComparisonHash", "does not match update comparison");
+        }
+    }
     if (!Array.isArray(value.releases) || value.releases.length < 1) invalid("$finalPlan.releases", "expected releases");
     value.releases.forEach((entry, index) => assertFinalRelease(entry, `$finalPlan.releases.${index}`));
     const releaseKeys = new Set();

@@ -1,9 +1,11 @@
 import { promises as fs } from "node:fs";
+import { generateKeyPairSync } from "node:crypto";
 import process from "node:process";
 
 import {
     MARKETPLACE_KINDS,
     MARKETPLACE_LIMITS,
+    MARKETPLACE_TOKEN_SCOPES,
 } from "./MarketplaceContract.js";
 import {
     hashMarketplaceDocument,
@@ -20,6 +22,12 @@ import { DEFAULT_STAGING_GRACE_MS } from "./registry/RegistryLayout.js";
 import { MarketplaceRegistryService } from "./registry/RegistryService.js";
 import { MarketplaceRegistryStore } from "./registry/RegistryStore.js";
 import { MarketplaceRegistryHttpServer } from "./registry/RegistryHttpServer.js";
+import { RegistryAuthStore } from "./registry/RegistryAuthStore.js";
+import {
+    publisherKeyId,
+    publisherPublicKey,
+    signMarketplaceRelease,
+} from "./PublisherSignatures.js";
 
 export const REGISTRY_CLI_EXIT = Object.freeze({
     OK: 0,
@@ -34,8 +42,18 @@ export const REGISTRY_CLI_EXIT = Object.freeze({
 const VALUE_OPTIONS = new Set([
     "root", "registry-id", "file", "content-kind", "media-type", "track", "kind", "grace-hours",
     "offline-root-key", "current-root-key", "new-root-key", "host", "port",
+    "publisher-id", "item-id", "namespace", "scope", "subject", "token-id", "key-id", "private-key", "public-key",
+    "output", "status", "release-version", "artifact-sha256", "reason", "tls-key", "tls-cert", "tls-ca",
 ]);
-const FLAG_OPTIONS = new Set(["dry-run"]);
+const FLAG_OPTIONS = new Set(["dry-run", "read-auth", "unsafe-development-lan", "mtls", "writable"]);
+
+const LOCAL_ADMIN_ACTOR = Object.freeze({
+    tokenId: "00000000-0000-4000-8000-000000000000",
+    subject: "admin",
+    publisherId: null,
+    namespaces: Object.freeze([]),
+    scopes: MARKETPLACE_TOKEN_SCOPES,
+});
 
 export function registryCliHelp() {
     return [
@@ -53,13 +71,23 @@ export function registryCliHelp() {
         "  admit artifact --root DIR --content-kind KIND --file FILE",
         "  admit preview --root DIR --media-type TYPE --file FILE",
         "  admit item --root DIR --file FILE",
-        "  admit release --root DIR --file FILE [--track stable|beta]",
+        "  admit release --root DIR --file DSSE_FILE [--track stable|beta]",
+        "  publisher register --root DIR --file PUBLISHER_JSON",
+        "  publisher add-key --root DIR --publisher-id ID --file KEY_JSON",
+        "  publisher set-key-status --root DIR --publisher-id ID --key-id SHA256 --status retired|revoked",
+        "  key generate --private-key FILE --public-key FILE",
+        "  sign release --file RELEASE_JSON --private-key FILE --output DSSE_FILE",
+        "  token create --root DIR --subject reader|publisher|admin --scope CSV [--publisher-id ID --namespace CSV]",
+        "  token revoke --root DIR --token-id UUID",
+        "  track set --root DIR --item-id ID --release-version VERSION --track stable|beta",
+        "  yank --root DIR --item-id ID --release-version VERSION --artifact-sha256 SHA256 --reason TEXT",
+        "  advisory admit --root DIR --file ADVISORY_JSON",
         "  list --root DIR --kind items|releases|blobs",
         "  verify --root DIR",
         "  gc --root DIR --dry-run [--grace-hours N]",
         "  tuf refresh --root DIR",
         "  tuf rotate-root --root DIR --current-root-key FILE --new-root-key FILE",
-        "  serve --root DIR [--host 127.0.0.1|::1] [--port 8080]",
+        "  serve --root DIR [--host HOST] [--port 8080] [--tls-key FILE --tls-cert FILE] [--tls-ca FILE --mtls] [--read-auth] [--writable] [--unsafe-development-lan]",
     ].join("\n");
 }
 
@@ -126,6 +154,26 @@ async function readInputFile(filePath) {
 
 function jsonLine(stream, value) {
     stream.write(`${JSON.stringify(value)}\n`);
+}
+
+function csv(value, option, { required = false } = {}) {
+    if (value === undefined) {
+        if (required) throw usage(`Option --${option} requires at least one comma-separated value.`);
+        return [];
+    }
+    const values = value.split(",").map((entry) => entry.trim()).filter(Boolean);
+    if (values.length < 1 || new Set(values).size !== values.length) throw usage(`Option --${option} must contain unique comma-separated values.`);
+    return values;
+}
+
+async function writeExclusive(filePath, bytes, { mode = 0o600 } = {}) {
+    const handle = await fs.open(filePath, "wx", mode);
+    try {
+        await handle.writeFile(bytes);
+        await handle.sync();
+    } finally {
+        await handle.close();
+    }
 }
 
 function errorExit(error, signal) {
@@ -238,10 +286,137 @@ async function execute(parsed, signal, { stdout }) {
                 ok: true,
                 command: "admit",
                 kind,
-                ...await service.admitRelease(bytes, { track: options.track ?? null }),
+                ...await (() => {
+                    let value;
+                    try { value = JSON.parse(bytes.toString("utf8")); } catch { value = null; }
+                    return value?.payloadType
+                        ? service.admitReleaseEnvelope(bytes, { actor: LOCAL_ADMIN_ACTOR, track: options.track ?? null })
+                        : service.admitRelease(bytes, { track: options.track ?? null });
+                })(),
             }));
         }
         throw usage(`Unknown admission kind ${JSON.stringify(kind)}.`);
+    }
+    if (command === "publisher") {
+        if (positional.length !== 1) throw usage("publisher requires register, add-key, or set-key-status.");
+        if (positional[0] === "register") {
+            exactOptions(options, ["root", "file"]);
+            const bytes = await readInputFile(options.file);
+            return withStore(options.root, {}, async (_store, service) => ({
+                ok: true, command, operation: "register", ...await service.registerPublisher(bytes, { actor: LOCAL_ADMIN_ACTOR }),
+            }));
+        }
+        if (positional[0] === "add-key") {
+            exactOptions(options, ["root", "publisher-id", "file"]);
+            const key = JSON.parse((await readInputFile(options.file)).toString("utf8"));
+            return withStore(options.root, {}, async (_store, service) => ({
+                ok: true,
+                command,
+                operation: "add-key",
+                ...await service.addPublisherKey(options["publisher-id"], key, { actor: LOCAL_ADMIN_ACTOR }),
+            }));
+        }
+        if (positional[0] === "set-key-status") {
+            exactOptions(options, ["root", "publisher-id", "key-id", "status"]);
+            return withStore(options.root, {}, async (_store, service) => ({
+                ok: true,
+                command,
+                operation: "set-key-status",
+                ...await service.setPublisherKeyStatus(options["publisher-id"], options["key-id"], options.status, { actor: LOCAL_ADMIN_ACTOR }),
+            }));
+        }
+        throw usage(`Unknown publisher operation ${JSON.stringify(positional[0])}.`);
+    }
+    if (command === "key") {
+        if (positional.length !== 1 || positional[0] !== "generate") throw usage("key requires generate.");
+        exactOptions(options, ["private-key", "public-key"]);
+        const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+        const keyId = publisherKeyId(publicKey);
+        const publicRecord = {
+            keyId,
+            algorithm: "ed25519",
+            publicKey: publisherPublicKey(publicKey),
+            status: "active",
+            createdAt: new Date().toISOString(),
+            statusChangedAt: new Date().toISOString(),
+        };
+        await writeExclusive(options["private-key"], privateKey.export({ format: "pem", type: "pkcs8" }));
+        try {
+            await writeExclusive(options["public-key"], Buffer.from(`${JSON.stringify(publicRecord)}\n`), { mode: 0o644 });
+        } catch (error) {
+            await fs.rm(options["private-key"], { force: true });
+            throw error;
+        }
+        return { ok: true, command, operation: "generate", keyId };
+    }
+    if (command === "sign") {
+        if (positional.length !== 1 || positional[0] !== "release") throw usage("sign requires release.");
+        exactOptions(options, ["file", "private-key", "output"]);
+        const release = parseMarketplaceDocument(await readInputFile(options.file));
+        const privateKey = await readInputFile(options["private-key"]);
+        const signed = signMarketplaceRelease(release, privateKey);
+        await writeExclusive(options.output, signed.bytes, { mode: 0o644 });
+        return { ok: true, command, operation: "release", keyId: signed.keyId, releaseHash: hashMarketplaceRelease(signed.release) };
+    }
+    if (command === "token") {
+        if (positional.length !== 1) throw usage("token requires create or revoke.");
+        if (positional[0] === "create") {
+            exactOptions(options, ["root", "subject", "scope"], ["publisher-id", "namespace"]);
+            return withStore(options.root, {}, async (store) => {
+                const auth = await RegistryAuthStore.open(store.paths);
+                return {
+                    ok: true,
+                    command,
+                    operation: "create",
+                    ...await auth.createToken({
+                        subject: options.subject,
+                        publisherId: options["publisher-id"] ?? null,
+                        namespaces: csv(options.namespace, "namespace"),
+                        scopes: csv(options.scope, "scope", { required: true }),
+                    }),
+                };
+            });
+        }
+        if (positional[0] === "revoke") {
+            exactOptions(options, ["root", "token-id"]);
+            return withStore(options.root, {}, async (store) => {
+                const auth = await RegistryAuthStore.open(store.paths);
+                return { ok: true, command, operation: "revoke", revoked: await auth.revokeToken(options["token-id"]) };
+            });
+        }
+        throw usage(`Unknown token operation ${JSON.stringify(positional[0])}.`);
+    }
+    if (command === "track") {
+        if (positional.length !== 1 || positional[0] !== "set") throw usage("track requires set.");
+        exactOptions(options, ["root", "item-id", "release-version", "track"]);
+        return withStore(options.root, {}, async (_store, service) => ({
+            ok: true,
+            command,
+            operation: "set",
+            ...await service.setTrack(options["item-id"], options.track, options["release-version"], { actor: LOCAL_ADMIN_ACTOR }),
+        }));
+    }
+    if (command === "yank") {
+        if (positional.length !== 0) throw usage("yank does not accept positional arguments.");
+        exactOptions(options, ["root", "item-id", "release-version", "artifact-sha256", "reason"]);
+        return withStore(options.root, {}, async (_store, service) => ({
+            ok: true,
+            command,
+            ...await service.yankRelease({
+                itemId: options["item-id"],
+                releaseVersion: options["release-version"],
+                artifactSha256: options["artifact-sha256"],
+                reason: options.reason,
+            }, { actor: LOCAL_ADMIN_ACTOR }),
+        }));
+    }
+    if (command === "advisory") {
+        if (positional.length !== 1 || positional[0] !== "admit") throw usage("advisory requires admit.");
+        exactOptions(options, ["root", "file"]);
+        const bytes = await readInputFile(options.file);
+        return withStore(options.root, {}, async (_store, service) => ({
+            ok: true, command, operation: "admit", ...await service.admitAdvisory(bytes, { actor: LOCAL_ADMIN_ACTOR }),
+        }));
     }
     if (command === "list") {
         if (positional.length !== 0) throw usage("list does not accept positional arguments.");
@@ -296,10 +471,28 @@ async function execute(parsed, signal, { stdout }) {
     }
     if (command === "serve") {
         if (positional.length !== 0) throw usage("serve does not accept positional arguments.");
-        exactOptions(options, ["root"], ["host", "port"]);
+        exactOptions(options, ["root"], [
+            "host", "port", "tls-key", "tls-cert", "tls-ca", "mtls", "read-auth", "writable", "unsafe-development-lan",
+        ]);
         const port = options.port === undefined ? 8080 : Number(options.port);
         if (!Number.isSafeInteger(port) || port < 0 || port > 65535) throw usage("--port must be an integer from 0 through 65535.");
-        const server = await MarketplaceRegistryHttpServer.open(options.root);
+        const hasTls = options["tls-key"] !== undefined || options["tls-cert"] !== undefined || options["tls-ca"] !== undefined || options.mtls === true;
+        if (hasTls && (!options["tls-key"] || !options["tls-cert"])) throw usage("TLS requires both --tls-key and --tls-cert.");
+        if (options.mtls === true && !options["tls-ca"]) throw usage("--mtls requires --tls-ca.");
+        const tls = hasTls ? {
+            key: await readInputFile(options["tls-key"]),
+            cert: await readInputFile(options["tls-cert"]),
+            ...(options["tls-ca"] ? { ca: await readInputFile(options["tls-ca"]) } : {}),
+            requestCert: options.mtls === true,
+            rejectUnauthorized: options.mtls === true,
+            minVersion: "TLSv1.2",
+        } : null;
+        const server = await MarketplaceRegistryHttpServer.open(options.root, {
+            tls,
+            readAuthentication: options["read-auth"] === true,
+            writable: options.writable === true,
+            unsafeDevelopmentLan: options["unsafe-development-lan"] === true,
+        });
         try {
             const address = await server.listen({ host: options.host ?? "127.0.0.1", port });
             jsonLine(stdout, {

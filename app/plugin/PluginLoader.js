@@ -4,11 +4,12 @@ import { PLUGIN_ERROR_CODES, pluginError } from "./PluginErrors.js";
 import { verifyPluginPackage } from "./PluginPackage.js";
 
 export class PluginLoader {
-    constructor({ moduleSource, host } = {}) {
+    constructor({ moduleSource, host, authorizePackage = null } = {}) {
         if (!moduleSource || typeof moduleSource.importRuntime !== "function") throw new Error("PluginLoader requires a module source.");
         if (!host || typeof host.registerPackage !== "function") throw new Error("PluginLoader requires a plugin host.");
         this.moduleSource = moduleSource;
         this.host = host;
+        this.authorizePackage = authorizePackage;
     }
 
     async loadPackage(resource, { capabilities = [] } = {}) {
@@ -26,6 +27,7 @@ export class PluginLoader {
                 cause: error,
             });
         }
+        if (this.authorizePackage) await this.authorizePackage(verified.resource.packageHash, verified);
         let namespace;
         try {
             namespace = await this.moduleSource.importRuntime(verified);

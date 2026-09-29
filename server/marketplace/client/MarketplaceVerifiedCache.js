@@ -5,7 +5,6 @@ import path from "node:path";
 import { fsyncDir } from "../../storage/visual-assets/atomicFs.js";
 import {
     assertMarketplaceItem,
-    assertMarketplaceRelease,
     marketplaceDocumentBytes,
     parseMarketplaceDocument,
 } from "../MarketplaceContracts.js";
@@ -183,12 +182,21 @@ export class MarketplaceVerifiedCache {
         if (!current) throw marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_UNAVAILABLE, "Marketplace source has no verified snapshot.");
         const target = current.manifest.releases.find((entry) => entry.itemId === itemId && entry.releaseVersion === releaseVersion);
         if (!target) throw marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_NOT_FOUND, "Marketplace release is not present in the verified snapshot.");
-        const bytes = await readRegularBytes(path.join(current.snapshotRoot, "targets", ...target.path.split("/")));
-        const document = assertMarketplaceRelease(parseMarketplaceDocument(bytes));
-        if (!Buffer.from(bytes).equals(Buffer.from(marketplaceDocumentBytes(document)))) {
-            throw recovery("Marketplace release cache entry is not canonical.");
-        }
+        const document = current.documents.releases.find((entry) => entry.itemId === itemId && entry.releaseVersion === releaseVersion);
+        if (!document) throw recovery("Marketplace verified release document is missing from its snapshot.");
         return Object.freeze({ document, fresh: current.fresh, manifest: current.manifest });
+    }
+
+    async readAdvisories(source, options = {}) {
+        const current = await this.readCurrent(source, options);
+        if (!current) throw marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_UNAVAILABLE, "Marketplace source has no verified snapshot.");
+        return Object.freeze({ documents: current.documents.advisories, fresh: current.fresh, manifest: current.manifest });
+    }
+
+    async readPublishers(source, options = {}) {
+        const current = await this.readCurrent(source, options);
+        if (!current) throw marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_UNAVAILABLE, "Marketplace source has no verified snapshot.");
+        return Object.freeze({ documents: current.documents.publishers, fresh: current.fresh, manifest: current.manifest });
     }
 
     async removeSource(sourceId) {

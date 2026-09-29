@@ -38,6 +38,10 @@ import { MarketplaceInstalledStore } from "./MarketplaceInstalledStore.js";
 import { MarketplaceInstallJobManager } from "./MarketplaceInstallJobManager.js";
 import { MarketplaceInstallOwnershipStore } from "./MarketplaceInstallOwnershipStore.js";
 import { MarketplaceInstallPlanner } from "./MarketplaceInstallPlanner.js";
+import { MarketplacePolicyStore } from "./MarketplacePolicyStore.js";
+import { MarketplaceExecutableProvenanceStore } from "./MarketplaceExecutableProvenanceStore.js";
+import { MarketplaceExecutablePolicy } from "./MarketplaceExecutablePolicy.js";
+import { MarketplaceUpdateModel } from "./MarketplaceUpdateModel.js";
 import { resolveDependencyDag } from "./MarketplaceDependencyResolver.js";
 import { MarketplaceReceiptStore } from "./MarketplaceReceiptStore.js";
 import { MarketplaceTransactionCoordinator } from "./MarketplaceTransactionCoordinator.js";
@@ -71,15 +75,35 @@ function recovery(message, pathName = null, cause = null) {
 
 function assertBearer(value, { nullable = true } = {}) {
     if (value === null && nullable) return null;
-    if (!value || typeof value !== "object" || Array.isArray(value)
-        || Object.keys(value).length !== 2 || value.type !== "bearer" || !Object.hasOwn(value, "token")) {
+    const allowed = new Set(["type", "token", "privateCaCertificates", "clientCertificate", "clientPrivateKey"]);
+    if (!value || typeof value !== "object" || Array.isArray(value) || value.type !== "bearer"
+        || !Object.hasOwn(value, "token") || Object.keys(value).some((key) => !allowed.has(key))) {
         throw marketplaceError(MARKETPLACE_ERROR_CODES.DOCUMENT_INVALID, "credential must be a bearer credential object.", { path: "credential" });
     }
     if (typeof value.token !== "string" || value.token.length < 1 || Buffer.byteLength(value.token) > 8 * 1024
         || /[\u0000-\u0020\u007f]/u.test(value.token)) {
         throw marketplaceError(MARKETPLACE_ERROR_CODES.DOCUMENT_INVALID, "credential.token is invalid.", { path: "credential.token" });
     }
-    return Object.freeze({ type: "bearer", token: value.token });
+    const privateCaCertificates = value.privateCaCertificates ?? [];
+    if (!Array.isArray(privateCaCertificates) || privateCaCertificates.length > 16
+        || privateCaCertificates.some((entry) => typeof entry !== "string" || !entry.includes("BEGIN CERTIFICATE") || Buffer.byteLength(entry) > 1024 ** 2)) {
+        throw marketplaceError(MARKETPLACE_ERROR_CODES.DOCUMENT_INVALID, "credential.privateCaCertificates is invalid.", { path: "credential.privateCaCertificates" });
+    }
+    const hasCertificate = value.clientCertificate !== undefined;
+    const hasPrivateKey = value.clientPrivateKey !== undefined;
+    if (hasCertificate !== hasPrivateKey || (hasCertificate && (
+        typeof value.clientCertificate !== "string" || !value.clientCertificate.includes("BEGIN CERTIFICATE")
+        || typeof value.clientPrivateKey !== "string" || !value.clientPrivateKey.includes("PRIVATE KEY")
+        || Buffer.byteLength(value.clientCertificate) > 1024 ** 2 || Buffer.byteLength(value.clientPrivateKey) > 1024 ** 2
+    ))) {
+        throw marketplaceError(MARKETPLACE_ERROR_CODES.DOCUMENT_INVALID, "credential client certificate pair is invalid.", { path: "credential.clientCertificate" });
+    }
+    return Object.freeze({
+        type: "bearer",
+        token: value.token,
+        ...(privateCaCertificates.length ? { privateCaCertificates: Object.freeze([...privateCaCertificates]) } : {}),
+        ...(hasCertificate ? { clientCertificate: value.clientCertificate, clientPrivateKey: value.clientPrivateKey } : {}),
+    });
 }
 
 async function readCanonicalHealth(filePath) {
@@ -89,6 +113,13 @@ async function readCanonicalHealth(filePath) {
         throw recovery("Marketplace health document is not canonical.", filePath);
     }
     return document;
+}
+
+function executablePackageHashes(release) {
+    return [
+        ...(release.executable ? [release.executable.packageHash] : []),
+        ...(release.embeddedPlugins?.map((plugin) => plugin.packageHash) ?? []),
+    ];
 }
 
 function publicPreview(preview) {
@@ -124,6 +155,10 @@ export class MarketplaceService {
         transactionCoordinator,
         jobManager,
         adapterRegistry,
+        policyStore,
+        provenanceStore,
+        executablePolicy,
+        updateModel,
         hostProfileProvider,
         now,
     }) {
@@ -140,6 +175,10 @@ export class MarketplaceService {
         this.transactionCoordinator = transactionCoordinator;
         this.jobManager = jobManager;
         this.adapterRegistry = adapterRegistry;
+        this.policyStore = policyStore;
+        this.provenanceStore = provenanceStore;
+        this.executablePolicy = executablePolicy;
+        this.updateModel = updateModel;
         this.hostProfileProvider = hostProfileProvider;
         this.now = now;
     }
@@ -165,6 +204,9 @@ export class MarketplaceService {
         const credentialStore = await MarketplaceCredentialStore.open(dataDir);
         const cache = await MarketplaceVerifiedCache.open(dataDir, { now, fault: cacheFault });
         const installedStore = await MarketplaceInstalledStore.open(dataDir);
+        const policyStore = await MarketplacePolicyStore.open(dataDir, { now });
+        const provenanceStore = await MarketplaceExecutableProvenanceStore.open(dataDir);
+        const executablePolicy = new MarketplaceExecutablePolicy({ policyStore, provenanceStore });
         const ownershipStore = await MarketplaceInstallOwnershipStore.open(dataDir, await installedStore.snapshot(), { allowPending: true });
         const receiptStore = await MarketplaceReceiptStore.open(dataDir);
         const resolvedAdapterRegistry = adapterRegistry ?? createMarketplaceClientArtifactRegistry({
@@ -181,6 +223,8 @@ export class MarketplaceService {
             cache,
             installedStore,
             ownershipStore,
+            receiptStore,
+            policyStore,
             artifactStore,
             adapterRegistry: resolvedAdapterRegistry,
             hostProfileProvider,
@@ -193,6 +237,7 @@ export class MarketplaceService {
             receiptStore,
             artifactStore,
             adapterRegistry: resolvedAdapterRegistry,
+            provenanceStore,
             now,
             fault: transactionFault,
         });
@@ -209,6 +254,7 @@ export class MarketplaceService {
             now,
             fault: jobFault,
         });
+        const updateModel = new MarketplaceUpdateModel({ sourceStore, cache, installedStore, policyStore });
         const service = new MarketplaceService({
             paths: marketplaceClientPaths(dataDir),
             sourceStore,
@@ -223,6 +269,10 @@ export class MarketplaceService {
             transactionCoordinator,
             jobManager,
             adapterRegistry: resolvedAdapterRegistry,
+            policyStore,
+            provenanceStore,
+            executablePolicy,
+            updateModel,
             hostProfileProvider,
             now,
         });
@@ -371,7 +421,7 @@ export class MarketplaceService {
             throw marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_UNTRUSTED, "Marketplace source confirmation does not match the discovered registry trust root.");
         }
         const sourceId = randomUUID();
-        const credentialRef = normalized ? await this.credentialStore.stageBearer(normalized.token) : null;
+        const credentialRef = normalized ? await this.credentialStore.stageCredential(normalized) : null;
         const rootPath = trustRootPath(this.paths, sourceId);
         const health = createEmptyHealth(sourceId);
         let visible = false;
@@ -415,7 +465,7 @@ export class MarketplaceService {
             if (!current) throw marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_NOT_FOUND, "Marketplace source was not found.");
             const credentialSupplied = credential !== undefined;
             const normalized = credentialSupplied ? assertBearer(credential) : null;
-            const newCredentialRef = credentialSupplied && normalized ? await this.credentialStore.stageBearer(normalized.token) : null;
+            const newCredentialRef = credentialSupplied && normalized ? await this.credentialStore.stageCredential(normalized) : null;
             let result;
             try {
                 result = await this.sourceStore.update(sourceId, {
@@ -484,7 +534,7 @@ export class MarketplaceService {
             let staging = null;
             try {
                 const trust = await this.#readTrust(source);
-                const bearerToken = await this.credentialStore.readBearer(source.credentialRef);
+                const credential = await this.credentialStore.readCredential(source.credentialRef);
                 let current = null;
                 try {
                     current = await this.cache.readCurrent(source);
@@ -495,7 +545,7 @@ export class MarketplaceService {
                 staging = await this.cache.stageRefresh(sourceId);
                 const result = await this.trustClient.refreshSource({
                     source,
-                    bearerToken,
+                    credential,
                     bootstrapRootBytes: trust.bytes,
                     staging,
                     previousSnapshotRoot: current?.snapshotRoot ?? null,
@@ -509,6 +559,14 @@ export class MarketplaceService {
                         "Marketplace catalog revision was rolled back or rewritten.",
                     );
                 }
+                await this.policyStore.ingestVerifiedSnapshot({
+                    source,
+                    manifest: result.manifest,
+                    publishers: result.documents.publishers,
+                    releases: result.documents.releases,
+                    advisories: result.documents.advisories,
+                    yanks: result.catalog.yanks,
+                });
                 const latest = this.sourceStore.snapshot();
                 const latestSource = latest.sources.find((entry) => entry.sourceId === sourceId);
                 if (latest.revision !== expectedRevision || JSON.stringify(latestSource) !== JSON.stringify(source)) {
@@ -620,6 +678,14 @@ export class MarketplaceService {
         const selectedRelease = current.documents.releases.find((entry) => entry.itemId === itemId
             && entry.releaseVersion === selectedSummary.releaseVersion);
         if (!selectedRelease) throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Marketplace verified snapshot is incomplete.");
+        const publisher = current.documents.publishers.find((entry) => entry.publisherId === selectedRelease.publisherId) ?? null;
+        const publisherKey = publisher?.keys.find((entry) => entry.keyId === selectedSummary.publisherKeyId) ?? null;
+        const policy = await this.policyStore.evaluateRelease({
+            registryId: source.registryId,
+            publisherId: selectedRelease.publisherId,
+            release: selectedRelease,
+            packageHashes: executablePackageHashes(selectedRelease),
+        });
         const releases = current.catalog.releases.filter((entry) => entry.itemId === itemId);
         const tracks = Object.fromEntries(current.catalog.tracks
             .filter((entry) => entry.itemId === itemId)
@@ -657,7 +723,12 @@ export class MarketplaceService {
         }));
         const authoringOnly = AUTHORING_ONLY_CONTENT_KINDS.includes(selectedRelease.contentKind);
         const nonExecutable = authoringOnly || isCollection;
-        const issues = [...downloadIssues, ...lifecycleIssues, ...(nonExecutable ? [] : compatibility.issues)];
+        const publisherApproved = !selectedSummary.publisherKeyId || policy.approved;
+        const policyIssues = [
+            ...(!publisherApproved ? [{ path: "publisherId", code: "PUBLISHER_NOT_APPROVED", required: selectedRelease.publisherId, actual: null }] : []),
+            ...(policy.blocked ? [{ path: "policy", code: "RELEASE_BLOCKED", required: "allowed", actual: "blocked" }] : []),
+        ];
+        const issues = [...downloadIssues, ...lifecycleIssues, ...(nonExecutable ? [] : compatibility.issues), ...policyIssues];
         const selectedExactKey = `${selectedRelease.itemId}\u0000${selectedRelease.releaseVersion}\u0000${selectedRelease.artifact.sha256}`;
         const warnings = yanks.some((entry) => (
             `${entry.release.itemId}\u0000${entry.release.releaseVersion}\u0000${entry.release.artifactSha256}` === selectedExactKey
@@ -677,7 +748,7 @@ export class MarketplaceService {
                 status: nonExecutable ? "not-applicable" : (compatibility.compatible ? "eligible" : "blocked"),
                 issues: Object.freeze(nonExecutable ? [] : compatibility.issues),
             }),
-            canInstall: sizeAllowed && lifecycleAvailable && (nonExecutable || compatibility.compatible),
+            canInstall: sizeAllowed && lifecycleAvailable && (nonExecutable || compatibility.compatible) && publisherApproved && !policy.blocked,
             issues: Object.freeze(issues),
             warnings: Object.freeze(warnings),
         });
@@ -707,6 +778,13 @@ export class MarketplaceService {
             releases: Object.freeze(releases),
             tracks: Object.freeze(tracks),
             yanks: Object.freeze(yanks),
+            publisher: publisher ? Object.freeze({
+                publisherId: publisher.publisherId,
+                keyId: selectedSummary.publisherKeyId,
+                keyStatus: publisherKey?.status ?? null,
+            }) : null,
+            advisories: policy.advisories,
+            policy,
             verification: current.verification,
             fresh: current.fresh && health.status === MARKETPLACE_SOURCE_HEALTH.READY,
             eligibility,
@@ -792,7 +870,78 @@ export class MarketplaceService {
 
     async listInstalled() {
         this.#assertOpen();
-        return this.installedStore.snapshot();
+        const installed = await this.installedStore.snapshot();
+        const projected = [];
+        for (const entry of installed.installations) {
+            const source = this.sourceStore.get(entry.sourceId);
+            let status = entry.status;
+            if (source) {
+                const current = await this.cache.readCurrent(source).catch(() => null);
+                const release = current?.documents.releases.find((candidate) => candidate.itemId === entry.release.itemId
+                    && candidate.releaseVersion === entry.release.releaseVersion
+                    && candidate.artifact.sha256 === entry.release.artifactSha256);
+                if (release) {
+                    const policy = await this.policyStore.evaluateRelease({
+                        registryId: entry.registryId,
+                        publisherId: release.publisherId,
+                        release,
+                        packageHashes: executablePackageHashes(release),
+                    });
+                    if (policy.blocked) status = "blocked";
+                    else if (policy.yanked) status = "yanked";
+                }
+            }
+            if (!source) {
+                const policy = await this.policyStore.evaluateInstalled(entry);
+                if (policy.blocked) status = "blocked";
+                else if (policy.yanked) status = "yanked";
+            }
+            projected.push({ ...entry, status });
+        }
+        return Object.freeze({ ...installed, installations: Object.freeze(projected) });
+    }
+
+    async listUpdates(options = {}) {
+        this.#assertOpen();
+        return this.updateModel.listUpdates(options);
+    }
+
+    async listAdvisories() {
+        this.#assertOpen();
+        const policy = await this.policyStore.snapshot();
+        return Object.freeze(policy.registries.flatMap((entry) => entry.advisories.map((record) => Object.freeze({
+            registryId: entry.registryId,
+            hash: record.hash,
+            advisory: record.advisory,
+        }))));
+    }
+
+    async getPolicy() {
+        this.#assertOpen();
+        return this.policyStore.snapshot();
+    }
+
+    subscribePolicy(listener) {
+        this.#assertOpen();
+        return this.policyStore.subscribe(listener);
+    }
+
+    async setPublisherApproval({ registryId, publisherId, approved, expectedRevision }) {
+        this.#assertOpen();
+        await this.policyStore.setPublisherApproval(registryId, publisherId, approved, { expectedRevision });
+        return this.policyStore.snapshot();
+    }
+
+    async setOperatorOverride({ packageHash, reason, expectedRevision }) {
+        this.#assertOpen();
+        await this.policyStore.setOperatorOverride(packageHash, reason, { expectedRevision });
+        return this.policyStore.snapshot();
+    }
+
+    async authorizePackage(packageHash) {
+        this.#assertOpen();
+        assertSha256(packageHash, "packageHash");
+        return this.executablePolicy.authorizePackage(packageHash);
     }
 
     async listInstalledOwnership() {
@@ -827,7 +976,7 @@ export class MarketplaceService {
         const pathName = `/v1/blobs/sha256/${digest}`;
         const fetcher = new MarketplaceFixedOriginFetcher({
             baseUrl: source.baseUrl,
-            bearerToken: await this.credentialStore.readBearer(source.credentialRef),
+            credential: await this.credentialStore.readCredential(source.credentialRef),
             fetchImpl: this.trustClient.fetchImpl,
         });
         fetcher.allowPath(pathName);

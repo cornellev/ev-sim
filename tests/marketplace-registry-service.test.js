@@ -23,7 +23,7 @@ async function registry(t) {
     const parent = await fs.mkdtemp(path.join(os.tmpdir(), "cev-mkt-registry-service-"));
     t.after(() => fs.rm(parent, { recursive: true, force: true }));
     const root = path.join(parent, "registry");
-    await MarketplaceRegistryStore.initialize(root);
+    await MarketplaceRegistryStore.initialize(root, { unsafeUnsignedDevelopment: true });
     const store = await MarketplaceRegistryStore.open(root);
     t.after(() => store.close());
     return { root, store, service: new MarketplaceRegistryService(store) };
@@ -219,10 +219,11 @@ test("MKT-04 keeps the standalone loopback listener out of the application serve
     const files = await fs.readdir(root, { recursive: true });
     for (const file of files.filter((entry) => entry.endsWith(".js"))) {
         const source = await fs.readFile(new URL(file, root), "utf8");
+        const listenerPattern = /node:http(?:"|')|createServer\s*\(|\.listen\s*\(/u;
         if (file === "registry/RegistryHttpServer.js" || file === "RegistryCli.js") {
-            assert.match(source, /node:http|createServer\s*\(|\.listen\s*\(/u, file);
+            assert.match(source, listenerPattern, file);
         } else {
-            assert.doesNotMatch(source, /node:http|createServer\s*\(|\.listen\s*\(/u, file);
+            assert.doesNotMatch(source, listenerPattern, file);
         }
     }
     const application = await fs.readFile(new URL("../server/App.js", import.meta.url), "utf8");

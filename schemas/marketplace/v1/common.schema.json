@@ -41,6 +41,16 @@
       },
       "additionalProperties": false
     },
+    "executablePlugin": {
+      "type": "object",
+      "required": ["pluginId", "packageHash", "runtimeHash"],
+      "properties": {
+        "pluginId": { "$ref": "#/$defs/marketplaceId" },
+        "packageHash": { "$ref": "#/$defs/sha256" },
+        "runtimeHash": { "$ref": "#/$defs/sha256" }
+      },
+      "additionalProperties": false
+    },
     "targetDescriptor": {
       "type": "object",
       "required": ["path", "sha256", "sizeBytes"],
@@ -128,6 +138,15 @@
       },
       "additionalProperties": false
     },
+    "publisherSummary": {
+      "type": "object",
+      "required": ["publisherId", "target"],
+      "properties": {
+        "publisherId": { "$ref": "#/$defs/marketplaceId" },
+        "target": { "$ref": "#/$defs/targetDescriptor" }
+      },
+      "additionalProperties": false
+    },
     "releaseSummary": {
       "type": "object",
       "required": ["itemId", "releaseVersion", "contentKind", "publisherId", "licenseExpression", "artifact", "compatibility", "capabilities", "dependencies", "releaseHash", "target"],
@@ -136,12 +155,14 @@
         "releaseVersion": { "$ref": "#/$defs/releaseVersion" },
         "contentKind": { "$ref": "#/$defs/contentKind" },
         "publisherId": { "$ref": "#/$defs/marketplaceId" },
+        "publisherKeyId": { "$ref": "#/$defs/sha256" },
         "licenseExpression": { "type": "string", "format": "spdx-expression", "maxLength": 1024 },
         "artifact": { "$ref": "#/$defs/artifactDescriptor" },
         "compatibility": { "$ref": "#/$defs/compatibility" },
         "capabilities": { "type": "array", "uniqueItems": true, "items": { "type": "string", "format": "plugin-capability" } },
         "dependencies": { "type": "array", "items": { "$ref": "#/$defs/exactReleaseRef" } },
         "embeddedPlugins": { "type": "array", "items": { "$ref": "#/$defs/embeddedPlugin" } },
+        "executable": { "$ref": "#/$defs/executablePlugin" },
         "releaseHash": { "$ref": "#/$defs/sha256" },
         "target": { "$ref": "#/$defs/targetDescriptor" }
       },

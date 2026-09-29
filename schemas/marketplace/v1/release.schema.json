@@ -16,7 +16,8 @@
     "compatibility": { "$ref": "common.schema.json#/$defs/compatibility" },
     "capabilities": { "type": "array", "uniqueItems": true, "items": { "type": "string", "format": "plugin-capability" } },
     "dependencies": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/exactReleaseRef" } },
-    "embeddedPlugins": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/embeddedPlugin" } }
+    "embeddedPlugins": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/embeddedPlugin" } },
+    "executable": { "$ref": "common.schema.json#/$defs/executablePlugin" }
   },
   "additionalProperties": false
 }

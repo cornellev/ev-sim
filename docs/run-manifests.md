@@ -101,6 +101,16 @@ bundles, `resolvedHash`, `simulationSemanticHash`, `episodeHash`,
 `trajectoryHash`, `worldHash`, or run-package archive identity. Importers keep
 using the existing exact-byte verification and deterministic collision rules.
 
+MKT-13 adds a host-policy admission step for canonical plugin package hashes.
+Authoring resolution, direct headless construction when supplied a policy, and
+managed admission reject a currently blocked or unapproved Marketplace package
+before module import. The admitted policy snapshot is retained for an active
+episode; a later policy revision affects the next reset/admission and does not
+rewrite or unload the current run. Publisher, advisory, override, provenance,
+and policy revisions are deliberately absent from run manifests, bundles,
+packages, `resolvedHash`, `simulationSemanticHash`, `episodeHash`, and
+`trajectoryHash`.
+
 VIS-02 dispatches exact camera render provider ID/version. Omitted selections
 alias only to `canonical-analytic@1` during resolution. VIS-12b makes
 `pbr-mesh@1` resolution-capable for immutable export and integrity-only
