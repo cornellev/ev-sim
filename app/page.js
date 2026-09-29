@@ -248,6 +248,15 @@ function HomeContent() {
         });
     }, []);
 
+    const openMarketplaceEnvironment = useCallback((environmentId) => {
+        requestWorkspace(() => {
+            selectEnvironment(environmentId);
+            setView(APP_VIEWS.THREE_D);
+            setThreeDMode(THREE_D_MODES.ENVIRONMENT);
+            setMenuVisible(false);
+        });
+    }, [requestWorkspace, selectEnvironment]);
+
     useEffect(() => getRunSessionController().setEnvironmentHandler(selectEnvironment), [selectEnvironment]);
 
     const launchResolvedRun = useCallback((resolved) => {
@@ -425,7 +434,7 @@ function HomeContent() {
             view === APP_VIEWS.HEADLESS_RUNS && <HeadlessPage onOpenWorkspace={() => openWorkspaceSwitcher("pointer")} onOpenReplay={goToReplay} onOpenAnalysis={goToAnalysis} preselectedSuiteId={headlessPreselectedSuiteId} />
         }
         {
-            view === APP_VIEWS.MARKETPLACE && <MarketplacePage onOpenWorkspace={() => openWorkspaceSwitcher("pointer")} />
+            view === APP_VIEWS.MARKETPLACE && <MarketplacePage onOpenWorkspace={() => openWorkspaceSwitcher("pointer")} onOpenEnvironment={openMarketplaceEnvironment} />
         }
         {
             activeEnvironmentId && (

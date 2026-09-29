@@ -682,6 +682,17 @@ prepared data, installed state, receipts, imported roots, and local mapping are
 nonsemantic; `worldHash` changes only after a separate canonical environment
 edit places or updates an asset.
 
+MKT-10 adds `cev-sim.environment-package@1` without adding a second environment
+writer. Export snapshots the saved schema-v4 record and its complete asset and
+visual closure. Import publishes immutable visual uses and editor revisions,
+then optional descriptor/access records, and commits the rewritten environment
+through the guarded `StorageService` schema-v4 persistence lane. Opening the
+result selects the environment in the normal editor path; subsequent edits and
+projection still flow through `CommandBus` and `SceneProjector`. Existing world,
+visual, artifact, resolved, simulation-semantic, episode, and run-package hash
+contracts are unchanged. Package preparations, receipts, mappings, and installed
+membership are provenance only and enter none of those hashes.
+
 ## External Integration
 
 cev-sim does not embed ROS. `app/3d/managers/ClientManager.js` creates a browser client from `app/client/Client.js`, syncs message definitions from the external orchestrator Types API, then connects to the orchestrator WebSocket.

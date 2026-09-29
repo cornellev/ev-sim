@@ -150,6 +150,7 @@ import {
     composeVisualLayers,
 } from "../../app/editor-assets/AssetVisualLayerCompiler.js";
 import { glbTriangleBounds } from "../../app/simulation/visual/GlbBounds.js";
+import { marketplaceEnvironmentContentHash } from "../marketplace/EnvironmentPackage.js";
 import {
     BINDING_SCOPES,
     createBindingManifest,
@@ -435,6 +436,121 @@ export class StorageService {
             await this._recoverEnvironmentTransactions();
             await this.bakePromotions.recover(environmentId);
             return this._readEnvironment(environmentId);
+        });
+    }
+
+    async snapshotMarketplaceEnvironment(environmentId) {
+        return this._withEnvironmentWrite(environmentId, async () => {
+            await this._recoverEnvironmentTransactions();
+            await this.bakePromotions.recover(environmentId);
+            const stored = await this._fileStore(this._environmentPath(environmentId), null).read();
+            if (!stored) throw new Error(`Saved environment "${environmentId}" was not found.`);
+            const environment = presentStoredEnvironment(stored, environmentId);
+            if (readSchemaVersion(environment) !== 4) {
+                throw new Error("Marketplace environment export requires a saved schema-v4 environment.");
+            }
+            const reference = environment.visualLayer ?? null;
+            if (!reference) return Object.freeze({ environment: structuredClone(environment), descriptor: null, access: null });
+            if (!reference.descriptorHash || !reference.accessHash) {
+                throw visualAssetError(
+                    VISUAL_LAYER_ERROR_CODES.ACCESS_NOT_FOUND,
+                    "Marketplace environment export requires a materializable visual descriptor and access sidecar.",
+                );
+            }
+            const descriptor = await this._visualLayerDescriptors.get(reference.descriptorHash);
+            const access = await this._visualLayerAccess.get(reference.accessHash);
+            if (!descriptor) throw new Error(`Visual layer descriptor ${reference.descriptorHash} is missing.`);
+            if (!access) {
+                throw visualAssetError(VISUAL_LAYER_ERROR_CODES.ACCESS_NOT_FOUND, `Visual layer access ${reference.accessHash} was not found.`);
+            }
+            const world = createWorldResource(environment);
+            if (descriptor.sourceWorldHash !== world.hash || access.descriptorHash !== reference.descriptorHash) {
+                throw visualAssetError(VISUAL_LAYER_ERROR_CODES.WORLD_MISMATCH, "Environment visual-layer identity is stale.");
+            }
+            const uses = await this._loadAccessUses(access);
+            assertVisualLayerAccessMatches(access, descriptor, uses);
+            return Object.freeze({
+                environment: structuredClone(environment),
+                descriptor: structuredClone(descriptor),
+                access: structuredClone(access),
+            });
+        });
+    }
+
+    async publishMarketplaceVisualLayer({ descriptor, access } = {}) {
+        assertVisualLayer(descriptor);
+        assertVisualLayerAccess(access);
+        const descriptorHash = hashVisualLayer(descriptor);
+        if (access.descriptorHash !== descriptorHash) {
+            throw visualAssetError(VISUAL_LAYER_ERROR_CODES.ACCESS_MISMATCH, "Marketplace visual access does not match its descriptor.");
+        }
+        const verification = await this.visualAssets.validateAccessSet({
+            useHashes: access.assets.map((entry) => entry.useHash),
+            operations: VISUAL_ASSET_UPLOAD_OPERATIONS,
+            verifyBytes: true,
+            includeUseRecords: true,
+        });
+        const uses = new Map(verification.closureUses.map((entry) => [entry.useHash, entry.use]));
+        assertVisualLayerAccessMatches(access, descriptor, uses);
+        const publishedDescriptorHash = await this._visualLayerDescriptors.put(descriptor);
+        const accessHash = await this._visualLayerAccess.put(access);
+        if (publishedDescriptorHash !== descriptorHash || accessHash !== hashVisualLayerAccess(access)) {
+            throw new Error("Marketplace visual-layer publication returned an unexpected identity.");
+        }
+        return Object.freeze({ descriptorHash, accessHash });
+    }
+
+    commitMarketplaceEnvironment({ environmentId, manifest, expectedRevision, contentHash } = {}) {
+        return this._withEnvironmentWrite(environmentId, async () => {
+            await this._recoverEnvironmentTransactions();
+            await this.bakePromotions.recover(environmentId);
+            const incomingHash = marketplaceEnvironmentContentHash(manifest);
+            if (incomingHash !== contentHash) throw new Error("Prepared marketplace environment content hash changed.");
+            const current = await this._readEnvironment(environmentId);
+            const currentRevision = current?.revision ?? 0;
+            if (current) {
+                const currentHash = marketplaceEnvironmentContentHash(current);
+                const recoverableCreate = expectedRevision === 0 && currentRevision === 1;
+                if (currentHash !== contentHash || (currentRevision !== expectedRevision && !recoverableCreate)) {
+                    const error = new Error(`Environment "${environmentId}" changed after marketplace planning.`);
+                    error.code = "CONFLICT";
+                    error.statusCode = 409;
+                    throw error;
+                }
+                const world = createWorldResource(current);
+                return Object.freeze({
+                    environmentId,
+                    revision: currentRevision,
+                    contentHash: currentHash,
+                    worldHash: world.hash,
+                    descriptorHash: current.visualLayer?.descriptorHash ?? null,
+                    accessHash: current.visualLayer?.accessHash ?? null,
+                    reused: true,
+                });
+            }
+            if (expectedRevision !== 0) {
+                const error = new Error(`Environment "${environmentId}" was removed after marketplace planning.`);
+                error.code = "CONFLICT";
+                error.statusCode = 409;
+                throw error;
+            }
+            const committed = await this._commitEnvironment(environmentId, manifest, {
+                create: true,
+                supportedRoadGeometryVersions: [1, 2],
+                supportedAssetMetricVersions: [1],
+                supportedEditorSourceVersions: [1],
+            });
+            const committedHash = marketplaceEnvironmentContentHash(committed);
+            if (committedHash !== contentHash) throw new Error("Committed marketplace environment content changed during serialization.");
+            return Object.freeze({
+                environmentId,
+                revision: committed.revision,
+                contentHash: committedHash,
+                worldHash: createWorldResource(committed).hash,
+                descriptorHash: committed.visualLayer?.descriptorHash ?? null,
+                accessHash: committed.visualLayer?.accessHash ?? null,
+                reused: false,
+            });
         });
     }
 

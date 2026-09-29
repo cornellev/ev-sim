@@ -11,6 +11,7 @@ import {
 } from "../../app/editor-assets/EditorAssetContract.js";
 import { verifyPluginPackage } from "../../app/plugin/PluginPackage.js";
 import { VISUAL_ASSET_UPLOAD_OPERATIONS, hashVisualAssetUse, normalizeVisualAssetUse } from "../../app/simulation/visual/VisualLayer.js";
+import { createWorldResource } from "../../app/simulation/world/WorldDescription.js";
 import { verifyRunBundleBytes } from "../headless/RunBundle.js";
 import { verifyRunPackageArchive } from "../headless/VisualAssetPack.js";
 import {
@@ -31,6 +32,18 @@ import {
     planAssetPackageImport,
     readPreparedAssetRevision,
 } from "./AssetPackageImportPlanner.js";
+import {
+    ENVIRONMENT_PACKAGE_BLOB_PREFIX,
+    inspectEnvironmentPackage,
+    marketplaceEnvironmentContentHash,
+    prepareEnvironmentPackage,
+    readEnvironmentPackagePreparation,
+    readPreparedEnvironmentJsonRecord,
+} from "./EnvironmentPackage.js";
+import {
+    planEnvironmentPackageImport,
+    readPreparedEnvironment,
+} from "./EnvironmentPackageImportPlanner.js";
 import { MARKETPLACE_ARTIFACTS, MARKETPLACE_LIMITS } from "./MarketplaceContract.js";
 import { MARKETPLACE_ERROR_CODES, marketplaceError } from "./MarketplaceErrors.js";
 
@@ -519,6 +532,27 @@ export const assetPackageArtifactAdapter = defineArtifactAdapter({
     inspect: inspectAssetPackageArtifact,
 });
 
+async function inspectEnvironmentPackageArtifact(adapter, rawHandle, context) {
+    const { normalized: handle, opened } = await openHandle(rawHandle, adapter.contract);
+    await opened.handle.close();
+    const inspection = await inspectEnvironmentPackage({
+        archivePath: handle.path,
+        stagingRoot: context.stagingRoot,
+        limits: context.limits,
+        signal: context.signal,
+    });
+    if (inspection.archiveSha256 !== handle.sha256 || inspection.archiveSizeBytes !== handle.sizeBytes) {
+        throw marketplaceError(MARKETPLACE_ERROR_CODES.ARTIFACT_HASH_MISMATCH, "Environment-package archive identity does not match its descriptor.");
+    }
+    return baseInspection(adapter, handle, inspection);
+}
+
+export const environmentArtifactAdapter = defineArtifactAdapter({
+    id: "environment@1",
+    contentKind: "environment",
+    inspect: inspectEnvironmentPackageArtifact,
+});
+
 export function createAssetPackageLifecycleAdapter({
     editorAssetStore, visualAssetStore, receiptStore,
 } = {}) {
@@ -694,11 +728,256 @@ export function createAssetPackageLifecycleAdapter({
     });
 }
 
+export function createEnvironmentPackageLifecycleAdapter({
+    storageService, editorAssetStore, visualAssetStore, receiptStore,
+} = {}) {
+    if (!storageService || !editorAssetStore || !visualAssetStore || !receiptStore) {
+        throw new TypeError("Environment-package lifecycle adapter requires storage, editor, visual, and receipt stores.");
+    }
+
+    const requirePlannedOperation = (adapterPlan, operation) => {
+        const planned = adapterPlan?.operations?.find((entry) => entry.operationId === operation?.operationId);
+        if (!planned || !isDeepStrictEqual(planned, operation)) {
+            throw marketplaceError(
+                MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED,
+                "Environment-package transaction operation is not the exact operation frozen in the final plan.",
+            );
+        }
+        return planned;
+    };
+
+    const commitAssetOperation = async ({ operation, adapterPlan, preparation }) => {
+        if (operation.kind === "publish-visual-use") {
+            const use = normalizeVisualAssetUse(await readPreparedEnvironmentJsonRecord(preparation, operation.recordSha256));
+            if (hashVisualAssetUse(use) !== operation.useHash || use.asset.sha256 !== operation.blobSha256) {
+                throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Prepared environment visual-use operation identity changed.");
+            }
+            const rights = await visualAssetStore.evaluateSourceRights({
+                sourceIds: use.sourceIds,
+                operations: VISUAL_ASSET_UPLOAD_OPERATIONS,
+            });
+            if (!rights.allowed) throw marketplaceError(MARKETPLACE_ERROR_CODES.RIGHTS_DENIED, "Visual source rights changed before environment import.");
+            const blob = preparation.entry(`${ENVIRONMENT_PACKAGE_BLOB_PREFIX}${operation.blobSha256}`);
+            const upload = await visualAssetStore.createUpload(use);
+            await visualAssetStore.writeUploadContent(upload.id, createReadStream(blob.path), { contentLength: blob.sizeBytes });
+            return { kind: operation.kind, useHash: operation.useHash };
+        }
+        if (operation.kind !== "publish-editor-asset-revision") return null;
+        const preparedRevision = await readPreparedAssetRevision({
+            preparationDir: preparation.preparationDir,
+            preparedRevisionHash: operation.preparedRevisionHash,
+        });
+        if (preparedRevision.sourceAssetId !== operation.sourceAssetId
+            || preparedRevision.sourceRevision !== operation.sourceRevision
+            || preparedRevision.localAssetId !== operation.localAssetId
+            || preparedRevision.localRevision !== operation.localRevision
+            || preparedRevision.hashes.localContent !== operation.localContentHash) {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Prepared environment asset revision identity changed.");
+        }
+        const rights = await visualAssetStore.evaluateSourceRights({
+            sourceIds: preparedRevision.requiredSourceIds,
+            operations: [
+                ...VISUAL_ASSET_UPLOAD_OPERATIONS,
+                ...(preparedRevision.draft.definition ? ["derivatives"] : []),
+            ],
+        });
+        if (!rights.allowed) throw marketplaceError(MARKETPLACE_ERROR_CODES.RIGHTS_DENIED, "Visual source rights changed before environment asset publication.");
+        const replay = await editorAssetStore.findPublication(operation.publicationId);
+        if (replay) {
+            if (replay.revision.assetId !== operation.localAssetId || replay.revision.revision !== operation.localRevision
+                || hashEditorAssetRevisionContent(replay.revision) !== operation.localContentHash) {
+                throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Imported environment asset publication replay has a different identity.");
+            }
+            const root = await visualAssetStore.getRoot(`editor-asset:${operation.localAssetId}:revision:${operation.localRevision}`);
+            if (root?.useHash !== replay.revision.modelUseHash) throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Imported environment asset root is missing.");
+            return {
+                kind: operation.kind,
+                assetId: operation.localAssetId,
+                revision: operation.localRevision,
+                localContentHash: operation.localContentHash,
+                modelUseHash: replay.revision.modelUseHash,
+                rootGeneration: root.generation,
+            };
+        }
+        let existing = null;
+        try {
+            existing = await editorAssetStore.getRevision(operation.localAssetId, operation.localRevision);
+        } catch (error) {
+            if (error.code !== EDITOR_ASSET_ERROR_CODES.NOT_FOUND) throw error;
+        }
+        if (existing) {
+            if (hashEditorAssetRevisionContent(existing) !== operation.localContentHash) {
+                throw marketplaceError(MARKETPLACE_ERROR_CODES.CONFLICT, "Local editor-asset history changed after environment planning.");
+            }
+            const root = await visualAssetStore.getRoot(`editor-asset:${operation.localAssetId}:revision:${operation.localRevision}`);
+            if (root?.useHash !== existing.modelUseHash) throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Content-identical environment asset history has no intact root.");
+            return {
+                kind: operation.kind,
+                assetId: operation.localAssetId,
+                revision: operation.localRevision,
+                localContentHash: operation.localContentHash,
+                modelUseHash: existing.modelUseHash,
+                rootGeneration: root.generation,
+            };
+        }
+        const snapshot = await editorAssetStore.list({ archived: true });
+        const result = await editorAssetStore.publishImportedRevision(preparedRevision.draft, snapshot.catalogRevision);
+        if (result.revision.assetId !== operation.localAssetId || result.revision.revision !== operation.localRevision
+            || hashEditorAssetRevisionContent(result.revision) !== operation.localContentHash) {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Imported environment asset revision committed at an unexpected identity.");
+        }
+        const root = await visualAssetStore.getRoot(`editor-asset:${operation.localAssetId}:revision:${operation.localRevision}`);
+        if (root?.useHash !== result.revision.modelUseHash) throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Imported environment asset root is missing after publication.");
+        return {
+            kind: operation.kind,
+            assetId: operation.localAssetId,
+            revision: operation.localRevision,
+            localContentHash: operation.localContentHash,
+            modelUseHash: result.revision.modelUseHash,
+            rootGeneration: root.generation,
+        };
+    };
+
+    return defineArtifactAdapter({
+        id: "environment@1",
+        contentKind: "environment",
+        inspect: inspectEnvironmentPackageArtifact,
+        receiptResourceKinds: ["environment"],
+        async plan(_adapter, { release, artifactHandle, context }) {
+            if (!context.workDirectory) throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Environment-package planning requires durable job work storage.");
+            const prepared = await prepareEnvironmentPackage({
+                archivePath: artifactHandle.path,
+                workDirectory: context.workDirectory,
+                signal: context.signal,
+            });
+            if (prepared.verified.archiveSha256 !== artifactHandle.sha256) {
+                throw marketplaceError(MARKETPLACE_ERROR_CODES.ARTIFACT_HASH_MISMATCH, "Prepared environment package changed after inspection.");
+            }
+            return planEnvironmentPackageImport({
+                verified: prepared.verified,
+                preparation: prepared,
+                storageService,
+                editorAssetStore,
+                visualAssetStore,
+                receiptStore,
+                release,
+                context,
+            });
+        },
+        async commit(_adapter, { operation, adapterPlan, context }) {
+            operation = requirePlannedOperation(adapterPlan, operation);
+            const preparation = await readEnvironmentPackagePreparation({
+                workDirectory: context.workDirectory,
+                preparationHash: adapterPlan.preparationHash,
+                archiveSha256: adapterPlan.package.archiveSha256,
+            });
+            if (operation.kind === "publish-visual-use" || operation.kind === "publish-editor-asset-revision") {
+                return commitAssetOperation({ operation, adapterPlan, preparation });
+            }
+            const prepared = await readPreparedEnvironment({
+                preparationDir: preparation.preparationDir,
+                preparedEnvironmentHash: operation.preparedEnvironmentHash,
+            });
+            if (prepared.target.environmentId !== adapterPlan.environment.localEnvironmentId
+                || prepared.target.contentHash !== adapterPlan.environment.localContentHash
+                || prepared.target.worldHash !== adapterPlan.environment.localWorldHash) {
+                throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Prepared environment identity changed after planning.");
+            }
+            if (operation.kind === "publish-environment-visual-layer") {
+                if (!prepared.visual || prepared.visual.descriptorHash !== operation.descriptorHash
+                    || prepared.visual.accessHash !== operation.accessHash) {
+                    throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Prepared environment visual identity changed.");
+                }
+                return {
+                    kind: operation.kind,
+                    ...await storageService.publishMarketplaceVisualLayer({
+                        descriptor: prepared.visual.descriptor,
+                        access: prepared.visual.access,
+                    }),
+                };
+            }
+            if (operation.kind === "publish-environment") {
+                if (operation.environmentId !== prepared.target.environmentId
+                    || operation.expectedRevision !== prepared.target.expectedRevision
+                    || operation.contentHash !== prepared.target.contentHash
+                    || operation.worldHash !== prepared.target.worldHash
+                    || marketplaceEnvironmentContentHash(prepared.target.manifest) !== operation.contentHash) {
+                    throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Prepared environment publication operation changed.");
+                }
+                return {
+                    kind: operation.kind,
+                    ...await storageService.commitMarketplaceEnvironment({
+                        environmentId: prepared.target.environmentId,
+                        manifest: prepared.target.manifest,
+                        expectedRevision: prepared.target.expectedRevision,
+                        contentHash: prepared.target.contentHash,
+                    }),
+                };
+            }
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, `Unknown environment-package operation ${operation.kind}.`);
+        },
+        async recover(adapter, input) {
+            const adapterPlan = input.adapterPlan;
+            const operation = requirePlannedOperation(adapterPlan, input.operation);
+            input = { ...input, operation };
+            if (operation.kind === "publish-visual-use") {
+                const use = await visualAssetStore.getUse(operation.useHash, { optional: true });
+                if (use && hashVisualAssetUse(use) === operation.useHash) {
+                    await visualAssetStore.readPublishedBytes(use.asset.sha256, { expectedSize: use.asset.sizeBytes });
+                    return { kind: operation.kind, useHash: operation.useHash };
+                }
+            } else if (operation.kind === "publish-editor-asset-revision") {
+                let revision = null;
+                try {
+                    revision = await editorAssetStore.getRevision(operation.localAssetId, operation.localRevision);
+                } catch (error) {
+                    if (error.code !== EDITOR_ASSET_ERROR_CODES.NOT_FOUND) throw error;
+                }
+                const root = revision ? await visualAssetStore.getRoot(`editor-asset:${operation.localAssetId}:revision:${operation.localRevision}`) : null;
+                if (revision && hashEditorAssetRevisionContent(revision) === operation.localContentHash
+                    && root?.useHash === revision.modelUseHash) {
+                    return {
+                        kind: operation.kind,
+                        assetId: operation.localAssetId,
+                        revision: operation.localRevision,
+                        localContentHash: operation.localContentHash,
+                        modelUseHash: revision.modelUseHash,
+                        rootGeneration: root.generation,
+                    };
+                }
+            } else if (operation.kind === "publish-environment") {
+                const current = await storageService.getEnvironment(operation.environmentId);
+                if (current && marketplaceEnvironmentContentHash(current) === operation.contentHash
+                    && createWorldResource(current).hash === operation.worldHash
+                    && (current.revision === operation.expectedRevision
+                        || (operation.expectedRevision === 0 && current.revision === 1))) {
+                    return {
+                        kind: operation.kind,
+                        environmentId: operation.environmentId,
+                        revision: current.revision,
+                        contentHash: operation.contentHash,
+                        worldHash: operation.worldHash,
+                        descriptorHash: current.visualLayer?.descriptorHash ?? null,
+                        accessHash: current.visualLayer?.accessHash ?? null,
+                        reused: true,
+                    };
+                }
+                if (current) throw marketplaceError(MARKETPLACE_ERROR_CODES.CONFLICT, "Imported environment changed before marketplace recovery completed.");
+            }
+            return adapter.commit({ ...input, adapterPlan });
+        },
+        async createReceipt(_adapter, { adapterPlan }) {
+            return { mappings: adapterPlan.mappings };
+        },
+    });
+}
+
 export const MARKETPLACE_ARTIFACT_ADAPTERS = Object.freeze([
     pluginArtifactAdapter,
     vehicleArtifactAdapter,
     runTemplateArtifactAdapter,
     runPackageArtifactAdapter,
+    environmentArtifactAdapter,
     assetPackageArtifactAdapter,
 ]);
 
@@ -789,6 +1068,9 @@ export function createMarketplaceClientArtifactRegistry(options) {
         vehicleArtifactAdapter,
         runTemplateArtifactAdapter,
         runPackageArtifactAdapter,
+        options?.storageService && options?.editorAssetStore && options?.visualAssetStore && options?.receiptStore
+            ? createEnvironmentPackageLifecycleAdapter(options)
+            : environmentArtifactAdapter,
         options?.editorAssetStore && options?.visualAssetStore && options?.receiptStore
             ? createAssetPackageLifecycleAdapter(options)
             : assetPackageArtifactAdapter,

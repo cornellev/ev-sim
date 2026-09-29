@@ -259,7 +259,7 @@ export class MarketplaceInstallPlanner {
                 throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Pinned marketplace release identity changed.");
             }
             const compatibility = evaluateMarketplaceCompatibility(release.compatibility, hostProfile);
-            if (!compatibility.compatible && release.contentKind !== "asset-pack") {
+            if (!compatibility.compatible && !["asset-pack", "environment"].includes(release.contentKind)) {
                 throw marketplaceError(MARKETPLACE_ERROR_CODES.INCOMPATIBLE, `Marketplace release ${release.itemId}@${release.releaseVersion} is incompatible with this host.`);
             }
             const policy = this.releasePolicy(release) ?? {};

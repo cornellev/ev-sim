@@ -2020,6 +2020,17 @@ by this plan revision.
 
 ## Decision log
 
+### 2026-09-28 — Portable environment import reuses visual truth and access contracts
+
+MKT-10 exports a saved environment's exact descriptor/access pair and complete
+export-authorized use/blob closure. Destination planning reevaluates local
+source policy, never writes `visual-source-registry.json`, preserves the pair
+when `worldHash` is unchanged, and otherwise uses the existing
+`rebindVisualLayer()` and `rebindVisualLayerAccess()` contracts before immutable
+publication. Descriptor/access validation, source rights, roots, hashes, and
+versions are unchanged. Marketplace provenance and receipts enter no visual or
+simulation identity, so this is not a VIS milestone.
+
 ### 2026-09-28 — Marketplace asset packages preserve visual authority and roots
 
 MKT-09 exports the complete reachable visual-use and blob closure for selected

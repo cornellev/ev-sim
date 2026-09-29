@@ -18,8 +18,8 @@ hosted private-LAN registry. It is not headless PR 13 and does not extend the
 | MKT-07: plans, jobs, transactions, receipts | Complete; acceptance pending | Core local gates pass; repository-wide UI/a11y has unrelated failures | Unmerged |
 | MKT-08: plugin lifecycle | Complete; acceptance pending | Core local and serial Marketplace gates pass; repository-wide UI/a11y has unrelated failures | Unmerged |
 | MKT-09: asset-package export, import, and revision mapping | Complete; acceptance pending | Core local gates pass; repository-wide a11y has unrelated workspace timeouts; hosted CI pending | Unmerged |
-| MKT-10: vehicle and run lifecycle | Not started | Not run | Unmerged |
-| MKT-11: environment-package lifecycle | Not started | Not run | Unmerged |
+| MKT-10: portable environments | Implemented; acceptance pending | Core local gates pass; browser remainder waived for this run; supported-Node and hosted CI evidence pending | Unmerged |
+| MKT-11: vehicle and run lifecycle | Not started | Not run | Unmerged |
 | MKT-12: collections | Not started | Not run | Unmerged |
 | MKT-13: publishers, authentication, secure LAN | Not started | Not run | Unmerged |
 | MKT-14: LAN discovery, updates, advisories | Not started | Not run | Unmerged |
@@ -158,17 +158,16 @@ hashes.
 ## Portable archive limits
 
 MKT-02 generalizes the existing strict run-package USTAR implementation;
-MKT-09 activates asset packages; environment packages remain deferred to
-MKT-11. Existing run-package limits and bytes remain unchanged.
+MKT-09 activates asset packages and MKT-10 activates environment packages.
+Existing run-package limits and bytes remain unchanged.
 `server/artifacts/DeterministicArchive.js`
 owns transport-only canonical USTAR framing and verification, while each
 content profile continues to own entry order, semantic validation, and its
 narrower limits.
 
-The asset-package profile uses an 8 GiB archive ceiling, a 1 GiB binary-blob
-ceiling, a 32 MiB authoring-record ceiling, a 4 MiB manifest ceiling, 16,384
-payload entries, and dependency depth 64. The future environment profile
-retains its separate 50 GiB/100,000-entry proposal. No base-256 or PAX
+Asset and environment packages share an 8 GiB archive ceiling, a 1 GiB
+binary-blob ceiling, a 32 MiB authoring-record ceiling, a 4 MiB manifest
+ceiling, 16,384 payload entries, and dependency depth 64. No base-256 or PAX
 extension is admitted.
 
 ## MKT-01 work packages
@@ -534,7 +533,28 @@ identical plans; geometry and metric behavior survive remapping; post-commit
 failure pauses in `needs-attention` and resumes operation-by-operation without
 rollback or overwrite.
 
-### MKT-10 — Vehicle, run-template, and exact-run lifecycle
+### MKT-10 — Portable environments
+
+Implement `cev-sim.environment-package@1` as a deterministic, resumable
+authoring lifecycle over a canonical schema-v4 environment, the MKT-09 asset
+closure, and the complete visual descriptor/access closure. Import rewrites
+asset pins and metric snapshots, deterministically allocates the local
+environment ID, rebinds visual truth only when the world changes, and publishes
+uses, revisions, visual records, then the environment through the existing
+guarded storage lanes.
+
+The package does not carry correspondence evidence, bake-reuse state, source
+policy, or Marketplace provenance into authoring identity. Marketplace opens a
+completed import through the normal Environment Editor selection path; it does
+not invoke document mutations or projection directly.
+
+Gate: repeated exports are byte-identical; all archive and graph failures are
+rejected before authoring; operation-level resume never overwrites or rolls
+back user edits; round trips remain editable through `CommandBus` and
+`SceneProjector`; carried rights cannot grant authority; world identity changes
+only with canonical world content.
+
+### MKT-11 — Vehicle, run-template, and exact-run lifecycle
 
 Wire existing vehicle/run-bundle/run-package importers. Embedded vehicle
 plugins enter CAS without library membership. Templates become editable local
@@ -542,16 +562,6 @@ configs; exact packages remain immutable.
 
 Gate: artifact hashes and exact reproduction remain stable; collision mappings
 are deterministic; unsupported backends fail rather than substitute.
-
-### MKT-11 — Environment-package lifecycle
-
-Implement the separately versioned environment package export/import contract,
-including canonical environment persistence and the existing `CommandBus` and
-`SceneProjector` boundaries. It must not be inferred from MKT-09 asset import.
-
-Gate: round trips remain editable through `CommandBus` and `SceneProjector`;
-carried rights cannot grant authority; world identity changes only with
-canonical world content.
 
 ### MKT-12 — Collections and multi-release plans
 
@@ -1050,7 +1060,87 @@ Local evidence on 2026-09-28:
 Hosted CI and merge evidence remain pending, so WP-11 and the milestone merge
 gate remain open.
 
+## MKT-10 work packages
+
+- [x] WP-00: reconcile the attached roadmap authority so portable environments
+  are MKT-10, retain MKT-09 evidence, and replace the obsolete 50 GiB future
+  profile with the shared 8 GiB portable-authoring profile.
+- [x] WP-01: expose reusable MKT-09 asset-closure collection and verification,
+  retain standalone asset-package bytes and non-empty-root rules, and make
+  prepared revision reads work beneath either package preparation directory.
+- [x] WP-02: add serialized schema-v4 environment snapshots and deterministic,
+  concurrency-checked export of environment, asset, descriptor, access, use,
+  and blob records.
+- [x] WP-03: add strict manifest-first USTAR verification, exact closure and
+  graph checks, portable-source rejection, inspection cleanup, and durable
+  preparation indexed by a preparation hash.
+- [x] WP-04: add sparse asset/reference rewriting, metric-snapshot rebuilding,
+  deterministic environment-ID allocation, prior-receipt reuse, and the
+  nonsemantic authoring-content hash.
+- [x] WP-05: write durable prepared environments, rebind descriptor/access
+  truth only when the local world changes, clear correspondence evidence and
+  bake-reuse state, and reevaluate current source rights.
+- [x] WP-06: publish immutable visual records and schema-v4 environments through
+  guarded storage methods that replay exact commits and conflict on user edits.
+- [x] WP-07: register the `environment@1` lifecycle, freeze environment-last
+  operations and completion identities, pass `StorageService` into Marketplace,
+  and keep authoring imports independent of runtime/backend compatibility.
+- [x] WP-08: add environment plan review plus completion and Installed-tab
+  navigation through the normal environment selection/editor path.
+- [x] WP-09: add focused deterministic export, strict verification,
+  concurrency, remapping, allocation, publication, and recovery coverage plus
+  the completion/Installed navigation implementation. Broader browser evidence
+  is recorded below.
+- [ ] WP-10: complete all repository, serial browser, accessibility, hosted CI,
+  and merge gates and freeze final evidence.
+
+Local evidence on 2026-09-28:
+
+- `node --test tests/marketplace-environment-package.test.js` passed 7/7,
+  covering byte-identical empty export, strict verification, authenticated
+  durable preparation, exact frozen operations, post-publication edit conflict,
+  v1 and GLTF tile@2 remapping, capture/recheck conflict, legacy/built-in/live
+  source rejection, denied export rights, visual rebinding, and unchanged local
+  source-registry bytes.
+- `node --test tests/marketplace-asset-package.test.js` passed 4/4 after the
+  shared closure refactor, retaining the deterministic MKT-09 package baseline.
+- `npm run test:marketplace` passed 95/95 with loopback access enabled.
+- `npm test` passed 1,831 tests with six declared skips and zero failures.
+- `npm run lint` completed with zero errors and the pre-existing `MapSurface.js`
+  `assetEpoch` hook warning; `npm run build` and `npm run release:check` passed.
+- `npm run fixtures:headless` and `npm run fixtures:environment-editor` passed
+  with no fixture or Marketplace schema diff. `git diff --check` passed.
+- The serial Marketplace Playwright suite passed three cases directly; its
+  discovery keyboard case missed one five-second details-panel wait and passed
+  immediately when rerun alone. The Marketplace keyboard/Axe case passed.
+  A combined serial Environment Editor run passed four cases, hit the existing
+  long ED-07 timeout pattern in two cases, and was stopped before the remaining
+  cases at user direction. The five-worker accessibility run likewise produced
+  two Environment Editor Axe passes and known long Environment Editor timeouts
+  before the user waived the remaining Playwright run. No accessibility-rule
+  violation was reported.
+- This host uses Node `v22.14.0`, below the locked `22.22.2` patch baseline.
+  Supported-Node, hosted CI, merge, and the user-waived browser remainder keep
+  WP-10 and milestone acceptance open.
+
 ## Decision log
+
+### 2026-09-28 — Make portable environments MKT-10
+
+The attached integrated roadmap supersedes the stale checked-in ordering that
+assigned vehicle/run lifecycle work to MKT-10 and environment packages to
+MKT-11. MKT-10 now owns `cev-sim.environment-package@1`; vehicle, run-template,
+and exact-run lifecycle work moves to MKT-11 without being implemented here.
+MKT-09 evidence and artifact bytes remain authoritative prerequisites.
+
+Environment packages use the MKT-09 portable-authoring ceilings: 8 GiB archive,
+1 GiB blob, 32 MiB record, 4 MiB manifest, 16,384 payload entries, and graph
+depth 64. Import reuses schema-v4 persistence, asset/visual publication,
+`createWorldResource()`, visual access policy, and Environment Editor navigation
+without changing their contract versions or hash algorithms. Marketplace
+provenance, preparations, receipts, and installed membership remain outside
+`worldHash`, `resolvedHash`, `simulationSemanticHash`, `episodeHash`, artifact
+hashes, and run-package identity.
 
 ### 2026-09-28 — Import assets as durable authoring content, not environment state
 
@@ -1229,10 +1319,9 @@ without changing any legacy serializer. Development/CI pin Node 22.22.2 while
 the supported range permits later Node 22 patch releases only. The marketplace
 startup flag remains dormant and defaults off.
 
-### 2026-09-26 — Correct the future environment USTAR per-entry limit
+### 2026-09-26 — Correct the then-proposed future environment USTAR limit
 
-The future environment-package per-entry limit is 8,589,934,591 bytes,
-the maximum canonical 11-octal-digit USTAR size. The total 50 GiB archive limit
-is unchanged. This decision does not alter existing run-package limits or
-bytes. Asset packages instead use the narrower MKT-09 profile; environment
-implementation belongs to MKT-11.
+This historical proposal assigned a separate 50 GiB profile to the future
+environment package. The 2026-09-28 MKT-10 decision supersedes it with the
+shared 8 GiB portable-authoring profile. Existing run-package limits and bytes
+remain unchanged.

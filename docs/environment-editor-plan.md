@@ -1002,6 +1002,18 @@ Record in the ledger: focused-suite pass counts, `npm run lint` result,
 
 ## Decision log
 
+### 2026-09-28 — Portable environment import reuses guarded schema-v4 persistence
+
+MKT-10 may publish a fully verified and rewritten schema-v4 environment through
+the existing guarded `StorageService` commit lane. It does not add an
+environment schema, bypass asset-pin or metric validation, call document
+mutations, dispatch synthetic editor commands, or project runtime meshes.
+Marketplace navigation selects the imported environment; all later editing,
+saving, loading, and projection continue through `CommandBus`, the schema-v4
+writer, `EnvironmentLoader`, and `SceneProjector`. Existing environment-editor
+contracts, fixtures, and `worldHash` rules are unchanged, so this records a
+consumer boundary rather than a new ED milestone.
+
 ### 2026-09-28 — Marketplace import publishes assets, not environment edits
 
 MKT-09 maps each selected source asset history to one deterministic local asset

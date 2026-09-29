@@ -1,5 +1,6 @@
 import express from "express";
 import { storageEvents } from "../mcp/events.js";
+import { exportEnvironmentPackage } from "../marketplace/EnvironmentPackage.js";
 import { jsonHandler } from "./jsonHandler.js";
 
 /**
@@ -31,6 +32,31 @@ export function createStorageRouter(service) {
     )));
     router.get("/environments/:id", handle(async (req) => service.getEnvironment(req.params.id)));
     router.put("/environments/:id", handle(async (req) => service.putEnvironment(req.params.id, req.body ?? {})));
+    router.post("/environments/:id/packages/export", async (req, res) => {
+        try {
+            const exported = await exportEnvironmentPackage({
+                storageService: service,
+                environmentId: req.params.id,
+                expectedRevision: parseExpectedRevision(req.body?.expectedRevision),
+                signal: req.signal,
+            });
+            res.status(200).set({
+                "Cache-Control": "no-store",
+                "Content-Type": "application/vnd.cev-sim.environment-package+tar",
+                "Content-Disposition": `attachment; filename="cev-sim-environment-${req.params.id}.tar"`,
+                "X-Content-Type-Options": "nosniff",
+            });
+            exported.stream.on("error", (error) => {
+                if (!res.destroyed) res.destroy(error);
+            });
+            exported.stream.pipe(res);
+            await exported.completion;
+        } catch (error) {
+            console.error(`[storage] ${req.method} ${req.originalUrl} failed:`, error);
+            if (res.headersSent) res.destroy(error);
+            else res.status(Number(error.statusCode) || (error.code === "CONFLICT" ? 409 : 400)).json({ error: error.message, code: error.code });
+        }
+    });
     router.post("/environments/:id/bake-promotions", handle(async (req) => (
         service.beginBakePromotion(req.params.id, req.body ?? {})
     )));

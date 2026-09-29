@@ -23,3 +23,30 @@ export function updateAssetRevisionBinding(record, revision, assetTypeVersion = 
     } else if (assetTypeVersion !== null) next.typeVersion = assetTypeVersion;
     return next;
 }
+
+export function rewriteAssetBinding(record, {
+    assetId, revision, assetTypeVersion = null,
+} = {}) {
+    const asset = readAssetBinding(record);
+    const id = String(assetId ?? "").trim();
+    if (!asset || !id || !Number.isInteger(revision) || revision <= 0) {
+        throw new TypeError("An asset-backed object, asset id, and positive revision are required.");
+    }
+    const next = structuredClone(record);
+    next.components.asset = {
+        ...next.components.asset,
+        assetId: id,
+        revision,
+    };
+    if (next.typeId === "tile") {
+        next.typeVersion = 2;
+        next.components.tile = {
+            ...next.components.tile,
+            provider: "gltf",
+            assetTypeVersion: assetTypeVersion ?? next.components.tile?.assetTypeVersion ?? 1,
+        };
+    } else if (assetTypeVersion !== null) {
+        next.typeVersion = assetTypeVersion;
+    }
+    return next;
+}

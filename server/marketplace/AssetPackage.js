@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { createReadStream, promises as fs } from "node:fs";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -24,6 +23,11 @@ import {
     hashMarketplaceBytes,
     parseMarketplaceJsonBytes,
 } from "./MarketplaceJson.js";
+import {
+    createPackagePreparationIndex,
+    packagePreparationHash,
+    readPackagePreparation,
+} from "./PackagePreparation.js";
 
 export const ASSET_PACKAGE_KIND = "cev-sim.asset-package";
 export const ASSET_PACKAGE_VERSION = 1;
@@ -87,7 +91,7 @@ function sortedUnique(values, key, pathName) {
     });
 }
 
-export function normalizeAssetPackageManifest(value) {
+export function normalizeAssetClosureManifest(value) {
     exactKeys(value, ["kind", "version", "roots", "assets", "uses", "blobs"], "$manifest");
     if (value.kind !== ASSET_PACKAGE_KIND || value.version !== ASSET_PACKAGE_VERSION) {
         invalid(`Expected ${ASSET_PACKAGE_KIND}@${ASSET_PACKAGE_VERSION}.`, "$manifest.kind");
@@ -140,7 +144,9 @@ export function normalizeAssetPackageManifest(value) {
     return { kind: ASSET_PACKAGE_KIND, version: ASSET_PACKAGE_VERSION, roots, assets, uses, blobs };
 }
 
-function revisionUseRoots(revision) {
+export const normalizeAssetPackageManifest = normalizeAssetClosureManifest;
+
+export function revisionUseRoots(revision) {
     const hashes = new Set([revision.modelUseHash]);
     if (revision.version === 2) {
         revision.definition.sources.forEach((source) => hashes.add(source.modelUseHash));
@@ -154,7 +160,7 @@ function revisionKey(assetId, revision) {
     return `${assetId}@${revision}`;
 }
 
-function topologicalOrder(nodes, edges, label) {
+export function topologicalOrder(nodes, edges, label) {
     const outgoing = new Map(nodes.map((node) => [node, new Set()]));
     const incoming = new Map(nodes.map((node) => [node, 0]));
     for (const [from, to] of edges) {
@@ -180,7 +186,7 @@ function topologicalOrder(nodes, edges, label) {
     return ordered;
 }
 
-function assertGraphDepth(nodes, edges, order, maximum, label) {
+export function assertGraphDepth(nodes, edges, order, maximum, label) {
     const outgoing = new Map(nodes.map((node) => [node, []]));
     for (const [from, to] of edges) outgoing.get(from).push(to);
     const depths = new Map(nodes.map((node) => [node, 1]));
@@ -192,14 +198,14 @@ function assertGraphDepth(nodes, edges, order, maximum, label) {
     if ([...depths.values()].some((depth) => depth > maximum)) limit(`${label} exceeds the depth limit.`);
 }
 
-function parseCanonicalRecord(bytes, expectedSha256, expectedSize, label) {
+export function parseCanonicalRecord(bytes, expectedSha256, expectedSize, label) {
     if (bytes.byteLength !== expectedSize || hashMarketplaceBytes(bytes) !== expectedSha256) invalid(`${label} bytes do not match the manifest.`);
     const { document } = parseMarketplaceJsonBytes(bytes);
     if (!Buffer.from(bytes).equals(Buffer.from(canonicalMarketplaceBytes(document)))) invalid(`${label} must contain exact canonical JSON.`);
     return document;
 }
 
-function archiveLimits(overrides = {}) {
+export function assetPackageLimits(overrides = {}) {
     const merged = { ...ASSET_PACKAGE_LIMITS, ...overrides };
     for (const key of ["archiveBytes", "blobBytes", "recordBytes", "manifestBytes", "payloadEntries", "entries", "graphDepth", "temporaryBytes", "inodes", "verificationTimeoutMs"]) {
         if (!Number.isSafeInteger(merged[key]) || merged[key] < 1 || merged[key] > ASSET_PACKAGE_LIMITS[key]) {
@@ -209,65 +215,56 @@ function archiveLimits(overrides = {}) {
     return Object.freeze(merged);
 }
 
-async function verifyStagedAssetPackage(verified, limits) {
-    if (verified.entries.length === 0 || verified.entries[0].name !== ASSET_PACKAGE_MANIFEST) invalid("Asset package manifest must be the first archive entry.");
-    if (verified.entries.length - 1 > limits.payloadEntries) limit("Asset package exceeds the payload-entry limit.");
-    const manifestEntry = verified.entries[0];
-    const manifestBytes = await fs.readFile(manifestEntry.path);
-    const manifestDocument = parseCanonicalRecord(manifestBytes, manifestEntry.sha256, manifestEntry.sizeBytes, "Asset package manifest");
-    const manifest = normalizeAssetPackageManifest(manifestDocument);
-    if (manifest.roots.length === 0) invalid("Asset package must declare at least one root revision.");
-    if (!Buffer.from(manifestBytes).equals(Buffer.from(canonicalMarketplaceBytes(manifest)))) invalid("Asset package manifest is not normalized canonical JSON.");
-
+export function verifyAssetClosure({
+    manifest: manifestInput,
+    recordBytes,
+    blobs: blobEntries,
+    limits: limitInput = ASSET_PACKAGE_LIMITS,
+    requireRoots = false,
+} = {}) {
+    const limits = limitInput;
+    const manifest = normalizeAssetClosureManifest(manifestInput);
+    if (requireRoots && manifest.roots.length === 0) invalid("Asset package must declare at least one root revision.");
+    if (!(recordBytes instanceof Map) || !(blobEntries instanceof Map)) invalid("Asset closure records and blobs must be maps.");
     const revisionDescriptors = manifest.assets.flatMap((asset) => asset.revisions.map((revision) => ({ ...revision, assetId: asset.assetId })));
     const recordDigests = [...new Set([
         ...revisionDescriptors.map((entry) => entry.recordSha256),
         ...manifest.uses.map((entry) => entry.recordSha256),
     ])].sort(compareUtf8);
-    const expectedNames = [
-        ASSET_PACKAGE_MANIFEST,
-        ...recordDigests.map((entry) => `${ASSET_PACKAGE_RECORD_PREFIX}${entry}`),
-        ...manifest.blobs.map((entry) => `${ASSET_PACKAGE_BLOB_PREFIX}${entry.sha256}`),
-    ];
-    if (verified.entries.length !== expectedNames.length || verified.entries.some((entry, index) => entry.name !== expectedNames[index])) {
-        invalid("Asset package archive entries do not exactly match the manifest or canonical ordering.");
-    }
-    const entriesByName = new Map(verified.entries.map((entry) => [entry.name, entry]));
-    const recordBytes = new Map();
-    for (const recordDigest of recordDigests) {
-        const entry = entriesByName.get(`${ASSET_PACKAGE_RECORD_PREFIX}${recordDigest}`);
-        if (entry.sha256 !== recordDigest) invalid(`Record ${recordDigest} content digest does not match its path.`);
-        recordBytes.set(recordDigest, await fs.readFile(entry.path));
+    if (recordDigests.length !== recordBytes.size || recordDigests.some((sha256) => !recordBytes.has(sha256))) {
+        invalid("Asset closure records are missing or contain unreachable entries.");
     }
 
     const revisions = new Map();
     for (const descriptor of revisionDescriptors) {
         if (descriptor.sizeBytes > limits.recordBytes) limit(`Asset revision record ${descriptor.recordSha256} exceeds the record limit.`);
-        const document = parseCanonicalRecord(recordBytes.get(descriptor.recordSha256), descriptor.recordSha256, descriptor.sizeBytes, "Asset revision record");
+        const bytes = recordBytes.get(descriptor.recordSha256);
+        const document = parseCanonicalRecord(bytes, descriptor.recordSha256, descriptor.sizeBytes, "Asset revision record");
         const issues = validateEditorAssetRevision(document);
         if (issues.length) invalid(`Asset revision record is invalid: ${issues[0].message}`);
         const revision = normalizeEditorAssetRevision(document);
         if (revision.assetId !== descriptor.assetId || revision.revision !== descriptor.revision) invalid("Asset revision record identity does not match the manifest.");
-        if (!Buffer.from(recordBytes.get(descriptor.recordSha256)).equals(Buffer.from(canonicalMarketplaceBytes(revision)))) invalid("Asset revision record is not normalized canonical JSON.");
+        if (!Buffer.from(bytes).equals(Buffer.from(canonicalMarketplaceBytes(revision)))) invalid("Asset revision record is not normalized canonical JSON.");
         revisions.set(revisionKey(revision.assetId, revision.revision), { descriptor, revision });
     }
 
     const uses = new Map();
     for (const descriptor of manifest.uses) {
         if (descriptor.sizeBytes > limits.recordBytes) limit(`Visual-use record ${descriptor.recordSha256} exceeds the record limit.`);
-        const document = parseCanonicalRecord(recordBytes.get(descriptor.recordSha256), descriptor.recordSha256, descriptor.sizeBytes, "Visual-use record");
+        const bytes = recordBytes.get(descriptor.recordSha256);
+        const document = parseCanonicalRecord(bytes, descriptor.recordSha256, descriptor.sizeBytes, "Visual-use record");
         const use = normalizeVisualAssetUse(document);
         if (hashVisualAssetUse(use) !== descriptor.useHash) invalid(`Visual-use record ${descriptor.useHash} has the wrong use hash.`);
-        if (!Buffer.from(recordBytes.get(descriptor.recordSha256)).equals(Buffer.from(canonicalMarketplaceBytes(use)))) invalid("Visual-use record is not normalized canonical JSON.");
+        if (!Buffer.from(bytes).equals(Buffer.from(canonicalMarketplaceBytes(use)))) invalid("Visual-use record is not normalized canonical JSON.");
         uses.set(descriptor.useHash, { descriptor, use });
     }
 
     const blobByDigest = new Map(manifest.blobs.map((blob) => [blob.sha256, blob]));
-    for (const blob of manifest.blobs) {
-        if (blob.sizeBytes > limits.blobBytes) limit(`Asset-package blob ${blob.sha256} exceeds the blob limit.`);
-        const entry = entriesByName.get(`${ASSET_PACKAGE_BLOB_PREFIX}${blob.sha256}`);
-        if (entry.sha256 !== blob.sha256 || entry.sizeBytes !== blob.sizeBytes) invalid(`Asset-package blob ${blob.sha256} does not match the manifest.`);
-    }
+    if (blobByDigest.size !== blobEntries.size || [...blobByDigest].some(([sha256, blob]) => {
+        const entry = blobEntries.get(sha256);
+        return !entry || entry.sha256 !== sha256 || entry.sizeBytes !== blob.sizeBytes;
+    })) invalid("Asset closure blobs are missing, inconsistent, or contain unreachable entries.");
+    for (const blob of manifest.blobs) if (blob.sizeBytes > limits.blobBytes) limit(`Asset-package blob ${blob.sha256} exceeds the blob limit.`);
 
     const assetNodes = [...revisions.keys()].sort(compareUtf8);
     const assetEdges = [];
@@ -319,17 +316,75 @@ async function verifyStagedAssetPackage(verified, limits) {
     for (const root of manifest.roots) if (!revisions.has(revisionKey(root.assetId, root.revision))) invalid(`Asset package root ${revisionKey(root.assetId, root.revision)} is missing.`);
     return Object.freeze({
         manifest,
-        manifestSha256: manifestEntry.sha256,
-        archiveSha256: verified.sha256,
-        archiveSizeBytes: verified.sizeBytes,
-        stagingDir: verified.stagingDir,
-        entries: Object.freeze(verified.entries.map((entry) => Object.freeze({ ...entry }))),
         revisions,
         uses,
         assetOrder: Object.freeze(assetOrder),
         useOrder: Object.freeze(useOrder),
         assetEdges: Object.freeze(assetEdges.map((edge) => Object.freeze([...edge]))),
         useEdges: Object.freeze(useEdges.map((edge) => Object.freeze([...edge]))),
+    });
+}
+
+async function verifyStagedAssetPackage(verified, limits) {
+    if (verified.entries.length === 0 || verified.entries[0].name !== ASSET_PACKAGE_MANIFEST) invalid("Asset package manifest must be the first archive entry.");
+    if (verified.entries.length - 1 > limits.payloadEntries) limit("Asset package exceeds the payload-entry limit.");
+    const manifestEntry = verified.entries[0];
+    const manifestBytes = await fs.readFile(manifestEntry.path);
+    const manifestDocument = parseCanonicalRecord(manifestBytes, manifestEntry.sha256, manifestEntry.sizeBytes, "Asset package manifest");
+    const manifest = normalizeAssetPackageManifest(manifestDocument);
+    if (!Buffer.from(manifestBytes).equals(Buffer.from(canonicalMarketplaceBytes(manifest)))) invalid("Asset package manifest is not normalized canonical JSON.");
+
+    const revisionDescriptors = manifest.assets.flatMap((asset) => asset.revisions.map((revision) => ({ ...revision, assetId: asset.assetId })));
+    const recordDigests = [...new Set([
+        ...revisionDescriptors.map((entry) => entry.recordSha256),
+        ...manifest.uses.map((entry) => entry.recordSha256),
+    ])].sort(compareUtf8);
+    const expectedNames = [
+        ASSET_PACKAGE_MANIFEST,
+        ...recordDigests.map((entry) => `${ASSET_PACKAGE_RECORD_PREFIX}${entry}`),
+        ...manifest.blobs.map((entry) => `${ASSET_PACKAGE_BLOB_PREFIX}${entry.sha256}`),
+    ];
+    if (verified.entries.length !== expectedNames.length || verified.entries.some((entry, index) => entry.name !== expectedNames[index])) {
+        invalid("Asset package archive entries do not exactly match the manifest or canonical ordering.");
+    }
+    const entriesByName = new Map(verified.entries.map((entry) => [entry.name, entry]));
+    const recordBytes = new Map();
+    for (const recordDigest of recordDigests) {
+        const entry = entriesByName.get(`${ASSET_PACKAGE_RECORD_PREFIX}${recordDigest}`);
+        if (entry.sha256 !== recordDigest) invalid(`Record ${recordDigest} content digest does not match its path.`);
+        recordBytes.set(recordDigest, await fs.readFile(entry.path));
+    }
+
+    const blobByDigest = new Map(manifest.blobs.map((blob) => [blob.sha256, blob]));
+    for (const blob of manifest.blobs) {
+        if (blob.sizeBytes > limits.blobBytes) limit(`Asset-package blob ${blob.sha256} exceeds the blob limit.`);
+        const entry = entriesByName.get(`${ASSET_PACKAGE_BLOB_PREFIX}${blob.sha256}`);
+        if (entry.sha256 !== blob.sha256 || entry.sizeBytes !== blob.sizeBytes) invalid(`Asset-package blob ${blob.sha256} does not match the manifest.`);
+    }
+
+    const closure = verifyAssetClosure({
+        manifest,
+        recordBytes,
+        blobs: new Map(manifest.blobs.map((blob) => {
+            const entry = entriesByName.get(`${ASSET_PACKAGE_BLOB_PREFIX}${blob.sha256}`);
+            return [blob.sha256, { sha256: entry.sha256, sizeBytes: entry.sizeBytes }];
+        })),
+        limits,
+        requireRoots: true,
+    });
+    return Object.freeze({
+        manifest,
+        manifestSha256: manifestEntry.sha256,
+        archiveSha256: verified.sha256,
+        archiveSizeBytes: verified.sizeBytes,
+        stagingDir: verified.stagingDir,
+        entries: Object.freeze(verified.entries.map((entry) => Object.freeze({ ...entry }))),
+        revisions: closure.revisions,
+        uses: closure.uses,
+        assetOrder: closure.assetOrder,
+        useOrder: closure.useOrder,
+        assetEdges: closure.assetEdges,
+        useEdges: closure.useEdges,
         cleanup: verified.cleanup,
     });
 }
@@ -337,7 +392,7 @@ async function verifyStagedAssetPackage(verified, limits) {
 export async function verifyAssetPackage(input, {
     limits: overrides = {}, signal, stagingRoot, stagingDir, retainStaging = true,
 } = {}) {
-    const limits = archiveLimits(overrides);
+    const limits = assetPackageLimits(overrides);
     const source = typeof input === "string" ? createReadStream(input, { signal }) : input;
     const verified = await verifyDeterministicArchive(source, {
         limits: {
@@ -385,8 +440,21 @@ export async function inspectAssetPackage({ archivePath, stagingRoot, limits, si
     return inspection;
 }
 
-export async function exportAssetPackage({ editorAssetStore, visualAssetStore, roots, output = null, signal }) {
-    const snapshot = await editorAssetStore.snapshotRevisionClosure(roots);
+export async function collectAssetClosure({
+    editorAssetStore,
+    visualAssetStore,
+    roots,
+    operations = ASSET_PACKAGE_EXPORT_OPERATIONS,
+    allowEmpty = false,
+} = {}) {
+    const normalizedRoots = [...new Map((roots ?? []).map((root) => [
+        `${String(root?.assetId)}@${Number(root?.revision)}`,
+        { assetId: String(root?.assetId), revision: Number(root?.revision) },
+    ])).values()].sort((left, right) => compareUtf8(left.assetId, right.assetId) || left.revision - right.revision);
+    if (!allowEmpty && normalizedRoots.length === 0) invalid("Asset package must declare at least one root revision.");
+    const snapshot = normalizedRoots.length
+        ? await editorAssetStore.snapshotRevisionClosure(normalizedRoots)
+        : { roots: [], assets: [], revisions: [] };
     const revisionRecords = snapshot.revisions.map((revision) => {
         const bytes = Buffer.from(canonicalMarketplaceBytes(revision));
         return { revision, bytes, sha256: hashMarketplaceBytes(bytes) };
@@ -394,7 +462,7 @@ export async function exportAssetPackage({ editorAssetStore, visualAssetStore, r
     const requestedUses = [...new Set(snapshot.revisions.flatMap(revisionUseRoots))].sort(compareUtf8);
     const access = await visualAssetStore.validateAccessSet({
         useHashes: requestedUses,
-        operations: ASSET_PACKAGE_EXPORT_OPERATIONS,
+        operations,
         verifyBytes: true,
         includeUseRecords: true,
     });
@@ -426,9 +494,22 @@ export async function exportAssetPackage({ editorAssetStore, visualAssetStore, r
         })),
         blobs,
     });
+    return Object.freeze({
+        manifest,
+        snapshot,
+        access,
+        revisionRecords: Object.freeze(revisionRecords),
+        useRecords: Object.freeze(useRecords),
+        blobs: Object.freeze(blobs),
+        records: Object.freeze([...new Map([...revisionRecords, ...useRecords].map((entry) => [entry.sha256, entry])).values()]
+            .sort((left, right) => compareUtf8(left.sha256, right.sha256))),
+    });
+}
+
+export async function exportAssetPackage({ editorAssetStore, visualAssetStore, roots, output = null, signal }) {
+    const closure = await collectAssetClosure({ editorAssetStore, visualAssetStore, roots });
+    const { manifest, records, blobs } = closure;
     const manifestBytes = Buffer.from(canonicalMarketplaceBytes(manifest));
-    const records = [...new Map([...revisionRecords, ...useRecords].map((entry) => [entry.sha256, entry])).values()]
-        .sort((left, right) => compareUtf8(left.sha256, right.sha256));
     const entries = [
         { name: ASSET_PACKAGE_MANIFEST, bytes: manifestBytes, sizeBytes: manifestBytes.length },
         ...records.map((entry) => ({ name: `${ASSET_PACKAGE_RECORD_PREFIX}${entry.sha256}`, bytes: entry.bytes, sizeBytes: entry.bytes.length, sha256: entry.sha256 })),
@@ -461,12 +542,11 @@ export async function exportAssetPackage({ editorAssetStore, visualAssetStore, r
 }
 
 export function assetPackagePreparationHash(verified) {
-    return createHash("sha256").update(canonicalMarketplaceBytes({
+    return packagePreparationHash({
         archiveSha256: verified.archiveSha256,
         manifestSha256: verified.manifestSha256,
-        assetOrder: verified.assetOrder,
-        useOrder: verified.useOrder,
-    })).digest("hex");
+        entries: verified.entries,
+    });
 }
 
 export function stagedAssetPackageEntry(verified, name) {
@@ -479,15 +559,12 @@ export async function prepareAssetPackage({ archivePath, workDirectory, limits, 
     const stagingRoot = path.join(workDirectory, "asset-package-staging");
     await fs.mkdir(stagingRoot, { recursive: true, mode: 0o700 });
     const verified = await verifyAssetPackage(archivePath, { stagingRoot, limits, signal, retainStaging: true });
-    const preparationHash = assetPackagePreparationHash(verified);
-    const index = {
+    const { preparationHash, index } = createPackagePreparationIndex({
         kind: "cev-sim.asset-package-preparation",
-        version: 1,
-        preparationHash,
         archiveSha256: verified.archiveSha256,
         manifestSha256: verified.manifestSha256,
-        entries: verified.entries.map(({ name, stagingName, sizeBytes, sha256 }) => ({ name, stagingName, sizeBytes, sha256 })),
-    };
+        entries: verified.entries,
+    });
     const indexBytes = Buffer.from(canonicalMarketplaceBytes(index));
     const destinationRoot = path.join(workDirectory, "asset-packages");
     const destination = path.join(destinationRoot, preparationHash);
@@ -505,30 +582,16 @@ export async function prepareAssetPackage({ archivePath, workDirectory, limits, 
 }
 
 export async function readAssetPackagePreparation({ workDirectory, preparationHash, archiveSha256 = null }) {
-    digest(preparationHash, "$preparationHash");
-    const preparationDir = path.join(workDirectory, "asset-packages", preparationHash);
-    const bytes = await fs.readFile(path.join(preparationDir, "preparation.json"));
-    const { document } = parseMarketplaceJsonBytes(bytes);
-    exactKeys(document, ["kind", "version", "preparationHash", "archiveSha256", "manifestSha256", "entries"], "$preparation");
-    if (document.kind !== "cev-sim.asset-package-preparation" || document.version !== 1
-        || document.preparationHash !== preparationHash || (archiveSha256 && document.archiveSha256 !== archiveSha256)
-        || !Buffer.from(bytes).equals(Buffer.from(canonicalMarketplaceBytes(document)))) {
-        invalid("Asset-package preparation index is invalid.");
-    }
-    digest(document.archiveSha256, "$preparation.archiveSha256");
-    digest(document.manifestSha256, "$preparation.manifestSha256");
-    const entries = denseArray(document.entries, "$preparation.entries").map((entry, index) => {
-        const entryPath = `$preparation.entries.${index}`;
-        exactKeys(entry, ["name", "stagingName", "sizeBytes", "sha256"], entryPath);
-        if (typeof entry.name !== "string" || typeof entry.stagingName !== "string" || !/^e[0-9]{6}$/u.test(entry.stagingName)) invalid(`${entryPath} has an invalid entry name.`);
-        return { ...entry, sizeBytes: nonNegative(entry.sizeBytes, `${entryPath}.sizeBytes`), sha256: digest(entry.sha256, `${entryPath}.sha256`) };
+    return readPackagePreparation({
+        workDirectory,
+        directoryName: "asset-packages",
+        preparationHash,
+        archiveSha256,
+        kind: "cev-sim.asset-package-preparation",
+        manifestName: ASSET_PACKAGE_MANIFEST,
+        recordPrefix: ASSET_PACKAGE_RECORD_PREFIX,
+        blobPrefix: ASSET_PACKAGE_BLOB_PREFIX,
     });
-    const entry = (name) => {
-        const descriptor = entries.find((candidate) => candidate.name === name);
-        if (!descriptor) invalid(`Prepared asset-package entry ${name} is missing.`);
-        return Object.freeze({ ...descriptor, path: path.join(preparationDir, descriptor.stagingName) });
-    };
-    return Object.freeze({ preparationDir, document, entries: Object.freeze(entries), entry });
 }
 
 export async function readPreparedJsonRecord(preparation, recordSha256) {

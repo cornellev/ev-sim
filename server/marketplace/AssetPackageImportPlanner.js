@@ -200,7 +200,7 @@ function publicationId({ context, release, sourceAssetId, sourceRevision, localA
     })}`;
 }
 
-function operationId(operation) {
+export function assetImportOperationId(operation) {
     return sha256({ kind: "cev-sim.marketplace-adapter-operation", version: 1, operation });
 }
 
@@ -415,8 +415,9 @@ async function prepareRevisionOutputs({ verified, mappingsBySource, groups, prep
     return summaries;
 }
 
-export async function readPreparedAssetRevision({ workDirectory, preparationHash, preparedRevisionHash }) {
-    const filePath = path.join(workDirectory, "asset-packages", preparationHash, "generated", `${preparedRevisionHash}.json`);
+export async function readPreparedAssetRevision({ workDirectory, preparationHash, preparationDir = null, preparedRevisionHash }) {
+    const root = preparationDir ?? path.join(workDirectory, "asset-packages", preparationHash);
+    const filePath = path.join(root, "generated", `${preparedRevisionHash}.json`);
     const bytes = await fs.readFile(filePath);
     if (createHash("sha256").update(bytes).digest("hex") !== preparedRevisionHash) {
         throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Prepared asset revision failed its content hash.");
@@ -519,7 +520,7 @@ export async function planAssetPackageImport({
             recordSha256: entry.descriptor.recordSha256,
             blobSha256: entry.use.asset.sha256,
         };
-        adapterOperations.push({ ...operation, operationId: operationId(operation) });
+        adapterOperations.push({ ...operation, operationId: assetImportOperationId(operation) });
     }
     for (const key of verified.assetOrder) {
         const source = verified.revisions.get(key);
@@ -536,7 +537,7 @@ export async function planAssetPackageImport({
             preparedRevisionHash: preparedRevision.preparedRevisionHash,
             localContentHash: preparedRevision.hashes.localContent,
         };
-        adapterOperations.push({ ...operation, operationId: operationId(operation) });
+        adapterOperations.push({ ...operation, operationId: assetImportOperationId(operation) });
     }
     return {
         preparationHash,

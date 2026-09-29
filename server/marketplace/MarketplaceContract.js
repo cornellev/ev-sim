@@ -61,14 +61,7 @@ export const MARKETPLACE_LIMITS = Object.freeze({
     previewBytes: 8 * 1024 ** 2,
 });
 
-export const FUTURE_MARKETPLACE_ARCHIVE_LIMITS = Object.freeze({
-    archiveBytes: 50 * 1024 ** 3,
-    entries: 100_000,
-    manifestBytes: 8 * 1024 ** 2,
-    entryBytes: 8_589_934_591,
-});
-
-export const ASSET_PACKAGE_LIMITS = Object.freeze({
+export const PORTABLE_MARKETPLACE_ARCHIVE_LIMITS = Object.freeze({
     archiveBytes: 8 * 1024 ** 3,
     blobBytes: 1024 ** 3,
     recordBytes: 32 * 1024 ** 2,
@@ -81,8 +74,15 @@ export const ASSET_PACKAGE_LIMITS = Object.freeze({
     verificationTimeoutMs: 60_000,
 });
 
+// Kept as named profiles so format-specific code can evolve additively without
+// allowing one portable format to raise the frozen shared ceiling.
+export const ASSET_PACKAGE_LIMITS = PORTABLE_MARKETPLACE_ARCHIVE_LIMITS;
+export const ENVIRONMENT_PACKAGE_LIMITS = PORTABLE_MARKETPLACE_ARCHIVE_LIMITS;
+
 export function artifactByteLimitFor(contentKind) {
-    return contentKind === "asset-pack" ? ASSET_PACKAGE_LIMITS.archiveBytes : MARKETPLACE_LIMITS.artifactBytes;
+    return contentKind === "asset-pack" || contentKind === "environment"
+        ? PORTABLE_MARKETPLACE_ARCHIVE_LIMITS.archiveBytes
+        : MARKETPLACE_LIMITS.artifactBytes;
 }
 
 export function artifactContractFor(contentKind) {

@@ -143,6 +143,7 @@ export class MarketplaceService {
         jobFault = null,
         adapterRegistry = null,
         pluginStore = null,
+        storageService = null,
         editorAssetStore = null,
         visualAssetStore = null,
         publishPluginLibraryChange = null,
@@ -159,6 +160,7 @@ export class MarketplaceService {
         const resolvedAdapterRegistry = adapterRegistry ?? createMarketplaceClientArtifactRegistry({
             pluginStore: resolvedPluginStore,
             publishLibraryChange: publishPluginLibraryChange,
+            storageService,
             editorAssetStore,
             visualAssetStore,
             receiptStore,
@@ -626,7 +628,7 @@ export class MarketplaceService {
             required: artifactByteLimitFor(selectedRelease.contentKind),
             actual: selectedRelease.artifact.sizeBytes,
         }];
-        const authoringOnly = selectedRelease.contentKind === "asset-pack";
+        const authoringOnly = ["asset-pack", "environment"].includes(selectedRelease.contentKind);
         const issues = [...downloadIssues, ...lifecycleIssues, ...(authoringOnly ? [] : compatibility.issues)];
         const selectedExactKey = `${selectedRelease.itemId}\u0000${selectedRelease.releaseVersion}\u0000${selectedRelease.artifact.sha256}`;
         const warnings = yanks.some((entry) => (
