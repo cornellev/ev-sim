@@ -91,6 +91,7 @@ app.prepare().then(async () => {
                     clientProtocol: HEADLESS_PROTOCOL,
                 }),
             }),
+            connectionDirectory: server.locals.marketplaceConfig.connectionsDir,
         });
         storageService.setMarketplaceExecutablePolicy(marketplaceService.executablePolicy);
         server.locals.marketplaceService = marketplaceService;

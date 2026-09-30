@@ -24,7 +24,7 @@ hosted private-LAN registry. It is not headless PR 13 and does not extend the
 | MKT-13: updates, tracks, yanks, and advisory UX | Implemented; acceptance pending | Local focused, full repository, fixtures, release, and serial UI/a11y gates pass; supported-Node build/distribution and hosted CI pending | Unmerged |
 | MKT-14: simulator publisher workspace | Implemented; acceptance pending | Focused publisher/UI gates and full Marketplace/repository tests pass; supported-Node build, repository-wide browser, hosted CI evidence pending | Unmerged |
 | MKT-15: scale, recovery, and operations | Not started | Not run | Unmerged |
-| MKT-16: candidate acceptance and release | Not started | Not run | Unmerged |
+| MKT-16: candidate acceptance and release | Zero-setup prerequisite implemented; candidate acceptance not started | Focused and full Marketplace/repository tests, lint, fixtures, and release check pass; browser/build and hosted candidate evidence pending | Unmerged |
 
 Only a merged change may be marked merged. Verification records actual commands
 and evidence; implementation status alone does not satisfy a milestone gate.
@@ -33,6 +33,15 @@ and evidence; implementation status alone does not satisfy a milestone gate.
 
 - The registry is a standalone JavaScript/ESM service. The simulator remains a
   local service and browser code never connects directly to a registry.
+- Source onboarding is URL-only and fail-closed: the backend must already have
+  an owner-only connection bundle containing the exact normalized origin, TUF
+  root pin, and scoped read credential. There is no trust-on-first-use path.
+- Publishing identities are provisioned and reconciled by the backend. Browser
+  state contains only friendly identity names and readiness; tokens, private
+  keys, secret references, and filesystem paths never cross the local API.
+- Install, update, and publish preparation may perform downloads and local
+  verification automatically, but exactly one final confirmation remains the
+  boundary before local commit or remote publication writes.
 - Initial operation is private-LAN with verified offline-cache support.
 - SHA-256 identifies immutable artifact bytes. TUF protects catalog metadata,
   release visibility, rollbacks, and key rotation. Publisher releases use
@@ -924,6 +933,42 @@ use every content kind; tampering fails; verified cached content works offline;
 rights/remapping and plugin nonexecution remain intact; all legacy identities
 and fixed-step behavior remain unchanged.
 
+Zero-setup onboarding and publishing is an MKT-16 prerequisite, not a new
+milestone. Its implementation packages are:
+
+1. **Connection policy and provisioning:** strict
+   `cev-sim.marketplace-connection@1` bundles, default-enabled startup with an
+   explicit kill switch, and one atomic `publisher provision` CLI command.
+2. **URL-only source connection:** configured-origin lookup, pinned bootstrap
+   verification, credential import, idempotent source creation, and immediate
+   verified refresh.
+3. **Backend publishing identities:** configured key/token reconciliation,
+   verified active-key readiness, and allowlisted publisher approval.
+4. **Resolved publication identity:** private nonsemantic bindings, automatic
+   item lifecycle/version/default selection, verified release choices, and
+   exact dependency resolution.
+5. **One-confirm publication:** autosave, combined plan/job preparation, exact
+   final-plan confirmation, and existing journal/recovery semantics.
+6. **Task-led workspace:** Discover, Library, and Publish as primary
+   destinations; Sources and Security under Settings; technical data behind
+   disclosures.
+7. **One-confirm install/update:** automatic noncommitting preparation and one
+   exact final commit confirmation.
+8. **Documentation and migration:** bundle operations, readiness, private
+   bindings, legacy adoption, backup, rotation, and recovery.
+
+All eight packages are implemented as additive local/private contracts. Local
+evidence on 2026-09-30 includes 133/133 Marketplace tests, 1,869 passing full
+repository tests with six hardware/environment skips and no failures, clean
+lint aside from one pre-existing `MapSurface.js` hook warning, an exact
+headless and environment-editor fixture regeneration, and a passing release
+check. The production browser/build gate remains blocked locally by the
+existing Next/Turbopack worker sandbox failure; the development-server fallback
+does not hydrate this application's client event handlers and therefore is not
+accepted as substitute UI or accessibility evidence. Production UI,
+accessibility, build, hosted, soak, x64 NVIDIA, and Jetson ARM64 evidence
+remains required before MKT-16 acceptance.
+
 ## MKT-01 evidence ledger
 
 Baseline captured before implementation at `7a463e7` on macOS arm64, Node
@@ -1437,6 +1482,28 @@ Local evidence on 2026-09-28:
   WP-10 and milestone acceptance open.
 
 ## Decision log
+
+### 2026-09-30 — Pin onboarding and publishing authority in backend configuration
+
+Ordinary source setup accepts only a registry URL. The backend resolves that
+URL against an exact normalized-origin connection bundle, uses its scoped read
+credential, verifies discovery, registry identity, bootstrap signature, and
+configured root SHA-256, then performs the initial refresh. Unknown origins
+fail closed. This removes manual fingerprint copying without introducing
+trust-on-first-use.
+
+Publisher tokens and PKCS#8 keys are operator-provisioned bundle secrets. The
+backend imports them into the existing owner-only stores only after the
+verified source contains the configured publisher and matching active key.
+The browser receives friendly names and blockers only. Automatic approval is
+limited to the bundle's explicit publisher allowlist.
+
+Preparation remains reversible and noncommitting. Install/update preparation
+may download and inspect bytes, and publication preparation may autosave,
+create the exact plan, and stage an awaiting-confirmation job. The existing
+revision plus final-plan-hash commit remains the sole confirmation boundary.
+Connection policy, readiness, library projections, and publication bindings
+are private nonsemantic state and enter no existing hash authority.
 
 ### 2026-09-29 — Centralize publication in the simulator Marketplace workspace
 

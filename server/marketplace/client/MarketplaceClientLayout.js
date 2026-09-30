@@ -65,6 +65,7 @@ export function marketplaceClientPaths(dataDir) {
     const publisher = path.join(root, "publisher");
     return Object.freeze({
         root,
+        connections: path.join(root, "connections.d"),
         sources: path.join(root, "sources.json"),
         credentials: path.join(root, "credentials"),
         trust: path.join(root, "trust"),
@@ -88,6 +89,7 @@ export function marketplaceClientPaths(dataDir) {
         publicationPreviews: path.join(publisher, "previews", "sha256"),
         publicationPlans: path.join(publisher, "plans", "sha256"),
         publicationJobs: path.join(publisher, "jobs"),
+        publicationBindings: path.join(publisher, "bindings.json"),
     });
 }
 

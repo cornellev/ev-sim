@@ -2,6 +2,7 @@ import { MetadataKind } from "@tufjs/models";
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import semver from "semver";
 
 import { PluginStore } from "../../storage/PluginStore.js";
 import {
@@ -12,7 +13,7 @@ import {
     artifactByteLimitFor,
 } from "../MarketplaceContract.js";
 import { MARKETPLACE_ERROR_CODES, MarketplaceError, marketplaceError } from "../MarketplaceErrors.js";
-import { assertCanonicalUuid, assertMarketplaceId, assertSha256 } from "../MarketplaceFormats.js";
+import { assertCanonicalUuid, assertMarketplaceId, assertReleaseVersion, assertSha256 } from "../MarketplaceFormats.js";
 import { hashMarketplaceBytes } from "../MarketplaceJson.js";
 import {
     atomicReplaceDurable,
@@ -73,6 +74,16 @@ import {
     MarketplacePublicationPlanner,
 } from "./MarketplacePublicationPlanner.js";
 import { MarketplacePublishJobManager } from "./MarketplacePublishJobManager.js";
+import { MarketplacePublicationDependencyResolver } from "./MarketplacePublicationDependencyResolver.js";
+import { MarketplaceLibraryReadModel } from "./MarketplaceLibraryReadModel.js";
+import { MarketplaceConnectionPolicy } from "./MarketplaceConnectionPolicy.js";
+import { normalizeMarketplaceOrigin } from "./MarketplaceConnectionDocuments.js";
+import { MarketplacePublishingIdentityManager } from "./MarketplacePublishingIdentityManager.js";
+import {
+    MarketplacePublicationBindingReconciler,
+    MarketplacePublicationBindingStore,
+    publicationLocalIdentity,
+} from "./MarketplacePublicationBindingStore.js";
 import {
     assertMarketplaceDetailSelection,
     buildMarketplaceFacets,
@@ -179,6 +190,11 @@ export class MarketplaceService {
         publicationDraftStore,
         publicationPlanner,
         publishJobManager,
+        connectionPolicy,
+        publishingIdentityManager,
+        publicationBindingStore,
+        publicationBindingReconciler,
+        publicationDependencyResolver,
         hostProfileProvider,
         now,
     }) {
@@ -205,8 +221,14 @@ export class MarketplaceService {
         this.publicationDraftStore = publicationDraftStore;
         this.publicationPlanner = publicationPlanner;
         this.publishJobManager = publishJobManager;
+        this.connectionPolicy = connectionPolicy;
+        this.publishingIdentityManager = publishingIdentityManager;
+        this.publicationBindingStore = publicationBindingStore;
+        this.publicationBindingReconciler = publicationBindingReconciler;
+        this.publicationDependencyResolver = publicationDependencyResolver;
         this.hostProfileProvider = hostProfileProvider;
         this.now = now;
+        this.libraryReadModel = new MarketplaceLibraryReadModel(this);
     }
 
     static async open(dataDir, {
@@ -223,6 +245,7 @@ export class MarketplaceService {
         publishPluginLibraryChange = null,
         hostProfileProvider = async () => createMarketplaceHostProfile(),
         releasePolicy,
+        connectionDirectory = null,
     } = {}) {
         const resolvedPluginStore = pluginStore ?? new PluginStore(dataDir);
         await resolvedPluginStore.ensureOwnershipMigration();
@@ -281,17 +304,28 @@ export class MarketplaceService {
             fault: jobFault,
         });
         const updateModel = new MarketplaceUpdateModel({ sourceStore, cache, installedStore, policyStore });
+        const connectionPolicy = await MarketplaceConnectionPolicy.open(dataDir, { directory: connectionDirectory });
         let publisherProfileStore = null;
         let publisherSecretStore = null;
         let publicationDraftStore = null;
         let publicationCatalog = null;
         let publicationPlanner = null;
         let publishJobManager = null;
+        let publishingIdentityManager = null;
+        let publicationBindingStore = null;
+        let publicationBindingReconciler = null;
+        let publicationDependencyResolver = null;
         if (storageService && editorAssetStore && visualAssetStore) {
             publisherProfileStore = await MarketplacePublisherProfileStore.open(dataDir);
             publisherSecretStore = await MarketplacePublisherSecretStore.open(dataDir);
             publicationDraftStore = await MarketplacePublicationDraftStore.open(dataDir);
-            publicationCatalog = new MarketplacePublicationCatalog({ storageService, editorAssetStore, draftStore: publicationDraftStore });
+            publicationBindingStore = await MarketplacePublicationBindingStore.open(dataDir, { now });
+            publicationCatalog = new MarketplacePublicationCatalog({
+                storageService,
+                editorAssetStore,
+                draftStore: publicationDraftStore,
+                bindingStore: publicationBindingStore,
+            });
             const publicationArtifactBuilder = new MarketplacePublicationArtifactBuilder({
                 storageService,
                 editorAssetStore,
@@ -318,6 +352,30 @@ export class MarketplaceService {
                 fetchImpl,
                 now,
             });
+            publishingIdentityManager = new MarketplacePublishingIdentityManager({
+                connectionPolicy,
+                sourceStore,
+                cache,
+                policyStore,
+                profileStore: publisherProfileStore,
+                secretStore: publisherSecretStore,
+                now,
+            });
+            publicationBindingReconciler = new MarketplacePublicationBindingReconciler({
+                bindingStore: publicationBindingStore,
+                draftStore: publicationDraftStore,
+                profileStore: publisherProfileStore,
+                sourceStore,
+                cache,
+                publishJobManager,
+            });
+            publicationDependencyResolver = new MarketplacePublicationDependencyResolver({
+                profileStore: publisherProfileStore,
+                sourceStore,
+                cache,
+                draftStore: publicationDraftStore,
+                storageService,
+            });
         }
         const service = new MarketplaceService({
             paths: marketplaceClientPaths(dataDir),
@@ -343,6 +401,11 @@ export class MarketplaceService {
             publicationDraftStore,
             publicationPlanner,
             publishJobManager,
+            connectionPolicy,
+            publishingIdentityManager,
+            publicationBindingStore,
+            publicationBindingReconciler,
+            publicationDependencyResolver,
             hostProfileProvider,
             now,
         });
@@ -356,10 +419,15 @@ export class MarketplaceService {
         await jobManager.recover(recoveredTransactions);
         if (publishJobManager) {
             await publisherSecretStore.recover(publisherProfileStore.snapshot().profiles.map((profile) => profile.secretRef));
+            await publishingIdentityManager.reconcileAll();
             publishJobManager.setRefreshSource(async (sourceId) => {
                 await service.refreshSource(sourceId, { expectedRevision: sourceStore.snapshot().revision });
             });
+            publishJobManager.setPublicationCompleted(async (sourceId) => {
+                await publicationBindingReconciler.reconcileSource(sourceId);
+            });
             await publishJobManager.recover();
+            await publicationBindingReconciler.reconcileAll();
         }
         return service;
     }
@@ -479,6 +547,73 @@ export class MarketplaceService {
         const { baseUrl } = input;
         const normalized = Object.hasOwn(input, "credential") ? assertBearer(input.credential, { nullable: false }) : null;
         return publicPreview(await this.trustClient.previewSource({ baseUrl, credential: normalized }));
+    }
+
+    async connectSource({ baseUrl }) {
+        this.#assertOpen();
+        const origin = normalizeMarketplaceOrigin(baseUrl);
+        const connection = this.connectionPolicy.find(origin);
+        if (!connection) {
+            throw marketplaceError(
+                MARKETPLACE_ERROR_CODES.SOURCE_UNTRUSTED,
+                "This registry is not configured by the Marketplace operator.",
+            );
+        }
+        const { kind: _kind, version: _version, ...credential } = connection.credential;
+        const preview = await this.trustClient.previewSource({ baseUrl: origin, credential });
+        if (preview.trustedRootFingerprint !== connection.trustedRootSha256) {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_UNTRUSTED, "Configured Marketplace root pin does not match the registry.");
+        }
+        let snapshot = this.sourceStore.snapshot();
+        let source = snapshot.sources.find((entry) => entry.baseUrl === origin) ?? null;
+        if (source && (source.registryId !== preview.registryId || source.trustedRootFingerprint !== preview.trustedRootFingerprint)) {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_UNTRUSTED, "Existing Marketplace source identity does not match configured trust.");
+        }
+        if (!source) {
+            const added = await this.addSource({
+                expectedRevision: snapshot.revision,
+                name: connection.displayName,
+                baseUrl: origin,
+                registryId: preview.registryId,
+                trustedRootFingerprint: preview.trustedRootFingerprint,
+                enabled: true,
+                priority: connection.priority,
+                credential,
+            });
+            source = this.sourceStore.get(added.source.sourceId);
+            snapshot = this.sourceStore.snapshot();
+        } else {
+            const storedCredential = await this.credentialStore.readCredential(source.credentialRef);
+            const credentialChanged = JSON.stringify(storedCredential) !== JSON.stringify(credential);
+            const metadataChanged = source.name !== connection.displayName || !source.enabled || source.priority !== connection.priority;
+            if (credentialChanged || metadataChanged) {
+                await this.updateSource(source.sourceId, {
+                    expectedRevision: snapshot.revision,
+                    name: connection.displayName,
+                    enabled: true,
+                    priority: connection.priority,
+                    ...(credentialChanged ? { credential } : {}),
+                });
+                snapshot = this.sourceStore.snapshot();
+                source = this.sourceStore.get(source.sourceId);
+            }
+        }
+        let catalog = null;
+        const warnings = [];
+        try {
+            catalog = await this.refreshSource(source.sourceId, { expectedRevision: snapshot.revision });
+        } catch (error) {
+            warnings.push(Object.freeze({
+                code: error instanceof MarketplaceError ? error.code : MARKETPLACE_ERROR_CODES.SOURCE_UNAVAILABLE,
+                message: error instanceof MarketplaceError
+                    ? error.message
+                    : "The trusted source was saved, but its initial catalog refresh failed.",
+            }));
+        }
+        const currentSources = await this.listSources();
+        const publicValue = currentSources.sources.find((entry) => entry.sourceId === source.sourceId);
+        const publishing = this.publishingIdentityManager ? await this.publishingIdentityManager.readiness() : Object.freeze({ identities: [], defaultProfileId: null, ready: false });
+        return Object.freeze({ source: publicValue, catalog, publishing, warnings: Object.freeze(warnings) });
     }
 
     async addSource(input) {
@@ -663,6 +798,8 @@ export class MarketplaceService {
                     catalogSha256: published.manifest.catalog.sha256,
                     earliestExpiryAt: result.earliestExpiryAt,
                 });
+                if (this.publishingIdentityManager) await this.publishingIdentityManager.reconcileSource(sourceId);
+                if (this.publicationBindingReconciler) await this.publicationBindingReconciler.reconcileSource(sourceId);
                 return Object.freeze({
                     snapshotId: published.manifest.snapshotId,
                     catalogRevision: published.manifest.catalog.revision,
@@ -902,6 +1039,14 @@ export class MarketplaceService {
         return this.publisherProfileStore.snapshot({ publicOnly: true });
     }
 
+    async publisherReadiness() {
+        this.#assertOpen();
+        this.#requirePublisherWorkspace();
+        return this.publishingIdentityManager
+            ? this.publishingIdentityManager.readiness()
+            : Object.freeze({ identities: Object.freeze([]), defaultProfileId: null, ready: false });
+    }
+
     async createPublisherProfile({ expectedRevision, name, sourceId, publisherId, writeToken, privateKeyPem }) {
         this.#assertOpen();
         this.#requirePublisherWorkspace();
@@ -926,23 +1071,24 @@ export class MarketplaceService {
             throw marketplaceError(MARKETPLACE_ERROR_CODES.DOCUMENT_INVALID, "Publisher token and private key must be rotated together.");
         }
         let staged = null;
+        let result;
         try {
             if (rotatesSecret) {
                 staged = await this.publisherSecretStore.stage({ writeToken, privateKeyPem });
                 await this.#publisherAuthority(current.sourceId, current.publisherId, staged.keyId);
             }
             const updatedAt = this.now().toISOString();
-            const result = await this.publisherProfileStore.update(profileId, {
+            result = await this.publisherProfileStore.update(profileId, {
                 ...(name !== undefined ? { name } : {}),
                 ...(staged ? { keyId: staged.keyId, secretRef: staged.secretRef } : {}),
                 updatedAt,
             }, expectedRevision);
-            if (staged) await this.publisherSecretStore.remove(current.secretRef);
-            return result;
         } catch (error) {
             if (staged) await this.publisherSecretStore.remove(staged.secretRef).catch(() => {});
             throw error;
         }
+        if (staged) await this.publisherSecretStore.remove(current.secretRef).catch(() => {});
+        return result;
     }
 
     async removePublisherProfile(profileId, expectedRevision) {
@@ -1048,6 +1194,77 @@ export class MarketplaceService {
         return this.publicationDraftStore.add(draft, input.expectedRevision);
     }
 
+    async createResolvedPublicationDraft({ expectedRevision, contentKind, localSelection, profileId = null }) {
+        this.#assertOpen();
+        this.#requirePublisherWorkspace();
+        const readiness = await this.publisherReadiness();
+        const selectedProfileId = profileId ?? readiness.defaultProfileId;
+        if (!selectedProfileId) {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.INCOMPATIBLE, "No ready publishing identity is configured.");
+        }
+        const selectedIdentity = readiness.identities.find((identity) => identity.profileId === selectedProfileId && identity.status === "ready");
+        if (!selectedIdentity) {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.INCOMPATIBLE, "Selected publishing identity is not ready.");
+        }
+        const profile = this.publisherProfileStore.get(selectedProfileId);
+        if (!profile) throw marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_NOT_FOUND, "Publisher profile was not found.");
+        const resolvedSelection = contentKind === "collection" && !localSelection.publicationProjectId
+            ? { ...localSelection, publicationProjectId: randomUUID() }
+            : localSelection;
+        const inventory = await this.#inventoryEntry(resolvedSelection, contentKind);
+        if (inventory && !inventory.publishable) throw marketplaceError(MARKETPLACE_ERROR_CODES.INCOMPATIBLE, inventory.unavailableReason);
+        const localIdentity = inventory?.publicationIdentity ?? publicationLocalIdentity(contentKind, resolvedSelection, { projectId: randomUUID() });
+        const binding = this.publicationBindingStore.get(selectedProfileId, contentKind, localIdentity);
+        const { current } = await this.#publisherAuthority(profile.sourceId, profile.publisherId, profile.keyId);
+        const source = this.sourceStore.get(profile.sourceId);
+        const connection = this.connectionPolicy.find(source.baseUrl);
+        const configuredIdentity = connection?.identities.find((identity) => identity.publisherId === profile.publisherId);
+        const existingVersions = binding
+            ? current.documents.releases.filter((release) => release.itemId === binding.itemId).map((release) => release.releaseVersion).filter((value) => semver.valid(value))
+            : [];
+        const highest = existingVersions.sort(semver.rcompare)[0] ?? null;
+        const releaseVersion = contentKind === "plugin"
+            ? inventory.identity.version
+            : highest ? semver.inc(highest, "patch") : "0.1.0";
+        const dependencyResolution = contentKind === "run-template"
+            ? await this.publicationDependencyResolver.resolveRunTemplate(selectedProfileId, resolvedSelection)
+            : { localSelection: resolvedSelection, dependencies: [] };
+        const result = await this.createPublicationDraft({
+            expectedRevision,
+            profileId: selectedProfileId,
+            contentKind,
+            localSelection: dependencyResolution.localSelection,
+            mode: binding ? "new-release" : "create-item",
+            ...(binding ? { itemId: binding.itemId } : {}),
+            release: {
+                releaseVersion,
+                licenseExpression: configuredIdentity?.defaults.license ?? "Apache-2.0",
+                changelog: binding ? `Update ${releaseVersion}.` : "Initial marketplace publication.",
+                track: configuredIdentity?.defaults.track ?? "stable",
+                compatibility: {
+                    cevSim: ">=0.1.0 <0.2.0",
+                    contracts: [],
+                    platforms: [], architectures: [], runtimes: [], backends: [], features: [],
+                },
+            },
+        });
+        return Object.freeze({
+            ...result,
+            resolution: Object.freeze({
+                localIdentity,
+                binding,
+                mode: binding ? "new-release" : "create-item",
+                dependencies: dependencyResolution.dependencies,
+            }),
+        });
+    }
+
+    async listPublicationReleaseOptions({ q = "", profileId = null, contentKind = null } = {}) {
+        this.#assertOpen();
+        this.#requirePublisherWorkspace();
+        return this.publicationDependencyResolver.releaseOptions({ q, profileId, contentKind });
+    }
+
     async updatePublicationDraft(draftId, { expectedRevision, ...patch }) {
         this.#assertOpen();
         this.#requirePublisherWorkspace();
@@ -1057,6 +1274,10 @@ export class MarketplaceService {
         }
         const current = this.publicationDraftStore.get(draftId);
         if (!current) throw marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_NOT_FOUND, "Publication draft was not found.");
+        if (patch.localSelection?.kind === "asset-pack" && patch.localSelection.roots.length > 1
+            && !patch.localSelection.publicationProjectId) {
+            patch.localSelection = { ...patch.localSelection, publicationProjectId: current.localSelection.publicationProjectId ?? randomUUID() };
+        }
         const projected = { ...current, ...patch };
         const state = projected.contentKind === "collection" && projected.members.length === 0 ? "incomplete" : "ready";
         return this.publicationDraftStore.update(draftId, { ...patch, state }, expectedRevision);
@@ -1118,6 +1339,12 @@ export class MarketplaceService {
         this.#assertOpen();
         this.#requirePublisherWorkspace();
         return this.publishJobManager.start(planHash);
+    }
+
+    async preparePublication(input) {
+        const plan = await this.createPublicationPlan(input);
+        const job = await this.startPublishJob(plan.planHash);
+        return Object.freeze({ plan, job });
     }
 
     async getPublishJob(jobId) { this.#assertOpen(); this.#requirePublisherWorkspace(); return { job: await this.publishJobManager.snapshot(jobId) }; }
@@ -1236,6 +1463,11 @@ export class MarketplaceService {
         return Object.freeze({ ...installed, installations: Object.freeze(projected) });
     }
 
+    async library() {
+        this.#assertOpen();
+        return this.libraryReadModel.read();
+    }
+
     async listUpdates(options = {}) {
         this.#assertOpen();
         return this.updateModel.listUpdates(options);
@@ -1270,6 +1502,24 @@ export class MarketplaceService {
     async setOperatorOverride({ packageHash, reason, expectedRevision }) {
         this.#assertOpen();
         await this.policyStore.setOperatorOverride(packageHash, reason, { expectedRevision });
+        return this.policyStore.snapshot();
+    }
+
+    async setOperatorOverrideForRelease({ registryId, itemId, releaseVersion, artifactSha256, reason, expectedRevision }) {
+        this.#assertOpen();
+        assertCanonicalUuid(registryId, "registryId");
+        assertMarketplaceId(itemId, "itemId");
+        assertReleaseVersion(releaseVersion, "releaseVersion");
+        assertSha256(artifactSha256, "artifactSha256");
+        const policy = await this.policyStore.snapshot();
+        const origin = policy.registries.find((entry) => entry.registryId === registryId)?.releases.find((entry) => (
+            entry.itemId === itemId && entry.releaseVersion === releaseVersion && entry.artifactSha256 === artifactSha256
+        ));
+        if (!origin) throw marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_NOT_FOUND, "Installed Marketplace release provenance was not found.");
+        if (origin.packageHashes.length !== 1) {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.CONFLICT, "This release does not resolve to one executable package override.");
+        }
+        await this.policyStore.setOperatorOverride(origin.packageHashes[0], reason, { expectedRevision });
         return this.policyStore.snapshot();
     }
 

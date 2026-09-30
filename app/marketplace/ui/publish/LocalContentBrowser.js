@@ -29,8 +29,7 @@ export default function LocalContentBrowser({ inventory, query, onQueryChange, o
                 <div><span className={styles.kindLabel}>{kindLabel(entry.contentKind)} · {entry.publicationStatus}</span><h3>{entry.name}</h3><p>{entry.summary}</p><small>{entry.localId} · revision {entry.revision}</small>{entry.unavailableReason && <small className={styles.publishWarning}>{entry.unavailableReason}</small>}</div>
                 <div className={styles.publishItemActions}>
                     {entry.contentKind === "asset-pack" && assetPackDraft ? <Button size="compact" aria-label={`Add ${entry.name} to selected asset pack`} disabled={disabled || !entry.publishable || assetPackDraft.localSelection.roots.some((root) => root.assetId === entry.localSelection.roots[0].assetId)} onClick={() => onAddToAssetPack(assetPackDraft, entry)}><IconPlus size={14} aria-hidden="true" /> Basket</Button> : null}
-                    <Button size="compact" aria-label={`Create new marketplace item for ${entry.name}`} disabled={disabled || !entry.publishable} onClick={() => onCreate(entry, "create-item")}><IconPlus size={14} aria-hidden="true" /> New item</Button>
-                    <Button size="compact" aria-label={`Create release for existing marketplace item from ${entry.name}`} disabled={disabled || !entry.publishable} onClick={() => onCreate(entry, "new-release")}>Release</Button>
+                    <Button variant="primary" size="compact" aria-label={`${entry.publicationStatus === "published" ? "Update" : "Publish"} ${entry.name}`} disabled={disabled || !entry.publishable} onClick={() => onCreate(entry)}><IconPlus size={14} aria-hidden="true" /> {entry.publicationStatus === "published" ? "Update" : "Publish"}</Button>
                 </div>
             </article>)}
             {inventory && inventory.entries.length === 0 ? <p className={styles.publishEmpty}>No local content matches these filters.</p> : null}

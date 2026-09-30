@@ -99,29 +99,32 @@ async function trustSource(page, request, name = "Playwright Registry") {
     expect(previewResponse.ok(), await previewResponse.text()).toBeTruthy();
     const preview = await previewResponse.json();
 
-    await page.getByRole("tab", { name: "Sources" }).click();
-    await page.getByRole("button", { name: "Add source" }).click();
-    const dialog = page.getByRole("dialog", { name: "Add Marketplace source" });
-    await dialog.getByRole("textbox", { name: "Registry origin" }).fill(registry.baseUrl);
-    await dialog.getByRole("textbox", { name: "Source name" }).fill(name);
-    await dialog.getByLabel("Read token").fill(credential.token);
-    await dialog.getByRole("button", { name: "Preview trust" }).click();
-    await expect(dialog.getByText(preview.trustedRootFingerprint, { exact: true })).toBeVisible();
-    await dialog.getByRole("textbox", { name: "Type the verified fingerprint" }).fill(preview.trustedRootFingerprint);
-    await dialog.getByRole("button", { name: "Trust source" }).click();
-    await expect(dialog).toBeHidden();
-    const card = page.getByRole("article", { name: `${name} marketplace source` });
-    const refresh = card.getByRole("button", { name: "Refresh" });
-    await expect(refresh).toBeFocused();
-    await refresh.click();
-    await expect(card.getByText("ready", { exact: true })).toBeVisible();
-    await page.getByRole("tab", { name: "Security" }).click();
-    const registryPolicy = page.getByRole("article").filter({ has: page.getByRole("heading", { name: preview.registryId, exact: true }) });
-    await expect(registryPolicy).toBeVisible();
-    const approve = registryPolicy.getByRole("button", { name: "Approve publisher" });
-    if (await approve.count()) await approve.click();
-    await expect(registryPolicy.getByRole("button", { name: "Revoke approval" })).toBeVisible();
-    return { card, preview, credential };
+    const sources = await (await request.get("/api/marketplace/sources")).json();
+    const addedResponse = await request.post("/api/marketplace/sources", { data: {
+        expectedRevision: sources.revision,
+        name,
+        baseUrl: registry.baseUrl,
+        registryId: preview.registryId,
+        trustedRootFingerprint: preview.trustedRootFingerprint,
+        enabled: true,
+        priority: 10,
+        credential,
+    } });
+    expect(addedResponse.ok(), await addedResponse.text()).toBeTruthy();
+    const added = await addedResponse.json();
+    const refresh = await request.post(`/api/marketplace/sources/${added.source.sourceId}/refresh`, { data: { expectedRevision: added.revision } });
+    expect(refresh.ok(), await refresh.text()).toBeTruthy();
+    const policy = await (await request.get("/api/marketplace/policy")).json();
+    const approved = await request.put("/api/marketplace/policy/publisher-approvals", { data: {
+        registryId: preview.registryId,
+        publisherId: registry.publisher.publisherId,
+        approved: true,
+        expectedRevision: policy.revision,
+    } });
+    expect(approved.ok(), await approved.text()).toBeTruthy();
+    await page.getByRole("tab", { name: "Library" }).click();
+    await page.getByRole("tab", { name: "Discover" }).click();
+    return { source: added.source, preview, credential };
 }
 
 test.beforeAll(async () => {
@@ -138,31 +141,27 @@ test.beforeEach(async ({ request }) => {
     await clearSources(request);
 });
 
-test("MKT-14 exposes the local publisher catalog, durable draft queue, and profile import boundary", async ({ page, request }) => {
+test("MKT-16 exposes task-led publishing without browser profile or secret setup", async ({ page, request }) => {
     test.setTimeout(120_000);
     await openMarketplace(page);
     const { credential } = await trustSource(page, request, "Publisher Workspace Registry");
     await page.getByRole("tab", { name: "Publish" }).click();
     await expect(page.getByRole("heading", { name: "Local catalog" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Publication drafts" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Select a publication draft" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Drafts" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Select content to publish" })).toBeVisible();
     await expect(page.getByLabel("Content kind")).toBeVisible();
     await expect(page.getByLabel("Sort publications")).toBeVisible();
-    await expect(page.getByRole("button", { name: "New collection" })).toBeDisabled();
-    await page.getByRole("button", { name: /Profile/u }).click();
-    const dialog = page.getByRole("dialog", { name: "Add publisher profile" });
-    await expect(dialog.getByLabel("Ed25519 PKCS#8 private key")).toBeVisible();
-    await expect(dialog.getByLabel("Write bearer token")).toHaveAttribute("type", "password");
-    await expect(dialog.getByRole("button", { name: "Verify & save" })).toBeDisabled();
-    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(page.getByText("Publishing is not configured", { exact: true })).toBeVisible();
+    await expect(page.getByLabel(/private key|write bearer token|publisher id|item id|artifact sha/i)).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /Profile/u })).toHaveCount(0);
     expect(await page.evaluate(() => JSON.stringify(localStorage))).not.toContain(credential.token);
     expect(await page.content()).not.toContain("PRIVATE KEY");
 });
 
-test("MKT-06 trusts, refreshes, browses, retains offline catalog, updates, and removes a source", async ({ page, request }) => {
+test("MKT-16 source settings expose one URL field while retained sources remain operable", async ({ page, request }) => {
     test.setTimeout(120_000);
     await openMarketplace(page);
-    const { card, credential } = await trustSource(page, request);
+    const { credential } = await trustSource(page, request);
 
     const listed = await (await request.get("/api/marketplace/sources")).json();
     expect(JSON.stringify(listed)).not.toContain(credential.token);
@@ -175,10 +174,8 @@ test("MKT-06 trusts, refreshes, browses, retains offline catalog, updates, and r
     await page.keyboard.press("Enter");
     const details = page.getByRole("article", { name: "Marketplace release details" });
     await expect(details.getByRole("heading", { name: "Control Pack", level: 2 })).toBeVisible();
+    await details.getByText("Technical details", { exact: true }).click();
     await expect(details.getByText("Declared publisher")).toBeVisible();
-    await expect(details.getByText("Verified signer")).toBeVisible();
-    await expect(details.getByText(registry.publisher.keys[0].keyId, { exact: true })).toBeVisible();
-    await expect(details.locator("dl > div").filter({ hasText: "Signer status" })).toContainText("active");
     await expect(details.getByText("[Image: Remote preview]", { exact: true })).toBeVisible();
     await expect(details.locator('a[href^="javascript:"]')).toHaveCount(0);
     await expect(details.getByText("raw html")).toHaveCount(0);
@@ -193,23 +190,28 @@ test("MKT-06 trusts, refreshes, browses, retains offline catalog, updates, and r
     await menu.getByRole("button", { name: "Browse Marketplace" }).click();
     await expect(page.getByRole("tab", { name: "Discover" })).toBeVisible();
 
+    await page.getByRole("button", { name: "Settings" }).click();
+    await page.getByRole("button", { name: "Add source" }).click();
+    let dialog = page.getByRole("dialog", { name: "Add source" });
+    await expect(dialog.getByRole("textbox", { name: "Marketplace URL" })).toBeVisible();
+    await expect(dialog.locator("input")).toHaveCount(1);
+    await expect(dialog.getByRole("button", { name: "Connect" })).toBeVisible();
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    const card = page.getByRole("article", { name: "Playwright Registry marketplace source" });
+    await expect(card.getByText("ready", { exact: true })).toBeVisible();
+
     await stopRegistry();
-    await page.getByRole("tab", { name: "Sources" }).click();
-    await card.getByRole("button", { name: "Refresh" }).click();
-    await expect(page.getByText("Marketplace source operation failed")).toBeVisible();
-    await page.getByRole("tab", { name: "Discover" }).click();
+    await card.getByRole("button", { name: "Sync now" }).click();
+    await expect(page.getByText("Source needs attention")).toBeVisible();
+    await page.getByRole("button", { name: "Done" }).click();
     await expect(page.getByRole("button", { name: /Control Pack/u })).toBeVisible();
     await expect(page.getByText("cached metadata", { exact: true })).toBeVisible();
 
-    await page.getByRole("tab", { name: "Sources" }).click();
-    await card.getByRole("textbox", { name: "Source name" }).fill("Renamed Registry");
-    await card.getByRole("button", { name: "Save changes" }).click();
-    const renamed = page.getByRole("article", { name: "Renamed Registry marketplace source" });
-    await expect(renamed).toBeVisible();
-    await renamed.getByRole("button", { name: "Remove" }).click();
-    const removal = page.getByRole("dialog", { name: "Remove Marketplace source" });
-    await removal.getByRole("button", { name: "Remove source" }).click();
-    await expect(page.getByText("No trusted sources")).toBeVisible();
+    await page.getByRole("button", { name: "Settings" }).click();
+    await card.getByRole("button", { name: "Remove" }).click();
+    dialog = page.getByRole("dialog", { name: "Remove source" });
+    await dialog.getByRole("button", { name: "Remove source" }).click();
+    await expect(page.getByText("No sources connected")).toBeVisible();
     await startFreshRegistry();
 });
 
@@ -225,36 +227,28 @@ test("MKT-08 installs a plugin with an explicit zero-grant review and safely rem
     await install.click();
 
     const dialog = page.getByRole("dialog", { name: "Install Control Pack" });
-    await dialog.getByRole("button", { name: "Download and inspect" }).click();
-    const commit = dialog.getByRole("button", { name: "Commit installation" });
+    const commit = dialog.getByRole("button", { name: "Install", exact: true });
     await expect(commit).toBeEnabled({ timeout: 30_000 });
-    await expect(dialog.getByText("Package hash", { exact: true })).toBeVisible();
+    await dialog.getByText("Mappings and exact operations", { exact: true }).click();
     await expect(dialog.getByText(registry.plugin.packageHash, { exact: true })).toBeVisible();
-    await expect(dialog.getByText("CAS action", { exact: true })).toBeVisible();
-    await expect(dialog.getByText("Library action", { exact: true })).toBeVisible();
-    await expect(dialog.getByText("Owner action", { exact: true })).toBeVisible();
     const grants = dialog.locator("dl > div").filter({ hasText: "Runtime grants added" });
     await expect(grants).toContainText("None");
     await commit.click();
-    await expect(dialog.getByText("Installation complete", { exact: true })).toBeVisible({ timeout: 30_000 });
-    await expect(dialog.getByText(new RegExp(`${registry.plugin.packageHash}.*Plugin Library`, "u"))).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Library", exact: true })).toBeVisible({ timeout: 30_000 });
 
     await expect.poll(async () => {
         const response = await request.get("/api/storage/plugins/library");
         const library = await response.json();
         return library.packages.some((entry) => entry.packageHash === registry.plugin.packageHash);
     }).toBe(true);
-    await dialog.getByRole("contentinfo").getByRole("button", { name: "Close" }).click();
-    await page.getByRole("tab", { name: "Installed" }).click();
-    const installed = page.getByRole("article").filter({ hasText: "acme.example@1.0.0" });
-    await expect(installed.getByText("Plugin ID", { exact: true })).toBeVisible();
-    await expect(installed.getByText(registry.plugin.runtimeHash, { exact: true })).toBeVisible();
-    await installed.getByRole("button", { name: "Remove installation" }).click();
+    const installed = page.getByRole("article").filter({ hasText: "Control Pack" });
+    await expect(installed).toContainText("Version 1.0.0");
+    await installed.getByRole("button", { name: "Remove", exact: true }).click();
     const removal = page.getByRole("dialog", { name: "Remove installation" });
     await expect(removal.getByText(/removes the direct owner only/u)).toBeVisible();
     await expect(removal.getByText(/Last-owner removal updates Marketplace visibility/u)).toBeVisible();
-    await removal.getByRole("button", { name: "Remove installation" }).click();
-    await expect(page.getByRole("heading", { name: "No installed Marketplace releases" })).toBeVisible();
+    await removal.getByRole("button", { name: "Remove", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Your library is empty" })).toBeVisible();
     await expect.poll(async () => {
         const response = await request.get("/api/storage/plugins/library");
         const library = await response.json();
@@ -276,29 +270,19 @@ test("MKT-13 reviews and commits a signed beta update side by side", async ({ pa
     await page.getByRole("button", { name: /Control Pack/u }).click();
     await page.getByRole("button", { name: "Install plugin" }).click();
     let dialog = page.getByRole("dialog", { name: "Install Control Pack" });
-    await dialog.getByRole("button", { name: "Download and inspect" }).click();
-    await expect(dialog.getByRole("button", { name: "Commit installation" })).toBeEnabled({ timeout: 30_000 });
-    await dialog.getByRole("button", { name: "Commit installation" }).click();
-    await expect(dialog.getByText("Installation complete", { exact: true })).toBeVisible({ timeout: 30_000 });
-    await dialog.getByRole("contentinfo").getByRole("button", { name: "Close" }).click();
+    await expect(dialog.getByRole("button", { name: "Install", exact: true })).toBeEnabled({ timeout: 30_000 });
+    await dialog.getByRole("button", { name: "Install", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Library", exact: true })).toBeVisible({ timeout: 30_000 });
 
-    await page.getByRole("tab", { name: "Updates" }).click();
-    await page.getByRole("combobox", { name: "Update track" }).selectOption("beta");
-    const update = page.getByRole("article").filter({ hasText: "acme.example" });
-    await expect(update).toContainText("1.0.0 → 1.1.0");
+    const update = page.getByRole("article").filter({ hasText: "Control Pack" });
+    await expect(update.getByText("Update available", { exact: true })).toBeVisible();
     await update.getByRole("button", { name: "Review update" }).click();
     dialog = page.getByRole("dialog", { name: "Update Control Pack" });
-    await dialog.getByRole("button", { name: "Download and inspect" }).click();
     await expect(dialog.getByRole("region", { name: "Update comparison" })).toBeVisible({ timeout: 30_000 });
     await expect(dialog.getByText("Executables added / removed / changed")).toBeVisible();
-    await expect(dialog.getByRole("button", { name: "Commit installation" })).toBeEnabled();
-    await dialog.getByRole("button", { name: "Commit installation" }).click();
-    await expect(dialog.getByText("Installation complete", { exact: true })).toBeVisible({ timeout: 30_000 });
-    await dialog.getByRole("contentinfo").getByRole("button", { name: "Close" }).click();
-
-    await page.getByRole("tab", { name: "Installed" }).click();
-    await expect(page.getByRole("article").filter({ hasText: "acme.example@1.0.0" })).toBeVisible();
-    await expect(page.getByRole("article").filter({ hasText: "acme.example@1.1.0" })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Install update" })).toBeEnabled();
+    await dialog.getByRole("button", { name: "Install update" }).click();
+    await expect(page.getByRole("article").filter({ hasText: "Version 1.1.0" })).toBeVisible({ timeout: 30_000 });
     const installed = await (await request.get("/api/marketplace/installed")).json();
     expect(installed.installations.filter((entry) => entry.release.itemId === "acme.example").map((entry) => entry.release.releaseVersion).sort()).toEqual(["1.0.0", "1.1.0"]);
 });
@@ -317,22 +301,15 @@ test("MKT-08 Marketplace removal preserves an independent manual plugin owner", 
     await page.getByRole("button", { name: /Control Pack/u }).click();
     await page.getByRole("button", { name: "Install plugin" }).click();
     const dialog = page.getByRole("dialog", { name: "Install Control Pack" });
-    await dialog.getByRole("button", { name: "Download and inspect" }).click();
-    const commit = dialog.getByRole("button", { name: "Commit installation" });
+    const commit = dialog.getByRole("button", { name: "Install", exact: true });
     await expect(commit).toBeEnabled({ timeout: 30_000 });
-    await expect(dialog.locator("dl > div").filter({ hasText: "CAS action" })).toContainText("reuse");
-    await expect(dialog.locator("dl > div").filter({ hasText: "Library action" })).toContainText("reuse");
-    await expect(dialog.locator("dl > div").filter({ hasText: "Owner action" })).toContainText("add");
     await commit.click();
-    await expect(dialog.getByText("Installation complete", { exact: true })).toBeVisible({ timeout: 30_000 });
-    await dialog.getByRole("contentinfo").getByRole("button", { name: "Close" }).click();
-
-    await page.getByRole("tab", { name: "Installed" }).click();
-    const installed = page.getByRole("article").filter({ hasText: "acme.example@1.0.0" });
-    await installed.getByRole("button", { name: "Remove installation" }).click();
+    await expect(page.getByRole("heading", { name: "Library", exact: true })).toBeVisible({ timeout: 30_000 });
+    const installed = page.getByRole("article").filter({ hasText: "Control Pack" });
+    await installed.getByRole("button", { name: "Remove", exact: true }).click();
     await page.getByRole("dialog", { name: "Remove installation" })
-        .getByRole("button", { name: "Remove installation" }).click();
-    await expect(page.getByRole("heading", { name: "No installed Marketplace releases" })).toBeVisible();
+        .getByRole("button", { name: "Remove", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Your library is empty" })).toBeVisible();
     const library = await (await request.get("/api/storage/plugins/library")).json();
     expect(library.packages.some((entry) => entry.packageHash === registry.plugin.packageHash)).toBe(true);
 
@@ -356,61 +333,51 @@ test("MKT-12 reviews grouped collection members and removes only collection owne
     await details.getByRole("button", { name: "Install collection" }).click();
 
     const dialog = page.getByRole("dialog", { name: "Install Control Collection" });
-    await dialog.getByRole("button", { name: "Download and inspect" }).click();
-    const commit = dialog.getByRole("button", { name: "Commit installation" });
+    const commit = dialog.getByRole("button", { name: "Install", exact: true });
     await expect(commit).toBeEnabled({ timeout: 30_000 });
     await expect(dialog.getByRole("heading", { name: "Collection members" })).toBeVisible();
     await expect(dialog.getByText("Controllers", { exact: true })).toBeVisible();
-    await expect(dialog.getByText(/acme\.example@1\.0\.0.*operations/u)).toBeVisible();
     await expect(dialog.getByRole("heading", { name: "Artifact-only dependencies" })).toBeVisible();
     await commit.click();
-    await expect(dialog.getByText("Installation complete", { exact: true })).toBeVisible({ timeout: 30_000 });
-    await dialog.getByRole("contentinfo").getByRole("button", { name: "Close" }).click();
-
-    await page.getByRole("tab", { name: "Installed" }).click();
-    const member = page.getByRole("article").filter({ hasText: "acme.example@1.0.0" });
+    await expect(page.getByRole("heading", { name: "Library", exact: true })).toBeVisible({ timeout: 30_000 });
+    const member = page.getByRole("article").filter({ hasText: "Control Pack" });
     await expect(member.getByText(/Retained by collection ownership/u)).toBeVisible();
-    await expect(member.getByRole("button", { name: "Remove installation" })).toHaveCount(0);
-    const collection = page.getByRole("article").filter({ hasText: "com.example.control-collection@1.0.0" });
-    await expect(collection.getByText(/acme\.example@1\.0\.0 \(Controllers\)/u)).toBeVisible();
+    await expect(member.getByRole("button", { name: "Remove", exact: true })).toHaveCount(0);
+    const collection = page.getByRole("article").filter({ hasText: "Control Collection" });
     await collection.getByRole("button", { name: "Remove collection" }).click();
-    await page.getByRole("dialog", { name: "Remove collection" }).getByRole("button", { name: "Remove collection" }).click();
-    await expect(page.getByRole("heading", { name: "No installed Marketplace releases" })).toBeVisible();
+    await page.getByRole("dialog", { name: "Remove collection" }).getByRole("button", { name: "Remove", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Your library is empty" })).toBeVisible();
 });
 
-test("MKT-06 Marketplace tabs and trust dialog are keyboard accessible @a11y", async ({ page, request }) => {
+test("MKT-16 primary tasks and URL-only source dialog are keyboard accessible @a11y", async ({ page, request }) => {
     test.setTimeout(60_000);
     await openMarketplace(page);
     const discover = page.getByRole("tab", { name: "Discover" });
     await discover.focus();
     await page.keyboard.press("ArrowRight");
+    await expect(page.getByRole("tab", { name: "Library" })).toBeFocused();
+    await page.keyboard.press("ArrowRight");
     await expect(page.getByRole("tab", { name: "Publish" })).toBeFocused();
-    await page.keyboard.press("ArrowRight");
-    await expect(page.getByRole("tab", { name: "Updates" })).toBeFocused();
-    await page.keyboard.press("ArrowRight");
-    await expect(page.getByRole("tab", { name: "Installed" })).toBeFocused();
-    await page.keyboard.press("ArrowRight");
-    await expect(page.getByRole("tab", { name: "Security" })).toBeFocused();
-    await page.keyboard.press("ArrowRight");
-    await expect(page.getByRole("tab", { name: "Sources" })).toBeFocused();
-    await page.keyboard.press("Enter");
-    await expect(page.getByRole("heading", { name: "Trusted sources", exact: true })).toBeVisible();
 
     let results = await new AxeBuilder({ page }).analyze();
     expect(results.violations).toEqual([]);
 
-    await page.getByRole("button", { name: "Add source" }).focus();
+    await page.getByRole("button", { name: "Settings" }).focus();
     await page.keyboard.press("Enter");
-    const dialog = page.getByRole("dialog", { name: "Add Marketplace source" });
+    const settings = page.getByRole("dialog", { name: "Marketplace settings" });
+    await settings.getByRole("button", { name: "Add source" }).focus();
+    await page.keyboard.press("Enter");
+    const dialog = page.getByRole("dialog", { name: "Add source" });
     await expect(dialog).toBeVisible();
+    await expect(dialog.locator("input")).toHaveCount(1);
     await dialog.evaluate((element) => Promise.all(element.getAnimations().map((animation) => animation.finished)));
     results = await new AxeBuilder({ page }).include(".sf-dialog").analyze();
     expect(results.violations).toEqual([]);
     const box = await dialog.boundingBox();
     assert.ok(box && box.x >= 0 && box.y >= 0 && box.x + box.width <= 1280 && box.y + box.height <= 720);
-    await dialog.getByRole("button", { name: "Close" }).focus();
+    await dialog.getByRole("button", { name: "Cancel" }).focus();
     await page.keyboard.press("Enter");
-    await expect(page.getByRole("button", { name: "Add source" })).toBeFocused();
+    await expect(settings.getByRole("button", { name: "Add source" })).toBeFocused();
     await page.evaluate(() => window.dispatchEvent(new CustomEvent("cev-sim-marketplace-reload-required", {
         detail: { packageHashes: ["a".repeat(64)] },
     })));

@@ -97,6 +97,10 @@ export function previewMarketplaceSource(input, { signal } = {}) {
     return requestJson("/api/marketplace/sources/preview", { method: "POST", body: input, signal });
 }
 
+export function connectMarketplaceSource(baseUrl, { signal } = {}) {
+    return requestJson("/api/marketplace/sources/connect", { method: "POST", body: { baseUrl }, signal });
+}
+
 export function addMarketplaceSource(input, { signal } = {}) {
     return requestJson("/api/marketplace/sources", { method: "POST", body: input, signal });
 }
@@ -188,6 +192,10 @@ export function listMarketplaceInstalled({ signal } = {}) {
     return requestJson("/api/marketplace/installed", { signal });
 }
 
+export function getMarketplaceLibrary({ signal } = {}) {
+    return requestJson("/api/marketplace/library", { signal });
+}
+
 export function listMarketplaceUpdates({ track = "stable", signal } = {}) {
     const query = new URLSearchParams({ track });
     return requestJson(`/api/marketplace/updates?${query}`, { signal });
@@ -221,6 +229,10 @@ export function setMarketplaceOperatorOverride(input, { signal } = {}) {
     return requestJson("/api/marketplace/policy/operator-overrides", { method: "PUT", body: input, signal });
 }
 
+export function setMarketplaceOperatorOverrideForRelease(input, { signal } = {}) {
+    return requestJson("/api/marketplace/policy/operator-overrides/for-release", { method: "POST", body: input, signal });
+}
+
 export function listMarketplaceInstalledOwnership({ signal } = {}) {
     return requestJson("/api/marketplace/installed-ownership", { signal });
 }
@@ -247,6 +259,10 @@ export function listMarketplacePublisherProfiles({ signal } = {}) {
     return requestJson("/api/marketplace/publisher/profiles", { signal });
 }
 
+export function getMarketplacePublisherReadiness({ signal } = {}) {
+    return requestJson("/api/marketplace/publisher/readiness", { signal });
+}
+
 export function createMarketplacePublisherProfile(input, { signal } = {}) {
     return requestJson("/api/marketplace/publisher/profiles", { method: "POST", body: input, signal });
 }
@@ -266,6 +282,17 @@ export function listMarketplacePublicationDrafts({ signal } = {}) {
 
 export function createMarketplacePublicationDraft(input, { signal } = {}) {
     return requestJson("/api/marketplace/publisher/drafts", { method: "POST", body: input, signal });
+}
+
+export function createResolvedMarketplacePublicationDraft(input, { signal } = {}) {
+    return requestJson("/api/marketplace/publisher/drafts/resolved", { method: "POST", body: input, signal });
+}
+
+export function listMarketplacePublicationReleaseOptions(query = {}, { signal } = {}) {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(query)) if (value !== null && value !== undefined && value !== "") params.set(key, String(value));
+    const suffix = params.size ? `?${params}` : "";
+    return requestJson(`/api/marketplace/publisher/release-options${suffix}`, { signal });
 }
 
 export function updateMarketplacePublicationDraft(draftId, input, { signal } = {}) {
@@ -294,6 +321,12 @@ export function removeMarketplacePublicationPreview(draftId, digest, expectedRev
 
 export function createMarketplacePublicationPlan(draftId, draftRevision, { signal } = {}) {
     return requestJson("/api/marketplace/publisher/plans", { method: "POST", body: { draftId, draftRevision }, signal });
+}
+
+export function prepareMarketplacePublication(draftId, draftRevision, { signal } = {}) {
+    return requestJson("/api/marketplace/publisher/preparations", {
+        method: "POST", body: { draftId, draftRevision }, signal,
+    });
 }
 
 export function startMarketplacePublishJob(planHash, { signal } = {}) {

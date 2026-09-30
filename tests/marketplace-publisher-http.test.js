@@ -11,8 +11,10 @@ import { verifyPluginPackage } from "../app/plugin/PluginPackage.js";
 import { createDefaultVehicleManifest } from "../app/vehicles/VehicleManifest.js";
 import { MARKETPLACE_TOKEN_SCOPES } from "../server/marketplace/MarketplaceContract.js";
 import { marketplaceDocumentBytes } from "../server/marketplace/MarketplaceContracts.js";
+import { canonicalMarketplaceBytes } from "../server/marketplace/MarketplaceJson.js";
 import { publisherKeyId, publisherPublicKey, verifyMarketplaceReleaseEnvelope } from "../server/marketplace/PublisherSignatures.js";
 import { MarketplaceService } from "../server/marketplace/client/MarketplaceService.js";
+import { MarketplaceTrustClient } from "../server/marketplace/client/MarketplaceTrustClient.js";
 import { RegistryAuthStore } from "../server/marketplace/registry/RegistryAuthStore.js";
 import { MarketplaceRegistryHttpServer } from "../server/marketplace/registry/RegistryHttpServer.js";
 import { registryPaths } from "../server/marketplace/registry/RegistryLayout.js";
@@ -137,6 +139,33 @@ test("MKT-14 plugin publication prepares without mutation and commits an exact s
     const resource = await pluginFixtureResource();
     const verified = verifyPluginPackage(resource);
     await storage.installPluginFromBytes(Buffer.from(JSON.stringify(resource)));
+    const trust = await new MarketplaceTrustClient().previewSource({ baseUrl });
+    const bundle = path.join(dataDir, "marketplace", "connections.d", "publication-registry");
+    await fs.mkdir(bundle, { recursive: true, mode: 0o700 });
+    await fs.chmod(path.dirname(bundle), 0o700);
+    await fs.chmod(bundle, 0o700);
+    await fs.writeFile(path.join(bundle, "connection.json"), canonicalMarketplaceBytes({
+        kind: "cev-sim.marketplace-connection",
+        version: 1,
+        origin: baseUrl,
+        displayName: "Publication Registry",
+        trustedRootSha256: trust.trustedRootFingerprint,
+        readCredentialFile: "read-credential.json",
+        autoApprovePublisherIds: [publisher.publisherId],
+        publishingIdentities: [{
+            name: "Release Publisher",
+            publisherId: publisher.publisherId,
+            writeTokenFile: "publisher.token",
+            privateKeyFile: "publisher.pk8.pem",
+            default: true,
+            defaults: { track: "stable", license: "Apache-2.0" },
+        }],
+    }), { mode: 0o600 });
+    await fs.writeFile(path.join(bundle, "read-credential.json"), canonicalMarketplaceBytes({
+        kind: "cev-sim.marketplace-credential", version: 1, type: "bearer", token: "local-reader-token",
+    }), { mode: 0o600 });
+    await fs.writeFile(path.join(bundle, "publisher.token"), credential.token, { mode: 0o600 });
+    await fs.writeFile(path.join(bundle, "publisher.pk8.pem"), privateKeyPem, { mode: 0o600 });
     let service = await MarketplaceService.open(dataDir, {
         pluginStore: storage.plugins,
         storageService: storage,
@@ -144,25 +173,11 @@ test("MKT-14 plugin publication prepares without mutation and commits an exact s
         visualAssetStore: storage.visualAssets,
     });
     t.after(() => service.close());
-    const preview = await service.previewSource({ baseUrl });
-    const added = await service.addSource({
-        expectedRevision: 0,
-        name: "Publication Registry",
-        baseUrl,
-        registryId: preview.registryId,
-        trustedRootFingerprint: preview.trustedRootFingerprint,
-        enabled: true,
-        priority: 0,
-    });
-    await service.refreshSource(added.source.sourceId, { expectedRevision: 1 });
-    const profileResult = await service.createPublisherProfile({
-        expectedRevision: 0,
-        name: "Release Publisher",
-        sourceId: added.source.sourceId,
-        publisherId: publisher.publisherId,
-        writeToken: credential.token,
-        privateKeyPem,
-    });
+    const added = await service.connectSource({ baseUrl });
+    const readiness = await service.publisherReadiness();
+    const profiles = await service.listPublisherProfiles();
+    const profileResult = { profile: profiles.profiles.find((entry) => entry.profileId === readiness.defaultProfileId) };
+    assert.equal(readiness.ready, true);
     assert.equal(profileResult.profile.keyId, keyId);
     assert.equal(profileResult.profile.secretConfigured, true);
     assert.equal(Object.hasOwn(profileResult.profile, "secretRef"), false);
@@ -181,14 +196,14 @@ test("MKT-14 plugin publication prepares without mutation and commits an exact s
         release,
     });
     const before = await fetch(`${baseUrl}v1/catalog`).then((response) => response.json());
-    const plan = await service.createPublicationPlan({ draftId: updated.draft.draftId, draftRevision: updated.draft.revision });
+    const prepared = await service.preparePublication({ draftId: updated.draft.draftId, draftRevision: updated.draft.revision });
+    const { plan, job } = prepared;
     assert.match(plan.entries[0].release.artifact.sha256, /^[a-f0-9]{64}$/u);
     assert.equal(plan.entries[0].release.executable.packageHash, resource.packageHash);
     assert.equal(plan.entries[0].release.compatibility.cevSim, verified.document.engines.cevSim);
     assert.deepEqual(plan.entries[0].release.compatibility.contracts, [{ kind: "cev-sim.plugin-package", versions: [1] }]);
     assert.deepEqual(await fetch(`${baseUrl}v1/catalog`).then((response) => response.json()), before);
 
-    const job = await service.startPublishJob(plan.planHash);
     assert.equal(job.phase, "awaiting-confirmation");
     assert.deepEqual(await fetch(`${baseUrl}v1/catalog`).then((response) => response.json()), before);
     await service.commitPublishJob(job.jobId, { expectedRevision: job.revision, finalPlanHash: plan.planHash });
@@ -209,20 +224,21 @@ test("MKT-14 plugin publication prepares without mutation and commits an exact s
     assert.equal(remoteItem.publisherId, publisher.publisherId);
     assert.equal(remoteRelease.artifact.sha256, plan.entries[0].release.artifact.sha256);
     assert.equal((await fetch(`${baseUrl}v1/catalog`).then((response) => response.json())).tracks[0].track, "stable");
+    await service.refreshSource(added.source.sourceId, { expectedRevision: 1 });
 
     const nextResource = await pluginFixtureResource({ mutateDocument: (document) => { document.version = "1.1.0"; } });
     await storage.installPluginFromBytes(Buffer.from(JSON.stringify(nextResource)));
     const nextInventory = await service.listPublicationInventory({ contentKind: "plugin" });
     const nextEntry = nextInventory.entries.find((entry) => entry.identity.version === "1.1.0");
+    assert.equal(nextEntry.publicationStatus, "published");
     const currentDrafts = await service.listPublicationDrafts();
-    const nextDraftResult = await service.createPublicationDraft({
+    const nextDraftResult = await service.createResolvedPublicationDraft({
         expectedRevision: currentDrafts.revision,
         profileId: profileResult.profile.profileId,
-        mode: "new-release",
-        itemId: verified.document.id,
         contentKind: "plugin",
         localSelection: nextEntry.localSelection,
     });
+    assert.equal(nextDraftResult.draft.mode, "new-release");
     assert.equal(nextDraftResult.draft.item.displayName, remoteItem.displayName);
     assert.equal(nextDraftResult.draft.item.itemId, verified.document.id);
     const nextUpdated = await service.updatePublicationDraft(nextDraftResult.draft.draftId, {

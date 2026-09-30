@@ -131,6 +131,11 @@ export function createMarketplaceRouter(service, {
         ])));
     }));
 
+    router.get("/publisher/readiness", handler(async (request, response) => {
+        exactQuery(request, []);
+        response.json(await service.publisherReadiness());
+    }));
+
     router.get("/publisher/profiles", handler(async (request, response) => {
         exactQuery(request, []);
         response.json(await service.listPublisherProfiles());
@@ -168,6 +173,12 @@ export function createMarketplaceRouter(service, {
         response.status(201).json(await service.createPublicationDraft(body));
     }));
 
+    router.post("/publisher/drafts/resolved", handler(async (request, response) => {
+        const body = exactBody(request.body, ["expectedRevision", "contentKind", "localSelection"], ["profileId"]);
+        bodyRevision(body.expectedRevision);
+        response.status(201).json(await service.createResolvedPublicationDraft(body));
+    }));
+
     router.patch("/publisher/drafts/:draftId", handler(async (request, response) => {
         const body = exactBody(request.body, ["expectedRevision"], ["profileId", "mode", "localSelection", "item", "release", "members"]);
         bodyRevision(body.expectedRevision);
@@ -200,6 +211,16 @@ export function createMarketplaceRouter(service, {
         const body = exactBody(request.body, ["draftId", "draftRevision"]);
         bodyRevision(body.draftRevision, "$.draftRevision");
         response.status(201).json(await service.createPublicationPlan(body));
+    }));
+
+    router.get("/publisher/release-options", handler(async (request, response) => {
+        response.json(await service.listPublicationReleaseOptions(exactQuery(request, ["q", "profileId", "contentKind"])));
+    }));
+
+    router.post("/publisher/preparations", handler(async (request, response) => {
+        const body = exactBody(request.body, ["draftId", "draftRevision"]);
+        bodyRevision(body.draftRevision, "$.draftRevision");
+        response.status(201).json(await service.preparePublication(body));
     }));
 
     router.post("/publisher/jobs", handler(async (request, response) => {
@@ -410,6 +431,14 @@ export function createMarketplaceRouter(service, {
         response.json(await service.setOperatorOverride(body));
     }));
 
+    router.post("/policy/operator-overrides/for-release", handler(async (request, response) => {
+        const body = exactBody(request.body, [
+            "registryId", "itemId", "releaseVersion", "artifactSha256", "reason", "expectedRevision",
+        ]);
+        bodyRevision(body.expectedRevision);
+        response.json(await service.setOperatorOverrideForRelease(body));
+    }));
+
     router.post("/policy/packages/:packageHash/authorize", handler(async (request, response) => {
         exactBody(request.body ?? {}, []);
         response.json(await service.authorizePackage(request.params.packageHash));
@@ -418,6 +447,11 @@ export function createMarketplaceRouter(service, {
     router.get("/installed-ownership", handler(async (request, response) => {
         exactQuery(request, []);
         response.json(await service.listInstalledOwnership());
+    }));
+
+    router.get("/library", handler(async (request, response) => {
+        exactQuery(request, []);
+        response.json(await service.library());
     }));
 
     router.get("/receipts/:receiptHash", handler(async (request, response) => {
@@ -477,6 +511,11 @@ export function createMarketplaceRouter(service, {
     router.post("/sources/preview", handler(async (request, response) => {
         const body = exactBody(request.body, ["baseUrl"], ["credential"]);
         response.json(await service.previewSource(body));
+    }));
+
+    router.post("/sources/connect", handler(async (request, response) => {
+        const body = exactBody(request.body, ["baseUrl"]);
+        response.status(201).json(await service.connectSource(body));
     }));
 
     router.get("/sources", handler(async (_request, response) => {

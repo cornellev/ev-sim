@@ -88,6 +88,46 @@ test("MKT-04 CLI emits one redacted JSON failure and requires literal --dry-run"
     assert.doesNotMatch(failed.stderr, /stack|cause|credential/u);
 });
 
+test("MKT-16 publisher provision writes one owner-only connection bundle and refuses overwrite", async (t) => {
+    const parent = await fs.mkdtemp(path.join(os.tmpdir(), "cev-mkt-provision-"));
+    t.after(() => fs.rm(parent, { recursive: true, force: true }));
+    const registry = path.join(parent, "registry");
+    const offlineRootKey = path.join(parent, "offline-root.pem");
+    const bundles = path.join(parent, "connections.d");
+    await fs.mkdir(bundles, { mode: 0o700 });
+    const executable = "server/marketplace/cev-mkt.js";
+    assert.equal((await run(executable, ["init", "--root", registry, "--offline-root-key", offlineRootKey])).exitCode, 0);
+    const output = path.join(bundles, "company");
+    const provisioned = await run(executable, [
+        "publisher", "provision",
+        "--root", registry,
+        "--origin", "https://marketplace.example",
+        "--display-name", "Company Marketplace",
+        "--namespace", "acme.example",
+        "--output", output,
+    ]);
+    assert.equal(provisioned.exitCode, 0, provisioned.stderr);
+    const result = JSON.parse(provisioned.stdout);
+    assert.equal(result.publisherId, "acme.example");
+    assert.doesNotMatch(provisioned.stdout, /token|PRIVATE KEY/u);
+    assert.equal((await fs.lstat(output)).mode & 0o077, 0);
+    for (const name of ["connection.json", "read-credential.json", "publisher.token", "publisher.pk8.pem"]) {
+        const stat = await fs.lstat(path.join(output, name));
+        assert.equal(stat.isFile(), true);
+        assert.equal(stat.mode & 0o077, 0);
+    }
+    const connection = JSON.parse(await fs.readFile(path.join(output, "connection.json"), "utf8"));
+    assert.equal(connection.origin, "https://marketplace.example/");
+    assert.equal(connection.publishingIdentities[0].publisherId, "acme.example");
+    const repeated = await run(executable, [
+        "publisher", "provision", "--root", registry,
+        "--origin", "https://marketplace.example", "--display-name", "Company Marketplace",
+        "--namespace", "acme.example", "--output", output,
+    ]);
+    assert.equal(repeated.exitCode, 2);
+    assert.match(repeated.stderr, /refuses to overwrite/u);
+});
+
 test("MKT-04 CLI aborts streaming and releases writer ownership on SIGINT", async (t) => {
     const parent = await fs.mkdtemp(path.join(os.tmpdir(), "cev-mkt-cli-signal-"));
     t.after(() => fs.rm(parent, { recursive: true, force: true }));

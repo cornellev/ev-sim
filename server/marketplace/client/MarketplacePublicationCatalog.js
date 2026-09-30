@@ -39,12 +39,17 @@ function selectionKeys(selection) {
     return [];
 }
 
+function stableIdentity(current) {
+    return `${current.contentKind}:${current.localId}`;
+}
+
 export class MarketplacePublicationCatalog {
-    constructor({ storageService, editorAssetStore, draftStore = null }) {
+    constructor({ storageService, editorAssetStore, draftStore = null, bindingStore = null }) {
         if (!storageService || !editorAssetStore) throw new TypeError("Publication catalog requires authoring stores.");
         this.storageService = storageService;
         this.editorAssetStore = editorAssetStore;
         this.draftStore = draftStore;
+        this.bindingStore = bindingStore;
     }
 
     async #entries() {
@@ -157,7 +162,9 @@ export class MarketplacePublicationCatalog {
         }
         return entries.map((current) => Object.freeze({
             ...current,
-            publicationStatus: publicationStates.get(selectionKeys(current.localSelection)[0]) ?? "unpublished",
+            publicationStatus: publicationStates.get(selectionKeys(current.localSelection)[0])
+                ?? (this.bindingStore?.findAny(current.contentKind, stableIdentity(current)) ? "published" : "unpublished"),
+            publicationIdentity: stableIdentity(current),
         }));
     }
 

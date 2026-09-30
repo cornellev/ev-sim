@@ -550,7 +550,7 @@ hash projections.
 
 MKT-01 freezes the JSON contract layer under `schemas/marketplace/v1/` and
 `server/marketplace/`. `CEV_SIM_MARKETPLACE_ENABLED` is parsed at server
-startup and defaults to false. In the disabled state it mounts no marketplace
+startup and defaults to true; `0` or `false` is the kill switch. In the disabled state it mounts no marketplace
 routes or services and creates no marketplace state. Registry installation and
 UI remain assigned to later milestones in [Marketplace roadmap](marketplace-plan.md).
 
@@ -764,6 +764,25 @@ idempotently. Collection member releases precede the collection artifact and
 release. Publisher profiles, drafts, previews, staged artifacts, plans, jobs,
 journals, tracks, and listing metadata remain nonsemantic and enter none of the
 world, resolved, simulation, episode, trajectory, package, or run identities.
+
+The MKT-16 zero-setup prerequisite adds a backend connection-policy boundary.
+`MarketplaceConnectionPolicy` loads strict owner-only bundles at startup and is
+the only authority that can turn a URL into a root pin, scoped credential,
+priority, approval allowlist, or publishing identity. `connectSource()` accepts
+only the URL, fails unknown origins closed, repeats the existing TUF bootstrap
+verification, and immediately refreshes verified catalog state.
+
+`MarketplacePublishingIdentityManager` reconciles configured identities into
+the existing private profile/secret stores only after a verified publisher and
+matching active key exist. `MarketplacePublicationBindingStore` and its
+reconciler retain local-to-item associations only after completed exact job
+results appear in verified cache state. `MarketplacePublicationDependencyResolver`
+selects same-registry exact release choices and auto-resolves unique plugin
+package matches. `MarketplaceLibraryReadModel` is exposed through
+`MarketplaceService.library()` and joins installed membership, ownership,
+receipts, verified listing metadata, advisories, and updates for presentation.
+Connection policy, readiness, library projection, and publication bindings are
+private operational data and enter no semantic or package identity.
 
 ## External Integration
 

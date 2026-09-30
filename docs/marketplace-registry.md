@@ -28,6 +28,9 @@ cev-mkt admit preview --root /srv/cev-marketplace --media-type image/png --file 
 cev-mkt admit item --root /srv/cev-marketplace --file item.json
 cev-mkt key generate --private-key publisher.pem --public-key publisher-key.json
 cev-mkt publisher register --root /srv/cev-marketplace --file publisher.json
+cev-mkt publisher provision --root /srv/cev-marketplace \
+  --origin https://marketplace.example --display-name "Company Marketplace" \
+  --namespace com.example --output /etc/cev-sim/marketplace/connections.d/company
 cev-mkt sign release --file release.json --private-key publisher.pem --output release.dsse.json
 cev-mkt admit release --root /srv/cev-marketplace --file release.dsse.json --track stable
 cev-mkt token create --root /srv/cev-marketplace --subject publisher \
@@ -71,6 +74,23 @@ root. Every numbered root is retained for sequential client updates.
 Commands write exactly one JSON result to stdout. Failures write one redacted
 JSON record to stderr and use a nonzero exit code. `serve` writes one startup
 record, remains quiet, and closes cleanly on `SIGINT` or `SIGTERM`.
+
+`publisher provision` is the ordinary one-command bootstrap. It atomically
+generates one Ed25519 key pair, registers the publisher and active key, creates
+a read token and publisher-scoped write token, and writes a mode-`0700` client
+connection bundle containing mode-`0600` documents and secrets. The first
+namespace is the publisher ID. The output parent must be owner-only and the
+command refuses to overwrite an existing bundle. It prints identifiers and the
+output path, never token or private-key material.
+
+To rotate credentials or signing identity, use the granular token/key commands,
+write replacement secret and `connection.json` files beside the live bundle,
+fsync them, atomically rename each replacement, then restart the simulator.
+Keep the old public key in publisher history as retired or revoked; revocation
+does not delete historical verification material. Back up connection bundles
+as secrets separately from the registry. Restore with owner-only permissions,
+verify the registry UUID/root pin, and restart. Never include bundle secrets in
+logs, support archives, source control, or registry backups.
 
 For a collection, admit every exact member release first. The canonical
 `cev-sim.marketplace-collection@1` artifact contains only ordered

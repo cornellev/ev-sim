@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import { generateKeyPairSync } from "node:crypto";
 import process from "node:process";
+import path from "node:path";
 
 import {
     MARKETPLACE_KINDS,
@@ -13,6 +14,7 @@ import {
     marketplaceDocumentBytes,
     parseMarketplaceDocument,
 } from "./MarketplaceContracts.js";
+import { canonicalMarketplaceBytes } from "./MarketplaceJson.js";
 import {
     MARKETPLACE_ERROR_CODES,
     MarketplaceError,
@@ -23,6 +25,9 @@ import { MarketplaceRegistryService } from "./registry/RegistryService.js";
 import { MarketplaceRegistryStore } from "./registry/RegistryStore.js";
 import { MarketplaceRegistryHttpServer } from "./registry/RegistryHttpServer.js";
 import { RegistryAuthStore } from "./registry/RegistryAuthStore.js";
+import { MarketplaceRegistryReader } from "./registry/RegistryReader.js";
+import { assertCredentialDocument, MARKETPLACE_CLIENT_DOCUMENT_VERSION, MARKETPLACE_CREDENTIAL_KIND } from "./client/MarketplaceClientLayout.js";
+import { assertMarketplaceConnectionDocument, normalizeMarketplaceOrigin } from "./client/MarketplaceConnectionDocuments.js";
 import {
     publisherKeyId,
     publisherPublicKey,
@@ -44,6 +49,7 @@ const VALUE_OPTIONS = new Set([
     "offline-root-key", "current-root-key", "new-root-key", "host", "port",
     "publisher-id", "item-id", "namespace", "scope", "subject", "token-id", "key-id", "private-key", "public-key",
     "output", "status", "release-version", "artifact-sha256", "reason", "tls-key", "tls-cert", "tls-ca",
+    "origin", "display-name",
 ]);
 const FLAG_OPTIONS = new Set(["dry-run", "read-auth", "unsafe-development-lan", "mtls", "writable"]);
 
@@ -73,6 +79,7 @@ export function registryCliHelp() {
         "  admit item --root DIR --file FILE",
         "  admit release --root DIR --file DSSE_FILE [--track stable|beta]",
         "  publisher register --root DIR --file PUBLISHER_JSON",
+        "  publisher provision --root DIR --origin URL --display-name NAME --namespace CSV --output DIR",
         "  publisher add-key --root DIR --publisher-id ID --file KEY_JSON",
         "  publisher set-key-status --root DIR --publisher-id ID --key-id SHA256 --status retired|revoked",
         "  key generate --private-key FILE --public-key FILE",
@@ -298,7 +305,90 @@ async function execute(parsed, signal, { stdout }) {
         throw usage(`Unknown admission kind ${JSON.stringify(kind)}.`);
     }
     if (command === "publisher") {
-        if (positional.length !== 1) throw usage("publisher requires register, add-key, or set-key-status.");
+        if (positional.length !== 1) throw usage("publisher requires register, provision, add-key, or set-key-status.");
+        if (positional[0] === "provision") {
+            exactOptions(options, ["root", "origin", "display-name", "namespace", "output"]);
+            const origin = normalizeMarketplaceOrigin(options.origin);
+            const namespaces = csv(options.namespace, "namespace", { required: true });
+            const publisherId = namespaces[0];
+            const output = path.resolve(options.output);
+            const outputParent = path.dirname(output);
+            await fs.mkdir(outputParent, { recursive: true, mode: 0o700 });
+            const outputParentStat = await fs.lstat(outputParent);
+            if (!outputParentStat.isDirectory() || outputParentStat.isSymbolicLink() || (outputParentStat.mode & 0o077) !== 0) {
+                throw usage("publisher provision requires an owner-only output parent directory.");
+            }
+            if (await fs.lstat(output).then(() => true, (error) => error.code === "ENOENT" ? false : Promise.reject(error))) {
+                throw usage("publisher provision refuses to overwrite --output.");
+            }
+            const provisioned = await withStore(options.root, {}, async (store, service) => {
+                const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+                const privateKeyPem = privateKey.export({ format: "pem", type: "pkcs8" });
+                const keyId = publisherKeyId(publicKey);
+                const timestamp = new Date().toISOString();
+                const publisher = {
+                    kind: "cev-sim.marketplace-publisher",
+                    version: 1,
+                    publisherId,
+                    namespaces,
+                    keys: [{
+                        keyId,
+                        algorithm: "ed25519",
+                        publicKey: publisherPublicKey(publicKey),
+                        status: "active",
+                        createdAt: timestamp,
+                        statusChangedAt: timestamp,
+                    }],
+                };
+                await service.registerPublisher(marketplaceDocumentBytes(publisher), { actor: LOCAL_ADMIN_ACTOR });
+                const auth = await RegistryAuthStore.open(store.paths);
+                const reader = await auth.createToken({ subject: "reader", scopes: ["read"] });
+                const writer = await auth.createToken({
+                    subject: "publisher",
+                    publisherId,
+                    namespaces,
+                    scopes: ["publish:blob", "publish:item", "publish:release", "manage:track"],
+                });
+                const discovery = (await (await MarketplaceRegistryReader.open(options.root)).wellKnown()).document;
+                return { privateKeyPem, keyId, readerToken: reader.token, writerToken: writer.token, discovery };
+            });
+            const temporary = `${output}.tmp-${process.pid}-${Date.now()}`;
+            await fs.mkdir(temporary, { mode: 0o700 });
+            try {
+                const credential = assertCredentialDocument({
+                    kind: MARKETPLACE_CREDENTIAL_KIND,
+                    version: MARKETPLACE_CLIENT_DOCUMENT_VERSION,
+                    type: "bearer",
+                    token: provisioned.readerToken,
+                });
+                const connection = assertMarketplaceConnectionDocument({
+                    kind: "cev-sim.marketplace-connection",
+                    version: 1,
+                    origin,
+                    displayName: options["display-name"],
+                    trustedRootSha256: provisioned.discovery.tuf.bootstrapRootSha256,
+                    readCredentialFile: "read-credential.json",
+                    autoApprovePublisherIds: [publisherId],
+                    publishingIdentities: [{
+                        name: options["display-name"],
+                        publisherId,
+                        writeTokenFile: "publisher.token",
+                        privateKeyFile: "publisher.pk8.pem",
+                        default: true,
+                        defaults: { track: "stable", license: "Apache-2.0" },
+                    }],
+                });
+                await writeExclusive(path.join(temporary, "connection.json"), canonicalMarketplaceBytes(connection));
+                await writeExclusive(path.join(temporary, "read-credential.json"), canonicalMarketplaceBytes(credential));
+                await writeExclusive(path.join(temporary, "publisher.token"), Buffer.from(provisioned.writerToken));
+                await writeExclusive(path.join(temporary, "publisher.pk8.pem"), provisioned.privateKeyPem);
+                await fs.rename(temporary, output);
+            } catch (error) {
+                await fs.rm(temporary, { recursive: true, force: true });
+                throw error;
+            }
+            return { ok: true, command, operation: "provision", publisherId, keyId: provisioned.keyId, origin, output };
+        }
         if (positional[0] === "register") {
             exactOptions(options, ["root", "file"]);
             const bytes = await readInputFile(options.file);

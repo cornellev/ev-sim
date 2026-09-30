@@ -4,14 +4,17 @@ import test from "node:test";
 
 import { resolveMarketplaceConfig } from "../server/marketplace/MarketplaceConfig.js";
 
-test("MKT-01 marketplace startup seam is frozen and disabled by default", () => {
-    for (const value of [undefined, "", "0", "false"]) {
+test("MKT-16 prerequisite enables Marketplace by default and preserves the explicit kill switch", () => {
+    for (const value of [undefined, ""]) {
         const config = resolveMarketplaceConfig(value === undefined ? {} : { CEV_SIM_MARKETPLACE_ENABLED: value });
-        assert.deepEqual(config, { enabled: false });
+        assert.deepEqual(config, { enabled: true });
         assert.equal(Object.isFrozen(config), true);
     }
     for (const value of ["1", "true"]) {
         assert.deepEqual(resolveMarketplaceConfig({ CEV_SIM_MARKETPLACE_ENABLED: value }), { enabled: true });
+    }
+    for (const value of ["0", "false"]) {
+        assert.deepEqual(resolveMarketplaceConfig({ CEV_SIM_MARKETPLACE_ENABLED: value }), { enabled: false });
     }
     assert.throws(
         () => resolveMarketplaceConfig({ CEV_SIM_MARKETPLACE_ENABLED: "yes" }),
@@ -21,6 +24,10 @@ test("MKT-01 marketplace startup seam is frozen and disabled by default", () => 
         assert.throws(() => resolveMarketplaceConfig({ CEV_SIM_MARKETPLACE_ENABLED: value }), /must be one of/);
     }
     assert.notEqual(resolveMarketplaceConfig({}), resolveMarketplaceConfig({}));
+    assert.deepEqual(resolveMarketplaceConfig({ CEV_SIM_MARKETPLACE_CONNECTIONS_DIR: "/operator/connections" }), {
+        enabled: true,
+        connectionsDir: "/operator/connections",
+    });
 });
 
 test("MKT-07 server startup constructs Marketplace after supervisor initialization and mounts it only when enabled", async () => {

@@ -1,11 +1,45 @@
 # Marketplace Trust Client
 
-MKT-05 adds the server-side trust client used by the simulator. It is enabled
-only when `CEV_SIM_MARKETPLACE_ENABLED=1` or `true`; the default remains off.
+MKT-05 adds the server-side trust client used by the simulator. Marketplace is
+enabled when `CEV_SIM_MARKETPLACE_ENABLED` is absent, empty, `1`, or `true`.
+`0` and `false` are the explicit kill switch.
 When disabled, `server/App.js` does not construct the service, mount
 `/api/marketplace`, create marketplace storage, or make registry requests.
 
 ## Trust workflow
+
+The ordinary flow is `POST /api/marketplace/sources/connect` with only
+`{"baseUrl":"https://…/"}`. The origin must match one backend connection
+bundle exactly. The backend supplies the display name, priority, root pin,
+read credential, publisher approval policy, and publishing identities. It
+verifies discovery, registry UUID, bootstrap signature, and root SHA-256 before
+persisting anything, then performs the first verified refresh. A failure after
+trust is persisted returns a retryable warning; a trust failure persists no
+source. Repeating Connect is idempotent and rotates policy-derived metadata or
+credentials without changing source identity.
+
+Low-level preview/add/update routes remain for tests and advanced tooling, but
+the ordinary browser does not expose their token, name, fingerprint, priority,
+or enablement fields.
+
+## Backend connection bundles
+
+Bundles live one directory per registry under
+`<dataDir>/marketplace/connections.d`, or the startup-only
+`CEV_SIM_MARKETPLACE_CONNECTIONS_DIR` override. Each bundle contains an
+owner-only `connection.json`:
+
+```json
+{"kind":"cev-sim.marketplace-connection","version":1,"origin":"https://marketplace.example/","displayName":"Company Marketplace","trustedRootSha256":"<64 lowercase hex>","readCredentialFile":"read-credential.json","autoApprovePublisherIds":["com.example.publisher"],"publishingIdentities":[{"name":"Product Team","publisherId":"com.example.publisher","writeTokenFile":"publisher.token","privateKeyFile":"publisher.pk8.pem","default":true,"defaults":{"track":"stable","license":"Apache-2.0"}}]}
+```
+
+The connection directory and bundle directories must be mode `0700`; every
+document and secret must be a nonsymlink regular file with mode `0600`.
+Referenced files are direct bundle children. Origins are canonical and unique;
+configured identities are unique and exactly one is default when identities
+exist. Invalid permissions, links, paths, pins, keys, shapes, or duplicates
+fail startup. Configuration reload is startup-only: rotate by atomic file
+replacement, then restart.
 
 `POST /api/marketplace/sources/preview` accepts a canonical registry origin and
 an optional write-only bearer credential. The backend fetches only
@@ -61,6 +95,12 @@ publisher/
   plans/sha256/<planHash>.json
   plans/sha256/<planHash>.artifacts/<draftId>
   jobs/<jobId>/{snapshot.json,journal.json,work/artifacts/<operationId>}
+  bindings.json
+connections.d/<registry>/
+  connection.json
+  read-credential.json
+  publisher.token
+  publisher.pk8.pem
 artifacts/sha256/<artifactSha256>
 artifact-records/sha256/<artifactSha256>.json
 quarantine/<quarantineId>/{artifact,record.json}
@@ -87,6 +127,35 @@ orphan source state, and incomplete staging directories, while symlinks,
 unexpected nodes, noncanonical documents, and trust mismatches fail closed.
 
 ## Publisher workspace
+
+`MarketplacePublishingIdentityManager` reconciles connection identities after
+startup and every successful source refresh. It derives the Ed25519 key ID,
+requires the verified publisher target to contain the matching active key,
+imports the scoped write token and PKCS#8 key into the existing secret store,
+and adopts or updates a matching private profile idempotently. Only publisher
+IDs in `autoApprovePublisherIds` receive automatic approval.
+
+`GET /publisher/readiness` returns friendly identity/source names, the default
+profile, readiness, and actionable blockers. It never returns credentials,
+private keys, key IDs, secret references, or paths. With one ready identity the
+Publish workspace selects it automatically; with several it shows a friendly
+destination selector.
+
+`POST /publisher/drafts/resolved` derives profile, stable local identity,
+bound item, new-item/update mode, SemVer, track, and license. Private
+`cev-sim.marketplace-publication-bindings@1` state maps profile plus stable
+local identity to an exact verified item/release/artifact. A binding is written
+only after a completed job reports the exact triple and a verified refresh
+contains it. Startup and later refreshes recover delayed bindings
+idempotently; attempted or unverified publication never creates one.
+
+`GET /publisher/release-options` returns friendly verified choices for
+collections and run-template plugin dependencies. Direct run-template plugin
+locks resolve automatically by exact package hash when there is one local
+draft or one verified release; missing, ambiguous, or cross-registry matches
+block preparation. `POST /publisher/preparations` combines exact plan creation
+and creation of an `awaiting-confirmation` job. Commit still requires the
+job's current revision and exact `finalPlanHash`.
 
 MKT-14 adds a local authoring boundary under `marketplace/publisher/` and a
 `Publish` tab beside Discover, Updates, Installed, Security, and Sources.
@@ -412,9 +481,10 @@ metadata cache have been deleted.
 
 ## Operations
 
-- Preview trust, then add the source with its exact registry UUID and root
-  fingerprint.
-- Call `POST /sources/:sourceId/refresh` explicitly. Startup never refreshes.
+- Provision or install an owner-only backend connection bundle, restart, then
+  Connect with only its registry URL. Connect performs the initial refresh.
+- Use Sync now for later explicit refreshes. Startup does not contact a
+  registry automatically.
 - Use optimistic `expectedRevision` values for add, update, remove, and
   refresh operations. A conflict returns HTTP 409 and `currentRevision`.
 - Rotate credentials through `PATCH /sources/:sourceId`; omit `credential` to
@@ -423,6 +493,10 @@ metadata cache have been deleted.
 - A source with a nonterminal installation job cannot be removed.
 - Cancel only before commit. Use Resume or Replan for `needs-attention`; do not
   delete transaction state manually.
+- Existing low-level sources, profiles, and drafts remain readable. Configured
+  identities adopt matching profiles. Sources outside policy remain visible
+  but cannot be recreated through URL-only Connect. Exact verified completed
+  publications seed bindings; ambiguous legacy associations remain unbound.
 
 Marketplace source, trust, health, credential, cache, installation, receipt,
 artifact-record, quarantine, job, and transaction documents are local

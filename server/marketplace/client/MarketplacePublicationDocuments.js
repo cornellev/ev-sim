@@ -236,7 +236,8 @@ function assertLocalSelection(value, contentKind, path) {
         string(value.environmentId, `${path}.environmentId`, { min: 1, max: 256 });
         integer(value.expectedRevision, `${path}.expectedRevision`);
     } else if (contentKind === "asset-pack") {
-        exactKeys(value, ["kind", "roots", "catalogRevision"], [], path);
+        exactKeys(value, ["kind", "roots", "catalogRevision"], ["publicationProjectId"], path);
+        if (value.publicationProjectId !== undefined) assertCanonicalUuid(value.publicationProjectId, `${path}.publicationProjectId`);
         integer(value.catalogRevision, `${path}.catalogRevision`);
         denseArray(value.roots, `${path}.roots`, 1024).forEach((entry, index) => {
             const current = `${path}.roots.${index}`;
@@ -247,7 +248,8 @@ function assertLocalSelection(value, contentKind, path) {
         if (value.roots.length < 1) invalid(`${path}.roots`, "requires at least one asset revision");
         unique(value.roots, (entry) => `${entry.assetId}@${entry.revision}`, `${path}.roots`);
     } else if (contentKind === "collection") {
-        exactKeys(value, ["kind"], [], path);
+        exactKeys(value, ["kind"], ["publicationProjectId"], path);
+        if (value.publicationProjectId !== undefined) assertCanonicalUuid(value.publicationProjectId, `${path}.publicationProjectId`);
     } else invalid(`${path}.kind`, "unsupported publication selection");
     return value;
 }

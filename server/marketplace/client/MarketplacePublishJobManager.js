@@ -162,7 +162,7 @@ export class MarketplacePublishJobManager {
 
     constructor({
         paths, planner, profileStore, secretStore, sourceStore, credentialStore, draftStore,
-        fetchImpl = globalThis.fetch, now = () => new Date(), refreshSource = null,
+        fetchImpl = globalThis.fetch, now = () => new Date(), refreshSource = null, publicationCompleted = null,
     }) {
         this.paths = paths;
         this.planner = planner;
@@ -174,6 +174,7 @@ export class MarketplacePublishJobManager {
         this.fetchImpl = fetchImpl;
         this.now = now;
         this.refreshSource = refreshSource;
+        this.publicationCompleted = publicationCompleted;
     }
 
     static async create(dataDir, dependencies) {
@@ -184,6 +185,10 @@ export class MarketplacePublishJobManager {
 
     setRefreshSource(operation) {
         this.refreshSource = operation;
+    }
+
+    setPublicationCompleted(operation) {
+        this.publicationCompleted = operation;
     }
 
     #assertOpen() {
@@ -387,6 +392,27 @@ export class MarketplacePublishJobManager {
         return { total: entries.length, offset: resolvedOffset, limit: resolvedLimit, entries: entries.slice(resolvedOffset, resolvedOffset + resolvedLimit) };
     }
 
+    async completedPublicationForDraft(draftId) {
+        assertCanonicalUuid(draftId, "draftId");
+        const matches = [];
+        for (const entry of await fs.readdir(this.paths.publicationJobs, { withFileTypes: true })) {
+            if (!entry.isDirectory() || entry.isSymbolicLink() || !/^[a-f0-9-]{36}$/u.test(entry.name)) continue;
+            const job = await this.#readJob(entry.name);
+            if (job.phase !== "complete") continue;
+            const plan = await this.planner.readPlan(job.planHash);
+            const publication = plan.entries.find((candidate) => candidate.draftId === draftId);
+            if (!publication) continue;
+            const exact = job.published.find((candidate) => candidate.itemId === publication.item.itemId
+                && candidate.releaseVersion === publication.release.releaseVersion
+                && candidate.artifactSha256 === publication.release.artifact.sha256);
+            if (exact) matches.push({ updatedAt: job.updatedAt, ...exact });
+        }
+        matches.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+        if (!matches[0]) return null;
+        const { updatedAt: _updatedAt, ...exact } = matches[0];
+        return Object.freeze(exact);
+    }
+
     async hasReference({ profileId = null, draftId = null } = {}) {
         if (!profileId && !draftId) throw new TypeError("A publication job reference target is required.");
         for (const entry of await fs.readdir(this.paths.publicationJobs, { withFileTypes: true })) {
@@ -511,6 +537,7 @@ export class MarketplacePublishJobManager {
             }));
             await this.#update(jobId, () => ({ phase: "complete", error: null, warning, published }));
             await this.#setDraftStates(plan, "published");
+            if (this.publicationCompleted) await this.publicationCompleted(source.sourceId).catch(() => {});
         } catch (error) {
             const journal = await this.#readJournal(jobId).catch(() => ({ completions: [] }));
             const job = await this.#readJob(jobId).catch(() => null);
