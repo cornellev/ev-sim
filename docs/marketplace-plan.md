@@ -22,7 +22,7 @@ hosted private-LAN registry. It is not headless PR 13 and does not extend the
 | MKT-11: complete editable run templates | Implemented; acceptance pending | Full local and serial Marketplace gates pass; supported-Node and hosted CI evidence pending | Unmerged |
 | MKT-12: collections | Implemented; acceptance pending | Focused contract, graph, ownership, registry, integration, API, job, and recovery suites pass; full gates pending | Unmerged |
 | MKT-13: updates, tracks, yanks, and advisory UX | Implemented; acceptance pending | Local focused, full repository, fixtures, release, and serial UI/a11y gates pass; supported-Node build/distribution and hosted CI pending | Unmerged |
-| MKT-14: LAN discovery and remaining operations | Superseded in part by MKT-13 | Not run | Unmerged |
+| MKT-14: simulator publisher workspace | Implemented; acceptance pending | Focused publisher/UI gates and full Marketplace/repository tests pass; supported-Node build, repository-wide browser, hosted CI evidence pending | Unmerged |
 | MKT-15: scale, recovery, and operations | Not started | Not run | Unmerged |
 | MKT-16: candidate acceptance and release | Not started | Not run | Unmerged |
 
@@ -72,8 +72,10 @@ flowchart LR
   Backend --> Registry[Configured registry origin]
   Registry --> Metadata[TUF metadata and targets]
   Registry --> CAS[SHA-256 artifact CAS]
-  Publisher[Publisher CLI] --> Envelope[Ed25519 DSSE release envelope]
+  Publish[Simulator Publish workspace] --> Backend
+  Backend --> Envelope[Locally signed Ed25519 DSSE release envelope]
   Envelope --> Registry
+  Admin[Registry-admin CLI] --> Registry
 ```
 
 There are three separate decisions:
@@ -798,11 +800,108 @@ the clean npm install with `EBADENGINE`: the package requires Node
 and distribution verification, hosted CI, and merge evidence remain open; the
 milestone is implemented but not accepted or merged.
 
-### MKT-14 — LAN discovery and remaining operations
+### MKT-14 — Simulator publisher workspace
 
-The previous MKT-14 update/yank/advisory scope moved into MKT-13. Authenticated
-DNS-SD discovery, if retained, remains a separate future milestone and can only
-produce untrusted candidates; it cannot add a source or grant trust.
+Add a `Publish` tab to the existing Marketplace workspace. The browser talks
+only to the local backend. The backend catalogs authored plugins, vehicles,
+editable run templates, saved environments, and editor assets; exact run
+packages remain CLI-only. Durable drafts can create a new item or a new
+immutable SemVer release of an owned item, optionally advance `stable` or
+`beta`, attach inspected listing images, and compose ordered collections from
+local drafts plus exact releases in the same verified registry.
+
+Publisher profiles bind one configured source/registry, publisher ID, active
+Ed25519 key ID, and owner-only secret reference. Write tokens and PKCS#8 private
+keys live only under `marketplace/publisher/secrets/`, use mode `0600`, and are
+never projected into browser responses, plans, jobs, journals, SSE, or logs.
+Registry-admin publisher/key registration remains a CLI operation.
+
+Preparation is a local-only boundary. It pins draft, profile, source snapshot,
+and authoring revisions; exports through the existing domain exporters;
+inspects exact staged bytes through `artifactAdapterRegistry`; resolves exact
+same-registry plugin and collection dependencies; and writes a canonical
+`planHash` plus dependency-first operation list. No remote mutation occurs
+until a job in `awaiting-confirmation` receives both its current revision and
+exact final plan hash.
+
+Committed jobs journal each successful artifact, preview, item, and signed
+release write before advancing. They resume idempotently after restart or
+network interruption, expose revisioned SSE progress, reject cancellation
+after the first remote write, and report partial completion truthfully. Local
+Ed25519 signing uses `signMarketplaceRelease()`. Collections publish member
+releases first and their collection artifact/release last; the release
+dependency list must exactly equal the ordered artifact members.
+
+Implementation work packages:
+
+1. **WP-01 — private persistence:** publisher layout, executable local-document
+   validators, atomic revision stores, mode checks, recovery, and redaction.
+2. **WP-02 — identity and transport:** Ed25519 import/key derivation, verified
+   publisher authority, fixed-origin write client, and scoped remote preview
+   admission.
+3. **WP-03 — local catalog:** deterministic filtering/sorting/pagination over
+   the authoritative authoring stores, excluding exact run packages.
+4. **WP-04 — artifact projection:** durable exporter output, shared adapter
+   inspection, server-derived immutable fields, compatibility, plugin bindings,
+   and bounded preview staging.
+5. **WP-05 — collections:** duplicate/self/cycle/cross-profile rejection,
+   topological preparation, mixed exact members, and collection-last writes.
+6. **WP-06 — plans/jobs:** canonical plans, explicit confirmation, durable
+   journals, SSE, cancellation, resume/replan, idempotent replay, and refresh.
+7. **WP-07 — Publish UI:** searchable local catalog, durable draft queue,
+   metadata inspector, asset-pack basket, collection composer, profile import,
+   exact-plan review, and accessible progress/recovery controls.
+8. **WP-08 — documentation/evidence:** client, registry, architecture, roadmap,
+   focused automation, and candidate gate records.
+
+Gate: every supported content kind can be prepared and explicitly published
+without direct browser-to-registry traffic; secrets never leave the backend;
+reviewed descriptors equal admitted bytes; release DSSE verifies under the
+configured active key; mixed collections publish dependency-first; interrupted
+jobs recover without fabricated rollback; public Marketplace schemas and all
+simulator hash authorities remain unchanged.
+
+Authenticated DNS-SD discovery, if retained, is deferred beyond MKT-14. It may
+only produce untrusted candidates and can never add a source or grant trust.
+
+### MKT-14 local evidence
+
+Implementation ran on 2026-09-29 from commit `d4f64ab` on macOS arm64 with
+Node `v22.14.0` and npm `11.4.1`, below the required Node `22.22.2` acceptance
+patch. The implementation remains behind `CEV_SIM_MARKETPLACE_ENABLED` and
+creates no publisher storage while Marketplace is disabled. Current evidence:
+
+- `tests/marketplace-publisher.test.js`: 3/3 passed for owner-only revisioned
+  persistence, Ed25519 validation, cycle/cross-profile rejection, deterministic
+  catalog projection, exact run-package exclusion, fixed-origin writes, and
+  redirect rejection.
+- `tests/marketplace-publisher-http.test.js`: 2/2 passed for scoped preview
+  admission and the explicit-confirmation publication boundary. The end-to-end
+  case covers signed new items/releases, stable/beta updates, a mixed
+  local/existing collection, collection-last dependency ordering, vehicle-to-
+  local-plugin dependency planning, interruption, restart/resume, idempotent
+  replay, and secret redaction.
+- `npm run test:marketplace`: 127/127 passed. `npm test`: 1,865 passed, six
+  skipped, and zero failed out of 1,871 tests.
+- `npm run lint`: zero errors and the pre-existing `MapSurface.js`
+  `assetEpoch` hook warning. A final focused lint of every new publisher,
+  route, UI, and test module also passed after the recovery-race fix.
+- `npm run release:check` passed. `git diff --check` passed.
+- The focused MKT-14 Publish workspace smoke test and the existing Marketplace
+  keyboard/Axe test each passed at 1280 by 720.
+
+`npm run build` remains unverified because this sandbox denies the Turbopack
+helper's local process/port operation with `EPERM`, including after an approved
+unsandboxed retry. A webpack fallback additionally cannot fetch the repository's
+Google fonts and reaches the pre-existing Spark asset-generator incompatibility.
+The repository-wide `npm run test:ui` run was stopped after 24 minutes with four
+passes, seven unrelated control/autonomy/environment-editor timeouts, and 69
+tests not run; the subsequent all-workspace a11y run did not launch its 12 tests
+against a usable server. The focused Marketplace UI and Axe evidence above is
+green. Supported-Node build/browser verification, hosted CI, and merge evidence
+remain open, so MKT-14 is implemented but not accepted or merged. No PLG, ED,
+VIS, headless, public Marketplace schema, or simulator semantic-hash contract
+changed.
 
 ### MKT-15 — Scale, recovery, observability, and operations
 
@@ -1338,6 +1437,21 @@ Local evidence on 2026-09-28:
   WP-10 and milestone acceptance open.
 
 ## Decision log
+
+### 2026-09-29 — Centralize publication in the simulator Marketplace workspace
+
+MKT-14 replaces the deferred LAN-discovery placeholder with the simulator
+publisher workspace. Authenticated DNS-SD remains deferred and cannot grant
+trust. Publication uses the already configured verified source and publisher
+authority; registry publisher/key administration remains CLI-only.
+
+Profile, secret, draft, plan, and job documents are private executable-validated
+local formats rather than additions to the public Marketplace schemas. The
+browser receives no secret reference or key/token material and never connects
+to a registry. Preparation stages and inspects exact exporter bytes without a
+remote write; explicit final confirmation starts fixed-origin, journaled,
+idempotent publication. Exact run packages remain CLI-only. All publisher
+workspace data remains outside simulator and package hash authorities.
 
 ### 2026-09-29 — Replace the old MKT-13/MKT-14 split and fail closed on unsigned state
 

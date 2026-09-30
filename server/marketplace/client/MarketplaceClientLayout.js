@@ -62,6 +62,7 @@ function frozenClone(value) {
 
 export function marketplaceClientPaths(dataDir) {
     const root = path.resolve(dataDir, "marketplace");
+    const publisher = path.join(root, "publisher");
     return Object.freeze({
         root,
         sources: path.join(root, "sources.json"),
@@ -80,6 +81,13 @@ export function marketplaceClientPaths(dataDir) {
         quarantine: path.join(root, "quarantine"),
         receipts: path.join(root, "receipts", "sha256"),
         transactions: path.join(root, "transactions"),
+        publisher,
+        publisherProfiles: path.join(publisher, "profiles.json"),
+        publisherSecrets: path.join(publisher, "secrets"),
+        publicationDrafts: path.join(publisher, "drafts.json"),
+        publicationPreviews: path.join(publisher, "previews", "sha256"),
+        publicationPlans: path.join(publisher, "plans", "sha256"),
+        publicationJobs: path.join(publisher, "jobs"),
     });
 }
 

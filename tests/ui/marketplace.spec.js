@@ -138,6 +138,27 @@ test.beforeEach(async ({ request }) => {
     await clearSources(request);
 });
 
+test("MKT-14 exposes the local publisher catalog, durable draft queue, and profile import boundary", async ({ page, request }) => {
+    test.setTimeout(120_000);
+    await openMarketplace(page);
+    const { credential } = await trustSource(page, request, "Publisher Workspace Registry");
+    await page.getByRole("tab", { name: "Publish" }).click();
+    await expect(page.getByRole("heading", { name: "Local catalog" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Publication drafts" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Select a publication draft" })).toBeVisible();
+    await expect(page.getByLabel("Content kind")).toBeVisible();
+    await expect(page.getByLabel("Sort publications")).toBeVisible();
+    await expect(page.getByRole("button", { name: "New collection" })).toBeDisabled();
+    await page.getByRole("button", { name: /Profile/u }).click();
+    const dialog = page.getByRole("dialog", { name: "Add publisher profile" });
+    await expect(dialog.getByLabel("Ed25519 PKCS#8 private key")).toBeVisible();
+    await expect(dialog.getByLabel("Write bearer token")).toHaveAttribute("type", "password");
+    await expect(dialog.getByRole("button", { name: "Verify & save" })).toBeDisabled();
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    expect(await page.evaluate(() => JSON.stringify(localStorage))).not.toContain(credential.token);
+    expect(await page.content()).not.toContain("PRIVATE KEY");
+});
+
 test("MKT-06 trusts, refreshes, browses, retains offline catalog, updates, and removes a source", async ({ page, request }) => {
     test.setTimeout(120_000);
     await openMarketplace(page);
@@ -362,6 +383,8 @@ test("MKT-06 Marketplace tabs and trust dialog are keyboard accessible @a11y", a
     await openMarketplace(page);
     const discover = page.getByRole("tab", { name: "Discover" });
     await discover.focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(page.getByRole("tab", { name: "Publish" })).toBeFocused();
     await page.keyboard.press("ArrowRight");
     await expect(page.getByRole("tab", { name: "Updates" })).toBeFocused();
     await page.keyboard.press("ArrowRight");

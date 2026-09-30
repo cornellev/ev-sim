@@ -1,5 +1,6 @@
 import express from "express";
 
+import { MARKETPLACE_LIMITS, MARKETPLACE_PREVIEW_MEDIA_TYPES } from "../marketplace/MarketplaceContract.js";
 import { MARKETPLACE_ERROR_CODES, MarketplaceError, marketplaceError } from "../marketplace/MarketplaceErrors.js";
 
 function invalid(path, message) {
@@ -86,6 +87,22 @@ function handler(operation) {
     };
 }
 
+async function rawBody(request, maxBytes) {
+    const declared = request.headers["content-length"];
+    if (declared !== undefined && (!/^\d+$/u.test(declared) || Number(declared) > maxBytes)) {
+        throw marketplaceError(MARKETPLACE_ERROR_CODES.LIMIT_EXCEEDED, `Marketplace request body exceeds ${maxBytes} bytes.`);
+    }
+    const chunks = [];
+    let size = 0;
+    for await (const chunk of request) {
+        size += chunk.byteLength;
+        if (size > maxBytes) throw marketplaceError(MARKETPLACE_ERROR_CODES.LIMIT_EXCEEDED, `Marketplace request body exceeds ${maxBytes} bytes.`);
+        chunks.push(chunk);
+    }
+    if (size < 1) invalid("$", "preview body must not be empty");
+    return Buffer.concat(chunks, size);
+}
+
 export function createMarketplaceRouter(service, {
     jsonParser = express.json({ limit: "32kb", strict: true }),
     logger = console,
@@ -95,12 +112,157 @@ export function createMarketplaceRouter(service, {
         response.set("Cache-Control", "no-store");
         next();
     });
-    router.use(jsonParser);
+    router.use((request, response, next) => {
+        if (request.method === "POST" && /^\/publisher\/drafts\/[^/]+\/previews$/u.test(request.path)) {
+            next();
+            return;
+        }
+        jsonParser(request, response, next);
+    });
 
     router.get("/status", handler(async (request, response) => {
         exactQuery(request, []);
         response.json(service.status());
     }));
+
+    router.get("/publisher/inventory", handler(async (request, response) => {
+        response.json(await service.listPublicationInventory(exactQuery(request, [
+            "q", "contentKind", "status", "sort", "direction", "offset", "limit",
+        ])));
+    }));
+
+    router.get("/publisher/profiles", handler(async (request, response) => {
+        exactQuery(request, []);
+        response.json(await service.listPublisherProfiles());
+    }));
+
+    router.post("/publisher/profiles", handler(async (request, response) => {
+        const body = exactBody(request.body, [
+            "expectedRevision", "name", "sourceId", "publisherId", "writeToken", "privateKeyPem",
+        ]);
+        bodyRevision(body.expectedRevision);
+        response.status(201).json(await service.createPublisherProfile(body));
+    }));
+
+    router.patch("/publisher/profiles/:profileId", handler(async (request, response) => {
+        const body = exactBody(request.body, ["expectedRevision"], ["name", "writeToken", "privateKeyPem"]);
+        bodyRevision(body.expectedRevision);
+        if (Object.keys(body).length === 1) invalid("$", "expected at least one publisher profile update");
+        response.json(await service.updatePublisherProfile(request.params.profileId, body));
+    }));
+
+    router.delete("/publisher/profiles/:profileId", handler(async (request, response) => {
+        response.json(await service.removePublisherProfile(request.params.profileId, queryRevision(request)));
+    }));
+
+    router.get("/publisher/drafts", handler(async (request, response) => {
+        exactQuery(request, []);
+        response.json(await service.listPublicationDrafts());
+    }));
+
+    router.post("/publisher/drafts", handler(async (request, response) => {
+        const body = exactBody(request.body, ["expectedRevision", "profileId", "contentKind", "localSelection"], [
+            "mode", "itemId", "item", "release", "members",
+        ]);
+        bodyRevision(body.expectedRevision);
+        response.status(201).json(await service.createPublicationDraft(body));
+    }));
+
+    router.patch("/publisher/drafts/:draftId", handler(async (request, response) => {
+        const body = exactBody(request.body, ["expectedRevision"], ["profileId", "mode", "localSelection", "item", "release", "members"]);
+        bodyRevision(body.expectedRevision);
+        response.json(await service.updatePublicationDraft(request.params.draftId, body));
+    }));
+
+    router.delete("/publisher/drafts/:draftId", handler(async (request, response) => {
+        response.json(await service.removePublicationDraft(request.params.draftId, queryRevision(request)));
+    }));
+
+    router.post("/publisher/drafts/:draftId/previews", handler(async (request, response) => {
+        const query = exactQuery(request, ["alt", "expectedRevision"]);
+        if (typeof query.alt !== "string" || !query.alt || query.alt.length > 512) invalid("$.alt", "expected bounded non-empty preview alternative text");
+        bodyRevision(Number(query.expectedRevision), "$.expectedRevision");
+        const mediaType = String(request.headers["content-type"] ?? "").toLowerCase();
+        if (!MARKETPLACE_PREVIEW_MEDIA_TYPES.includes(mediaType)) invalid("$.mediaType", "expected image/png, image/jpeg, or image/webp");
+        const bytes = await rawBody(request, MARKETPLACE_LIMITS.previewBytes);
+        response.status(201).json(await service.addPublicationPreview(request.params.draftId, bytes, {
+            mediaType,
+            alt: query.alt,
+            expectedRevision: Number(query.expectedRevision),
+        }));
+    }));
+
+    router.delete("/publisher/drafts/:draftId/previews/:sha256", handler(async (request, response) => {
+        response.json(await service.removePublicationPreview(request.params.draftId, request.params.sha256, queryRevision(request)));
+    }));
+
+    router.post("/publisher/plans", handler(async (request, response) => {
+        const body = exactBody(request.body, ["draftId", "draftRevision"]);
+        bodyRevision(body.draftRevision, "$.draftRevision");
+        response.status(201).json(await service.createPublicationPlan(body));
+    }));
+
+    router.post("/publisher/jobs", handler(async (request, response) => {
+        const body = exactBody(request.body, ["planHash"]);
+        response.status(202).json({ job: await service.startPublishJob(body.planHash) });
+    }));
+
+    router.get("/publisher/jobs/:jobId/events", handler(async (request, response) => {
+        exactQuery(request, []);
+        const initial = await service.getPublishJob(request.params.jobId);
+        response.status(200).set({
+            "Content-Type": "text/event-stream; charset=utf-8",
+            "Cache-Control": "no-store",
+            Connection: "keep-alive",
+            "X-Accel-Buffering": "no",
+        });
+        response.flushHeaders?.();
+        let closed = false;
+        let heartbeat = null;
+        let unsubscribe = () => {};
+        let lastRevision = -1;
+        const close = () => {
+            if (closed) return;
+            closed = true;
+            clearInterval(heartbeat);
+            unsubscribe();
+            if (!response.writableEnded) response.end();
+        };
+        const send = (view) => {
+            if (closed || response.writableEnded || view.job.revision <= lastRevision) return;
+            lastRevision = view.job.revision;
+            response.write(`id: ${view.job.revision}\nevent: job\ndata: ${JSON.stringify(view)}\n\n`);
+            if (["failed", "cancelled", "complete", "needs-attention"].includes(view.job.phase)) setImmediate(close);
+        };
+        send(initial);
+        if (closed || response.writableEnded) return;
+        unsubscribe = service.subscribePublishJob(request.params.jobId, send);
+        heartbeat = setInterval(() => { if (!closed && !response.writableEnded) response.write(": heartbeat\n\n"); }, 25_000);
+        heartbeat.unref?.();
+        request.once("close", close);
+    }));
+
+    router.get("/publisher/jobs/:jobId", handler(async (request, response) => {
+        exactQuery(request, []);
+        response.json(await service.getPublishJob(request.params.jobId));
+    }));
+
+    router.get("/publisher/jobs/:jobId/operations", handler(async (request, response) => {
+        response.json(await service.listPublishJobOperations(request.params.jobId, exactQuery(request, ["offset", "limit", "status"])));
+    }));
+
+    router.post("/publisher/jobs/:jobId/commit", handler(async (request, response) => {
+        const body = exactBody(request.body, ["expectedRevision", "finalPlanHash"]);
+        bodyRevision(body.expectedRevision);
+        response.status(202).json(await service.commitPublishJob(request.params.jobId, body));
+    }));
+
+    for (const [action, method] of [["cancel", "cancelPublishJob"], ["resume", "resumePublishJob"], ["replan", "replanPublishJob"]]) {
+        router.post(`/publisher/jobs/:jobId/${action}`, handler(async (request, response) => {
+            const body = exactBody(request.body, ["expectedRevision"]);
+            response.status(action === "cancel" ? 200 : 202).json(await service[method](request.params.jobId, bodyRevision(body.expectedRevision)));
+        }));
+    }
 
     router.post("/install-plans", handler(async (request, response) => {
         const body = exactBody(request.body, ["sourceId", "itemId", "releaseVersion"], ["intent", "allowYanked"]);

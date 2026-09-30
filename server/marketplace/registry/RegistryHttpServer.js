@@ -3,7 +3,7 @@ import http from "node:http";
 import https from "node:https";
 
 import { assertCanonicalUuid, assertMarketplaceId, assertReleaseVersion, assertSha256 } from "../MarketplaceFormats.js";
-import { MARKETPLACE_LIMITS } from "../MarketplaceContract.js";
+import { MARKETPLACE_LIMITS, MARKETPLACE_PREVIEW_MEDIA_TYPES } from "../MarketplaceContract.js";
 import { MARKETPLACE_ERROR_CODES, MarketplaceError, marketplaceError } from "../MarketplaceErrors.js";
 import { MarketplaceRegistryReader, REGISTRY_HTTP_MAX_RANGE_BYTES } from "./RegistryReader.js";
 import { MarketplaceRegistryStore } from "./RegistryStore.js";
@@ -252,6 +252,25 @@ export class MarketplaceRegistryHttpServer {
             const contentKind = parts[2];
             const size = Number(request.headers["content-length"]);
             const result = await this.service.admitArtifact(request, { contentKind, sizeBytes: Number.isSafeInteger(size) ? size : undefined, actor });
+            const bytes = jsonBytes(result);
+            sendBytes(request, response, { bytes, etag: sha256(bytes), contentType: JSON_TYPE, cacheControl: "no-store", status: 201 });
+            return;
+        }
+        if (request.method === "POST" && parts.join("/") === "v1/previews") {
+            if (!this.service) { sendError(response, 405, "READ_ONLY", "Registry is read-only."); return; }
+            let actor;
+            try { actor = await this.#actor(request, "publish:blob"); } catch { sendError(response, 403, "RIGHTS_DENIED", "Preview publication is not authorized."); return; }
+            const mediaType = String(request.headers["content-type"] ?? "").toLowerCase();
+            if (!MARKETPLACE_PREVIEW_MEDIA_TYPES.includes(mediaType)) {
+                sendError(response, 400, "DOCUMENT_INVALID", "Preview Content-Type must be image/png, image/jpeg, or image/webp.");
+                return;
+            }
+            const size = Number(request.headers["content-length"]);
+            const result = await this.service.admitPreview(request, {
+                mediaType,
+                sizeBytes: Number.isSafeInteger(size) ? size : undefined,
+                actor,
+            });
             const bytes = jsonBytes(result);
             sendBytes(request, response, { bytes, etag: sha256(bytes), contentType: JSON_TYPE, cacheControl: "no-store", status: 201 });
             return;

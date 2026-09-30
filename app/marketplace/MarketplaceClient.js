@@ -44,6 +44,26 @@ async function requestJson(path, { method = "GET", body, signal } = {}) {
     return payload;
 }
 
+async function requestRaw(path, { method, body, contentType, signal } = {}) {
+    const response = await fetch(path, {
+        method,
+        body,
+        signal,
+        headers: { "content-type": contentType },
+        credentials: "same-origin",
+        cache: "no-store",
+    });
+    const payload = response.headers.get("content-type")?.includes("application/json") ? await response.json() : null;
+    if (!response.ok) {
+        throw new MarketplaceApiError(payload?.error?.message || `Marketplace request failed with HTTP ${response.status}.`, {
+            code: payload?.error?.code,
+            status: response.status,
+            currentRevision: payload?.error?.currentRevision,
+        });
+    }
+    return payload;
+}
+
 export async function getMarketplaceStatus({ signal } = {}) {
     try {
         return await requestJson("/api/marketplace/status", { signal });
@@ -214,4 +234,109 @@ export function removeMarketplaceInstalled(release, expectedRevision, { signal }
     const segments = [release.sourceId, release.itemId, release.releaseVersion, release.artifactSha256]
         .map((value) => encodeURIComponent(value));
     return requestJson(`/api/marketplace/installed/${segments.join("/")}?${query}`, { method: "DELETE", signal });
+}
+
+export function listMarketplacePublicationInventory(query = {}, { signal } = {}) {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(query)) if (value !== null && value !== undefined && value !== "") params.set(key, String(value));
+    const suffix = params.size ? `?${params}` : "";
+    return requestJson(`/api/marketplace/publisher/inventory${suffix}`, { signal });
+}
+
+export function listMarketplacePublisherProfiles({ signal } = {}) {
+    return requestJson("/api/marketplace/publisher/profiles", { signal });
+}
+
+export function createMarketplacePublisherProfile(input, { signal } = {}) {
+    return requestJson("/api/marketplace/publisher/profiles", { method: "POST", body: input, signal });
+}
+
+export function updateMarketplacePublisherProfile(profileId, input, { signal } = {}) {
+    return requestJson(`/api/marketplace/publisher/profiles/${encodeURIComponent(profileId)}`, { method: "PATCH", body: input, signal });
+}
+
+export function removeMarketplacePublisherProfile(profileId, expectedRevision, { signal } = {}) {
+    const query = new URLSearchParams({ expectedRevision: String(expectedRevision) });
+    return requestJson(`/api/marketplace/publisher/profiles/${encodeURIComponent(profileId)}?${query}`, { method: "DELETE", signal });
+}
+
+export function listMarketplacePublicationDrafts({ signal } = {}) {
+    return requestJson("/api/marketplace/publisher/drafts", { signal });
+}
+
+export function createMarketplacePublicationDraft(input, { signal } = {}) {
+    return requestJson("/api/marketplace/publisher/drafts", { method: "POST", body: input, signal });
+}
+
+export function updateMarketplacePublicationDraft(draftId, input, { signal } = {}) {
+    return requestJson(`/api/marketplace/publisher/drafts/${encodeURIComponent(draftId)}`, { method: "PATCH", body: input, signal });
+}
+
+export function removeMarketplacePublicationDraft(draftId, expectedRevision, { signal } = {}) {
+    const query = new URLSearchParams({ expectedRevision: String(expectedRevision) });
+    return requestJson(`/api/marketplace/publisher/drafts/${encodeURIComponent(draftId)}?${query}`, { method: "DELETE", signal });
+}
+
+export function uploadMarketplacePublicationPreview(draftId, file, alt, expectedRevision, { signal } = {}) {
+    const query = new URLSearchParams({ alt, expectedRevision: String(expectedRevision) });
+    return requestRaw(`/api/marketplace/publisher/drafts/${encodeURIComponent(draftId)}/previews?${query}`, {
+        method: "POST",
+        body: file,
+        contentType: file.type,
+        signal,
+    });
+}
+
+export function removeMarketplacePublicationPreview(draftId, digest, expectedRevision, { signal } = {}) {
+    const query = new URLSearchParams({ expectedRevision: String(expectedRevision) });
+    return requestJson(`/api/marketplace/publisher/drafts/${encodeURIComponent(draftId)}/previews/${encodeURIComponent(digest)}?${query}`, { method: "DELETE", signal });
+}
+
+export function createMarketplacePublicationPlan(draftId, draftRevision, { signal } = {}) {
+    return requestJson("/api/marketplace/publisher/plans", { method: "POST", body: { draftId, draftRevision }, signal });
+}
+
+export function startMarketplacePublishJob(planHash, { signal } = {}) {
+    return requestJson("/api/marketplace/publisher/jobs", { method: "POST", body: { planHash }, signal });
+}
+
+export function getMarketplacePublishJob(jobId, { signal } = {}) {
+    return requestJson(`/api/marketplace/publisher/jobs/${encodeURIComponent(jobId)}`, { signal });
+}
+
+export function subscribeMarketplacePublishJob(jobId, { onJob, onError } = {}) {
+    const events = new EventSource(`/api/marketplace/publisher/jobs/${encodeURIComponent(jobId)}/events`);
+    events.addEventListener("job", (event) => onJob?.(JSON.parse(event.data)));
+    events.addEventListener("error", (event) => onError?.(event));
+    return () => events.close();
+}
+
+export function commitMarketplacePublishJob(jobId, expectedRevision, finalPlanHash, { signal } = {}) {
+    return requestJson(`/api/marketplace/publisher/jobs/${encodeURIComponent(jobId)}/commit`, {
+        method: "POST", body: { expectedRevision, finalPlanHash }, signal,
+    });
+}
+
+function publishJobAction(jobId, action, expectedRevision, signal) {
+    return requestJson(`/api/marketplace/publisher/jobs/${encodeURIComponent(jobId)}/${action}`, {
+        method: "POST", body: { expectedRevision }, signal,
+    });
+}
+
+export function cancelMarketplacePublishJob(jobId, expectedRevision, { signal } = {}) {
+    return publishJobAction(jobId, "cancel", expectedRevision, signal);
+}
+
+export function resumeMarketplacePublishJob(jobId, expectedRevision, { signal } = {}) {
+    return publishJobAction(jobId, "resume", expectedRevision, signal);
+}
+
+export function replanMarketplacePublishJob(jobId, expectedRevision, { signal } = {}) {
+    return publishJobAction(jobId, "replan", expectedRevision, signal);
+}
+
+export function listMarketplacePublishJobOperations(jobId, { offset = 0, limit = 100, status = null, signal } = {}) {
+    const query = new URLSearchParams({ offset: String(offset), limit: String(limit) });
+    if (status) query.set("status", status);
+    return requestJson(`/api/marketplace/publisher/jobs/${encodeURIComponent(jobId)}/operations?${query}`, { signal });
 }

@@ -56,6 +56,7 @@ import {
     WorkspaceFrame,
 } from "../../ui";
 import SafeMarketplaceMarkdown, { MARKETPLACE_ACTION_LABELS } from "./SafeMarketplaceMarkdown.js";
+import PublishTab from "./publish/PublishTab.js";
 import styles from "./MarketplaceWorkspace.module.css";
 
 const CONTENT_KINDS = ["plugin", "vehicle", "run-template", "run-package", "environment", "asset-pack", "collection"];
@@ -522,12 +523,26 @@ function ReleaseDetail({ detail, loading, error, onRetry, releaseVersion, onRele
     );
 }
 
-function DiscoverTab({ onOpenEnvironment, onOpenRunConfig }) {
-    const [query, setQuery] = useState({ q: "", track: "stable", contentKind: "", sourceId: "", publisherId: "", license: "", offset: 0, limit: 50 });
+function DiscoverTab({ onOpenEnvironment, onOpenRunConfig, openTarget }) {
+    const [query, setQuery] = useState(() => ({
+        q: openTarget?.itemId ?? "",
+        track: openTarget?.track ?? "stable",
+        contentKind: "",
+        sourceId: openTarget?.sourceId ?? "",
+        publisherId: "",
+        license: "",
+        offset: 0,
+        limit: 50,
+    }));
     const [result, setResult] = useState(null);
     const [status, setStatus] = useState("loading");
     const [error, setError] = useState(null);
-    const [selected, setSelected] = useState(null);
+    const [selected, setSelected] = useState(() => openTarget ? ({
+        key: `${openTarget.sourceId}:${openTarget.itemId}:${openTarget.releaseVersion}`,
+        source: { sourceId: openTarget.sourceId },
+        item: { itemId: openTarget.itemId },
+        release: { releaseVersion: openTarget.releaseVersion },
+    }) : null);
     const [detail, setDetail] = useState(null);
     const [detailStatus, setDetailStatus] = useState("idle");
     const [detailError, setDetailError] = useState(null);
@@ -539,14 +554,16 @@ function DiscoverTab({ onOpenEnvironment, onOpenRunConfig }) {
             setResult(payload);
             setStatus("ready");
             setError(null);
-            setSelected((current) => payload.entries.some((entry) => entry.key === current?.key) ? current : (payload.entries[0] ?? null));
+            const requested = openTarget ? payload.entries.find((entry) => entry.item.itemId === openTarget.itemId
+                && entry.release.releaseVersion === openTarget.releaseVersion) : null;
+            setSelected((current) => requested ?? (openTarget ? current : (payload.entries.some((entry) => entry.key === current?.key) ? current : (payload.entries[0] ?? null))));
         }).catch((caught) => {
             if (caught.name === "AbortError") return;
             setStatus("error");
             setError(marketplaceApiErrorMessage(caught));
         });
         return controller;
-    }, [query]);
+    }, [openTarget, query]);
 
     useEffect(() => {
         let controller = null;
@@ -961,6 +978,18 @@ function SecurityTab() {
 
 export default function MarketplaceWorkspace({ onOpenWorkspace, onOpenEnvironment, onOpenRunConfig }) {
     const [tab, setTab] = useState("discover");
+    const [discoverTarget, setDiscoverTarget] = useState(null);
+    const openPublished = (plan) => {
+        const entry = plan.entries.find((candidate) => candidate.draftId === plan.rootDraftId) ?? plan.entries.at(-1);
+        setDiscoverTarget({
+            sourceId: plan.source.sourceId,
+            itemId: entry.item.itemId,
+            releaseVersion: entry.release.releaseVersion,
+            track: entry.track,
+            requestId: Date.now(),
+        });
+        setTab("discover");
+    };
     return (
         <TabsRoot value={tab} onValueChange={setTab} className={styles.root}>
             <WorkspaceFrame
@@ -969,10 +998,11 @@ export default function MarketplaceWorkspace({ onOpenWorkspace, onOpenEnvironmen
                 onOpenWorkspace={onOpenWorkspace}
                 className={styles.workspace}
                 contentClassName={styles.workspaceContent}
-                actions={<TabsList aria-label="Marketplace sections"><TabsTrigger value="discover">Discover</TabsTrigger><TabsTrigger value="updates">Updates</TabsTrigger><TabsTrigger value="installed">Installed</TabsTrigger><TabsTrigger value="security">Security</TabsTrigger><TabsTrigger value="sources">Sources</TabsTrigger></TabsList>}
+                actions={<TabsList aria-label="Marketplace sections"><TabsTrigger value="discover">Discover</TabsTrigger><TabsTrigger value="publish">Publish</TabsTrigger><TabsTrigger value="updates">Updates</TabsTrigger><TabsTrigger value="installed">Installed</TabsTrigger><TabsTrigger value="security">Security</TabsTrigger><TabsTrigger value="sources">Sources</TabsTrigger></TabsList>}
             >
                 <h1 className={styles.srOnly}>Marketplace</h1>
-                <TabsContent value="discover" className={styles.tabContent}><DiscoverTab onOpenEnvironment={onOpenEnvironment} onOpenRunConfig={onOpenRunConfig} /></TabsContent>
+                <TabsContent value="discover" className={styles.tabContent}><DiscoverTab key={discoverTarget?.requestId ?? "discover"} onOpenEnvironment={onOpenEnvironment} onOpenRunConfig={onOpenRunConfig} openTarget={discoverTarget} /></TabsContent>
+                <TabsContent value="publish" className={styles.tabContent}><PublishTab onOpenPublished={openPublished} /></TabsContent>
                 <TabsContent value="updates" className={styles.tabContent}><UpdatesTab onOpenEnvironment={onOpenEnvironment} onOpenRunConfig={onOpenRunConfig} /></TabsContent>
                 <TabsContent value="installed" className={styles.tabContent}><InstalledTab onOpenEnvironment={onOpenEnvironment} onOpenRunConfig={onOpenRunConfig} /></TabsContent>
                 <TabsContent value="security" className={styles.tabContent}><SecurityTab /></TabsContent>

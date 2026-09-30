@@ -745,6 +745,26 @@ release and never mutates old receipts, authored records, locks, or live
 sessions. All policy, provenance, track, signer, and update state remains
 outside semantic/package/run/environment identities.
 
+MKT-14 adds a simulator-facing publication coordinator without adding a second
+artifact authority. `MarketplacePublicationCatalog` projects the live
+authoring stores; `MarketplacePublicationArtifactBuilder` invokes the existing
+plugin, vehicle, editable-template, environment, and editor-asset exporters;
+and `ArtifactAdapterRegistry` inspects the exact staged bytes. Exact run
+packages remain on their existing CLI path and are not exposed by this catalog.
+
+`MarketplacePublisherProfileStore`, `MarketplacePublisherSecretStore`, and
+`MarketplacePublicationDraftStore` own private revisioned state below
+`marketplace/publisher/`. Tokens and Ed25519 private keys are owner-only and
+never cross the local HTTP boundary. `MarketplacePublicationPlanner` pins the
+verified source snapshot and all local revisions, resolves one same-registry
+dependency DAG, and persists a canonical plan without remote writes.
+`MarketplacePublishJobManager` applies the explicit-confirmation boundary,
+signs releases locally, journals each fixed-origin registry write, and resumes
+idempotently. Collection member releases precede the collection artifact and
+release. Publisher profiles, drafts, previews, staged artifacts, plans, jobs,
+journals, tracks, and listing metadata remain nonsemantic and enter none of the
+world, resolved, simulation, episode, trajectory, package, or run identities.
+
 ## External Integration
 
 cev-sim does not embed ROS. `app/3d/managers/ClientManager.js` creates a browser client from `app/client/Client.js`, syncs message definitions from the external orchestrator Types API, then connects to the orchestrator WebSocket.

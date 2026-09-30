@@ -53,6 +53,14 @@ executable-provenance.json
 plans/sha256/<planHash>.json
 jobs/<jobId>/{snapshot.json,work/}
 jobs/<jobId>/work/asset-packages/<preparationHash>/{preparation.json,generated/}
+publisher/
+  profiles.json
+  secrets/<secretRef>.json
+  drafts.json
+  previews/sha256/<digest>
+  plans/sha256/<planHash>.json
+  plans/sha256/<planHash>.artifacts/<draftId>
+  jobs/<jobId>/{snapshot.json,journal.json,work/artifacts/<operationId>}
 artifacts/sha256/<artifactSha256>
 artifact-records/sha256/<artifactSha256>.json
 quarantine/<quarantineId>/{artifact,record.json}
@@ -77,6 +85,54 @@ first removes the source from `sources.json`, then removes its trust,
 credential, health, and cache state. Startup deletes unreferenced credentials,
 orphan source state, and incomplete staging directories, while symlinks,
 unexpected nodes, noncanonical documents, and trust mismatches fail closed.
+
+## Publisher workspace
+
+MKT-14 adds a local authoring boundary under `marketplace/publisher/` and a
+`Publish` tab beside Discover, Updates, Installed, Security, and Sources.
+`MarketplacePublicationCatalog` reads the authoritative Plugin Library,
+vehicle/run-manifest/environment stores, and `EditorAssetStore`; it does not
+list exact run packages. `MarketplacePublicationArtifactBuilder` calls the
+existing exporters directly and inspects the staged result through the same
+artifact adapter used by registry admission.
+
+Public profile responses expose `secretConfigured` but never `secretRef`.
+Imported publisher tokens and Ed25519 PKCS#8 keys are immutable owner-only
+secret files. The source read credential is never reused for writes.
+`MarketplacePublisherClient` permits only the configured origin and exact
+publication paths/methods, reuses the source TLS/mTLS transport material,
+rejects redirects and URL credentials, and sanitizes all failures.
+
+Drafts are revisioned local documents. A draft pins one local selection and is
+either `create-item` or `new-release`; existing-item mode loads verified item
+metadata and locks publisher/content kind. Run-template plugin bindings and
+collection members resolve only to same-profile local drafts or exact releases
+in the profile's verified registry snapshot. Asset packs retain an ordered
+basket of exact editor-asset revisions.
+
+`POST /publisher/plans` performs no network mutation. It stages exact bytes,
+derives artifact/release fields server-side, builds the dependency DAG, and
+returns a canonical `planHash`. `POST /publisher/jobs` creates a durable job in
+`awaiting-confirmation`; `/commit` requires the current job revision and exact
+final plan hash. Artifact, preview, item, and locally signed release writes are
+journaled individually. SSE reports persisted job revisions. Pre-write jobs can
+be cancelled; interrupted committed jobs can be resumed or replanned only when
+no remote completion exists. Refresh failure after all writes is a warning, not
+a claim that the immutable publication rolled back.
+
+The local publisher API is:
+
+- `GET /publisher/inventory`;
+- revisioned CRUD under `/publisher/profiles` and `/publisher/drafts`;
+- bounded raw preview `POST` and revisioned preview `DELETE` below a draft;
+- `POST /publisher/plans` and `POST /publisher/jobs`;
+- job `GET`, revisioned SSE `/events`, paginated `/operations`, and explicit
+  `/commit`, `/cancel`, `/resume`, and `/replan` actions.
+
+All paths are relative to `/api/marketplace`. JSON retains the existing 32 KiB
+strict-body limit. Preview bodies are inspected PNG, JPEG, or WebP files no
+larger than 8 MiB. The feature remains behind
+`CEV_SIM_MARKETPLACE_ENABLED`; disabled startup creates no publisher state.
 
 ## Refresh and offline reads
 
@@ -190,8 +246,8 @@ accessible preview placeholder.
 ## Browser workspace
 
 The browser probes the enabled-only status route before exposing Marketplace
-navigation. Discover, Updates, Installed, Security, and Sources are explicit
-workspace tabs.
+navigation. Discover, Updates, Installed, Security, Sources, and Publish are
+explicit workspace tabs.
 Descriptions and changelogs use pinned CommonMark rendering with raw HTML and
 images suppressed; only HTTP(S) links are admitted and external links use
 `noopener noreferrer`. Compatibility shows both declared requirements and the

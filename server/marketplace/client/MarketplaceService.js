@@ -6,6 +6,7 @@ import path from "node:path";
 import { PluginStore } from "../../storage/PluginStore.js";
 import {
     AUTHORING_ONLY_CONTENT_KINDS,
+    MARKETPLACE_ARTIFACTS,
     MARKETPLACE_LIMITS,
     MARKETPLACE_SOURCE_HEALTH,
     artifactByteLimitFor,
@@ -59,6 +60,19 @@ import { MarketplaceSourceStore } from "./MarketplaceSourceStore.js";
 import { MarketplaceTrustClient } from "./MarketplaceTrustClient.js";
 import { MarketplaceVerifiedCache } from "./MarketplaceVerifiedCache.js";
 import { MarketplaceFixedOriginFetcher } from "./MarketplaceFixedOriginFetcher.js";
+import { MarketplacePublicationCatalog } from "./MarketplacePublicationCatalog.js";
+import {
+    MarketplacePublicationDraftStore,
+    MarketplacePublisherProfileStore,
+    MarketplacePublisherSecretStore,
+    createPublicationDraft,
+    createPublisherProfile,
+} from "./MarketplacePublisherStores.js";
+import {
+    MarketplacePublicationArtifactBuilder,
+    MarketplacePublicationPlanner,
+} from "./MarketplacePublicationPlanner.js";
+import { MarketplacePublishJobManager } from "./MarketplacePublishJobManager.js";
 import {
     assertMarketplaceDetailSelection,
     buildMarketplaceFacets,
@@ -159,6 +173,12 @@ export class MarketplaceService {
         provenanceStore,
         executablePolicy,
         updateModel,
+        publicationCatalog,
+        publisherProfileStore,
+        publisherSecretStore,
+        publicationDraftStore,
+        publicationPlanner,
+        publishJobManager,
         hostProfileProvider,
         now,
     }) {
@@ -179,6 +199,12 @@ export class MarketplaceService {
         this.provenanceStore = provenanceStore;
         this.executablePolicy = executablePolicy;
         this.updateModel = updateModel;
+        this.publicationCatalog = publicationCatalog;
+        this.publisherProfileStore = publisherProfileStore;
+        this.publisherSecretStore = publisherSecretStore;
+        this.publicationDraftStore = publicationDraftStore;
+        this.publicationPlanner = publicationPlanner;
+        this.publishJobManager = publishJobManager;
         this.hostProfileProvider = hostProfileProvider;
         this.now = now;
     }
@@ -255,6 +281,44 @@ export class MarketplaceService {
             fault: jobFault,
         });
         const updateModel = new MarketplaceUpdateModel({ sourceStore, cache, installedStore, policyStore });
+        let publisherProfileStore = null;
+        let publisherSecretStore = null;
+        let publicationDraftStore = null;
+        let publicationCatalog = null;
+        let publicationPlanner = null;
+        let publishJobManager = null;
+        if (storageService && editorAssetStore && visualAssetStore) {
+            publisherProfileStore = await MarketplacePublisherProfileStore.open(dataDir);
+            publisherSecretStore = await MarketplacePublisherSecretStore.open(dataDir);
+            publicationDraftStore = await MarketplacePublicationDraftStore.open(dataDir);
+            publicationCatalog = new MarketplacePublicationCatalog({ storageService, editorAssetStore, draftStore: publicationDraftStore });
+            const publicationArtifactBuilder = new MarketplacePublicationArtifactBuilder({
+                storageService,
+                editorAssetStore,
+                visualAssetStore,
+                adapterRegistry: resolvedAdapterRegistry,
+            });
+            publicationPlanner = await MarketplacePublicationPlanner.create(dataDir, {
+                sourceStore,
+                profileStore: publisherProfileStore,
+                secretStore: publisherSecretStore,
+                draftStore: publicationDraftStore,
+                cache,
+                artifactBuilder: publicationArtifactBuilder,
+                adapterRegistry: resolvedAdapterRegistry,
+                now,
+            });
+            publishJobManager = await MarketplacePublishJobManager.create(dataDir, {
+                planner: publicationPlanner,
+                profileStore: publisherProfileStore,
+                secretStore: publisherSecretStore,
+                sourceStore,
+                credentialStore,
+                draftStore: publicationDraftStore,
+                fetchImpl,
+                now,
+            });
+        }
         const service = new MarketplaceService({
             paths: marketplaceClientPaths(dataDir),
             sourceStore,
@@ -273,6 +337,12 @@ export class MarketplaceService {
             provenanceStore,
             executablePolicy,
             updateModel,
+            publicationCatalog,
+            publisherProfileStore,
+            publisherSecretStore,
+            publicationDraftStore,
+            publicationPlanner,
+            publishJobManager,
             hostProfileProvider,
             now,
         });
@@ -284,6 +354,13 @@ export class MarketplaceService {
         const recoveredTransactions = await transactionCoordinator.recoverPending();
         ownershipStore.verifyAgainstInstalled(await ownershipStore.snapshot(), await installedStore.snapshot());
         await jobManager.recover(recoveredTransactions);
+        if (publishJobManager) {
+            await publisherSecretStore.recover(publisherProfileStore.snapshot().profiles.map((profile) => profile.secretRef));
+            publishJobManager.setRefreshSource(async (sourceId) => {
+                await service.refreshSource(sourceId, { expectedRevision: sourceStore.snapshot().revision });
+            });
+            await publishJobManager.recover();
+        }
         return service;
     }
 
@@ -795,8 +872,266 @@ export class MarketplaceService {
 
     status() {
         this.#assertOpen();
-        return Object.freeze({ mode: "coordinator", canInstall: this.adapterRegistry.hasLifecycle() });
+        return Object.freeze({
+            mode: "coordinator",
+            canInstall: this.adapterRegistry.hasLifecycle(),
+        });
     }
+
+    #requirePublisherWorkspace() {
+        if (!this.publishJobManager) {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.INCOMPATIBLE, "Marketplace publisher workspace is unavailable without authoring stores.");
+        }
+    }
+
+    async #publisherAuthority(sourceId, publisherId, keyId) {
+        const source = this.sourceStore.get(sourceId);
+        if (!source || !source.enabled) throw marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_NOT_FOUND, "Publisher source was not found or is disabled.");
+        const current = await this.cache.readCurrent(source, { requireFresh: true });
+        if (!current) throw marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_UNAVAILABLE, "Publisher source has no verified snapshot.");
+        const publisher = current.documents.publishers.find((entry) => entry.publisherId === publisherId);
+        const key = publisher?.keys.find((entry) => entry.keyId === keyId);
+        if (!publisher) throw marketplaceError(MARKETPLACE_ERROR_CODES.RIGHTS_DENIED, "Publisher is not registered in the target registry.");
+        if (!key || key.status !== "active") throw marketplaceError(MARKETPLACE_ERROR_CODES.SIGNATURE_INVALID, "Publisher signing key is not active in the target registry.");
+        return { source, publisher, key, current };
+    }
+
+    async listPublisherProfiles() {
+        this.#assertOpen();
+        this.#requirePublisherWorkspace();
+        return this.publisherProfileStore.snapshot({ publicOnly: true });
+    }
+
+    async createPublisherProfile({ expectedRevision, name, sourceId, publisherId, writeToken, privateKeyPem }) {
+        this.#assertOpen();
+        this.#requirePublisherWorkspace();
+        const staged = await this.publisherSecretStore.stage({ writeToken, privateKeyPem });
+        try {
+            const { source } = await this.#publisherAuthority(sourceId, publisherId, staged.keyId);
+            const profile = createPublisherProfile({ source, name, publisherId, keyId: staged.keyId, secretRef: staged.secretRef, now: this.now() });
+            return await this.publisherProfileStore.add(profile, expectedRevision);
+        } catch (error) {
+            await this.publisherSecretStore.remove(staged.secretRef).catch(() => {});
+            throw error;
+        }
+    }
+
+    async updatePublisherProfile(profileId, { expectedRevision, name, writeToken, privateKeyPem }) {
+        this.#assertOpen();
+        this.#requirePublisherWorkspace();
+        const current = this.publisherProfileStore.get(profileId);
+        if (!current) throw marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_NOT_FOUND, "Publisher profile was not found.");
+        const rotatesSecret = writeToken !== undefined || privateKeyPem !== undefined;
+        if (rotatesSecret && (writeToken === undefined || privateKeyPem === undefined)) {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.DOCUMENT_INVALID, "Publisher token and private key must be rotated together.");
+        }
+        let staged = null;
+        try {
+            if (rotatesSecret) {
+                staged = await this.publisherSecretStore.stage({ writeToken, privateKeyPem });
+                await this.#publisherAuthority(current.sourceId, current.publisherId, staged.keyId);
+            }
+            const updatedAt = this.now().toISOString();
+            const result = await this.publisherProfileStore.update(profileId, {
+                ...(name !== undefined ? { name } : {}),
+                ...(staged ? { keyId: staged.keyId, secretRef: staged.secretRef } : {}),
+                updatedAt,
+            }, expectedRevision);
+            if (staged) await this.publisherSecretStore.remove(current.secretRef);
+            return result;
+        } catch (error) {
+            if (staged) await this.publisherSecretStore.remove(staged.secretRef).catch(() => {});
+            throw error;
+        }
+    }
+
+    async removePublisherProfile(profileId, expectedRevision) {
+        this.#assertOpen();
+        this.#requirePublisherWorkspace();
+        if (this.publicationDraftStore.snapshot().drafts.some((draft) => draft.profileId === profileId)) {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.CONFLICT, "Publisher profile is referenced by a publication draft.");
+        }
+        if (await this.publishJobManager.hasReference({ profileId })) {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.CONFLICT, "Publisher profile is referenced by a nonterminal publication job.");
+        }
+        const result = await this.publisherProfileStore.remove(profileId, expectedRevision);
+        await this.publisherSecretStore.remove(result.removed.secretRef);
+        return { document: result.document, removed: true };
+    }
+
+    async listPublicationInventory(query) {
+        this.#assertOpen();
+        this.#requirePublisherWorkspace();
+        return this.publicationCatalog.list(query);
+    }
+
+    async listPublicationDrafts() {
+        this.#assertOpen();
+        this.#requirePublisherWorkspace();
+        return this.publicationDraftStore.snapshot();
+    }
+
+    async #inventoryEntry(localSelection, contentKind) {
+        if (contentKind === "collection") return null;
+        let offset = 0;
+        while (true) {
+            const page = await this.publicationCatalog.list({ contentKind, offset, limit: 100 });
+            const found = page.entries.find((entry) => {
+                if (contentKind === "plugin") return entry.localSelection.packageHash === localSelection.packageHash;
+                if (contentKind === "vehicle") return entry.localSelection.vehicleId === localSelection.vehicleId;
+                if (contentKind === "run-template") return entry.localSelection.manifestId === localSelection.manifestId;
+                if (contentKind === "environment") return entry.localSelection.environmentId === localSelection.environmentId;
+                return localSelection.roots.every((root) => entry.localSelection.roots.some((candidate) => candidate.assetId === root.assetId && candidate.revision === root.revision));
+            });
+            if (found) return found;
+            offset += page.entries.length;
+            if (offset >= page.page.total || page.entries.length === 0) break;
+        }
+        throw marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_NOT_FOUND, "Selected local publication content was not found.");
+    }
+
+    async createPublicationDraft(input) {
+        this.#assertOpen();
+        this.#requirePublisherWorkspace();
+        const profile = this.publisherProfileStore.get(input.profileId);
+        if (!profile) throw marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_NOT_FOUND, "Publisher profile was not found.");
+        const { publisher, current } = await this.#publisherAuthority(profile.sourceId, profile.publisherId, profile.keyId);
+        const inventory = await this.#inventoryEntry(input.localSelection, input.contentKind);
+        if (inventory && !inventory.publishable) throw marketplaceError(MARKETPLACE_ERROR_CODES.INCOMPATIBLE, inventory.unavailableReason);
+        const localId = inventory?.localId ?? "collection";
+        const namespace = publisher.namespaces[0];
+        const slug = String(localId).toLowerCase().replace(/[^a-z0-9.-]+/gu, "-").replace(/^-+|-+$/gu, "") || "publication";
+        const defaultItemId = input.contentKind === "plugin" ? inventory.identity.pluginId : `${namespace}.${slug}`;
+        const mode = input.mode ?? "create-item";
+        const requestedItemId = input.itemId ?? input.item?.itemId ?? defaultItemId;
+        const existingItem = current.documents.items.find((entry) => entry.itemId === requestedItemId) ?? null;
+        if (mode === "new-release" && !existingItem) {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_NOT_FOUND, "Existing marketplace item was not found in the verified source snapshot.");
+        }
+        if (existingItem && (existingItem.publisherId !== profile.publisherId || existingItem.contentKind !== input.contentKind)) {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.RIGHTS_DENIED, "Existing marketplace item is owned by another publisher or content kind.");
+        }
+        const contract = MARKETPLACE_ARTIFACTS[input.contentKind];
+        const existingItemInput = existingItem ? (({ kind: _kind, version: _version, publisherId: _publisherId, contentKind: _contentKind, ...editable }) => editable)(structuredClone(existingItem)) : null;
+        const item = input.item ?? existingItemInput ?? {
+            itemId: defaultItemId,
+            displayName: inventory?.name ?? "Marketplace Collection",
+            summary: inventory?.summary ?? "A curated collection of exact marketplace releases.",
+            description: "",
+            categories: [input.contentKind === "run-template" ? "run-templates" : input.contentKind],
+            tags: [],
+            links: [],
+            previews: [],
+        };
+        const release = input.release ?? {
+            releaseVersion: input.contentKind === "plugin" ? inventory.identity.version : "0.1.0",
+            licenseExpression: "Apache-2.0",
+            changelog: "Initial marketplace publication.",
+            track: null,
+            compatibility: {
+                cevSim: ">=0.1.0 <0.2.0",
+                contracts: [],
+                platforms: [], architectures: [], runtimes: [], backends: [], features: [],
+            },
+        };
+        if (!contract) throw marketplaceError(MARKETPLACE_ERROR_CODES.DOCUMENT_INVALID, "Unsupported publication content kind.");
+        const draft = createPublicationDraft({
+            profileId: input.profileId,
+            contentKind: input.contentKind,
+            localSelection: input.localSelection,
+            item,
+            release,
+            members: input.members ?? [],
+            mode,
+            now: this.now(),
+        });
+        return this.publicationDraftStore.add(draft, input.expectedRevision);
+    }
+
+    async updatePublicationDraft(draftId, { expectedRevision, ...patch }) {
+        this.#assertOpen();
+        this.#requirePublisherWorkspace();
+        const allowed = new Set(["profileId", "mode", "localSelection", "item", "release", "members"]);
+        if (Object.keys(patch).some((key) => !allowed.has(key)) || Object.keys(patch).length === 0) {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.DOCUMENT_INVALID, "Publication draft update is empty or contains unsupported fields.");
+        }
+        const current = this.publicationDraftStore.get(draftId);
+        if (!current) throw marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_NOT_FOUND, "Publication draft was not found.");
+        const projected = { ...current, ...patch };
+        const state = projected.contentKind === "collection" && projected.members.length === 0 ? "incomplete" : "ready";
+        return this.publicationDraftStore.update(draftId, { ...patch, state }, expectedRevision);
+    }
+
+    async removePublicationDraft(draftId, expectedRevision) {
+        this.#assertOpen();
+        this.#requirePublisherWorkspace();
+        if (await this.publishJobManager.hasReference({ draftId })) {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.CONFLICT, "Publication draft is referenced by a nonterminal publication job.");
+        }
+        return this.publicationDraftStore.remove(draftId, expectedRevision);
+    }
+
+    async addPublicationPreview(draftId, bytes, { mediaType, alt, expectedRevision }) {
+        this.#assertOpen();
+        this.#requirePublisherWorkspace();
+        const preview = await inspectPreviewBytes(bytes, { mediaType });
+        const descriptor = { mediaType, sha256: preview.sha256, sizeBytes: preview.sizeBytes, alt };
+        const filePath = this.publicationPlanner.previewPath(preview.sha256);
+        const existing = await lstatOrNull(filePath);
+        if (existing) {
+            const stored = await readRegularBytes(filePath, { maxBytes: MARKETPLACE_LIMITS.previewBytes });
+            if (!Buffer.from(stored).equals(Buffer.from(bytes))) throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Publication preview digest collision.");
+        } else await writeExclusiveDurable(filePath, bytes);
+        return this.publicationDraftStore.attachPreview(draftId, descriptor, expectedRevision);
+    }
+
+    async removePublicationPreview(draftId, digest, expectedRevision) {
+        this.#assertOpen();
+        this.#requirePublisherWorkspace();
+        assertSha256(digest, "digest");
+        return this.publicationDraftStore.removePreview(draftId, digest, expectedRevision);
+    }
+
+    async createPublicationPlan(input) {
+        this.#assertOpen();
+        this.#requirePublisherWorkspace();
+        let plan;
+        try {
+            plan = await this.publicationPlanner.createPlan(input);
+        } catch (error) {
+            const draft = this.publicationDraftStore.get(input.draftId);
+            if (draft?.revision === input.draftRevision) {
+                await this.publicationDraftStore.update(input.draftId, { state: "preflight-failed" }, draft.revision).catch(() => {});
+            }
+            throw error;
+        }
+        for (const entry of plan.entries) {
+            const draft = this.publicationDraftStore.get(entry.draftId);
+            if (draft?.revision === entry.draftRevision) {
+                await this.publicationDraftStore.update(entry.draftId, { state: "prepared" }, draft.revision).catch(() => {});
+            }
+        }
+        return plan;
+    }
+
+    async startPublishJob(planHash) {
+        this.#assertOpen();
+        this.#requirePublisherWorkspace();
+        return this.publishJobManager.start(planHash);
+    }
+
+    async getPublishJob(jobId) { this.#assertOpen(); this.#requirePublisherWorkspace(); return { job: await this.publishJobManager.snapshot(jobId) }; }
+    subscribePublishJob(jobId, listener) { this.#assertOpen(); this.#requirePublisherWorkspace(); return this.publishJobManager.subscribe(jobId, (job) => listener({ job })); }
+    async commitPublishJob(jobId, input) { this.#assertOpen(); this.#requirePublisherWorkspace(); return { job: await this.publishJobManager.commit(jobId, input) }; }
+    async cancelPublishJob(jobId, expectedRevision) { this.#assertOpen(); this.#requirePublisherWorkspace(); return { job: await this.publishJobManager.cancel(jobId, expectedRevision) }; }
+    async resumePublishJob(jobId, expectedRevision) { this.#assertOpen(); this.#requirePublisherWorkspace(); return { job: await this.publishJobManager.resume(jobId, expectedRevision) }; }
+    async replanPublishJob(jobId, expectedRevision) {
+        this.#assertOpen();
+        this.#requirePublisherWorkspace();
+        const job = await this.publishJobManager.replan(jobId, expectedRevision);
+        return { job, plan: await this.publicationPlanner.readPlan(job.planHash) };
+    }
+    async listPublishJobOperations(jobId, query) { this.#assertOpen(); this.#requirePublisherWorkspace(); return this.publishJobManager.operations(jobId, query); }
 
     async createInstallPlan(input) {
         this.#assertOpen();
@@ -1004,6 +1339,7 @@ export class MarketplaceService {
         if (this.#closed) return;
         this.#closed = true;
         for (const controller of this.#controllers) controller.abort();
+        await this.publishJobManager?.close();
         await this.jobManager.close();
         await this.transactionCoordinator.close();
         await this.installedStore.close();

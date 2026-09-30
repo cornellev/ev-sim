@@ -169,6 +169,7 @@ GET      /v1/publishers/{publisherId}
 GET      /v1/advisories/{advisoryId}
 GET|HEAD /v1/blobs/sha256/{digest}
 POST     /v1/artifacts/{contentKind}
+POST     /v1/previews
 PUT      /v1/items
 PUT      /v1/releases
 PUT      /v1/publishers
@@ -192,6 +193,13 @@ no-cache`; numbered metadata, consistent targets, and blobs use immutable
 caching. The server emits no CORS headers. Raw request targets with queries,
 fragments, percent encoding, backslashes, duplicate or dot segments, NULs, or
 noncanonical identifiers are rejected.
+
+`POST /v1/previews` is the sole MKT-14 registry HTTP addition. It requires the
+existing `publish:blob` scope, an exact PNG/JPEG/WebP content type, and a
+bounded declared or streamed length. The registry applies the existing raster
+inspector and CAS admission path; exact replay succeeds idempotently. It
+introduces neither a new token scope nor a new public Marketplace document
+schema.
 
 Blob reads stream from a verified regular-file handle. They support one normal
 or suffix byte range, `If-Range`, and `If-None-Match`. Multiple, malformed,
