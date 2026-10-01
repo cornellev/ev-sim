@@ -1,6 +1,6 @@
 import { clamp, lerp3 } from "../math/linalg.js";
-import { roadLaneCount } from "./RoadLaneModel.js";
-import { buildRoadSurface, validateGeometry } from "./RoadGeometry.js";
+import { laneCenterRightOffset, laneDirections, laneDividerDescriptors, roadLaneCount } from "./RoadLaneModel.js";
+import { buildOffsetStrip, buildRoadSurface, offsetCenterlineSamples, sampleCenterline, validateGeometry } from "./RoadGeometry.js";
 import { ROAD_GEOMETRY_POLICY_V1 } from "./RoadGeometryPolicy.js";
 import { nodeConformsToRoads, resolveRoadEdge, validateRoadDomain } from "./RoadGeometryRecord.js";
 
@@ -223,7 +223,126 @@ function junctionSurface(node, incidents) {
     if (vertices.length < 3) throw new TypeError(`Junction "${node.id}" cannot form a paved polygon.`);
     const indices = [];
     for (let index = 1; index < vertices.length - 1; index += 1) indices.push(0, index, index + 1);
-    return { id: String(node.id), vertices, indices, bounds: boundsOf(vertices) };
+    return { id: String(node.id), kind: "hull", vertices, indices, bounds: boundsOf(vertices) };
+}
+
+function rayParameterIntersectionXZ(origin, direction, otherOrigin, otherDirection) {
+    const denominator = direction.x * otherDirection.z - direction.z * otherDirection.x;
+    if (Math.abs(denominator) <= EPSILON) return null;
+    const qx = otherOrigin.x - origin.x;
+    const qz = otherOrigin.z - origin.z;
+    return {
+        a: (qx * otherDirection.z - qz * otherDirection.x) / denominator,
+        b: (qx * direction.z - qz * direction.x) / denominator,
+    };
+}
+
+/** Circular-arc cubic handle, or one third of the chord when the tangents do not meet ahead of both mouths. */
+function filletHandleLength(p0, t0, p3, t1) {
+    const chord = Math.hypot(p3.x - p0.x, p3.z - p0.z);
+    const fallback = chord / 3;
+    const hit = rayParameterIntersectionXZ(p0, t0, p3, negate(t1));
+    if (!hit || hit.a <= EPSILON || hit.b <= EPSILON) return fallback;
+    const cos = clamp(t0.x * t1.x + t0.z * t1.z, -1, 1);
+    const delta = Math.acos(cos);
+    if (!(delta > 1e-4) || !(delta < Math.PI - 1e-4)) return fallback;
+    const factor = (4 / 3) * Math.tan(delta / 4) / Math.tan(delta / 2);
+    if (!Number.isFinite(factor) || factor <= 0) return fallback;
+    return Math.min(hit.a, hit.b) * factor;
+}
+
+function filletCenterline(node, incidents, policy) {
+    const start = incidents[0];
+    const end = incidents[1];
+    if (!start.outwardTangent || !end.outwardTangent || !start.mouth || !end.mouth) {
+        throw new TypeError(`Junction "${node.id}" cannot form a fillet.`);
+    }
+    const p0 = { x: start.mouth.x, y: start.mouth.y, z: start.mouth.z };
+    const p3 = { x: end.mouth.x, y: end.mouth.y, z: end.mouth.z };
+    const t0 = negate(start.outwardTangent);
+    const t1 = end.outwardTangent;
+    if (Math.hypot(p3.x - p0.x, p3.z - p0.z) <= EPSILON) throw new TypeError(`Junction "${node.id}" cannot form a fillet.`);
+    const handle = filletHandleLength(p0, t0, p3, t1);
+    const controlY = (p0.y + p3.y) * 0.5;
+    const p1 = { x: p0.x + t0.x * handle, y: controlY, z: p0.z + t0.z * handle };
+    const p2 = { x: p3.x - t1.x * handle, y: controlY, z: p3.z - t1.z * handle };
+    return sampleCenterline({
+        id: String(node.id),
+        spans: [{ kind: "cubic-bezier", p0, p1, p2, p3 }],
+    }, policy);
+}
+
+function parameterOffsets(samples, start, end) {
+    const total = samples.totalLengthXZ;
+    return samples.points.map((_, index) => {
+        const t = total <= EPSILON ? 0 : samples.cumulativeXZ[index] / total;
+        return start + (end - start) * t;
+    });
+}
+
+function sameLanePattern(left, right) {
+    if (roadLaneCount(left) !== roadLaneCount(right)) return false;
+    for (let index = 0; index < roadLaneCount(left); index += 1) {
+        const a = laneDirections(left, index);
+        const b = laneDirections(right, index);
+        if (a.length !== b.length || a.some((direction, directionIndex) => direction !== b[directionIndex])) return false;
+    }
+    return true;
+}
+
+function filletFrameOffset(edge, incident, travel, laneIndex) {
+    const tangent = incident.edgeTangent;
+    if (!tangent || !travel) throw new TypeError(`Junction lane offset at "${edge.id}" has an unusable tangent.`);
+    const sign = tangent.x * travel.x + tangent.z * travel.z >= 0 ? 1 : -1;
+    return sign * laneCenterRightOffset(edge, laneIndex);
+}
+
+function filletJunctionSurface(node, incidents, edgeById, policy) {
+    const centerline = filletCenterline(node, incidents, policy);
+    const edges = incidents.map((incident) => edgeById.get(incident.edgeId).edge);
+    const halfPaved = incidents.map((incident) => incident.pavedWidth * 0.5);
+    const halfCarriage = edges.map((edge) => Math.max(0, Number(edge.width ?? 7)) * 0.5);
+    const span = (start, end) => parameterOffsets(centerline, start, end);
+    const cap = { endpointTangents: true };
+    const strip = buildOffsetStrip(
+        centerline,
+        span(-halfPaved[0], -halfPaved[1]),
+        span(halfPaved[0], halfPaved[1]),
+        policy,
+        { ring: true, endpointTangents: true },
+    );
+    const matched = sameLanePattern(edges[0], edges[1]);
+    const travel = [negate(incidents[0].outwardTangent), incidents[1].outwardTangent];
+    const laneCenterlines = matched
+        ? Array.from({ length: roadLaneCount(edges[0]) }, (_, laneIndex) => offsetCenterlineSamples(centerline, span(
+            filletFrameOffset(edges[0], incidents[0], travel[0], laneIndex),
+            filletFrameOffset(edges[1], incidents[1], travel[1], laneIndex),
+        ), policy, cap))
+        : [];
+    return {
+        centerline,
+        surface: {
+            id: String(node.id),
+            kind: "fillet",
+            vertices: strip.vertices,
+            indices: strip.indices,
+            leftBoundary: strip.leftBoundary,
+            rightBoundary: strip.rightBoundary,
+            carriagewayLeft: offsetCenterlineSamples(centerline, span(-halfCarriage[0], -halfCarriage[1]), policy, cap),
+            carriagewayRight: offsetCenterlineSamples(centerline, span(halfCarriage[0], halfCarriage[1]), policy, cap),
+            laneCenterlines,
+            borderLeft: edges[0].borderLeft ?? null,
+            borderRight: edges[0].borderRight ?? null,
+            dividers: matched
+                ? laneDividerDescriptors(edges[0]).map((divider) => ({
+                    dividerIndex: divider.dividerIndex,
+                    opposing: divider.opposing,
+                    marking: divider.marking ?? null,
+                }))
+                : [],
+            bounds: boundsOf(strip.vertices),
+        },
+    };
 }
 
 function triangleAreaXZ(a, b, c) {
@@ -374,11 +493,13 @@ export function planRoadNetworkGeometry(roads, options = {}) {
             incident.mouthDistance = distance;
         }
         if (requiresPatch) {
+            const fillet = incidents.length === 2 ? filletJunctionSurface(node, incidents, edgeById, policy) : null;
             junctions.push({
                 node,
                 explicit,
                 incidents,
-                surface: junctionSurface(node, incidents),
+                ...(fillet ? { centerline: fillet.centerline } : {}),
+                surface: fillet ? fillet.surface : junctionSurface(node, incidents),
             });
         }
     }
@@ -470,6 +591,45 @@ function cubic(p0, p1, p2, p3, u) {
     return lerp(lerp(a, b, u), lerp(b, c, u), u);
 }
 
+function carriagewayHalfWidth(edge) {
+    return Math.max(0, Number(edge?.width ?? 7)) * 0.5;
+}
+
+function buildFilletConnector(plan, junction, from, to, fromEdge, toEdge, fromLane, toLane) {
+    const centerline = junction.centerline;
+    if (!centerline?.points || centerline.points.length < 2) {
+        throw new TypeError(`Junction "${junction.node.id}" is missing its fillet centerline.`);
+    }
+    const fromIndex = junction.incidents.indexOf(from);
+    const toIndex = junction.incidents.indexOf(to);
+    const forward = fromIndex === 0 && toIndex === 1;
+    const backward = fromIndex === 1 && toIndex === 0;
+    if (!forward && !backward) throw new TypeError("Junction movement references a non-incident road.");
+    const travel = [negate(junction.incidents[0].outwardTangent), junction.incidents[1].outwardTangent];
+    const fromOffset = filletFrameOffset(fromEdge.edge, from, travel[fromIndex], fromLane);
+    const toOffset = filletFrameOffset(toEdge.edge, to, travel[toIndex], toLane);
+    const startOffset = forward ? fromOffset : toOffset;
+    const endOffset = forward ? toOffset : fromOffset;
+    const halves = junction.incidents.map((incident) => carriagewayHalfWidth(plan.edgeById.get(incident.edgeId).edge));
+    const total = centerline.totalLengthXZ;
+    const amounts = centerline.points.map((_, index) => {
+        const t = total <= EPSILON ? 0 : centerline.cumulativeXZ[index] / total;
+        const limit = halves[0] + (halves[1] - halves[0]) * t;
+        return clamp(startOffset + (endOffset - startOffset) * t, -limit, limit);
+    });
+    const offsetPoints = offsetCenterlineSamples(centerline, amounts, plan.policy ?? ROAD_GEOMETRY_POLICY_V1, { endpointTangents: true });
+    const points = forward ? offsetPoints : [...offsetPoints].reverse();
+    if (points.length < 2) throw new TypeError("Junction connector leaves the paved surface.");
+    return {
+        nodeId: junction.node.id,
+        fromEdgeId: from.edgeId,
+        toEdgeId: to.edgeId,
+        fromLaneIndex: fromLane,
+        toLaneIndex: toLane,
+        points,
+    };
+}
+
 export function buildJunctionConnector(plan, movement) {
     const junction = plan.junctionByNode.get(String(movement?.nodeId));
     if (!junction) return null;
@@ -480,6 +640,9 @@ export function buildJunctionConnector(plan, movement) {
     const toEdge = plan.edgeById.get(to.edgeId);
     const fromLane = clamp(Number(movement.fromLaneIndex ?? 0), 0, roadLaneCount(fromEdge.edge) - 1);
     const toLane = clamp(Number(movement.toLaneIndex ?? 0), 0, roadLaneCount(toEdge.edge) - 1);
+    if (junction.surface?.kind === "fillet") {
+        return buildFilletConnector(plan, junction, from, to, fromEdge, toEdge, fromLane, toLane);
+    }
     const fromCenterline = fromEdge.surface.laneCenterlines[fromLane];
     const toCenterline = toEdge.surface.laneCenterlines[toLane];
     const p0 = from.end === "start" ? fromCenterline[0] : fromCenterline.at(-1);

@@ -1,6 +1,6 @@
 import { StorageRequestError } from "../../../client/storageClient.js";
 import { sha256ExactBytes, VISUAL_ASSET_UPLOAD_OPERATIONS } from "../../../simulation/visual/VisualLayer.js";
-import { createGltfImportPlan } from "../../../editor-assets/GltfImportPlan.js";
+import { createMeshImportPlan } from "../../../editor-assets/MeshImportPlan.js";
 import { VisualAssetClient } from "../../environment/visual/VisualAssetClient.js";
 
 export class AssetRepository {
@@ -38,7 +38,7 @@ export class AssetRepository {
     references(assetId, revision, { signal } = {}) { return this.json("GET", `/${encodeURIComponent(assetId)}/references${revision ? `?revision=${revision}` : ""}`, undefined, signal); }
 
     async import(files, sourceId, signal, { entryPath } = {}) {
-        const plan = createGltfImportPlan(files, { entryPath });
+        const plan = createMeshImportPlan(files, { entryPath });
         const unfinished = new Set();
         const upload = async (asset, bytes, dependencies = {}) => {
             const session = await this.visualAssets.createUpload({ asset, sourceIds: [sourceId], dependencies }, signal);
@@ -66,7 +66,7 @@ export class AssetRepository {
             return {
                 publicationId: globalThis.crypto?.randomUUID?.() ?? `publication-${Date.now().toString(36)}`,
                 modelUseHash: published.useHash,
-                suggestedName: plan.entryPath.split("/").at(-1).replace(/\.(gltf|glb)$/i, ""),
+                suggestedName: plan.entryPath.split("/").at(-1).replace(/\.(gltf|glb|obj|stl|ply)$/i, ""),
             };
         } catch (error) {
             await Promise.allSettled([...unfinished].map((id) => this.visualAssets.cancelUpload(id)));

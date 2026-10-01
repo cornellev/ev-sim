@@ -572,6 +572,29 @@ function compiledRoadObject(entry, roadOptions) {
     };
 }
 
+function addFilletMarkings(root, surface, roadOptions) {
+    const markings = [
+        [surface.carriagewayLeft, surface.borderLeft ?? roadOptions.borderLeft],
+        [surface.carriagewayRight, surface.borderRight ?? roadOptions.borderRight],
+    ];
+    for (const divider of surface.dividers ?? []) {
+        const left = surface.laneCenterlines?.[divider.dividerIndex - 1];
+        const right = surface.laneCenterlines?.[divider.dividerIndex];
+        if (!left || !right) continue;
+        const count = Math.min(left.length, right.length);
+        const points = Array.from({ length: count }, (_, index) => ({
+            x: (left[index].x + right[index].x) * 0.5,
+            y: (left[index].y + right[index].y) * 0.5,
+            z: (left[index].z + right[index].z) * 0.5,
+        }));
+        markings.push([points, divider.marking ?? (divider.opposing ? roadOptions.centerLineType : roadOptions.oneWayDividerType)]);
+    }
+    for (const [points, type] of markings) {
+        const mesh = markingMesh(points, type, roadOptions);
+        if (mesh) root.add(mesh);
+    }
+}
+
 function compiledIntersectionObject(junction, roads, roadOptions) {
     const geometry = indexedGeometry(junction.surface.vertices, junction.surface.indices);
     const root = new THREE.Group();
@@ -589,6 +612,9 @@ function compiledIntersectionObject(junction, roads, roadOptions) {
     mesh.receiveShadow = true;
     mesh.userData.bakeRoadSurface = true;
     root.add(mesh);
+    if (junction.surface.kind === "fillet" && junction.surface.laneCenterlines?.length) {
+        addFilletMarkings(root, junction.surface, roadOptions);
+    }
     return {
         roads,
         width: roads[0]?.width ?? new Unit(4, Unit.Type.METER),

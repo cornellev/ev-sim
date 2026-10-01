@@ -121,7 +121,7 @@ asset upload/validation endpoints. Folder and archive metadata never enter
 environment history. Archive hides an item from ordinary catalog results but
 does not release roots or invalidate existing instance pins.
 
-GLTF/GLB import is package-local. The browser requires one explicit entry file
+GLTF/GLB import is package-local. OBJ, STL, and PLY are transcoded in the browser into one canonical glTF 2.0 GLB before that same planner runs, and the catalog stores the GLB. An OBJ may include its selected MTL plus PNG, JPEG, or KTX2 images. The browser requires one explicit entry file
 when several models are selected, resolves external buffers/images only from
 the selected files, rejects missing, ambiguous, absolute, network, and
 traversing paths, and rewrites those URIs plus packed `bufferView` / `data:`

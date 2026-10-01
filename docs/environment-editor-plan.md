@@ -76,7 +76,7 @@ ED PR changes a contract, hash, gate, or milestone status.
   proxies are set up; LiDAR authoring supports generated meshes and editable
   primitives.
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-09-28 — MKT-09 imported revisions use contiguous local histories without environment mutation**.
+- Last updated: **2026-10-01 — MESH-01 through MESH-04 transcode OBJ, STL, and PLY into the glTF catalog**.
 
 ## Normative contracts
 
@@ -365,12 +365,15 @@ ED PR changes a contract, hash, gate, or milestone status.
   mouth fractions. Scene, Map, routes, off-road checks, world resources, and
   LiDAR consume that compiled result instead of resampling it.
 - Degree-zero/one nodes have no patch; equal-width tangent-continuous
-  degree-two roads join directly. Other degree-two/three/four nodes use a
-  deterministic upward-wound convex hull of trimmed mouths at junction
-  elevation. Insets are `clamp(0.75 × widest paved width, 2.5, 10)` capped at
-  35% of each incident XZ length. Lane connectors are cubics constrained to
-  the junction polygon. Cross-road same-elevation overlaps are structured
-  conflicts and `strict` callers reject them.
+  degree-two roads join directly. Other degree-two nodes compile a
+  tangent-matched cubic fillet between the trimmed mouths and sweep paved
+  width along it, tapering when the roads differ. Degree-three/four nodes
+  keep a deterministic upward-wound convex hull of trimmed mouths at junction
+  elevation. Insets stay `clamp(0.75 × widest paved width, 2.5, 10)` capped at
+  35% of each incident XZ length. Hull lane connectors are cubics constrained
+  to that polygon; fillet connectors are offsets of the fillet centerline.
+  Cross-road same-elevation overlaps are structured conflicts and `strict`
+  callers reject them.
 - `roadCommands.js` owns create, convert, insert, remove, set-knot, split,
   detach, and connect. The first of these commands upgrades every legacy edge
   to an explicit polyline, retains ids and arm points, clears legacy arms, and
@@ -805,6 +808,32 @@ default activation of the new editor.
 documentation and the headless/visual decision logs are updated where their
 contracts, identities, or gates changed.
 
+### MESH-01 — Mesh document and parsers
+
+**Depends on:** ED-06 path rules.
+
+`PackagePaths.js` owns `normalizedSelectedPath` and `resolveDependency`. OBJ+MTL, STL, and PLY parse into `createMeshDocument()` records: triangle primitives, Phong `kd` / `d` / `ns` / `mapKd`, and selected image bytes. Parsers stay free of three.js, DOM, and WebGL. `tests/mesh-document.test.js` covers groups, negative indices, n-gons, missing and escaping MTL paths, binary and ASCII STL, and PLY faces including big-endian rejection.
+
+### MESH-02 — Canonical GLB
+
+**Depends on:** MESH-01.
+
+`writeGlb()` / `writeGlbChunks()` in `GlbContainer.js` are the only GLB writers. `encodeMeshDocumentGlb()` emits glTF 2.0 with triangle `POSITION` data, external PNG/JPEG/KTX2 images, and Phong values mapped to metallic-roughness (`d < 1` becomes `alphaMode: "MASK"`). No axis swap. `tests/mesh-glb-encoder.test.js` checks byte-identical output and `decodeAssetSourceGeometry()`.
+
+### MESH-03 — Catalog import
+
+**Depends on:** MESH-02.
+
+`createMeshImportPlan()` sends `.gltf` / `.glb` straight to `createGltfImportPlan()` and transcodes `.obj` / `.stl` / `.ply` into `import.glb` first. `AssetRepository.import()` and the asset pane accept those extensions. The stored model remains `model/gltf-binary`. Visual-asset media types, `worldHash`, bake, and headless are unchanged.
+
+### MESH-04 — Configure the imported asset
+
+**Depends on:** MESH-03 and ED-07.
+
+The asset inspector edits `normalization.orientation` with Y-up and Z-up presets (`AssetOrientation.js`) through `assetStudioCommands.setNormalization`. `materialsFromGltf()` seeds the first definition from `lease.gltfJson` when a v1 revision is opened. Generate collision calls `AssetStudioSession.generateProxy({ channel: "collision" })`, which commits a convex from `generateVoxelProxy`. A placed instance stays visual until that v2 revision is saved.
+
+**Merge gate:** `tests/mesh-document.test.js`, `tests/mesh-glb-encoder.test.js`, `tests/editor-asset-import.test.js`, `tests/gltf-material-import.test.js`, `tests/ed07-asset-studio.test.js`, plus the OBJ import and asset-studio Playwright flows.
+
 ### Verification commands and evidence format
 
 ```text
@@ -1001,6 +1030,23 @@ Record in the ledger: focused-suite pass counts, `npm run lint` result,
   `6ca2ece3d5266822a2ceabba72e5f7dd9514789e76757e86f6aedd2730ab9a6a`.
 
 ## Decision log
+
+### 2026-10-01 — OBJ, STL, and PLY enter the catalog as glTF
+
+MESH-01 through MESH-04 parse OBJ+MTL, STL, and PLY in `app/editor-assets/` and transcode them to one canonical glTF 2.0 GLB before `createGltfImportPlan()`. The visual-asset media list stays glTF-only, so bake, headless, and `worldHash` are unchanged. Units and up-axis are asset-studio normalization. Collision still requires a saved v2 revision with an enabled proxy; the inspector can now generate that convex.
+
+### 2026-10-01 — Degree-two junctions compile a fillet
+
+Geometry-v2 nodes that join exactly two roads, and are not an equal-width
+tangent-continuous direct join, now compile a tangent-matched cubic fillet
+and sweep paved width along it. Three- and four-way junctions stay a convex
+hull. The fillet is the compiled surface used by the scene, map, routes,
+off-road checks, LiDAR, and world description. `roadNetworkHash` is unchanged
+because it hashes authoring. `worldHash` and `lidarGeometryHash` change only
+for a v2 world that contains one of these bends, because the world description
+stores the compiled junction mesh. Schema, route algorithm, and legacy v1
+intersection meshes are unchanged. This is compiler maintenance, not an ED
+milestone.
 
 ### 2026-09-28 — Portable environment import reuses guarded schema-v4 persistence
 

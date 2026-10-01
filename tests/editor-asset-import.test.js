@@ -3,6 +3,8 @@ import { promises as fs } from "node:fs";
 import test from "node:test";
 
 import { createGltfImportPlan } from "../app/editor-assets/GltfImportPlan.js";
+import { createMeshImportPlan } from "../app/editor-assets/MeshImportPlan.js";
+import { readGlb } from "../app/simulation/visual/GlbContainer.js";
 import { compileAssetDefinition } from "../app/editor-assets/AssetCompiler.js";
 import { createEmptyAssetDefinition } from "../app/editor-assets/AssetDefinition.js";
 import { AssetRepository } from "../app/3d/editor/assets/AssetRepository.js";
@@ -175,4 +177,54 @@ test("ED-06 packed GLB import publishes a source that ED-07 can decode and save"
     assert.equal(published.revision.version, 2);
     assert.equal(published.revision.appearance[0].textures[0].slot, "baseColor");
     assert.equal(published.revision.appearance[0].textures[0].useHash, texture.useHash);
+});
+
+test("MESH-03 OBJ, STL, and PLY import plans store a glTF binary model", () => {
+    const png = makePng();
+    const obj = createMeshImportPlan([
+        { path: "crate.obj", bytes: encoder.encode("mtllib crate.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nusemtl paint\nf 1 2 3\n") },
+        { path: "crate.mtl", bytes: encoder.encode("newmtl paint\nKd 1 0 0\nmap_Kd albedo.png\n") },
+        { path: "albedo.png", bytes: png },
+    ], { entryPath: "crate.obj" });
+    assert.equal(obj.mediaType, "model/gltf-binary");
+    assert.equal(obj.entryPath, "crate.obj");
+    assert.equal(obj.dependencies.length, 1);
+    assert.equal(obj.dependencies[0].mediaType, "image/png");
+    assert.equal(obj.dependencies[0].path, "albedo.png");
+    const objJson = readGlb(obj.modelBytes, { requireTotalLength: true, json: "last", jsonPadding: "whitespace" }).json;
+    assert.equal(objJson.asset.version, "2.0");
+    assert.equal(objJson.images[0].uri, `sha256:${sha256ExactBytes(png)}`);
+
+    const stl = new Uint8Array(84 + 50);
+    const view = new DataView(stl.buffer);
+    view.setUint32(80, 1, true);
+    view.setFloat32(108, 1, true);
+    view.setFloat32(124, 1, true);
+    const stlPlan = createMeshImportPlan([{ path: "models/barrier.stl", bytes: stl }], { entryPath: "models/barrier.stl" });
+    assert.equal(stlPlan.mediaType, "model/gltf-binary");
+    assert.equal(stlPlan.entryPath, "models/barrier.stl");
+    assert.deepEqual(stlPlan.dependencies, []);
+
+    const ply = encoder.encode([
+        "ply",
+        "format ascii 1.0",
+        "element vertex 3",
+        "property float x",
+        "property float y",
+        "property float z",
+        "element face 1",
+        "property list uchar int vertex_indices",
+        "end_header",
+        "0 0 0",
+        "1 0 0",
+        "0 1 0",
+        "3 0 1 2",
+    ].join("\n"));
+    const plyPlan = createMeshImportPlan([{ path: "post.ply", bytes: ply }], { entryPath: "post.ply" });
+    assert.equal(plyPlan.mediaType, "model/gltf-binary");
+    assert.equal(readGlb(plyPlan.modelBytes, { requireTotalLength: true, json: "last", jsonPadding: "whitespace" }).json.asset.version, "2.0");
+
+    assert.throws(() => createMeshImportPlan([
+        { path: "crate.obj", bytes: encoder.encode("mtllib missing.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n") },
+    ], { entryPath: "crate.obj" }), /not selected/);
 });

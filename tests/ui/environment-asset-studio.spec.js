@@ -52,23 +52,23 @@ function sha256Hex(bytes) {
 }
 
 function triangleFixture(name, xScale = 1) {
+    const indices = [0, 1, 2, 0, 1, 3, 0, 2, 3, 1, 2, 3];
     const model = {
         asset: { version: "2.0" }, scene: 0, scenes: [{ nodes: [0] }],
         nodes: [{ name, mesh: 0 }],
         meshes: [{ primitives: [{ attributes: { POSITION: 0 }, indices: 1 }] }],
         accessors: [
-            { bufferView: 0, componentType: 5126, count: 3, type: "VEC3", max: [xScale, 1, 0], min: [0, 0, 0] },
-            { bufferView: 1, componentType: 5123, count: 3, type: "SCALAR" },
+            { bufferView: 0, componentType: 5126, count: 4, type: "VEC3", max: [xScale, 1, 1], min: [0, 0, 0] },
+            { bufferView: 1, componentType: 5123, count: indices.length, type: "SCALAR" },
         ],
-        bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: 36 }, { buffer: 0, byteOffset: 36, byteLength: 6 }],
-        buffers: [{ byteLength: 42, uri: `${name}.bin` }],
+        bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: 48 }, { buffer: 0, byteOffset: 48, byteLength: indices.length * 2 }],
+        buffers: [{ byteLength: 48 + indices.length * 2, uri: `${name}.bin` }],
     };
-    const bytes = Buffer.alloc(42);
+    const bytes = Buffer.alloc(48 + indices.length * 2);
     bytes.writeFloatLE(xScale, 12);
     bytes.writeFloatLE(1, 28);
-    bytes.writeUInt16LE(0, 36);
-    bytes.writeUInt16LE(1, 38);
-    bytes.writeUInt16LE(2, 40);
+    bytes.writeFloatLE(1, 44);
+    indices.forEach((index, offset) => bytes.writeUInt16LE(index, 48 + offset * 2));
     return { name, model, bytes };
 }
 
@@ -331,7 +331,7 @@ test("ED-07 authors isolated revisions, nested proxies, explicit instance update
     await expect(page.getByLabel(`${child.name} asset studio viewport`)).toBeVisible({ timeout: 60_000 });
     let inspector = page.locator("[data-asset-catalog-inspector]");
     const childAssetId = await childItem.getAttribute("data-asset-id");
-    await expect(inspector.locator("[data-asset-id]")).toHaveText(`Asset ID ${childAssetId}`);
+    await expect(inspector.locator("[data-asset-id]")).toHaveText(`Asset ID ${childAssetId}`, { timeout: 60_000 });
     await commitNumber(inspector.getByLabel("Pivot Y"), "0.5");
     await page.getByRole("tree", { name: "Asset parts" }).getByRole("treeitem", { name: child.name }).click();
     await inspector.getByRole("button", { name: "Add", exact: true }).click();
@@ -342,7 +342,7 @@ test("ED-07 authors isolated revisions, nested proxies, explicit instance update
     await primaryItem.dblclick();
     const canvas = page.getByLabel(`${primary.name} asset studio viewport`);
     await expect(canvas).toBeVisible({ timeout: 60_000 });
-    await expect.poll(async () => canvas.getAttribute("data-appearance-rebuilds")).not.toBeNull();
+    await expect.poll(async () => canvas.getAttribute("data-appearance-rebuilds"), { timeout: 60_000 }).not.toBeNull();
     const rebuildsAfterOpen = await canvas.getAttribute("data-appearance-rebuilds");
     const canvasBox = await canvas.boundingBox();
     expect(canvasBox).not.toBeNull();
@@ -420,6 +420,14 @@ test("ED-07 authors isolated revisions, nested proxies, explicit instance update
     await expect(inspector.getByRole("alert")).toContainText("Regenerate or disable stale proxies");
     await inspector.getByRole("button", { name: "Regenerate LiDAR" }).click();
     await expect(inspector.getByText("lidar-generated-1 · lidar", { exact: true })).toBeVisible();
+    await expect(inspector.getByLabel("Up axis")).toHaveValue("y-up");
+    await inspector.getByLabel("Up axis").selectOption("z-up");
+    await expect(inspector.getByLabel("Up axis")).toHaveValue("z-up");
+    await expect(inspector.getByText("lidar-generated-1 · lidar · stale", { exact: true })).toBeVisible();
+    await inspector.getByRole("button", { name: "Regenerate LiDAR" }).click();
+    await expect(inspector.getByText("lidar-generated-1 · lidar", { exact: true })).toBeVisible();
+    await inspector.getByRole("button", { name: "Generate collision" }).click();
+    await expect(inspector.getByText("collision-generated-1 · collision", { exact: true })).toBeVisible();
     await inspector.getByRole("button", { name: "Add collision box" }).click();
     await inspector.getByRole("button", { name: "Save revision" }).click();
     await expect(page.getByRole("button", { name: new RegExp(`^${primary.name} · r2`) })).toBeVisible({ timeout: 60_000 });

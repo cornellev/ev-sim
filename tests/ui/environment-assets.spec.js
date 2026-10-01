@@ -411,6 +411,23 @@ test("ED-06 catalog folders use untitled names, inline rename, and context menus
     await expect(model).toBeVisible();
 });
 
+test("MESH-03 OBJ import publishes a catalog model", async ({ page, request }) => {
+    test.setTimeout(300_000);
+    const objName = `obstacle-${Date.now().toString(36)}`;
+    const objPath = path.join(fixtureDir, `${objName}.obj`);
+    await fs.writeFile(objPath, "o crate\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n");
+    await activateBlank(request, "MESH-03 obj import");
+    await openEditor(page);
+    const library = page.locator("[data-editor-asset-library]");
+    const [chooser] = await Promise.all([
+        page.waitForEvent("filechooser"),
+        library.locator("[data-editor-asset-import]").click(),
+    ]);
+    await chooser.setFiles([objPath]);
+    await library.getByRole("button", { name: "Publish" }).click();
+    await expect(library.locator("[data-asset-id]").filter({ hasText: objName })).toBeVisible({ timeout: 60_000 });
+});
+
 test("ED-06 asset library and keyboard preview flow are accessible at 1280 by 720 @a11y", async ({ page, request }) => {
     test.setTimeout(300_000);
     await page.setViewportSize({ width: 1280, height: 720 });

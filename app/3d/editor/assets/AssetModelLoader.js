@@ -1,5 +1,6 @@
 import { sha256ExactBytes, sha256FromUri } from "../../../simulation/visual/VisualLayer.js";
 import { normalizeAssetDefinition } from "../../../editor-assets/AssetDefinition.js";
+import { materialsFromGltf } from "../../../editor-assets/GltfMaterialImport.js";
 import { VisualAssetClient } from "../../environment/visual/VisualAssetClient.js";
 import { createDigestUrlModifier } from "../../environment/visual/VisualGltfUriGuard.js";
 import { applyPublishedAppearance, decodeAppearanceTexture } from "./applyPublishedAppearance.js";
@@ -113,6 +114,13 @@ export function extractAssetSourceGeometries(lease) {
 
 /** Build the first editable definition from trusted GLTF node associations. */
 export function createImportedAssetDefinition({ lease, modelUseHash, name = "Model", sourceId = "source" } = {}) {
+    const imported = lease?.gltfJson
+        ? materialsFromGltf(lease.gltfJson, lease.dependencies ?? {})
+        : { materials: [], materialIdByNode: new Map() };
+    const bindingsFor = (nodeIndex) => {
+        const materialId = imported.materialIdByNode.get(nodeIndex);
+        return materialId ? { default: materialId } : {};
+    };
     const geometries = extractAssetSourceGeometries(lease);
     const mappedNodes = new Map();
     const ordered = [];
@@ -131,9 +139,9 @@ export function createImportedAssetDefinition({ lease, modelUseHash, name = "Mod
                 id: "root", parentId: null, order: 0, name,
                 transform: { position: [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] },
                 content: { kind: "model-node", sourceId, nodeIndex: 0 },
-                appearanceVisible: true, materialBindings: {},
+                appearanceVisible: true, materialBindings: bindingsFor(0),
             }],
-            materials: [], lidarProxies: [], collisionProxies: [],
+            materials: imported.materials, lidarProxies: [], collisionProxies: [],
         });
     }
     const objectToNode = new Map([...mappedNodes].map(([nodeIndex, object]) => [object, nodeIndex]));
@@ -159,14 +167,14 @@ export function createImportedAssetDefinition({ lease, modelUseHash, name = "Mod
                 ? { kind: "model-node", sourceId, nodeIndex }
                 : { kind: "group" },
             appearanceVisible: true,
-            materialBindings: {},
+            materialBindings: bindingsFor(nodeIndex),
         };
     });
     return normalizeAssetDefinition({
         kind: "cev-sim.asset-definition", version: 1,
         normalization: { metersPerUnit: 1, orientation: [0, 0, 0, 1], pivot: [0, 0, 0] },
         sources: [{ id: sourceId, modelUseHash }], parts,
-        materials: [], lidarProxies: [], collisionProxies: [],
+        materials: imported.materials, lidarProxies: [], collisionProxies: [],
     });
 }
 
@@ -218,6 +226,8 @@ export class AssetModelLoader {
             root,
             localBounds: value.localBounds.clone?.() ?? structuredClone(value.localBounds),
             nodeMappings,
+            gltfJson: value.gltfJson ?? null,
+            dependencies: value.dependencies ?? {},
             release: () => {
                 if (released) return;
                 released = true;
@@ -326,7 +336,13 @@ export class AssetModelLoader {
         sanitize(root);
         const THREE = await this._three();
         const localBounds = new THREE.Box3().setFromObject(root);
-        return { root, localBounds, associations };
+        return {
+            root,
+            localBounds,
+            associations,
+            gltfJson: parsed.parser?.json ?? parsed.json ?? null,
+            dependencies: { ...(primaryUse.dependencies ?? {}) },
+        };
     }
 
     async _parse(bytes, dependencies, signal) {

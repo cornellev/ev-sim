@@ -117,6 +117,23 @@ test("ED-07 material-only child revisions preserve generated proxy freshness", (
     assert.deepEqual(compileAssetDefinition(definition, { resolvedChildren: { "child@1": appearanceOnly } }).staleProxyIds, []);
 });
 
+test("MESH-04 generateProxy commits a collision convex", async () => {
+    const tetra = {
+        0: {
+            vertices: [[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]],
+            triangles: [[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]],
+        },
+    };
+    const session = new AssetStudioSession({ assetId: "hull-asset", revision: 1, definition: sourceDefinition(), sourceGeometries: { source: tetra } });
+    const result = await session.generateProxy({ id: "hull", channel: "collision", includedPartIds: ["root"], voxelSize: 0.2 });
+    assert.equal(result.ok, true);
+    assert.equal(session.document.collisionProxies[0].id, "hull");
+    assert.equal(session.document.collisionProxies[0].kind, "convex");
+    assert.equal(session.document.collisionProxies[0].enabled, true);
+    assert.ok(session.document.collisionProxies[0].vertices.length >= 4);
+    session.dispose();
+});
+
 test("ED-07 asset sessions keep independent history and reject stale generation commits", async () => {
     const a = new AssetStudioSession({ assetId: "a", revision: 1, definition: sourceDefinition(), sourceGeometries: { source: MODEL_GEOMETRY } });
     const b = new AssetStudioSession({ assetId: "b", revision: 1, definition: sourceDefinition(), sourceGeometries: { source: MODEL_GEOMETRY } });

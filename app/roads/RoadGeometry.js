@@ -137,9 +137,29 @@ function rightNormal(tangent) {
     return { x: -tangent.z / length, y: 0, z: tangent.x / length };
 }
 
-function offsetSamples(samples, offset, policy = ROAD_GEOMETRY_POLICY_V1) {
+function offsetAmount(offset, index) {
+    if (!Array.isArray(offset)) return offset;
+    const amount = Number(offset[index]);
+    if (!Number.isFinite(amount)) throw new TypeError("Road surface contains an unusable lateral offset.");
+    return amount;
+}
+
+function offsetSamples(samples, offset, policy = ROAD_GEOMETRY_POLICY_V1, { endpointTangents = false } = {}) {
+    if (Array.isArray(offset) && offset.length !== samples.points.length) {
+        throw new TypeError("Road offset count does not match the centerline.");
+    }
     const result = [];
     for (let index = 0; index < samples.points.length; index += 1) {
+        const amount = offsetAmount(offset, index);
+        // A chord to the next sample has already turned into the bend, which
+        // pulls the outer corner off the road's square end cap. Endpoints use
+        // the centerline tangent so the cap stays flush with the trimmed road.
+        if (endpointTangents && (index === 0 || index === samples.points.length - 1)) {
+            const normal = rightNormal(samples.tangents[index]);
+            if (!normal) throw new TypeError("Road surface contains an unusable lateral normal.");
+            result.push(add(samples.points[index], scale(normal, amount)));
+            continue;
+        }
         const previousPoint = samples.points[Math.max(0, index - 1)];
         const nextPoint = samples.points[Math.min(samples.points.length - 1, index + 1)];
         const incoming = index > 0 ? rightNormal(subtract(samples.points[index], previousPoint)) : null;
@@ -147,21 +167,21 @@ function offsetSamples(samples, offset, policy = ROAD_GEOMETRY_POLICY_V1) {
         const normal = outgoing ?? incoming ?? rightNormal(samples.tangents[index]);
         if (!normal) throw new TypeError("Road surface contains an unusable lateral normal.");
         let direction = normal;
-        let multiplier = offset;
+        let multiplier = amount;
         if (incoming && outgoing) {
             const summed = normalize(add(incoming, outgoing));
             const denominator = summed ? summed.x * outgoing.x + summed.z * outgoing.z : 0;
             if (summed && Math.abs(denominator) > EPSILON) {
                 direction = summed;
-                const miter = offset / denominator;
+                const miter = amount / denominator;
                 if (Math.abs(1 / denominator) > policy.miterLimit) {
                     // A bevel is two vertices at the same centerline sample,
                     // one on each incident segment. Duplicate zero-offset lane
                     // paths too, so every compiled lateral path has the same
                     // deterministic topology.
                     result.push(
-                        add(samples.points[index], scale(incoming, offset)),
-                        add(samples.points[index], scale(outgoing, offset)),
+                        add(samples.points[index], scale(incoming, amount)),
+                        add(samples.points[index], scale(outgoing, amount)),
                     );
                     continue;
                 }
@@ -171,6 +191,61 @@ function offsetSamples(samples, offset, policy = ROAD_GEOMETRY_POLICY_V1) {
         result.push(add(samples.points[index], scale(direction, multiplier)));
     }
     return result;
+}
+
+/** Offset a sampled centerline by a constant or per-sample signed right-hand distance. */
+export function offsetCenterlineSamples(samples, offset, policy = ROAD_GEOMETRY_POLICY_V1, options = {}) {
+    return offsetSamples(samples, offset, policy, options);
+}
+
+function appendStripTriangles(vertices, indices, triangles) {
+    const upward = (a, b, c) => (b.z - a.z) * (c.x - a.x) - (b.x - a.x) * (c.z - a.z);
+    for (let face = 0; face < triangles.length; face += 3) {
+        const triangle = triangles.slice(face, face + 3);
+        const winding = upward(vertices[triangle[0]], vertices[triangle[1]], vertices[triangle[2]]);
+        if (Math.abs(winding) <= EPSILON) throw new TypeError("Road surface contains a degenerate strip triangle.");
+        indices.push(...(winding > 0 ? triangle : [triangle[0], triangle[2], triangle[1]]));
+    }
+}
+
+/**
+ * Upward-wound strip between two offset polylines.
+ * `ring: false` keeps the interleaved road-mesh vertex order.
+ * `ring: true` stores a boundary ring (left, then reversed right) so polygon
+ * tests can use the vertices directly.
+ */
+export function buildOffsetStrip(samples, leftOffset, rightOffset, policy = ROAD_GEOMETRY_POLICY_V1, { ring = false, endpointTangents = false } = {}) {
+    const offsetOptions = { endpointTangents };
+    const leftBoundary = offsetSamples(samples, leftOffset, policy, offsetOptions);
+    const rightBoundary = offsetSamples(samples, rightOffset, policy, offsetOptions);
+    const vertices = [];
+    const indices = [];
+    if (!ring) {
+        const stripPointCount = Math.min(leftBoundary.length, rightBoundary.length);
+        for (let index = 0; index < stripPointCount; index += 1) vertices.push(leftBoundary[index], rightBoundary[index]);
+        for (let index = 0; index < stripPointCount - 1; index += 1) {
+            const left = index * 2;
+            const right = left + 1;
+            const nextLeft = left + 2;
+            const nextRight = left + 3;
+            appendStripTriangles(vertices, indices, [left, right, nextLeft, right, nextRight, nextLeft]);
+        }
+    } else {
+        if (leftBoundary.length !== rightBoundary.length || leftBoundary.length < 2) {
+            throw new TypeError("Road surface contains a degenerate strip triangle.");
+        }
+        const count = leftBoundary.length;
+        for (let index = 0; index < count; index += 1) vertices.push(leftBoundary[index]);
+        for (let index = count - 1; index >= 0; index -= 1) vertices.push(rightBoundary[index]);
+        for (let index = 0; index < count - 1; index += 1) {
+            const left = index;
+            const right = vertices.length - 1 - index;
+            const nextLeft = index + 1;
+            const nextRight = vertices.length - 1 - (index + 1);
+            appendStripTriangles(vertices, indices, [left, right, nextLeft, right, nextRight, nextLeft]);
+        }
+    }
+    return { leftBoundary, rightBoundary, vertices, indices };
 }
 
 export function buildLaneCenterline(edge, laneIndex, samples) {
@@ -190,38 +265,19 @@ export function buildRoadSurface(edge, context = {}) {
     const samples = context.samples ?? sampleCenterline(edge, policy);
     const halfCarriageway = Math.max(0, Number(edge.width ?? 7)) * 0.5;
     const halfPaved = halfCarriageway + Math.max(0, Number(edge.shoulderWidth ?? 0));
-    const leftBoundary = offsetSamples(samples, -halfPaved, policy);
-    const rightBoundary = offsetSamples(samples, halfPaved, policy);
+    const strip = buildOffsetStrip(samples, -halfPaved, halfPaved, policy);
     const carriagewayLeft = offsetSamples(samples, -halfCarriageway, policy);
     const carriagewayRight = offsetSamples(samples, halfCarriageway, policy);
-    const vertices = [];
-    const stripPointCount = Math.min(leftBoundary.length, rightBoundary.length);
-    for (let index = 0; index < stripPointCount; index += 1) vertices.push(leftBoundary[index], rightBoundary[index]);
-    const indices = [];
-    const upward = (a, b, c) => (b.z - a.z) * (c.x - a.x) - (b.x - a.x) * (c.z - a.z);
-    for (let index = 0; index < stripPointCount - 1; index += 1) {
-        const left = index * 2;
-        const right = left + 1;
-        const nextLeft = left + 2;
-        const nextRight = left + 3;
-        const candidate = [left, right, nextLeft, right, nextRight, nextLeft];
-        for (let face = 0; face < candidate.length; face += 3) {
-            const triangle = candidate.slice(face, face + 3);
-            const winding = upward(vertices[triangle[0]], vertices[triangle[1]], vertices[triangle[2]]);
-            if (Math.abs(winding) <= EPSILON) throw new TypeError("Road surface contains a degenerate strip triangle.");
-            indices.push(...(winding > 0 ? triangle : [triangle[0], triangle[2], triangle[1]]));
-        }
-    }
     const laneCenterlines = Array.from({ length: roadLaneCount(edge) }, (_, laneIndex) => buildLaneCenterline(edge, laneIndex, samples));
     return {
-        vertices,
-        indices,
-        leftBoundary,
-        rightBoundary,
+        vertices: strip.vertices,
+        indices: strip.indices,
+        leftBoundary: strip.leftBoundary,
+        rightBoundary: strip.rightBoundary,
         carriagewayLeft,
         carriagewayRight,
         laneCenterlines,
-        bounds: boundsOf(vertices),
+        bounds: boundsOf(strip.vertices),
     };
 }
 

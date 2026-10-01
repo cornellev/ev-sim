@@ -209,8 +209,8 @@ export function AssetPane({ data }) {
 
     const beginFiles = async (fileList, reimportAsset = null) => {
         const files = await Promise.all([...fileList].map(async (file) => ({ path: pathOf(file), bytes: new Uint8Array(await file.arrayBuffer()) })));
-        const entries = files.map((file) => file.path).filter((filePath) => /\.(gltf|glb)$/i.test(filePath));
-        if (entries.length === 0) { setMessage("Select a GLTF or GLB model."); return; }
+        const entries = files.map((file) => file.path).filter((filePath) => /\.(gltf|glb|obj|stl|ply)$/i.test(filePath));
+        if (entries.length === 0) { setMessage("Select a GLTF, GLB, OBJ, STL, or PLY model."); return; }
         setPendingImport({ files, entries, entryPath: entries.length === 1 ? entries[0] : "", reimportAsset });
     };
 
@@ -506,7 +506,7 @@ export function AssetPane({ data }) {
                     ref={fileInputRef}
                     type="file"
                     multiple
-                    accept=".gltf,.glb,.bin,image/*,.ktx2"
+                    accept=".gltf,.glb,.bin,.obj,.mtl,.stl,.ply,image/*,.ktx2"
                     aria-label="Import"
                     tabIndex={canImport ? undefined : -1}
                     className="sr-only"

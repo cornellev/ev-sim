@@ -1,6 +1,6 @@
+import { normalizedSelectedPath, resolveDependency } from "./PackagePaths.js";
 import { sha256ExactBytes } from "../simulation/visual/VisualLayer.js";
-import { GLB_BIN_CHUNK, GLB_JSON_CHUNK, GLB_MAGIC, readGlb } from "../simulation/visual/GlbContainer.js";
-const JSON_CHUNK = GLB_JSON_CHUNK;
+import { GLB_BIN_CHUNK, readGlb, writeGlbChunks } from "../simulation/visual/GlbContainer.js";
 const BIN_CHUNK = GLB_BIN_CHUNK;
 const PNG_SIGNATURE = Object.freeze([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const KTX2_IDENTIFIER = Object.freeze([
@@ -24,7 +24,7 @@ function startsWith(bytes, prefix) {
     return prefix.every((value, index) => bytes[index] === value);
 }
 
-function sniffImageMediaType(bytes) {
+export function sniffImageMediaType(bytes) {
     if (bytes.length >= 8 && startsWith(bytes, PNG_SIGNATURE)) return "image/png";
     if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xd8) return "image/jpeg";
     if (bytes.length >= 12 && startsWith(bytes, KTX2_IDENTIFIER)) return "image/ktx2";
@@ -46,32 +46,6 @@ function decodeDataUri(uri) {
     const match = String(uri).match(DATA_URI_PATTERN);
     if (!match || match[2].length % 4 !== 0) throw new Error("Embedded data URI must be a canonical base64 data URI.");
     return { mediaType: match[1], bytes: decodeBase64(match[2]) };
-}
-
-function normalizedSelectedPath(value) {
-    let text = String(value ?? "").replaceAll("\\", "/");
-    try { text = decodeURIComponent(text); } catch { throw new Error(`Import path ${JSON.stringify(value)} has invalid URI escapes.`); }
-    if (!text || text.startsWith("/") || /^[A-Za-z]:\//.test(text) || /^[a-z][a-z0-9+.-]*:/i.test(text)) throw new Error(`Import path ${JSON.stringify(value)} must be package-relative.`);
-    const parts = [];
-    for (const part of text.split("/")) {
-        if (!part || part === ".") continue;
-        if (part === "..") {
-            if (parts.length === 0) throw new Error(`Import path ${JSON.stringify(value)} traverses outside the package.`);
-            parts.pop();
-        } else parts.push(part);
-    }
-    if (parts.length === 0) throw new Error("Import path cannot resolve to the package root.");
-    return parts.join("/");
-}
-
-function resolveDependency(entryPath, uri) {
-    const raw = String(uri ?? "");
-    if (raw.startsWith("data:")) return null;
-    if (!raw || raw.startsWith("/") || raw.startsWith("\\") || raw.startsWith("//") || /^[A-Za-z]:[\\/]/.test(raw) || /^[a-z][a-z0-9+.-]*:/i.test(raw)) {
-        throw new Error(`External GLTF URI ${JSON.stringify(raw)} is not a selected package path.`);
-    }
-    const base = entryPath.includes("/") ? entryPath.slice(0, entryPath.lastIndexOf("/") + 1) : "";
-    return normalizedSelectedPath(`${base}${raw}`);
 }
 
 function mediaTypeFor(path) {
@@ -101,26 +75,7 @@ function parseGlb(bytes) {
 }
 
 function encodeGlb(json, chunks) {
-    const encoded = new TextEncoder().encode(JSON.stringify(json));
-    const jsonLength = Math.ceil(encoded.length / 4) * 4;
-    const total = 12 + 8 + jsonLength + chunks.reduce((sum, chunk) => sum + 8 + chunk.bytes.length, 0);
-    const output = new Uint8Array(total);
-    const view = new DataView(output.buffer);
-    view.setUint32(0, GLB_MAGIC, true);
-    view.setUint32(4, 2, true);
-    view.setUint32(8, total, true);
-    view.setUint32(12, jsonLength, true);
-    view.setUint32(16, JSON_CHUNK, true);
-    output.fill(0x20, 20, 20 + jsonLength);
-    output.set(encoded, 20);
-    let offset = 20 + jsonLength;
-    for (const chunk of chunks) {
-        view.setUint32(offset, chunk.bytes.length, true);
-        view.setUint32(offset + 4, chunk.type, true);
-        output.set(chunk.bytes, offset + 8);
-        offset += 8 + chunk.bytes.length;
-    }
-    return output;
+    return writeGlbChunks(json, chunks);
 }
 
 function glbBinBytes(chunks) {

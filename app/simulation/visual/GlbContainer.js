@@ -90,3 +90,39 @@ export function readGlb(bytes, options = {}) {
         chunks,
     };
 }
+
+/**
+ * Write one glTF 2.0 GLB. JSON is space-padded to 4 bytes. `binChunk` is
+ * stored as given; callers pad it when the glTF chunk alignment rule applies.
+ * @param {object} json
+ * @param {Uint8Array|null} [binChunk]
+ */
+export function writeGlb(json, binChunk = null) {
+    const chunks = binChunk == null ? [] : [{ type: GLB_BIN_CHUNK, bytes: asBytes(binChunk) }];
+    return writeGlbChunks(json, chunks);
+}
+
+/** Write a GLB whose chunk list follows the JSON chunk, bytes unchanged. */
+export function writeGlbChunks(json, chunks = []) {
+    const encoded = new TextEncoder().encode(JSON.stringify(json));
+    const jsonLength = Math.ceil(encoded.length / 4) * 4;
+    const total = 12 + 8 + jsonLength + chunks.reduce((sum, chunk) => sum + 8 + chunk.bytes.length, 0);
+    const output = new Uint8Array(total);
+    const view = new DataView(output.buffer);
+    view.setUint32(0, GLB_MAGIC, true);
+    view.setUint32(4, 2, true);
+    view.setUint32(8, total, true);
+    view.setUint32(12, jsonLength, true);
+    view.setUint32(16, GLB_JSON_CHUNK, true);
+    output.fill(0x20, 20, 20 + jsonLength);
+    output.set(encoded, 20);
+    let offset = 20 + jsonLength;
+    for (const chunk of chunks) {
+        const bytes = asBytes(chunk.bytes);
+        view.setUint32(offset, bytes.length, true);
+        view.setUint32(offset + 4, chunk.type, true);
+        output.set(bytes, offset + 8);
+        offset += 8 + bytes.length;
+    }
+    return output;
+}

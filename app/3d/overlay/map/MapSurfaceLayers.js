@@ -81,6 +81,19 @@ function dividerStroke(divider) {
     };
 }
 
+function CompiledJunctions({ plan, viewport, size }) {
+    return plan.junctions.map((junction) => (
+        <polygon
+            key={`junction-${junction.node.id}`}
+            data-intersection-id={junction.node.id}
+            data-junction-kind={junction.surface.kind}
+            points={screenPoints(junction.surface.vertices, viewport, size)}
+            fill="#52525b"
+            stroke="none"
+        />
+    ));
+}
+
 function CompiledRoadEdges({ plan, viewport, size, mapSelection, showDetail }) {
     return plan.edges.map((entry) => {
         const selected = mapSelection?.type === MAP_SELECTION_TYPES.ROAD && mapSelection.id === entry.edge.id;
@@ -199,7 +212,14 @@ function GridLines({ viewport, size, visible }) {
 
 function RoadEdges({ documentSnapshot, viewport, size, layers, mapSelection, showDetail, compiledPlan }) {
     if (!layers.roads) return null;
-    if (compiledPlan) return <CompiledRoadEdges plan={compiledPlan} viewport={viewport} size={size} mapSelection={mapSelection} showDetail={showDetail} />;
+    if (compiledPlan) {
+        return (
+            <>
+                <CompiledJunctions plan={compiledPlan} viewport={viewport} size={size} />
+                <CompiledRoadEdges plan={compiledPlan} viewport={viewport} size={size} mapSelection={mapSelection} showDetail={showDetail} />
+            </>
+        );
+    }
 
     return documentSnapshot.roads.edges.map((edge) => {
         const endpoints = getEdgeRenderEndpoints(documentSnapshot, edge);
