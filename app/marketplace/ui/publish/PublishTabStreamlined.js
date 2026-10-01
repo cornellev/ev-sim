@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from "react";
-import { IconBox, IconRefresh, IconTrash } from "@tabler/icons-react";
+import { IconBox, IconRefresh } from "@tabler/icons-react";
 
 import {
     cancelMarketplacePublishJob,
@@ -27,6 +27,7 @@ import { AsyncState, Button, DialogSurface, NativeSelect, StatusMessage } from "
 import LocalContentBrowser from "./LocalContentBrowser.js";
 import PublicationDraftEditor from "./PublicationDraftEditorStreamlined.js";
 import PublicationReviewDialog from "./PublicationReviewDialogStreamlined.js";
+import { displayKind, draftStateLabel } from "../presentation.js";
 import styles from "../MarketplaceWorkspace.module.css";
 
 const INITIAL_QUERY = Object.freeze({ q: "", contentKind: "", status: "all", sort: "name", direction: "asc", offset: 0, limit: 50 });
@@ -171,17 +172,21 @@ export default function PublishTabStreamlined({ onOpenPublished }) {
     const selected = draftsDocument.drafts.find((entry) => entry.draftId === selectedDraftId) ?? null;
     const readyIdentities = readiness.identities.filter((entry) => entry.status === "ready");
     return <div className={styles.publishWorkspace}>
-        {error && <div className={styles.publishGlobalStatus}><StatusMessage tone="danger" title="Publisher operation failed">{error}</StatusMessage></div>}
-        {!readiness.ready && <div className={styles.publishGlobalStatus}><StatusMessage tone="warning" title="Publishing is not configured">Connect a backend-configured source or ask the Marketplace operator to provision a publishing identity.</StatusMessage></div>}
+        {(error || !readiness.ready) && <div className={styles.publishGlobalStatus}>
+            {error && <StatusMessage tone="danger" title="Publisher operation failed">{error}</StatusMessage>}
+            {!readiness.ready && <StatusMessage tone="warning" title="Publishing is not configured">Connect a backend-configured source or ask the Marketplace operator to provision a publishing identity.</StatusMessage>}
+        </div>}
+        <div className={styles.publishWorkspaceBody}>
         <LocalContentBrowser inventory={inventory} query={query} onQueryChange={setQuery} onCreate={createDraft} assetPackDraft={selected?.contentKind === "asset-pack" ? selected : null} onAddToAssetPack={addAssetRoot} disabled={!profileId || busy} />
         <section className={`${styles.publishColumn} ${styles.publishQueueColumn}`} aria-labelledby="publication-drafts-heading">
             <header className={styles.publishColumnHeader}><div><h2 id="publication-drafts-heading">Drafts</h2><p>Saved automatically</p></div><Button size="compact" onClick={loadContext} aria-label="Refresh publication drafts"><IconRefresh size={14} /></Button></header>
             {readyIdentities.length > 1 && <div className={styles.publishProfileBar}><NativeSelect aria-label="Publish to" value={profileId} onChange={(event) => setProfileId(event.target.value)}>{readyIdentities.map((identity) => <option value={identity.profileId} key={identity.profileId}>{identity.name} · {identity.sourceName}</option>)}</NativeSelect></div>}
             <div className={styles.publishQueueActions}><Button size="compact" disabled={!profileId} onClick={createCollection}><IconBox size={14} /> New collection</Button></div>
-            <div className={styles.publishList}>{draftsDocument.drafts.map((draft) => <button type="button" className={styles.draftButton} data-selected={selectedDraftId === draft.draftId || undefined} key={draft.draftId} onClick={() => setSelectedDraftId(draft.draftId)}><span className={styles.kindLabel}>{draft.contentKind}</span><strong>{draft.item.displayName}</strong><small>{draft.release.releaseVersion}</small><span className={styles.draftState}>{draft.state}</span></button>)}{draftsDocument.drafts.length === 0 ? <div className={styles.publishEmptyState}><IconTrash size={22} /><p>Select local content to start a publication.</p></div> : null}</div>
+            <div className={styles.publishList}>{draftsDocument.drafts.map((draft) => <button type="button" className={styles.draftButton} data-selected={selectedDraftId === draft.draftId || undefined} key={draft.draftId} onClick={() => setSelectedDraftId(draft.draftId)}><span className={styles.kindLabel}>{displayKind(draft.contentKind)}</span><strong>{draft.item.displayName}</strong><small>{draft.release.releaseVersion}</small><span className={styles.draftState}>{draftStateLabel(draft.state)}</span></button>)}{draftsDocument.drafts.length === 0 ? <div className={styles.publishEmptyState}><IconBox size={22} /><p>Select local content to start a publication.</p></div> : null}</div>
         </section>
         <PublicationDraftEditor key={selected?.draftId ?? "empty"} draft={selected} drafts={draftsDocument.drafts} releaseOptions={releaseOptions} onSave={saveDraft} onDelete={setDeleteTarget} onPrepare={prepare} onUploadPreview={uploadPreview} onRemovePreview={removePreview} onRemoveAssetRoot={removeAssetRoot} busy={busy} error={null} />
         <PublicationReviewDialog plan={plan} job={job} open={Boolean(plan)} onOpenChange={(open) => !open && setPlan(null)} onCommit={commit} onCancel={cancel} onResume={resume} onReplan={replan} onOpenPublished={onOpenPublished} busy={busy} />
+        </div>
         <DialogSurface open={Boolean(deleteTarget)} onOpenChange={(open) => !open && setDeleteTarget(null)} title="Delete publication draft" description="This removes only the local draft. Published content is unchanged." footer={<><Button onClick={() => setDeleteTarget(null)}>Keep draft</Button><Button variant="danger" onClick={deleteDraft}>Delete draft</Button></>}><p>{deleteTarget?.item.displayName}</p></DialogSurface>
     </div>;
 }

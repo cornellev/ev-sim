@@ -29,7 +29,9 @@ test("workspace switcher reaches every workspace at laptop height", async ({ pag
     await page.keyboard.press("Escape");
     const dialog = page.getByRole("dialog", { name: "Workspaces" });
     await expect(dialog).toBeVisible();
-    await expect(dialog.getByRole("button", { name: /^Marketplace/i })).toBeVisible();
+    const rail = dialog.getByRole("navigation", { name: "Workspace dialog sections" });
+    await expect(rail.getByRole("button", { name: "Marketplace", exact: true })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: /Browse verified registry catalogs/i })).toHaveCount(0);
     await expect(dialog.getByRole("button")).toHaveCount(17);
     await expect(dialog.getByRole("button", { name: /^Run configuration/i })).toBeVisible();
 

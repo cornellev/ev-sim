@@ -304,6 +304,10 @@ export function removeMarketplacePublicationDraft(draftId, expectedRevision, { s
     return requestJson(`/api/marketplace/publisher/drafts/${encodeURIComponent(draftId)}?${query}`, { method: "DELETE", signal });
 }
 
+export function publicationPreviewUrl(draftId, digest) {
+    return `/api/marketplace/publisher/drafts/${encodeURIComponent(draftId)}/previews/${encodeURIComponent(digest)}`;
+}
+
 export function uploadMarketplacePublicationPreview(draftId, file, alt, expectedRevision, { signal } = {}) {
     const query = new URLSearchParams({ alt, expectedRevision: String(expectedRevision) });
     return requestRaw(`/api/marketplace/publisher/drafts/${encodeURIComponent(draftId)}/previews?${query}`, {

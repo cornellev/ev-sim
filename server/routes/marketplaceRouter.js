@@ -207,6 +207,19 @@ export function createMarketplaceRouter(service, {
         response.json(await service.removePublicationPreview(request.params.draftId, request.params.sha256, queryRevision(request)));
     }));
 
+    router.get("/publisher/drafts/:draftId/previews/:sha256", handler(async (request, response) => {
+        exactQuery(request, []);
+        const result = await service.readPublicationPreview(request.params.draftId, request.params.sha256);
+        response.set({
+            "Cache-Control": "private, no-store",
+            "Content-Type": result.descriptor.mediaType,
+            "Content-Length": String(result.bytes.byteLength),
+            "X-Content-Type-Options": "nosniff",
+            "Cross-Origin-Resource-Policy": "same-origin",
+        });
+        response.send(result.bytes);
+    }));
+
     router.post("/publisher/plans", handler(async (request, response) => {
         const body = exactBody(request.body, ["draftId", "draftRevision"]);
         bodyRevision(body.draftRevision, "$.draftRevision");
@@ -468,7 +481,7 @@ export function createMarketplaceRouter(service, {
 
     router.get("/discover", handler(async (request, response) => {
         const query = exactQuery(request, [
-            "q", "track", "contentKind", "sourceId", "publisherId", "license", "offset", "limit",
+            "q", "track", "contentKind", "sourceId", "publisherId", "license", "sort", "offset", "limit",
         ]);
         try {
             response.json(await service.searchCatalog(query));

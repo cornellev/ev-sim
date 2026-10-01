@@ -1544,6 +1544,12 @@ html[data-perspective-view="idle"] #canvas-container canvas {
   background: var(--slate-surface-2);
 }
 
+.sf-workspace-menu__rail-destination[aria-current="page"] {
+  background: var(--slate-surface-3);
+  color: var(--slate-fg);
+  box-shadow: inset 2px 0 0 var(--slate-ink);
+}
+
 .sf-workspace-menu__pane {
   min-width: 0;
   min-height: 0;

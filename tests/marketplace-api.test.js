@@ -165,6 +165,11 @@ test("MKT-06 read and source APIs enforce verification, confinement, revisions, 
     assert.equal(unknown.status, 422);
     const overLimit = await request(origin, "/api/marketplace/discover?limit=101");
     assert.equal(overLimit.status, 422);
+    const byVersion = await request(origin, "/api/marketplace/discover?sort=version");
+    assert.equal(byVersion.status, 200, JSON.stringify(byVersion.body));
+    assert.equal(byVersion.body.query.sort, "version");
+    const popular = await request(origin, "/api/marketplace/discover?sort=popular");
+    assert.equal(popular.status, 422);
 
     const itemPath = `/api/marketplace/items/${added.body.source.sourceId}/${registry.item.itemId}`;
     const detail = await request(origin, itemPath);

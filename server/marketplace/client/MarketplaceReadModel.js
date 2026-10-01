@@ -1,3 +1,5 @@
+import semver from "semver";
+
 import { compareUtf8 } from "../../../app/math/compareUtf8.js";
 import { MARKETPLACE_CONTENT_KINDS, MARKETPLACE_TRACKS } from "../MarketplaceContract.js";
 import {
@@ -6,6 +8,8 @@ import {
     assertReleaseVersion,
 } from "../MarketplaceFormats.js";
 
+export const MARKETPLACE_QUERY_SORTS = Object.freeze(["source", "name", "kind", "version"]);
+
 export const MARKETPLACE_QUERY_DEFAULTS = Object.freeze({
     q: "",
     track: "stable",
@@ -13,6 +17,7 @@ export const MARKETPLACE_QUERY_DEFAULTS = Object.freeze({
     sourceId: null,
     publisherId: null,
     license: null,
+    sort: "source",
     offset: 0,
     limit: 50,
 });
@@ -43,10 +48,12 @@ export function normalizeMarketplaceQuery(value = {}) {
     const publisherId = boundedText(value.publisherId, "publisherId", 255);
     if (publisherId) assertMarketplaceId(publisherId, "publisherId");
     const license = boundedText(value.license, "license", 1024);
+    const sort = boundedText(value.sort, "sort", 16) ?? MARKETPLACE_QUERY_DEFAULTS.sort;
+    if (!MARKETPLACE_QUERY_SORTS.includes(sort)) throw new TypeError("sort must be source, name, kind, or version.");
     const offset = nonNegativeInteger(value.offset, "offset", MARKETPLACE_QUERY_DEFAULTS.offset);
     const limit = nonNegativeInteger(value.limit, "limit", MARKETPLACE_QUERY_DEFAULTS.limit);
     if (limit < 1 || limit > MARKETPLACE_QUERY_MAX_LIMIT) throw new TypeError(`limit must be from 1 through ${MARKETPLACE_QUERY_MAX_LIMIT}.`);
-    return Object.freeze({ q, track, contentKind, sourceId, publisherId, license, offset, limit });
+    return Object.freeze({ q, track, contentKind, sourceId, publisherId, license, sort, offset, limit });
 }
 
 export function selectTrackedRelease(catalog, itemId, track = "stable") {
@@ -145,12 +152,32 @@ export function buildMarketplaceFacets(entries) {
     });
 }
 
-export function sortCatalogEntries(entries) {
-    return [...entries].sort((left, right) => left.source.priority - right.source.priority
+function compareReleaseVersion(left, right) {
+    const leftValid = semver.valid(left);
+    const rightValid = semver.valid(right);
+    if (leftValid && rightValid) return semver.rcompare(left, right);
+    if (leftValid) return -1;
+    if (rightValid) return 1;
+    return compareUtf8(left, right);
+}
+
+export function sortCatalogEntries(entries, sort = "source") {
+    const tie = (left, right) => compareUtf8(left.item.itemId, right.item.itemId)
+        || (left.source.priority - right.source.priority)
         || compareUtf8(left.source.sourceId, right.source.sourceId)
-        || compareUtf8(left.item.displayName, right.item.displayName)
-        || compareUtf8(left.item.itemId, right.item.itemId)
-        || compareUtf8(left.release.releaseVersion, right.release.releaseVersion));
+        || compareUtf8(left.release.releaseVersion, right.release.releaseVersion);
+    return [...entries].sort((left, right) => {
+        if (sort === "name") return compareUtf8(left.item.displayName, right.item.displayName) || tie(left, right);
+        if (sort === "kind") return compareUtf8(left.item.contentKind, right.item.contentKind)
+            || compareUtf8(left.item.displayName, right.item.displayName)
+            || tie(left, right);
+        if (sort === "version") return compareReleaseVersion(left.release.releaseVersion, right.release.releaseVersion) || tie(left, right);
+        return left.source.priority - right.source.priority
+            || compareUtf8(left.source.sourceId, right.source.sourceId)
+            || compareUtf8(left.item.displayName, right.item.displayName)
+            || compareUtf8(left.item.itemId, right.item.itemId)
+            || compareUtf8(left.release.releaseVersion, right.release.releaseVersion);
+    });
 }
 
 export function paginateMarketplaceEntries(entries, query) {

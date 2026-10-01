@@ -1483,6 +1483,15 @@ Local evidence on 2026-09-28:
 
 ## Decision log
 
+### 2026-09-30 — Marketplace workspace presentation stays outside the contract
+
+Discover, Library, and Publish presentation work uses the existing local
+read models. Catalog sort is a discover query parameter with values `source`,
+`name`, `kind`, and `version`. Omitted sort stays the previous source-priority
+order. There is no release publish timestamp, so “recently updated” is not a
+sort. Draft preview reads are a local publisher route. No public marketplace
+schema, trust rule, semantic hash, or MKT milestone changed.
+
 ### 2026-09-30 — Pin onboarding and publishing authority in backend configuration
 
 Ordinary source setup accepts only a registry URL. The backend resolves that

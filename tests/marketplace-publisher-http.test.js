@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import express from "express";
 import sharp from "sharp";
 
 import { verifyPluginPackage } from "../app/plugin/PluginPackage.js";
@@ -14,6 +15,7 @@ import { marketplaceDocumentBytes } from "../server/marketplace/MarketplaceContr
 import { canonicalMarketplaceBytes } from "../server/marketplace/MarketplaceJson.js";
 import { publisherKeyId, publisherPublicKey, verifyMarketplaceReleaseEnvelope } from "../server/marketplace/PublisherSignatures.js";
 import { MarketplaceService } from "../server/marketplace/client/MarketplaceService.js";
+import { createMarketplaceRouter } from "../server/routes/marketplaceRouter.js";
 import { MarketplaceTrustClient } from "../server/marketplace/client/MarketplaceTrustClient.js";
 import { RegistryAuthStore } from "../server/marketplace/registry/RegistryAuthStore.js";
 import { MarketplaceRegistryHttpServer } from "../server/marketplace/registry/RegistryHttpServer.js";
@@ -195,8 +197,32 @@ test("MKT-14 plugin publication prepares without mutation and commits an exact s
         expectedRevision: draftResult.draft.revision,
         release,
     });
+    const png = await sharp({ create: { width: 8, height: 6, channels: 4, background: "#4b6b5a" } }).png().toBuffer();
+    const previewed = await service.addPublicationPreview(updated.draft.draftId, png, {
+        mediaType: "image/png",
+        alt: "Listing preview",
+        expectedRevision: updated.draft.revision,
+    });
+    const digest = previewed.draft.item.previews.at(-1).sha256;
+    const app = express();
+    app.use("/api/marketplace", createMarketplaceRouter(service));
+    const httpServer = await new Promise((resolve, reject) => {
+        const server = app.listen(0, "127.0.0.1");
+        server.once("error", reject);
+        server.once("listening", () => resolve(server));
+    });
+    t.after(() => new Promise((resolve) => httpServer.close(resolve)));
+    const origin = `http://127.0.0.1:${httpServer.address().port}`;
+    const previewResponse = await fetch(`${origin}/api/marketplace/publisher/drafts/${updated.draft.draftId}/previews/${digest}`);
+    assert.equal(previewResponse.status, 200);
+    assert.equal(previewResponse.headers.get("content-type"), "image/png");
+    assert.equal(previewResponse.headers.get("x-content-type-options"), "nosniff");
+    assert.equal(Buffer.from(await previewResponse.arrayBuffer()).equals(png), true);
+    const missingPreview = await fetch(`${origin}/api/marketplace/publisher/drafts/${updated.draft.draftId}/previews/${"ab".repeat(32)}`);
+    assert.equal(missingPreview.status, 404);
+    const cleared = await service.removePublicationPreview(updated.draft.draftId, digest, previewed.draft.revision);
     const before = await fetch(`${baseUrl}v1/catalog`).then((response) => response.json());
-    const prepared = await service.preparePublication({ draftId: updated.draft.draftId, draftRevision: updated.draft.revision });
+    const prepared = await service.preparePublication({ draftId: cleared.draft.draftId, draftRevision: cleared.draft.revision });
     const { plan, job } = prepared;
     assert.match(plan.entries[0].release.artifact.sha256, /^[a-f0-9]{64}$/u);
     assert.equal(plan.entries[0].release.executable.packageHash, resource.packageHash);

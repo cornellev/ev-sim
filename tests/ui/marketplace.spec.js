@@ -183,6 +183,18 @@ test("MKT-16 source settings expose one URL field while retained sources remain 
     const preview = details.getByRole("img", { name: "Control Pack preview" });
     await expect(preview).toBeVisible();
     await expect.poll(() => preview.evaluate((image) => image.complete && image.naturalWidth > 0)).toBeTruthy();
+    const filters = page.getByRole("complementary", { name: "Marketplace filters" });
+    const results = page.getByRole("region", { name: "Marketplace results" });
+    for (const region of [filters, results, details]) {
+        const box = await region.boundingBox();
+        assert.ok(box && box.width > 80 && box.x >= 0 && box.x + box.width <= 1281);
+    }
+    await page.setViewportSize({ width: 800, height: 720 });
+    await expect(page.getByRole("button", { name: "Filters", exact: true })).toBeVisible();
+    await details.scrollIntoViewIfNeeded();
+    const narrow = await details.boundingBox();
+    assert.ok(narrow && narrow.width > 200 && narrow.x >= 0 && narrow.x + narrow.width <= 801);
+    await page.setViewportSize({ width: 1280, height: 720 });
 
     await page.getByRole("button", { name: "Open workspace switcher" }).click();
     const menu = page.getByRole("dialog", { name: "Workspaces" });
@@ -198,14 +210,14 @@ test("MKT-16 source settings expose one URL field while retained sources remain 
     await expect(dialog.getByRole("button", { name: "Connect" })).toBeVisible();
     await dialog.getByRole("button", { name: "Cancel" }).click();
     const card = page.getByRole("article", { name: "Playwright Registry marketplace source" });
-    await expect(card.getByText("ready", { exact: true })).toBeVisible();
+    await expect(card.getByText("Ready", { exact: true })).toBeVisible();
 
     await stopRegistry();
     await card.getByRole("button", { name: "Sync now" }).click();
     await expect(page.getByText("Source needs attention")).toBeVisible();
     await page.getByRole("button", { name: "Done" }).click();
     await expect(page.getByRole("button", { name: /Control Pack/u })).toBeVisible();
-    await expect(page.getByText("cached metadata", { exact: true })).toBeVisible();
+    await expect(page.getByText("Cached catalog", { exact: true })).toBeVisible();
 
     await page.getByRole("button", { name: "Settings" }).click();
     await card.getByRole("button", { name: "Remove" }).click();

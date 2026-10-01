@@ -865,16 +865,21 @@ export class MarketplaceService {
                 fresh: current.fresh && health.status === MARKETPLACE_SOURCE_HEALTH.READY,
             }));
         }
-        const sorted = sortCatalogEntries(entries);
+        const sorted = sortCatalogEntries(entries, query.sort);
         const filtered = filterCatalogEntries(sorted, query);
+        const kindScope = filterCatalogEntries(sorted, { ...query, contentKind: null });
         const paginated = paginateMarketplaceEntries(filtered, query);
+        const facets = buildMarketplaceFacets(sorted);
         return Object.freeze({
             sourcesRevision: snapshot.revision,
             sources: Object.freeze(publicSources),
             query,
             page: paginated.page,
             entries: Object.freeze(paginated.entries),
-            facets: buildMarketplaceFacets(sorted),
+            facets: Object.freeze({
+                ...facets,
+                contentKinds: buildMarketplaceFacets(kindScope).contentKinds,
+            }),
         });
     }
 
@@ -1311,6 +1316,21 @@ export class MarketplaceService {
         this.#requirePublisherWorkspace();
         assertSha256(digest, "digest");
         return this.publicationDraftStore.removePreview(draftId, digest, expectedRevision);
+    }
+
+    async readPublicationPreview(draftId, digest) {
+        this.#assertOpen();
+        this.#requirePublisherWorkspace();
+        assertSha256(digest, "digest");
+        const draft = this.publicationDraftStore.get(draftId);
+        if (!draft) throw marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_NOT_FOUND, "Publication draft was not found.");
+        const descriptor = draft.item.previews.find((entry) => entry.sha256 === digest);
+        if (!descriptor) throw marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_NOT_FOUND, "Publication preview was not found.");
+        const bytes = Buffer.from(await readRegularBytes(this.publicationPlanner.previewPath(digest), { maxBytes: MARKETPLACE_LIMITS.previewBytes }));
+        if (bytes.byteLength !== descriptor.sizeBytes || hashMarketplaceBytes(bytes) !== descriptor.sha256) {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.ARTIFACT_HASH_MISMATCH, "Publication preview bytes do not match the stored descriptor.");
+        }
+        return Object.freeze({ descriptor, bytes });
     }
 
     async createPublicationPlan(input) {

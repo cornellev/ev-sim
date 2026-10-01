@@ -39,6 +39,7 @@ export class MarketplaceLibraryReadModel {
                 registryId: installation.registryId,
                 itemId: installation.release.itemId,
                 displayName: item?.displayName ?? installation.release.itemId,
+                summary: item?.summary ?? "",
                 contentKind: item?.contentKind ?? null,
                 releaseVersion: installation.release.releaseVersion,
                 artifactSha256: installation.release.artifactSha256,

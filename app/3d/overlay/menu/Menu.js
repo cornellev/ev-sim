@@ -34,6 +34,15 @@ const DIALOG_SECTIONS = [
     { id: "settings", label: "Settings", icon: IconAdjustments, disabled: true },
 ];
 
+function railSections(marketplaceAvailable) {
+    const settings = DIALOG_SECTIONS.find((section) => section.id === "settings");
+    return [
+        ...DIALOG_SECTIONS.filter((section) => section.id !== "settings"),
+        ...(marketplaceAvailable ? [{ id: "marketplace", label: "Marketplace", icon: IconShoppingBag, destination: true }] : []),
+        settings,
+    ];
+}
+
 export default function Menu({
     activeView = APP_VIEWS.SCRIPTING,
     activeThreeDMode = THREE_D_MODES.SIMULATION,
@@ -56,6 +65,7 @@ export default function Menu({
 }) {
     const selectedRef = useRef(null);
     const [pane, setPane] = useState("workspaces");
+    const marketplaceActive = activeView === APP_VIEWS.MARKETPLACE;
     const selectPane = (id) => {
         const section = DIALOG_SECTIONS.find((entry) => entry.id === id);
         if (!section || section.disabled) return;
@@ -72,7 +82,6 @@ export default function Menu({
                 { key: "scenarios", label: "Scenarios", hint: "Create test scenarios", icon: IconRoute, active: activeView === APP_VIEWS.SCENARIOS, onSelect: onScenarios },
                 { key: "experiments", label: "Experiment Suite", hint: "Experiment with scenarios", icon: IconFlask2, active: activeView === APP_VIEWS.EXPERIMENTS, onSelect: onExperiments },
                 { key: "headless-runs", label: "Headless Runs", hint: "Queue and monitor server runs", icon: IconTerminal2, active: activeView === APP_VIEWS.HEADLESS_RUNS, onSelect: onHeadlessRuns },
-                ...(marketplaceAvailable ? [{ key: "marketplace", label: "Marketplace", hint: "Browse verified registry catalogs", icon: IconShoppingBag, active: activeView === APP_VIEWS.MARKETPLACE, onSelect: onMarketplace }] : []),
             ],
         },
         {
@@ -100,8 +109,6 @@ export default function Menu({
         onHeadlessRuns,
         onEnvironmentEditor,
         onLogs,
-        marketplaceAvailable,
-        onMarketplace,
         onReplay,
         onScripting,
         onSimulation,
@@ -133,8 +140,23 @@ export default function Menu({
                     </header>
                     <div className="sf-workspace-menu__shell">
                         <nav className="sf-workspace-menu__rail" aria-label="Workspace dialog sections">
-                            {DIALOG_SECTIONS.map((section) => {
+                            {railSections(marketplaceAvailable).map((section) => {
                                 const Icon = section.icon;
+                                if (section.destination) {
+                                    return (
+                                        <IconButton
+                                            key={section.id}
+                                            ref={marketplaceActive ? selectedRef : undefined}
+                                            label={section.label}
+                                            tooltip={section.label}
+                                            className="sf-workspace-menu__rail-destination"
+                                            aria-current={marketplaceActive ? "page" : undefined}
+                                            onClick={() => marketplaceActive ? onClose?.() : onMarketplace?.()}
+                                        >
+                                            <Icon {...ICON_PROPS} aria-hidden="true" />
+                                        </IconButton>
+                                    );
+                                }
                                 const active = pane === section.id;
                                 return (
                                     <IconButton

@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { IconLayoutGrid } from '@tabler/icons-react';
 import TotalScene from './3d/Scene';
 import Scripting from './scripting/Scripting';
@@ -39,6 +40,30 @@ import {
 import { usePerspectiveViewActive } from './3d/camera/perspectiveViewBridge';
 import RevisionNotice from './revision/RevisionNoticeDialog';
 import { MARKETPLACE_RELOAD_REQUIRED_EVENT } from './plugin/browser/BrowserMarketplacePolicy';
+
+function MarketplaceReloadAlert() {
+    const [host, setHost] = useState(null);
+
+    useEffect(() => {
+        const dialogs = document.querySelectorAll(".sf-dialog");
+        const dialog = dialogs[dialogs.length - 1];
+        setHost(dialog?.querySelector(".sf-dialog__body") ?? null);
+    }, []);
+
+    const alert = (
+        <div
+            className="fixed left-1/2 top-4 z-[80] flex max-w-[720px] -translate-x-1/2 items-center gap-3 rounded-[4px] border border-red-300/30 bg-red-950/95 px-4 py-3 text-sm text-red-50 shadow-[0_16px_44px_rgba(0,0,0,0.4)]"
+            style={host ? { position: "relative", top: "auto", left: "auto", transform: "none", maxWidth: "none", marginBottom: 12 } : undefined}
+            role="alert"
+            aria-live="assertive"
+        >
+            <span><strong>Reload required.</strong> Marketplace policy now blocks plugin code used by this open editor. Existing evaluation was not unloaded, but further activation and reset are refused.</span>
+            <button type="button" className="rounded-[3px] border border-red-100/30 px-3 py-1 font-semibold hover:bg-red-100/10 focus:outline-none focus:ring-2 focus:ring-red-100" onClick={() => window.location.reload()}>Reload now</button>
+        </div>
+    );
+
+    return host ? createPortal(alert, host) : alert;
+}
 
 export default function Home() {
     return (
@@ -458,7 +483,7 @@ function HomeContent() {
             )
         }
         </div>
-        {marketplaceReloadRequired && <div className="fixed left-1/2 top-4 z-[80] flex max-w-[720px] -translate-x-1/2 items-center gap-3 rounded-[4px] border border-red-300/30 bg-red-950/95 px-4 py-3 text-sm text-red-50 shadow-[0_16px_44px_rgba(0,0,0,0.4)]" role="alert" aria-live="assertive"><span><strong>Reload required.</strong> Marketplace policy now blocks plugin code used by this open editor. Existing evaluation was not unloaded, but further activation and reset are refused.</span><button type="button" className="rounded-[3px] border border-red-100/30 px-3 py-1 font-semibold hover:bg-red-100/10 focus:outline-none focus:ring-2 focus:ring-red-100" onClick={() => window.location.reload()}>Reload now</button></div>}
+        {marketplaceReloadRequired && <MarketplaceReloadAlert />}
         <DesktopRequired />
         <RevisionNotice />
         </div>

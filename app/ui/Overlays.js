@@ -25,12 +25,13 @@ export function DialogSurface({
     className,
     instant = false,
     showClose = true,
+    onCloseAutoFocus,
 }) {
     return (
         <Dialog.Root open={open} onOpenChange={onOpenChange}>
             <Dialog.Portal>
                 <Dialog.Overlay className="sf-dialog-overlay" data-instant={instant || undefined} />
-                <Dialog.Content className={cx("sf-dialog", className)} data-instant={instant || undefined}>
+                <Dialog.Content className={cx("sf-dialog", className)} data-instant={instant || undefined} onCloseAutoFocus={onCloseAutoFocus}>
                     <header className="sf-dialog__header">
                         <div>
                             <Dialog.Title className="sf-dialog__title">{title}</Dialog.Title>

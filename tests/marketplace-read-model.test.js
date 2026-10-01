@@ -82,12 +82,14 @@ test("MKT-06 normalizes strict read filters and bounds pagination", () => {
         sourceId: null,
         publisherId: null,
         license: null,
+        sort: "source",
         offset: 0,
         limit: 50,
     });
     assert.throws(() => normalizeMarketplaceQuery({ track: "nightly" }), /stable or beta/u);
     assert.throws(() => normalizeMarketplaceQuery({ limit: 101 }), /1 through 100/u);
     assert.throws(() => normalizeMarketplaceQuery({ offset: "-1" }), /non-negative/u);
+    assert.throws(() => normalizeMarketplaceQuery({ sort: "popular" }), /sort must be source, name, kind, or version/u);
 });
 
 test("MKT-06 selects exact signed stable and beta tracks", () => {
@@ -128,6 +130,33 @@ test("MKT-06 preserves duplicate cross-source IDs and orders and paginates deter
     assert.deepEqual(first.page, { offset: 0, limit: 1, total: 2 });
     assert.equal(first.entries[0].source.sourceId, SOURCE_A);
     assert.equal(second.entries[0].source.sourceId, SOURCE_B);
+});
+
+test("MKT-16 sorts catalog entries by name, kind, and release version", () => {
+    const base = entries()[0];
+    const cloned = (patch) => ({
+        ...base,
+        ...patch,
+        source: { ...base.source, ...patch.source },
+        item: { ...base.item, ...patch.item },
+        release: { ...base.release, ...patch.release },
+    });
+    const rows = [
+        base,
+        cloned({
+            key: `${SOURCE_B}:com.example.vehicle:1.2.0`,
+            source: { sourceId: SOURCE_B, name: "Secondary", priority: 20 },
+            item: { displayName: "Alpha Vehicle", contentKind: "vehicle", itemId: "com.example.vehicle" },
+            release: { releaseVersion: "1.2.0", itemId: "com.example.vehicle" },
+        }),
+        cloned({
+            key: `${SOURCE_A}:com.example.shared:3.0.0`,
+            release: { releaseVersion: "3.0.0" },
+        }),
+    ];
+    assert.deepEqual(sortCatalogEntries(rows, "name").map((entry) => entry.item.displayName), ["Alpha Vehicle", "Control Pack", "Control Pack"]);
+    assert.deepEqual(sortCatalogEntries(rows, "kind").map((entry) => entry.item.contentKind), ["plugin", "plugin", "vehicle"]);
+    assert.deepEqual(sortCatalogEntries(rows, "version").map((entry) => entry.release.releaseVersion), ["3.0.0", "1.2.0", "1.0.0"]);
 });
 
 test("MKT-06 projects yanks, freshness, and digest-addressed preview URLs", () => {
