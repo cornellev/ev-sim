@@ -20,6 +20,7 @@ import { isCompiledArtifact, normalizeScriptDocument } from "../../app/scripting
 import { normalizeBindingManifest } from "../../app/scripting/bindings/BindingDocument.js";
 import { normalizeVehicleManifest, validateVehicleManifest } from "../../app/vehicles/VehicleManifest.js";
 import { getBuiltInVehicleManifest } from "../../app/vehicles/BuiltInVehicleManifests.js";
+import { optionalAbortSignal } from "../artifacts/ArtifactVerification.js";
 import { createDeterministicArchiveStream, verifyDeterministicArchive } from "../artifacts/DeterministicArchive.js";
 import {
     ASSET_PACKAGE_BLOB_PREFIX,
@@ -343,6 +344,7 @@ export async function exportRunTemplatePackage({
     output = null,
     signal,
 } = {}) {
+    signal = optionalAbortSignal(signal);
     const captured = await collectRunTemplateClosure({ storageService, manifestId, expectedRevision, pluginReleaseRefs });
     await recheckRunTemplateSnapshot({ storageService, captured });
     const manifest = packageManifest(captured);
@@ -767,6 +769,7 @@ async function verifyStagedRunTemplate(archive, limits) {
 export async function verifyRunTemplatePackage(input, {
     limits: overrides = {}, signal, stagingRoot, stagingDir, retainStaging = true,
 } = {}) {
+    signal = optionalAbortSignal(signal);
     const limits = packageLimits(overrides);
     const source = typeof input === "string" ? createReadStream(input, { signal }) : input;
     const archive = await verifyDeterministicArchive(source, {

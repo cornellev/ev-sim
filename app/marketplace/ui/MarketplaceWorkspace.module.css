@@ -1021,10 +1021,12 @@
 .assetPackBasket code { color: var(--slate-muted); font-size: 10px; overflow-wrap: anywhere; }
 
 .fileButton {
+    position: relative;
     display: inline-flex;
     align-items: center;
     align-self: flex-start;
     gap: 6px;
+    overflow: hidden;
     border: 1px solid var(--market-line);
     border-radius: var(--radius);
     padding: 6px 9px;
@@ -1033,7 +1035,18 @@
     cursor: pointer;
 }
 
-.fileButton input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.fileButton input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    opacity: 0;
+    cursor: pointer;
+    font-size: 0;
+}
 
 .collectionMembers { display: grid; gap: 6px; margin-bottom: 12px; }
 .collectionMembers li { display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 1px solid var(--market-line); padding: 8px; }

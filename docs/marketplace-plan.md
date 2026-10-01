@@ -1485,6 +1485,17 @@ Local evidence on 2026-09-28:
 
 ## Decision log
 
+### 2026-10-01 — Publication preparation reports authoring failures
+
+`POST /publisher/preparations` was returning `RECOVERY_REQUIRED` for environment
+export failures that are ordinary authoring errors: a schema older than v4, a
+missing saved environment or visual descriptor, a stale visual layer, missing
+asset revisions, and rights or size limits. The marketplace route now returns
+those as `DOCUMENT_INVALID`, `SOURCE_NOT_FOUND`, `RIGHTS_DENIED`,
+`LIMIT_EXCEEDED`, or `ARTIFACT_HASH_MISMATCH` with the authoring message.
+Unexpected failures and real recovery states stay redacted. No marketplace
+schema, trust rule, semantic hash, or milestone status changed.
+
 ### 2026-10-01 — HTTPS URL enrollment pins the first registry root
 
 An HTTPS registry may offer `POST /v1/enroll` when `serve` is started with

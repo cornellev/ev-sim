@@ -1,7 +1,8 @@
 import express from "express";
 
 import { MARKETPLACE_LIMITS, MARKETPLACE_PREVIEW_MEDIA_TYPES } from "../marketplace/MarketplaceContract.js";
-import { MARKETPLACE_ERROR_CODES, MarketplaceError, marketplaceError } from "../marketplace/MarketplaceErrors.js";
+import { MARKETPLACE_ERROR_CODES, marketplaceError } from "../marketplace/MarketplaceErrors.js";
+import { publicMarketplaceError } from "../marketplace/MarketplaceRouteErrors.js";
 
 function invalid(path, message) {
     throw marketplaceError(MARKETPLACE_ERROR_CODES.DOCUMENT_INVALID, `${path}: ${message}`, { path });
@@ -558,19 +559,10 @@ export function createMarketplaceRouter(service, {
     }));
 
     router.use((error, request, response, _next) => {
-        let publicError;
-        if (error instanceof MarketplaceError && error.code === MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED) {
-            publicError = marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Marketplace local state requires recovery.");
-        } else if (error instanceof MarketplaceError) publicError = error;
-        else if (error?.type === "entity.too.large") {
-            publicError = marketplaceError(MARKETPLACE_ERROR_CODES.LIMIT_EXCEEDED, "Marketplace request body exceeds 32 KiB.");
-        } else if (error instanceof SyntaxError && Object.hasOwn(error, "body")) {
-            publicError = marketplaceError(MARKETPLACE_ERROR_CODES.DOCUMENT_INVALID, "Marketplace request body is not valid JSON.");
-        } else {
-            publicError = marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Marketplace request failed.");
-        }
+        const publicError = publicMarketplaceError(error);
         const route = request.route?.path ?? "unmatched";
-        logger.error?.(`[marketplace] ${request.method} ${route} ${publicError.code}`);
+        const source = error?.code === publicError.code ? "" : ` from ${[error?.name, error?.code].filter(Boolean).join(" ")}`;
+        logger.error?.(`[marketplace] ${request.method} ${route} ${publicError.code}${source}`);
         response.status(statusFor(publicError)).json({
             error: {
                 ...publicError.toJSON(),

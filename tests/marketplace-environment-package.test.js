@@ -45,6 +45,23 @@ async function writeExport(service, destination, expectedRevision = 1) {
     return fs.readFile(destination);
 }
 
+test("MKT-10 environment export treats a null abort signal as no cancellation", async (t) => {
+    const { directory, service } = await fixture(t);
+    const destination = path.join(directory, "null-signal.tar");
+    const output = (await fs.open(destination, "wx")).createWriteStream();
+    const exported = await exportEnvironmentPackage({
+        storageService: service,
+        environmentId: "portable-yard",
+        expectedRevision: 1,
+        output,
+        signal: null,
+    });
+    assert.equal(exported.manifest.environment.environmentId, "portable-yard");
+    const verified = await verifyEnvironmentPackage(destination, { signal: null });
+    t.after(() => verified.cleanup());
+    assert.equal(verified.environment.environmentId, "portable-yard");
+});
+
 test("MKT-10 environment export is deterministic and verifies an exact empty authoring closure", async (t) => {
     const { directory, service } = await fixture(t);
     const firstPath = path.join(directory, "first.tar");

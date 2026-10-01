@@ -12,6 +12,7 @@ import {
     hashVisualAssetUse,
     normalizeVisualAssetUse,
 } from "../../app/simulation/visual/VisualLayer.js";
+import { optionalAbortSignal } from "../artifacts/ArtifactVerification.js";
 import {
     createDeterministicArchiveStream,
     verifyDeterministicArchive,
@@ -392,6 +393,7 @@ async function verifyStagedAssetPackage(verified, limits) {
 export async function verifyAssetPackage(input, {
     limits: overrides = {}, signal, stagingRoot, stagingDir, retainStaging = true,
 } = {}) {
+    signal = optionalAbortSignal(signal);
     const limits = assetPackageLimits(overrides);
     const source = typeof input === "string" ? createReadStream(input, { signal }) : input;
     const verified = await verifyDeterministicArchive(source, {
@@ -507,6 +509,7 @@ export async function collectAssetClosure({
 }
 
 export async function exportAssetPackage({ editorAssetStore, visualAssetStore, roots, output = null, signal }) {
+    signal = optionalAbortSignal(signal);
     const closure = await collectAssetClosure({ editorAssetStore, visualAssetStore, roots });
     const { manifest, records, blobs } = closure;
     const manifestBytes = Buffer.from(canonicalMarketplaceBytes(manifest));

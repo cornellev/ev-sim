@@ -17,6 +17,7 @@ import {
     parseExactJson,
 } from "../../app/simulation/visual/VisualLayer.js";
 import { environmentSourceKind, readSchemaVersion } from "../../app/3d/environment/EnvironmentManifestPolicy.js";
+import { optionalAbortSignal } from "../artifacts/ArtifactVerification.js";
 import {
     createDeterministicArchiveStream,
     verifyDeterministicArchive,
@@ -374,6 +375,7 @@ async function verifyStagedEnvironmentPackage(verified, limits) {
 export async function verifyEnvironmentPackage(input, {
     limits: overrides = {}, signal, stagingRoot, stagingDir, retainStaging = true,
 } = {}) {
+    signal = optionalAbortSignal(signal);
     const limits = packageLimits(overrides);
     const source = typeof input === "string" ? createReadStream(input, { signal }) : input;
     const verified = await verifyDeterministicArchive(source, {
@@ -490,6 +492,7 @@ export async function collectEnvironmentPackageClosure({ storageService, environ
 export async function exportEnvironmentPackage({
     storageService, environmentId, expectedRevision, output = null, signal,
 } = {}) {
+    signal = optionalAbortSignal(signal);
     let captured = null;
     for (let attempt = 1; attempt <= 3; attempt += 1) {
         captured = await collectEnvironmentPackageClosure({ storageService, environmentId, expectedRevision });

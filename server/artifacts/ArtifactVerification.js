@@ -109,6 +109,10 @@ export function artifactDeadlineError(message = "Artifact operation exceeded its
     return artifactVerificationError(ARTIFACT_VERIFICATION_ERROR_CODES.TIMEOUT, message);
 }
 
+export function optionalAbortSignal(signal) {
+    return signal instanceof AbortSignal ? signal : undefined;
+}
+
 export function checkArtifactBoundary({ deadline = Number.POSITIVE_INFINITY, signal } = {}) {
     if (signal?.aborted) {
         throw artifactVerificationError(ARTIFACT_VERIFICATION_ERROR_CODES.CANCELLED, "Artifact operation was cancelled.", { cause: signal.reason });

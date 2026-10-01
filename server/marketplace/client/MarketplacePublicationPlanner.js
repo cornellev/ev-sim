@@ -157,6 +157,7 @@ export class MarketplacePublicationArtifactBuilder {
     }
 
     async build({ draft, outputPath, pluginReleaseRefs = [], collection = null, signal = null }) {
+        signal = signal instanceof AbortSignal ? signal : undefined;
         const selection = draft.localSelection;
         await ensureDirectory(path.dirname(outputPath));
         if (draft.contentKind === "plugin") {

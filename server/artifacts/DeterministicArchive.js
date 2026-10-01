@@ -12,6 +12,7 @@ import {
     checkArtifactBoundary,
     closeArtifactIterator,
     createArtifactStagingArea,
+    optionalAbortSignal,
     resolveContentLimits,
     stageArtifactStream,
     validateArchivePath,
@@ -230,7 +231,7 @@ export function encodeDeterministicArchive(entries, {
 
 async function openEntrySource(entry, deadline, signal) {
     if (entry.bytes !== null) return Readable.from([entry.bytes]);
-    if (entry.path !== undefined) return createReadStream(entry.path, { signal });
+    if (entry.path !== undefined) return createReadStream(entry.path, { signal: optionalAbortSignal(signal) });
     if (entry.stream !== undefined) return entry.stream;
     return beforeArtifactDeadline(Promise.resolve(entry.open()), { deadline, signal });
 }
@@ -242,6 +243,7 @@ export function createDeterministicArchiveStream(entries, {
 } = {}) {
     const limits = resolveDeterministicArchiveLimits(overrides);
     deadline ??= Date.now() + limits.verificationTimeoutMs;
+    signal = optionalAbortSignal(signal);
     const prepared = prepareEntries(entries);
     if (prepared.length > limits.entries) limit("Archive exceeds the entry-count ceiling.");
     if (projectedArchiveSize(prepared) > limits.archiveBytes) limit("Archive exceeds the archive-byte ceiling.");
