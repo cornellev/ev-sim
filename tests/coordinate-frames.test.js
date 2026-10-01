@@ -5,6 +5,7 @@ import {
     composeRep103Poses,
     eulerToQuaternion,
     lidarDirectionRep103,
+    lidarShaderDirectionToRep103,
     quaternionInverse,
     quaternionMultiply,
     quaternionToEuler,
@@ -42,8 +43,50 @@ test("Three.js camera looks along mount forward instead of ROS optical in scene 
 });
 
 test("vector basis mapping matches vehicle axis conventions", () => {
-    assert.deepEqual(threeToRep103Vector({ x: 1, y: 2, z: 3 }), { x: 1, y: 3, z: 2 });
-    assert.deepEqual(rep103ToThreeVector({ x: 1, y: 2, z: 3 }), { x: 1, y: 3, z: 2 });
+    assert.deepEqual(threeToRep103Vector({ x: 1, y: 2, z: 3 }), { x: 1, y: -3, z: 2 });
+    assert.deepEqual(rep103ToThreeVector({ x: 1, y: 2, z: 3 }), { x: 1, y: 3, z: -2 });
+    assert.deepEqual(rep103ToThreeVector(threeToRep103Vector({ x: 1, y: 2, z: 3 })), { x: 1, y: 2, z: 3 });
+});
+
+test("basis conversion is a rotation, not a reflection", () => {
+    // Three.js is right-handed with +X forward and +Y up, so +Z is the vehicle's
+    // right and REP-103 +Y (left) is Three.js -Z.
+    assert.deepEqual(threeToRep103Vector({ x: 0, y: 0, z: 1 }), { x: 0, y: -1, z: 0 });
+    const cross = (a, b) => ({
+        x: a.y * b.z - a.z * b.y,
+        y: a.z * b.x - a.x * b.z,
+        z: a.x * b.y - a.y * b.x,
+    });
+    const forward = threeToRep103Vector({ x: 1, y: 0, z: 0 });
+    const up = threeToRep103Vector({ x: 0, y: 1, z: 0 });
+    const right = threeToRep103Vector({ x: 0, y: 0, z: 1 });
+    // Three.js x cross y = z must still hold after conversion.
+    assert.deepEqual(cross(forward, up), right);
+    // Zero stays +0 so strict equality and canonical hashes are unaffected.
+    assert.ok(Object.is(threeToRep103Vector({ x: 0, y: 0, z: 0 }).y, 0));
+    assert.ok(Object.is(rep103ToThreeVector({ x: 0, y: 0, z: 0 }).z, 0));
+});
+
+test("REP-103 yaw matches the direction of travel", () => {
+    // Positive Three.js rotation about +Y turns +X toward -Z.
+    for (const yaw of [0.4, -1.2, 2.5]) {
+        const facing = { x: Math.cos(yaw), y: 0, z: -Math.sin(yaw) };
+        const pose = threePoseToRep103({
+            position: facing,
+            rotation: { x: 0, y: yaw, z: 0, order: "XYZ" },
+        });
+        const course = Math.atan2(pose.position.y, pose.position.x);
+        assert.ok(Math.abs(course - pose.rotation.z) < 1e-12, `yaw ${yaw}: course ${course}`);
+    }
+});
+
+test("LiDAR rays toward the vehicle's right have negative REP-103 y", () => {
+    // Ray casters use Three.js directions (cos phi cos theta, sin phi, cos phi sin theta).
+    const right = lidarShaderDirectionToRep103(Math.PI / 2, 0);
+    assert.ok(Math.abs(right.x) < 1e-10);
+    assert.ok(Math.abs(right.y + 1) < 1e-10);
+    const ahead = lidarShaderDirectionToRep103(0, 0);
+    assert.deepEqual(ahead, { x: 1, y: 0, z: 0 });
 });
 
 test("quaternion composition and inversion are consistent", () => {

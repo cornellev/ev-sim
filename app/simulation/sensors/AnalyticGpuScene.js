@@ -97,14 +97,15 @@ function composedSensor(job, { mapIdentity = false, opticalYaw = false } = {}) {
     const parent = parentVehicle(job, { mapIdentity });
     const vehicleQ = quaternionOf(parent.rotation);
     const pose = job.sensor.pose || {};
-    const localPosition = [pose.position?.x || 0, pose.position?.z || 0, pose.position?.y || 0];
+    // REP-103 mount pose -> Three.js: +Y (left) is -Z, so pitch about Y flips sign too.
+    const localPosition = [pose.position?.x || 0, pose.position?.z || 0, 0 - (pose.position?.y || 0)];
     const rotatedPosition = rotate(localPosition, vehicleQ);
     const origin = rotatedPosition.map((value, index) => value
         + [parent.position.x, parent.position.y, parent.position.z][index]);
     const mountQ = quaternionMultiply(vehicleQ, quaternionOf({
         x: pose.rotation?.x || 0,
         y: pose.rotation?.z || 0,
-        z: pose.rotation?.y || 0,
+        z: 0 - (pose.rotation?.y || 0),
     }));
     const cameraQ = opticalYaw
         ? quaternionMultiply(mountQ, quaternionOf({ y: -Math.PI / 2 }))

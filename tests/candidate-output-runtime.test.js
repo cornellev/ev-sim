@@ -54,7 +54,8 @@ test("normalizeDetections3D maps REP-103 centers into three-space", () => {
     const [box] = normalizeDetections3D(payload, { source: "candidate" });
     assert.equal(box.box3d.threeCenter.x, 2);
     assert.equal(box.box3d.threeCenter.y, 0.5);
-    assert.equal(box.box3d.threeCenter.z, 1);
+    // REP-103 +Y is left; Three.js +Z is right.
+    assert.equal(box.box3d.threeCenter.z, -1);
     assert.equal(box.classId, "vehicle");
 });
 
@@ -95,7 +96,7 @@ test("map-frame 3D detections keep world centers when TF is applied", () => {
     assert.equal(box.box3d.center.z, 0.7);
     assert.equal(box.box3d.threeCenter.x, 12);
     assert.equal(box.box3d.threeCenter.y, 0.7);
-    assert.equal(box.box3d.threeCenter.z, -3);
+    assert.equal(box.box3d.threeCenter.z, 3);
 });
 
 test("optical-frame 3D detections compose child-most-first into map", () => {

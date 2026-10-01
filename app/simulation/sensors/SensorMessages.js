@@ -1,4 +1,4 @@
-import { lidarDirectionRep103 } from "../../autonomy/CoordinateFrames.js";
+import { lidarShaderDirectionToRep103 } from "../../autonomy/CoordinateFrames.js";
 
 export function simulationStamp(timeNs) {
     const normalized = Math.max(0, Math.floor(Number(timeNs) || 0));
@@ -245,7 +245,7 @@ export function packPointCloud2DataJs({
         }
         const rawDistance = legacy ? (1 - Number(buffer[offset])) * rangeLimit : Number(buffer[offset]);
         const measured = Math.max(0, Math.min(rangeLimit, sampleRange(rawDistance, index)));
-        const direction = lidarDirectionRep103(theta, phi);
+        const direction = lidarShaderDirectionToRep103(theta, phi);
         const intensity = Math.max(0, Math.min(1, Number(legacy ? buffer[offset] : buffer[offset + 1]) || 0));
         onMeasured(index, measured, intensity, true);
         const byteOffset = width * 16;
@@ -271,7 +271,7 @@ export function packSemanticPointCloud2DataJs({
     let width = 0;
     forEachLidarHit(buffer, calibration, bufferEncoding, ({ offset, index, theta, phi, rangeLimit, legacy }) => {
         const rawDistance = legacy ? (1 - Number(buffer[offset])) * rangeLimit : Number(buffer[offset]);
-        const direction = lidarDirectionRep103(theta, phi);
+        const direction = lidarShaderDirectionToRep103(theta, phi);
         const byteOffset = width * pointStep;
         view.setFloat32(byteOffset, rawDistance * direction.x, true);
         view.setFloat32(byteOffset + 4, rawDistance * direction.y, true);

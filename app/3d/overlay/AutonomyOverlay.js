@@ -447,7 +447,7 @@ export class AutonomyOverlay {
         const pos = estimate.threePosition || {
             x: estimate.position?.x || 0,
             y: estimate.position?.z || 0,
-            z: estimate.position?.y || 0,
+            z: 0 - (estimate.position?.y || 0),
         };
         let index = 0;
         const ghost = this._ensureEkfGhost(index, color);
@@ -464,7 +464,7 @@ export class AutonomyOverlay {
             const truthPos = localization.truth.threePosition || {
                 x: localization.truth.position?.x || 0,
                 y: localization.truth.position?.z || 0,
-                z: localization.truth.position?.y || 0,
+                z: 0 - (localization.truth.position?.y || 0),
             };
             const errorLine = this._ensureEkfErrorLine(index);
             errorLine.geometry.dispose();
