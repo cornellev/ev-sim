@@ -76,7 +76,7 @@ additive within v1; `ResourceLimits` fields 11 and 12 are
 `max_gpu_bytes_per_environment`.
 
 JavaScript loads the checked-in proto dynamically with
-`@grpc/grpc-js` 1.14.4 and `@grpc/proto-loader` 0.8.1. Loader values use camel
+`@grpc/grpc-js` 1.14.5 and `@grpc/proto-loader` 0.8.1. Loader values use camel
 case, numeric enums, decimal-string uint64 values, `Buffer` bytes, defaults,
 and oneof markers. There are no generated JavaScript bindings.
 
