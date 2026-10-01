@@ -33,9 +33,11 @@ and evidence; implementation status alone does not satisfy a milestone gate.
 
 - The registry is a standalone JavaScript/ESM service. The simulator remains a
   local service and browser code never connects directly to a registry.
-- Source onboarding is URL-only and fail-closed: the backend must already have
-  an owner-only connection bundle containing the exact normalized origin, TUF
-  root pin, and scoped read credential. There is no trust-on-first-use path.
+- Source onboarding is URL-only. An HTTPS origin enrolls on first connect
+  when the registry serves `POST /v1/enroll`: the simulator pins the fetched
+  bootstrap root, writes an owner-only connection bundle, and later connections
+  must match that pin. HTTP origins, and HTTPS registries that do not offer
+  enrollment, still require a preinstalled connection bundle.
 - Publishing identities are provisioned and reconciled by the backend. Browser
   state contains only friendly identity names and readiness; tokens, private
   keys, secret references, and filesystem paths never cross the local API.
@@ -1482,6 +1484,28 @@ Local evidence on 2026-09-28:
   WP-10 and milestone acceptance open.
 
 ## Decision log
+
+### 2026-10-01 — HTTPS URL enrollment pins the first registry root
+
+An HTTPS registry may offer `POST /v1/enroll` when `serve` is started with
+TLS, `--writable`, `--enroll`, `--enroll-publisher`, and
+`--enroll-display-name`. The route is unauthenticated. Each call adds a
+distinct active Ed25519 key on that publisher, creates a read token and a
+publisher write token, and returns those secrets once with
+`Cache-Control: no-store`. The private key is not stored on the registry.
+Discovery documents are unchanged. Numbered TUF roots are readable without a
+bearer only while enrollment is enabled, so a simulator can pin the bootstrap
+root before it holds a token. Other reads still follow `--read-auth`.
+
+The simulator enrolls only for an unknown HTTPS origin. It fetches discovery
+and the numbered bootstrap root with system TLS trust, requires the enrollment
+response root SHA-256 to match that fetch, and writes an owner-only connection
+bundle. Later Connect calls use the saved pin and do not enroll again. A root
+mismatch fails closed. HTTP origins, and HTTPS registries that do not offer
+enrollment, still require a preinstalled bundle. Reachability of the HTTPS
+port is the enrollment boundary. Revoke a leaked key with the existing
+publisher key-status command. Each simulator enrollment keeps its own key.
+Marketplace metadata remains outside semantic hashes.
 
 ### 2026-09-30 — Marketplace workspace presentation stays outside the contract
 

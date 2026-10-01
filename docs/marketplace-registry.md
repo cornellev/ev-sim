@@ -46,7 +46,9 @@ cev-mkt tuf rotate-root --root /srv/cev-marketplace \
 cev-mkt serve --root /srv/cev-marketplace --host 127.0.0.1 --port 8080
 cev-mkt serve --root /srv/cev-marketplace --host 10.0.0.20 --port 8443 \
   --tls-key server-key.pem --tls-cert server-cert.pem --tls-ca private-ca.pem \
-  --mtls --read-auth --writable
+  --mtls --read-auth --writable \
+  --enroll --enroll-publisher org.cornellev \
+  --enroll-display-name "Cornell Electric Vehicles Autonomy"
 cev-mkt gc --root /srv/cev-marketplace --dry-run --grace-hours 24
 ```
 
@@ -75,8 +77,24 @@ Commands write exactly one JSON result to stdout. Failures write one redacted
 JSON record to stderr and use a nonzero exit code. `serve` writes one startup
 record, remains quiet, and closes cleanly on `SIGINT` or `SIGTERM`.
 
-`publisher provision` is the ordinary one-command bootstrap. It atomically
-generates one Ed25519 key pair, registers the publisher and active key, creates
+`serve --enroll` is refused unless the process also has TLS and `--writable`.
+It also requires `--enroll-publisher` and `--enroll-display-name`. While that
+flag is on, `POST /v1/enroll` needs no bearer. The first call registers the
+publisher; later calls add a new active Ed25519 key to that same publisher.
+Each response contains one PKCS#8 private key, a read token, and a publisher
+write token (`publish:blob`, `publish:item`, `publish:release`,
+`manage:track`), plus the current bootstrap root SHA-256. The response uses
+`Cache-Control: no-store`. The registry stores the public key only. With
+enrollment enabled, numbered TUF roots are readable without a bearer so a
+client can pin the bootstrap root before it has a token. Catalog, snapshot,
+timestamp, and target reads still follow `--read-auth`. Discovery is
+unchanged, so older clients learn that enrollment is absent by receiving 404.
+Reachability of the HTTPS port is the enrollment boundary. Revoke a key with
+`publisher set-key-status`; do not reuse one private key across simulators.
+
+`publisher provision` is the ordinary one-command bootstrap for a registry that
+does not offer URL enrollment. It atomically generates one Ed25519 key pair,
+registers the publisher and active key, creates
 a read token and publisher-scoped write token, and writes a mode-`0700` client
 connection bundle containing mode-`0600` documents and secrets. The first
 namespace is the publisher ID. The output parent must be owner-only and the
@@ -178,7 +196,10 @@ Loopback HTTP remains supported. A non-loopback bind requires TLS and read
 authentication unless the operator supplies the explicit
 `--unsafe-development-lan` override. Optional mTLS adds a client-certificate
 transport check but never replaces bearer authorization. The server emits no
-CORS headers and never returns bearer values.
+CORS headers. Authenticated routes never return bearer values.
+`POST /v1/enroll` is the exception: it returns a new read token and publisher
+write token once, with `Cache-Control: no-store`, and only while `--enroll`
+is enabled.
 
 ```text
 GET      /.well-known/cev-sim-marketplace
@@ -188,6 +209,7 @@ GET      /v1/items/{itemId}/releases/{releaseVersion}
 GET      /v1/publishers/{publisherId}
 GET      /v1/advisories/{advisoryId}
 GET|HEAD /v1/blobs/sha256/{digest}
+POST     /v1/enroll
 POST     /v1/artifacts/{contentKind}
 POST     /v1/previews
 PUT      /v1/items

@@ -21,7 +21,7 @@ import {
     marketplaceError,
 } from "./MarketplaceErrors.js";
 import { DEFAULT_STAGING_GRACE_MS } from "./registry/RegistryLayout.js";
-import { MarketplaceRegistryService } from "./registry/RegistryService.js";
+import { assertEnrollmentConfig, MarketplaceRegistryService } from "./registry/RegistryService.js";
 import { MarketplaceRegistryStore } from "./registry/RegistryStore.js";
 import { MarketplaceRegistryHttpServer } from "./registry/RegistryHttpServer.js";
 import { RegistryAuthStore } from "./registry/RegistryAuthStore.js";
@@ -49,9 +49,9 @@ const VALUE_OPTIONS = new Set([
     "offline-root-key", "current-root-key", "new-root-key", "host", "port",
     "publisher-id", "item-id", "namespace", "scope", "subject", "token-id", "key-id", "private-key", "public-key",
     "output", "status", "release-version", "artifact-sha256", "reason", "tls-key", "tls-cert", "tls-ca",
-    "origin", "display-name",
+    "origin", "display-name", "enroll-publisher", "enroll-display-name",
 ]);
-const FLAG_OPTIONS = new Set(["dry-run", "read-auth", "unsafe-development-lan", "mtls", "writable"]);
+const FLAG_OPTIONS = new Set(["dry-run", "read-auth", "unsafe-development-lan", "mtls", "writable", "enroll"]);
 
 const LOCAL_ADMIN_ACTOR = Object.freeze({
     tokenId: "00000000-0000-4000-8000-000000000000",
@@ -94,7 +94,7 @@ export function registryCliHelp() {
         "  gc --root DIR --dry-run [--grace-hours N]",
         "  tuf refresh --root DIR",
         "  tuf rotate-root --root DIR --current-root-key FILE --new-root-key FILE",
-        "  serve --root DIR [--host HOST] [--port 8080] [--tls-key FILE --tls-cert FILE] [--tls-ca FILE --mtls] [--read-auth] [--writable] [--unsafe-development-lan]",
+        "  serve --root DIR [--host HOST] [--port 8080] [--tls-key FILE --tls-cert FILE] [--tls-ca FILE --mtls] [--read-auth] [--writable] [--unsafe-development-lan] [--enroll --enroll-publisher ID --enroll-display-name NAME]",
     ].join("\n");
 }
 
@@ -563,12 +563,29 @@ async function execute(parsed, signal, { stdout }) {
         if (positional.length !== 0) throw usage("serve does not accept positional arguments.");
         exactOptions(options, ["root"], [
             "host", "port", "tls-key", "tls-cert", "tls-ca", "mtls", "read-auth", "writable", "unsafe-development-lan",
+            "enroll", "enroll-publisher", "enroll-display-name",
         ]);
         const port = options.port === undefined ? 8080 : Number(options.port);
         if (!Number.isSafeInteger(port) || port < 0 || port > 65535) throw usage("--port must be an integer from 0 through 65535.");
         const hasTls = options["tls-key"] !== undefined || options["tls-cert"] !== undefined || options["tls-ca"] !== undefined || options.mtls === true;
         if (hasTls && (!options["tls-key"] || !options["tls-cert"])) throw usage("TLS requires both --tls-key and --tls-cert.");
         if (options.mtls === true && !options["tls-ca"]) throw usage("--mtls requires --tls-ca.");
+        const enrollRequested = options.enroll === true || options["enroll-publisher"] !== undefined || options["enroll-display-name"] !== undefined;
+        let enrollment = null;
+        if (enrollRequested) {
+            if (options.enroll !== true || !options["enroll-publisher"] || !options["enroll-display-name"]) {
+                throw usage("Enrollment requires --enroll, --enroll-publisher, and --enroll-display-name.");
+            }
+            if (!hasTls || options.writable !== true) throw usage("Enrollment requires TLS and --writable.");
+            try {
+                enrollment = assertEnrollmentConfig({
+                    publisherId: options["enroll-publisher"],
+                    displayName: options["enroll-display-name"],
+                });
+            } catch (error) {
+                throw usage(error?.message ?? "Enrollment configuration is invalid.");
+            }
+        }
         const tls = hasTls ? {
             key: await readInputFile(options["tls-key"]),
             cert: await readInputFile(options["tls-cert"]),
@@ -582,6 +599,7 @@ async function execute(parsed, signal, { stdout }) {
             readAuthentication: options["read-auth"] === true,
             writable: options.writable === true,
             unsafeDevelopmentLan: options["unsafe-development-lan"] === true,
+            ...(enrollment ? { enrollment } : {}),
         });
         try {
             const address = await server.listen({ host: options.host ?? "127.0.0.1", port });

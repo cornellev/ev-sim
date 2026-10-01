@@ -7,7 +7,7 @@ import { MARKETPLACE_LIMITS, MARKETPLACE_PREVIEW_MEDIA_TYPES } from "../Marketpl
 import { MARKETPLACE_ERROR_CODES, MarketplaceError, marketplaceError } from "../MarketplaceErrors.js";
 import { MarketplaceRegistryReader, REGISTRY_HTTP_MAX_RANGE_BYTES } from "./RegistryReader.js";
 import { MarketplaceRegistryStore } from "./RegistryStore.js";
-import { MarketplaceRegistryService } from "./RegistryService.js";
+import { assertEnrollmentConfig, MarketplaceRegistryService } from "./RegistryService.js";
 import { RegistryAuthStore } from "./RegistryAuthStore.js";
 
 const JSON_TYPE = "application/json; charset=utf-8";
@@ -24,6 +24,10 @@ function quotedEtag(value) {
 
 function sha256(bytes) {
     return createHash("sha256").update(bytes).digest("hex");
+}
+
+function isNumberedRootPath(parts) {
+    return parts.length === 3 && parts[0] === "tuf" && parts[1] === "metadata" && /^[1-9][0-9]*\.root\.json$/u.test(parts[2]);
 }
 
 function matchesEtag(header, etag) {
@@ -159,13 +163,14 @@ function httpFailure(error) {
 }
 
 export class MarketplaceRegistryHttpServer {
-    constructor(reader, { store = null, authStore = null, tls = null, readAuthentication = false, unsafeDevelopmentLan = false } = {}) {
+    constructor(reader, { store = null, authStore = null, tls = null, readAuthentication = false, unsafeDevelopmentLan = false, enrollment = null } = {}) {
         this.reader = reader;
         this.store = store;
         this.service = store ? new MarketplaceRegistryService(store) : null;
         this.authStore = authStore;
         this.readAuthentication = readAuthentication;
         this.unsafeDevelopmentLan = unsafeDevelopmentLan;
+        this.enrollment = enrollment ? assertEnrollmentConfig(enrollment) : null;
         this.tlsEnabled = Boolean(tls);
         const handler = (request, response) => {
             this.#handle(request, response).catch((error) => {
@@ -241,9 +246,34 @@ export class MarketplaceRegistryHttpServer {
             sendError(response, 400, "INVALID_PATH", "Request path is not canonical.");
             return;
         }
-        const publicRead = parts.join("/") === ".well-known/cev-sim-marketplace" || parts.join("/") === "healthz";
+        const publicRead = parts.join("/") === ".well-known/cev-sim-marketplace" || parts.join("/") === "healthz"
+            || (this.enrollment !== null && isNumberedRootPath(parts));
         if (this.readAuthentication && !publicRead && (request.method === "GET" || request.method === "HEAD")) {
             try { await this.#actor(request, "read"); } catch { sendError(response, 401, "AUTHENTICATION_REQUIRED", "Bearer authentication is required.", { "WWW-Authenticate": "Bearer" }); return; }
+        }
+        if (request.method === "POST" && parts.join("/") === "v1/enroll") {
+            if (!this.enrollment) {
+                sendError(response, 404, "NOT_FOUND", "Enrollment is not enabled.");
+                return;
+            }
+            if (!this.service) {
+                sendError(response, 405, "READ_ONLY", "Registry is read-only.");
+                return;
+            }
+            await requestBytes(request, 1024);
+            const enrolled = await this.service.enrollPublisher(this.enrollment);
+            const discovery = (await this.reader.wellKnown()).document;
+            const bytes = jsonBytes({
+                publisherId: enrolled.publisherId,
+                displayName: enrolled.displayName,
+                keyId: enrolled.keyId,
+                privateKeyPem: enrolled.privateKeyPem,
+                readToken: enrolled.readToken,
+                writeToken: enrolled.writeToken,
+                bootstrapRootSha256: discovery.tuf.bootstrapRootSha256,
+            });
+            sendBytes(request, response, { bytes, etag: sha256(bytes), contentType: JSON_TYPE, cacheControl: "no-store", status: 201 });
+            return;
         }
         if (request.method === "POST" && parts.length === 3 && parts[0] === "v1" && parts[1] === "artifacts") {
             if (!this.service) { sendError(response, 405, "READ_ONLY", "Registry is read-only."); return; }

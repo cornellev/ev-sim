@@ -9,14 +9,22 @@ When disabled, `server/App.js` does not construct the service, mount
 ## Trust workflow
 
 The ordinary flow is `POST /api/marketplace/sources/connect` with only
-`{"baseUrl":"https://…/"}`. The origin must match one backend connection
-bundle exactly. The backend supplies the display name, priority, root pin,
-read credential, publisher approval policy, and publishing identities. It
-verifies discovery, registry UUID, bootstrap signature, and root SHA-256 before
-persisting anything, then performs the first verified refresh. A failure after
-trust is persisted returns a retryable warning; a trust failure persists no
-source. Repeating Connect is idempotent and rotates policy-derived metadata or
-credentials without changing source identity.
+`{"baseUrl":"https://…/"}`. For an unknown HTTPS origin, the backend fetches
+discovery and the numbered bootstrap root with system TLS trust, then
+`POST`s `/v1/enroll` on that same origin. A 404 keeps the origin unconfigured.
+A successful enrollment must return the same bootstrap root SHA-256. The
+backend then writes an owner-only connection bundle under
+`<dataDir>/marketplace/connections.d` and adopts it without a restart. That
+bundle supplies the display name, priority, root pin, read credential,
+publisher approval policy, and publishing identity. Later connects to the same
+origin use the saved pin and do not enroll again. HTTP origins, and HTTPS
+registries that do not offer enrollment, still require a preinstalled bundle.
+The backend verifies discovery, registry UUID, bootstrap signature, and root
+SHA-256 before persisting a source, then performs the first verified refresh.
+A failure after trust is persisted returns a retryable warning; a trust or
+root-pin failure persists no source. Repeating Connect is idempotent and
+rotates policy-derived metadata or credentials without changing source
+identity.
 
 Low-level preview/add/update routes remain for tests and advanced tooling, but
 the ordinary browser does not expose their token, name, fingerprint, priority,
@@ -482,8 +490,10 @@ metadata cache have been deleted.
 
 ## Operations
 
-- Provision or install an owner-only backend connection bundle, restart, then
-  Connect with only its registry URL. Connect performs the initial refresh.
+- Connect an enrolling HTTPS registry with only its URL. The first connection
+  saves trust and publishing access on this simulator and performs the initial
+  refresh. HTTP origins, and registries that do not offer enrollment, still
+  need an owner-only backend connection bundle and a restart before Connect.
 - Use Sync now for later explicit refreshes. Startup does not contact a
   registry automatically.
 - Use optimistic `expectedRevision` values for add, update, remove, and

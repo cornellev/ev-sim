@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { generateKeyPairSync } from "node:crypto";
 import { promises as fs } from "node:fs";
+import https from "node:https";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
 
 import { canonicalMarketplaceBytes } from "../server/marketplace/MarketplaceJson.js";
 import { publisherKeyId } from "../server/marketplace/PublisherSignatures.js";
@@ -17,10 +20,17 @@ import { MarketplacePublishingIdentityManager } from "../server/marketplace/clie
 import {
     MARKETPLACE_CLIENT_DOCUMENT_VERSION,
     MARKETPLACE_CREDENTIAL_KIND,
+    marketplaceClientPaths,
 } from "../server/marketplace/client/MarketplaceClientLayout.js";
 import { MarketplaceService } from "../server/marketplace/client/MarketplaceService.js";
 import { MarketplaceTrustClient } from "../server/marketplace/client/MarketplaceTrustClient.js";
+import { atomicReplaceDurable } from "../server/marketplace/registry/RegistryFs.js";
+import { MarketplaceRegistryHttpServer } from "../server/marketplace/registry/RegistryHttpServer.js";
+import { MarketplaceRegistryStore } from "../server/marketplace/registry/RegistryStore.js";
+import { StorageService } from "../server/storage/StorageService.js";
 import { createPopulatedClientRegistry } from "./helpers/marketplaceClientRegistry.js";
+
+const execFileAsync = promisify(execFile);
 
 function credential(token = "reader-token") {
     return {
@@ -132,7 +142,11 @@ test("MKT-16 URL-only connection uses backend policy, refreshes immediately, and
     const repeated = await service.connectSource({ baseUrl: registry.baseUrl });
     assert.equal(repeated.source.sourceId, first.source.sourceId);
     assert.equal((await service.listSources()).sources.length, 1);
-    await assert.rejects(service.connectSource({ baseUrl: "https://unknown.example/" }), (error) => error.code === "SOURCE_UNTRUSTED");
+    await assert.rejects(
+        service.connectSource({ baseUrl: "https://unknown.example/" }),
+        (error) => error.code === "SOURCE_UNAVAILABLE" || error.code === "SOURCE_UNTRUSTED",
+    );
+    assert.equal((await service.listSources()).sources.length, 1);
 });
 
 test("MKT-16 identity rotation keeps the newly referenced secret when old-secret cleanup fails", async () => {
@@ -216,4 +230,164 @@ test("MKT-16 verified publication binding recovery is idempotent", async (t) => 
     const repeated = await store.upsert(binding);
     assert.deepEqual(repeated, first);
     assert.equal(store.snapshot().revision, 1);
+});
+
+async function createLoopbackCertificate(directory) {
+    const configPath = path.join(directory, "openssl.cnf");
+    const keyPath = path.join(directory, "key.pem");
+    const certPath = path.join(directory, "cert.pem");
+    await fs.writeFile(configPath, [
+        "[req]",
+        "distinguished_name = dn",
+        "x509_extensions = v3_req",
+        "prompt = no",
+        "[dn]",
+        "CN = 127.0.0.1",
+        "[v3_req]",
+        "subjectAltName = IP:127.0.0.1",
+        "basicConstraints = critical,CA:true",
+        "keyUsage = critical,keyCertSign,digitalSignature",
+        "",
+    ].join("\n"));
+    await execFileAsync("openssl", [
+        "req", "-x509", "-newkey", "rsa:2048", "-keyout", keyPath, "-out", certPath,
+        "-days", "1", "-nodes", "-config", configPath,
+    ]);
+    return { key: await fs.readFile(keyPath), cert: await fs.readFile(certPath) };
+}
+
+function fetchWithCertificate(certificate) {
+    return (rawUrl, init = {}) => new Promise((resolve, reject) => {
+        const parsed = new URL(rawUrl);
+        const request = https.request(parsed, {
+            method: init.method ?? "GET",
+            headers: init.headers ?? {},
+            ca: certificate,
+            rejectUnauthorized: true,
+            minVersion: "TLSv1.2",
+        }, (response) => {
+            const chunks = [];
+            response.on("data", (chunk) => chunks.push(chunk));
+            response.on("end", () => {
+                const headers = new Headers();
+                for (const [name, value] of Object.entries(response.headers)) {
+                    if (Array.isArray(value)) value.forEach((entry) => headers.append(name, entry));
+                    else if (value !== undefined) headers.set(name, String(value));
+                }
+                resolve(new Response(Buffer.concat(chunks), { status: response.statusCode, headers }));
+            });
+        });
+        request.once("error", reject);
+        if (init.signal) {
+            const abort = () => request.destroy(init.signal.reason);
+            if (init.signal.aborted) abort();
+            else init.signal.addEventListener("abort", abort, { once: true });
+        }
+        if (init.body) request.write(init.body);
+        request.end();
+    });
+}
+
+test("MKT-16 unknown HTTP origins stay unconfigured", async (t) => {
+    const parent = await fs.mkdtemp(path.join(os.tmpdir(), "cev-mkt-http-connect-"));
+    t.after(() => fs.rm(parent, { recursive: true, force: true }));
+    const calls = [];
+    const service = await MarketplaceService.open(path.join(parent, "client"), {
+        fetchImpl: async (...args) => {
+            calls.push(args);
+            throw new Error("unexpected request");
+        },
+    });
+    t.after(() => service.close());
+    await assert.rejects(
+        service.connectSource({ baseUrl: "http://127.0.0.1:9/" }),
+        (error) => error.code === "SOURCE_UNTRUSTED" && /not configured by the Marketplace operator/u.test(error.message),
+    );
+    assert.equal(calls.length, 0);
+});
+
+test("MKT-16 HTTPS enrollment pins the first root, refreshes once, and rejects a changed root", async (t) => {
+    const parent = await fs.mkdtemp(path.join(os.tmpdir(), "cev-mkt-https-enroll-"));
+    t.after(() => fs.rm(parent, { recursive: true, force: true }));
+    const certificate = await createLoopbackCertificate(parent);
+    const registryRoot = path.join(parent, "registry");
+    await MarketplaceRegistryStore.initialize(registryRoot, { offlineRootKeyPath: path.join(parent, "root.pem") });
+    let enrollPosts = 0;
+    const fetchImpl = (url, init = {}) => {
+        if ((init.method ?? "GET") === "POST" && new URL(url).pathname === "/v1/enroll") enrollPosts += 1;
+        return fetchWithCertificate(certificate.cert)(url, init);
+    };
+    const hidden = await MarketplaceRegistryHttpServer.open(registryRoot, { tls: { ...certificate, minVersion: "TLSv1.2" } });
+    t.after(() => hidden.close());
+    const hiddenAddress = await hidden.listen({ port: 0 });
+    const hiddenUrl = `https://127.0.0.1:${hiddenAddress.port}/`;
+    const dataDir = path.join(parent, "client");
+    const storage = new StorageService(dataDir);
+    const publication = {
+        fetchImpl,
+        storageService: storage,
+        editorAssetStore: storage.editorAssets,
+        visualAssetStore: storage.visualAssets,
+    };
+    let service = await MarketplaceService.open(dataDir, { fetchImpl });
+    t.after(() => service.close());
+    await assert.rejects(
+        service.connectSource({ baseUrl: hiddenUrl }),
+        (error) => error.code === "SOURCE_UNTRUSTED" && /not configured by the Marketplace operator/u.test(error.message),
+    );
+    assert.equal(enrollPosts, 1);
+    assert.deepEqual(await fs.readdir(marketplaceClientPaths(dataDir).connections), []);
+    await hidden.close();
+    await service.close();
+
+    const enrolled = await MarketplaceRegistryHttpServer.open(registryRoot, {
+        writable: true,
+        readAuthentication: true,
+        tls: { ...certificate, minVersion: "TLSv1.2" },
+        enrollment: { publisherId: "org.cornellev", displayName: "Cornell Electric Vehicles Autonomy" },
+    });
+    t.after(() => enrolled.close());
+    const address = await enrolled.listen({ port: 0 });
+    const baseUrl = `https://127.0.0.1:${address.port}/`;
+    service = await MarketplaceService.open(dataDir, publication);
+    const first = await service.connectSource({ baseUrl });
+    assert.equal(enrollPosts, 2);
+    assert.equal(first.source.name, "Cornell Electric Vehicles Autonomy");
+    assert.equal(first.source.health.status, "ready");
+    assert.equal(first.publishing.ready, true);
+    assert.deepEqual(first.warnings, []);
+    const repeated = await service.connectSource({ baseUrl });
+    assert.equal(enrollPosts, 2);
+    assert.equal(repeated.source.sourceId, first.source.sourceId);
+    await service.close();
+
+    const connections = marketplaceClientPaths(dataDir).connections;
+    const [bundleName] = await fs.readdir(connections);
+    const bundle = path.join(connections, bundleName);
+    assert.equal((await fs.lstat(bundle)).mode & 0o077, 0);
+    for (const fileName of ["connection.json", "read-credential.json", "publisher.token", "publisher.pk8.pem"]) {
+        assert.equal((await fs.lstat(path.join(bundle, fileName))).mode & 0o077, 0);
+    }
+    const pinned = assertMarketplaceConnectionDocument(JSON.parse(await fs.readFile(path.join(bundle, "connection.json"), "utf8")));
+    await atomicReplaceDurable(path.join(bundle, "connection.json"), canonicalMarketplaceBytes({
+        ...pinned,
+        trustedRootSha256: "ab".repeat(32),
+    }));
+    const rejected = await MarketplaceService.open(dataDir, publication);
+    t.after(() => rejected.close());
+    await assert.rejects(
+        rejected.connectSource({ baseUrl }),
+        (error) => error.code === "SOURCE_UNTRUSTED" && /root pin does not match/u.test(error.message),
+    );
+    assert.equal(enrollPosts, 2);
+    await rejected.close();
+    await fs.rm(bundle, { recursive: true, force: true });
+
+    const replaced = await MarketplaceService.open(dataDir, publication);
+    t.after(() => replaced.close());
+    const again = await replaced.connectSource({ baseUrl });
+    assert.equal(enrollPosts, 3);
+    assert.equal(again.source.health.status, "ready");
+    assert.equal(again.publishing.ready, true);
+    assert.equal(again.source.sourceId, first.source.sourceId);
 });

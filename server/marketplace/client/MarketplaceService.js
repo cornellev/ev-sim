@@ -78,6 +78,11 @@ import { MarketplacePublicationDependencyResolver } from "./MarketplacePublicati
 import { MarketplaceLibraryReadModel } from "./MarketplaceLibraryReadModel.js";
 import { MarketplaceConnectionPolicy } from "./MarketplaceConnectionPolicy.js";
 import { normalizeMarketplaceOrigin } from "./MarketplaceConnectionDocuments.js";
+import {
+    enrollmentRootMatches,
+    requestRegistryEnrollment,
+    writeEnrollmentBundle,
+} from "./MarketplaceEnrollment.js";
 import { MarketplacePublishingIdentityManager } from "./MarketplacePublishingIdentityManager.js";
 import {
     MarketplacePublicationBindingReconciler,
@@ -549,9 +554,53 @@ export class MarketplaceService {
         return publicPreview(await this.trustClient.previewSource({ baseUrl, credential: normalized }));
     }
 
+    async #enrollUnconfiguredOrigin(origin) {
+        if (!origin.startsWith("https://")) {
+            throw marketplaceError(
+                MARKETPLACE_ERROR_CODES.SOURCE_UNTRUSTED,
+                "This registry is not configured by the Marketplace operator.",
+            );
+        }
+        const preview = await this.trustClient.previewSource({ baseUrl: origin });
+        const enrollment = await requestRegistryEnrollment({
+            baseUrl: origin,
+            fetchImpl: this.trustClient.fetchImpl,
+        });
+        if (!enrollment) {
+            throw marketplaceError(
+                MARKETPLACE_ERROR_CODES.SOURCE_UNTRUSTED,
+                "This registry is not configured by the Marketplace operator.",
+            );
+        }
+        if (!enrollmentRootMatches(preview.trustedRootFingerprint, enrollment.bootstrapRootSha256)) {
+            throw marketplaceError(
+                MARKETPLACE_ERROR_CODES.SOURCE_UNTRUSTED,
+                "Enrollment registry root does not match the fetched bootstrap root.",
+            );
+        }
+        const directory = await writeEnrollmentBundle({
+            connectionsDirectory: this.connectionPolicy.directory,
+            origin,
+            displayName: enrollment.displayName,
+            trustedRootSha256: preview.trustedRootFingerprint,
+            publisherId: enrollment.publisherId,
+            keyId: enrollment.keyId,
+            readToken: enrollment.readToken,
+            writeToken: enrollment.writeToken,
+            privateKeyPem: enrollment.privateKeyPem,
+        });
+        try {
+            await this.connectionPolicy.adopt(directory);
+        } catch (error) {
+            await fs.rm(directory, { recursive: true, force: true });
+            throw error;
+        }
+    }
+
     async connectSource({ baseUrl }) {
         this.#assertOpen();
         const origin = normalizeMarketplaceOrigin(baseUrl);
+        if (!this.connectionPolicy.find(origin)) await this.#enrollUnconfiguredOrigin(origin);
         const connection = this.connectionPolicy.find(origin);
         if (!connection) {
             throw marketplaceError(

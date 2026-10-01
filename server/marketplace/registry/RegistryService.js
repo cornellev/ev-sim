@@ -1,3 +1,4 @@
+import { generateKeyPairSync } from "node:crypto";
 import { createReadStream, promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -26,11 +27,13 @@ import {
     parseMarketplaceDocument,
 } from "../MarketplaceContracts.js";
 import { MARKETPLACE_ERROR_CODES, marketplaceError } from "../MarketplaceErrors.js";
+import { assertMarketplaceId } from "../MarketplaceFormats.js";
 import { canonicalMarketplaceBytes, hashMarketplaceBytes } from "../MarketplaceJson.js";
 import {
     parseReleaseEnvelope,
     publisherKeyId,
     publisherKeyObject,
+    publisherPublicKey,
     verifyMarketplaceReleaseEnvelope,
 } from "../PublisherSignatures.js";
 import {
@@ -73,10 +76,32 @@ import {
 } from "./RegistryFs.js";
 import { prepareCatalogTransaction } from "./RegistryTransaction.js";
 import { inspectPreviewBytes } from "./PreviewMedia.js";
+import { RegistryAuthStore } from "./RegistryAuthStore.js";
 import { RegistryPublisherStore } from "./RegistryPublisherStore.js";
 
 function conflict(message) {
     return marketplaceError(MARKETPLACE_ERROR_CODES.CONFLICT, message);
+}
+
+const ENROLLMENT_WRITE_SCOPES = Object.freeze(["publish:blob", "publish:item", "publish:release", "manage:track"]);
+const ENROLLMENT_ACTOR = Object.freeze({
+    subject: "admin",
+    publisherId: null,
+    namespaces: Object.freeze([]),
+    scopes: Object.freeze(["manage:publisher"]),
+});
+
+export function assertEnrollmentConfig(enrollment) {
+    if (!enrollment || typeof enrollment !== "object" || Array.isArray(enrollment)) {
+        throw marketplaceError(MARKETPLACE_ERROR_CODES.DOCUMENT_INVALID, "Enrollment configuration is invalid.");
+    }
+    assertMarketplaceId(enrollment.publisherId, "publisherId");
+    const displayName = enrollment.displayName;
+    if (typeof displayName !== "string" || !displayName.trim() || displayName !== displayName.trim()
+        || displayName.length > 256 || displayName.includes("\u0000")) {
+        throw marketplaceError(MARKETPLACE_ERROR_CODES.DOCUMENT_INVALID, "Enrollment display name is invalid.");
+    }
+    return Object.freeze({ publisherId: enrollment.publisherId, displayName });
 }
 
 function recovery(message, pathName = null) {
@@ -442,6 +467,57 @@ export class MarketplaceRegistryService {
         } finally {
             await cleanArea(area);
         }
+    }
+
+    async enrollPublisher(enrollment) {
+        const { publisherId, displayName } = assertEnrollmentConfig(enrollment);
+        const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+        const privateKeyPem = privateKey.export({ format: "pem", type: "pkcs8" });
+        const keyId = publisherKeyId(publicKey);
+        const timestamp = this.now().toISOString();
+        const key = {
+            keyId,
+            algorithm: "ed25519",
+            publicKey: publisherPublicKey(publicKey),
+            status: "active",
+            createdAt: timestamp,
+            statusChangedAt: timestamp,
+        };
+        const catalog = await this.store.readCatalog();
+        const existing = await this.publisherStore.getPublisher(publisherId, catalog);
+        if (!existing) {
+            const publisher = {
+                kind: "cev-sim.marketplace-publisher",
+                version: 1,
+                publisherId,
+                namespaces: [publisherId],
+                keys: [key],
+            };
+            try {
+                await this.registerPublisher(marketplaceDocumentBytes(publisher), { actor: ENROLLMENT_ACTOR });
+            } catch (error) {
+                if (error?.code !== MARKETPLACE_ERROR_CODES.CONFLICT || !error.message.includes("already exists")) throw error;
+                await this.addPublisherKey(publisherId, key, { actor: ENROLLMENT_ACTOR });
+            }
+        } else {
+            await this.addPublisherKey(publisherId, key, { actor: ENROLLMENT_ACTOR });
+        }
+        const auth = await RegistryAuthStore.open(this.store.paths, { now: this.now });
+        const reader = await auth.createToken({ subject: "reader", scopes: ["read"] });
+        const writer = await auth.createToken({
+            subject: "publisher",
+            publisherId,
+            namespaces: [publisherId],
+            scopes: ENROLLMENT_WRITE_SCOPES,
+        });
+        return Object.freeze({
+            publisherId,
+            displayName,
+            keyId,
+            privateKeyPem,
+            readToken: reader.token,
+            writeToken: writer.token,
+        });
     }
 
     async registerPublisher(rawBytes, { actor } = {}) {

@@ -34,6 +34,37 @@ async function readPrivateFile(bundleDirectory, relativePath, { maxBytes = MAX_S
     return utf8 ? bytes.toString("utf8") : bytes;
 }
 
+async function loadBundle(bundleDirectory) {
+    await requirePrivateDirectory(bundleDirectory);
+    const bytes = await readPrivateFile(bundleDirectory, CONNECTION_FILE, { maxBytes: MAX_CONNECTION_BYTES });
+    const document = parseMarketplaceConnectionDocument(bytes);
+    const credentialBytes = await readPrivateFile(bundleDirectory, document.readCredentialFile, { maxBytes: MAX_SECRET_BYTES });
+    const credential = parseLocalDocument(credentialBytes, assertCredentialDocument);
+    const identities = [];
+    for (const identity of document.publishingIdentities) {
+        const writeToken = (await readPrivateFile(bundleDirectory, identity.writeTokenFile, { maxBytes: 8 * 1024, utf8: true })).trim();
+        const privateKeyPem = await readPrivateFile(bundleDirectory, identity.privateKeyFile, { maxBytes: 96 * 1024, utf8: true });
+        if (!writeToken || /[\u0000-\u0020\u007f]/u.test(writeToken)) throw configError("Marketplace publisher token is invalid.", bundleDirectory);
+        let privateKey;
+        try { privateKey = createPrivateKey(privateKeyPem); }
+        catch (error) { throw configError("Marketplace publisher private key is invalid.", identity.privateKeyFile, error); }
+        if (privateKey.asymmetricKeyType !== "ed25519") throw configError("Marketplace publisher private key must be Ed25519.", identity.privateKeyFile);
+        identities.push(Object.freeze({ ...identity, writeToken, privateKeyPem }));
+    }
+    return Object.freeze({ bundleDirectory, document, credential, identities: Object.freeze(identities) });
+}
+
+function installConnections(policy, entries) {
+    const connections = [...entries].sort((left, right) => left.document.origin.localeCompare(right.document.origin));
+    const origins = new Set();
+    for (const entry of connections) {
+        if (origins.has(entry.document.origin)) throw configError("Marketplace connection origins must be unique.", entry.bundleDirectory);
+        origins.add(entry.document.origin);
+    }
+    policy.connections = Object.freeze(connections);
+    policy.byOrigin = new Map(connections.map((entry) => [entry.document.origin, entry]));
+}
+
 function publicConnection(connection, index) {
     return Object.freeze({
         origin: connection.document.origin,
@@ -71,31 +102,24 @@ export class MarketplaceConnectionPolicy {
         for (const dirent of await fs.readdir(resolved, { withFileTypes: true })) {
             const bundleDirectory = path.join(resolved, dirent.name);
             if (!dirent.isDirectory() || dirent.isSymbolicLink()) throw configError("Marketplace connection directory contains an unexpected node.", bundleDirectory);
-            await requirePrivateDirectory(bundleDirectory);
-            const bytes = await readPrivateFile(bundleDirectory, CONNECTION_FILE, { maxBytes: MAX_CONNECTION_BYTES });
-            const document = parseMarketplaceConnectionDocument(bytes);
-            const credentialBytes = await readPrivateFile(bundleDirectory, document.readCredentialFile, { maxBytes: MAX_SECRET_BYTES });
-            const credential = parseLocalDocument(credentialBytes, assertCredentialDocument);
-            const identities = [];
-            for (const identity of document.publishingIdentities) {
-                const writeToken = (await readPrivateFile(bundleDirectory, identity.writeTokenFile, { maxBytes: 8 * 1024, utf8: true })).trim();
-                const privateKeyPem = await readPrivateFile(bundleDirectory, identity.privateKeyFile, { maxBytes: 96 * 1024, utf8: true });
-                if (!writeToken || /[\u0000-\u0020\u007f]/u.test(writeToken)) throw configError("Marketplace publisher token is invalid.", bundleDirectory);
-                let privateKey;
-                try { privateKey = createPrivateKey(privateKeyPem); }
-                catch (error) { throw configError("Marketplace publisher private key is invalid.", identity.privateKeyFile, error); }
-                if (privateKey.asymmetricKeyType !== "ed25519") throw configError("Marketplace publisher private key must be Ed25519.", identity.privateKeyFile);
-                identities.push(Object.freeze({ ...identity, writeToken, privateKeyPem }));
-            }
-            entries.push(Object.freeze({ bundleDirectory, document, credential, identities: Object.freeze(identities) }));
+            entries.push(await loadBundle(bundleDirectory));
         }
-        entries.sort((left, right) => left.document.origin.localeCompare(right.document.origin));
-        const origins = new Set();
-        for (const entry of entries) {
-            if (origins.has(entry.document.origin)) throw configError("Marketplace connection origins must be unique.", entry.bundleDirectory);
-            origins.add(entry.document.origin);
+        const policy = new MarketplaceConnectionPolicy(resolved, []);
+        installConnections(policy, entries);
+        return policy;
+    }
+
+    async adopt(bundleDirectory) {
+        const resolved = path.resolve(bundleDirectory);
+        if (path.dirname(resolved) !== path.resolve(this.directory)) {
+            throw configError("Marketplace connection bundle is outside the connection directory.", resolved);
         }
-        return new MarketplaceConnectionPolicy(resolved, Object.freeze(entries));
+        const entry = await loadBundle(resolved);
+        if (this.byOrigin.has(entry.document.origin)) {
+            throw configError("Marketplace connection origins must be unique.", resolved);
+        }
+        installConnections(this, [...this.connections, entry]);
+        return this.find(entry.document.origin);
     }
 
     list() {
