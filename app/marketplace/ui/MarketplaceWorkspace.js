@@ -50,8 +50,19 @@ import {
     TextInput,
     WorkspaceFrame,
 } from "../../ui";
+import MarketplacePaneSplitter from "./MarketplacePaneSplitter.js";
 import SafeMarketplaceMarkdown, { MARKETPLACE_ACTION_LABELS } from "./SafeMarketplaceMarkdown.js";
 import PublishTab from "./publish/PublishTabStreamlined.js";
+import {
+    clampPanelLayout,
+    discoverGridTemplate,
+    resetPanel,
+    resizePanel,
+    splitterAria,
+    stepPanelSize,
+} from "./panelLayout.js";
+import { useContainerSize, useMedia } from "./useContainerSize.js";
+import { useMarketplacePanelLayout } from "./useMarketplacePanelLayout.js";
 import {
     displayKind,
     formatBytes,
@@ -76,18 +87,6 @@ const DEFAULT_DISCOVER_QUERY = Object.freeze({
     offset: 0,
     limit: 50,
 });
-
-function useMedia(query) {
-    const [matches, setMatches] = useState(false);
-    useEffect(() => {
-        const media = window.matchMedia(query);
-        const update = () => setMatches(media.matches);
-        update();
-        media.addEventListener("change", update);
-        return () => media.removeEventListener("change", update);
-    }, [query]);
-    return matches;
-}
 
 function formatDate(value) {
     if (!value) return "Never";
@@ -446,9 +445,9 @@ function InstallDialog({ target, onClose, onInstalled, onOpenEnvironment, onOpen
 
 function ReleaseDetail({ detail, loading, error, onRetry, releaseVersion, onReleaseVersion, onInstall }) {
     const [acknowledgeYank, setAcknowledgeYank] = useState(false);
-    if (loading) return <div className={styles.centerState}><AsyncState title="Loading release" /></div>;
-    if (error) return <div className={styles.centerState}><AsyncState status="error" title="Could not load release" detail={error} onRetry={onRetry} /></div>;
-    if (!detail) return <div className={styles.centerState}><AsyncState status="empty" title="Select an item" detail="Choose a verified catalog item to inspect its release." /></div>;
+    if (loading) return <div id="marketplace-release-detail" className={`${styles.centerState} ${styles.detailSlot}`}><AsyncState title="Loading release" /></div>;
+    if (error) return <div id="marketplace-release-detail" className={`${styles.centerState} ${styles.detailSlot}`}><AsyncState status="error" title="Could not load release" detail={error} onRetry={onRetry} /></div>;
+    if (!detail) return <div id="marketplace-release-detail" className={`${styles.centerState} ${styles.detailSlot}`}><AsyncState status="empty" title="Select an item" detail="Choose a verified catalog item to inspect its release." /></div>;
     const { item, selectedRelease: release, source, verification } = detail;
     const selectedSummary = detail.releases.find((entry) => entry.releaseVersion === release.releaseVersion);
     const preview = item.previews?.[0] ? {
@@ -464,7 +463,7 @@ function ReleaseDetail({ detail, loading, error, onRetry, releaseVersion, onRele
         : "A verified check runs before anything is saved locally.";
     const trackLabel = Object.entries(detail.tracks).filter(([, version]) => version === release.releaseVersion).map(([track]) => track).join(", ") || "Untracked";
     return (
-        <article className={styles.detail} aria-label="Marketplace release details">
+        <article id="marketplace-release-detail" className={styles.detail} aria-label="Marketplace release details">
             <div className={styles.detailScroll}>
                 <PreviewImage preview={preview} alt={item.displayName} />
                 <header className={styles.detailHeader}>
@@ -561,6 +560,11 @@ function ResultMark({ entry }) {
 
 function DiscoverTab({ onOpenEnvironment, onOpenRunConfig, onInstalled, onOpenSettings, openTarget, catalogEpoch = 0 }) {
     const narrowFilters = useMedia("(max-width: 1100px)");
+    const narrowStack = useMedia("(max-width: 760px)");
+    const splitMode = narrowStack ? "stacked" : narrowFilters ? "detail-only" : "wide";
+    const discoverRef = useRef(null);
+    const container = useContainerSize(discoverRef);
+    const [panelLayout, updatePanelLayout] = useMarketplacePanelLayout();
     const [filtersOpen, setFiltersOpen] = useState(false);
     const [query, setQuery] = useState(() => ({
         ...DEFAULT_DISCOVER_QUERY,
@@ -676,10 +680,22 @@ function DiscoverTab({ onOpenEnvironment, onOpenRunConfig, onInstalled, onOpenSe
     ].filter(Boolean);
     const filtersDiffer = Boolean(query.q || query.contentKind || query.sort !== "name" || activeFilters.length);
     const clearFilters = () => setQuery({ ...DEFAULT_DISCOVER_QUERY });
+    const template = splitMode === "stacked" ? null : discoverGridTemplate(panelLayout, splitMode);
+    const resizeDiscover = (id, size) => updatePanelLayout((current) => resizePanel(current, "discover", id, size, container, splitMode));
+    const stepDiscover = (id, direction, options) => updatePanelLayout((current) => stepPanelSize(current, "discover", id, direction, { ...options, container, mode: splitMode }));
+    const resetDiscover = (id) => updatePanelLayout((current) => clampPanelLayout(resetPanel(current, "discover", id), "discover", container, splitMode));
+    useEffect(() => {
+        updatePanelLayout((current) => clampPanelLayout(current, "discover", container, splitMode));
+    }, [container, splitMode, updatePanelLayout]);
     return (
-        <div className={styles.discover}>
+        <div
+            ref={discoverRef}
+            className={styles.discover}
+            data-split={splitMode === "stacked" ? undefined : splitMode}
+            style={template ? { gridTemplateColumns: template.columns } : undefined}
+        >
             {narrowFilters && <button type="button" className={styles.filtersToggle} aria-expanded={filtersOpen} onClick={() => setFiltersOpen((open) => !open)}>Filters</button>}
-            <aside className={styles.filters} aria-label="Marketplace filters" hidden={narrowFilters && !filtersOpen}>
+            <aside id="marketplace-filters" className={styles.filters} aria-label="Marketplace filters" hidden={narrowFilters && !filtersOpen}>
                 <div className={styles.searchBox}><IconSearch size={15} aria-hidden="true" /><input aria-label="Search Marketplace" value={query.q} onChange={(event) => updateFilter("q", event.target.value)} placeholder="Search verified catalog" /></div>
                 <div className={styles.kindChips} role="group" aria-label="Content kind">
                     <button type="button" aria-pressed={query.contentKind === ""} onClick={() => updateFilter("contentKind", "")}>All</button>
@@ -689,6 +705,7 @@ function DiscoverTab({ onOpenEnvironment, onOpenRunConfig, onInstalled, onOpenSe
                 <details className={styles.technicalDetails}><summary>Advanced filters</summary><div className={styles.advancedFilters}><Field label="Track"><NativeSelect value={query.track} onChange={(event) => updateFilter("track", event.target.value)}><option value="stable">Stable</option><option value="beta">Beta</option></NativeSelect></Field><Field label="Source"><NativeSelect value={query.sourceId} onChange={(event) => updateFilter("sourceId", event.target.value)}><option value="">All sources</option>{sources.map((source) => <option key={source.sourceId} value={source.sourceId}>{source.name}</option>)}</NativeSelect></Field><Field label="Publisher"><NativeSelect value={query.publisherId} onChange={(event) => updateFilter("publisherId", event.target.value)}><option value="">All publishers</option>{viewResult.facets.publishers.map((facet) => <option key={facet.value} value={facet.value}>{facet.value} ({facet.count})</option>)}</NativeSelect></Field><Field label="License"><NativeSelect value={query.license} onChange={(event) => updateFilter("license", event.target.value)}><option value="">All licenses</option>{viewResult.facets.licenses.map((facet) => <option key={facet.value} value={facet.value}>{facet.value} ({facet.count})</option>)}</NativeSelect></Field></div></details>
                 {filtersDiffer && <Button size="compact" onClick={clearFilters}>Clear filters</Button>}
             </aside>
+            {splitMode === "wide" && <MarketplacePaneSplitter splitterId="discover-filters" label="Resize filters" axis="x" growDirection={1} aria={splitterAria(panelLayout, "discover", "filters")} controlsId="marketplace-filters" onResize={(size) => resizeDiscover("filters", size)} onStep={(direction, options) => stepDiscover("filters", direction, options)} onReset={() => resetDiscover("filters")} />}
             <section className={styles.results} aria-label="Marketplace results" aria-busy={status === "loading" || undefined}>
                 <header><div><strong>{viewResult.page.total} verified items</strong><span role="status" aria-live="polite">Sort: {sortLabel(query.sort)}</span></div><Button size="compact" onClick={load} loading={status === "loading"}><IconRefresh size={14} aria-hidden="true" /> Refresh</Button></header>
                 {activeFilters.length > 0 && <div className={styles.activeFilters}>{activeFilters.map((filter) => <button type="button" key={filter.key} onClick={() => updateFilter(filter.key, filter.key === "track" ? "stable" : "")}>Remove {filter.label} filter</button>)}</div>}
@@ -698,6 +715,7 @@ function DiscoverTab({ onOpenEnvironment, onOpenRunConfig, onInstalled, onOpenSe
                 )}
                 {viewResult.page.total > viewResult.page.limit && <footer className={styles.pagination}><Button size="compact" disabled={query.offset === 0} onClick={() => setQuery((current) => ({ ...current, offset: Math.max(0, current.offset - current.limit) }))}>Previous</Button><span>{query.offset + 1}–{Math.min(query.offset + query.limit, viewResult.page.total)}</span><Button size="compact" disabled={query.offset + query.limit >= viewResult.page.total} onClick={() => setQuery((current) => ({ ...current, offset: current.offset + current.limit }))}>Next</Button></footer>}
             </section>
+            {splitMode !== "stacked" && <MarketplacePaneSplitter className={styles.detailSplitter} splitterId="discover-detail" label="Resize release details" axis="x" growDirection={-1} aria={splitterAria(panelLayout, "discover", "detail")} controlsId="marketplace-release-detail" onResize={(size) => resizeDiscover("detail", size)} onStep={(direction, options) => stepDiscover("detail", direction, options)} onReset={() => resetDiscover("detail")} />}
             <ReleaseDetail detail={detail} loading={detailStatus === "loading"} error={detailError} onRetry={() => loadDetail()} releaseVersion={selected?.release.releaseVersion} onReleaseVersion={selectRelease} onInstall={setInstallTarget} />
             <InstallDialog target={installTarget} onClose={() => setInstallTarget(null)} onInstalled={() => { setInstallTarget(null); onInstalled?.(); }} onOpenEnvironment={onOpenEnvironment} onOpenRunConfig={onOpenRunConfig} />
         </div>

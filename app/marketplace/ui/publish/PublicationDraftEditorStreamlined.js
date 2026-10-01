@@ -68,7 +68,7 @@ export default function PublicationDraftEditorStreamlined({ draft, drafts, relea
         return () => clearTimeout(timer);
     }, [busy, dirty, draft?.draftId, onSave, payload]);
 
-    if (!draft || !item || !release || !localSelection) return <section className={`${styles.publishColumn} ${styles.publishInspector}`}><div className={styles.publishEmptyState}><h2>Select content to publish</h2><p>Choose an authored item. Marketplace will determine whether it is new or an update.</p></div></section>;
+    if (!draft || !item || !release || !localSelection) return <section id="marketplace-publish-editor" className={`${styles.publishColumn} ${styles.publishInspector}`}><div className={styles.publishEmptyState}><h2>Select content to publish</h2><p>Choose an authored item. Marketplace will determine whether it is new or an update.</p></div></section>;
     const updateItem = (field, value) => setItem((current) => ({ ...current, [field]: value }));
     const updateRelease = (field, value) => setRelease((current) => ({ ...current, [field]: value }));
     const visibleSaveState = dirty && saveState === "saved" ? "pending" : saveState;
@@ -87,7 +87,7 @@ export default function PublicationDraftEditorStreamlined({ draft, drafts, relea
         setSaveState("saving");
         onSave(draft.draftId, payload, { quiet: true }).then((result) => setSaveState(result ? "saved" : "error"));
     };
-    return <section className={`${styles.publishColumn} ${styles.publishInspector}`} aria-labelledby="publication-editor-heading" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) saveOnExit(); }}>
+    return <section id="marketplace-publish-editor" className={`${styles.publishColumn} ${styles.publishInspector}`} aria-labelledby="publication-editor-heading" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) saveOnExit(); }}>
         <header className={styles.publishColumnHeader}><div><span className={styles.kindLabel}>{displayKind(draft.contentKind)}</span><h2 id="publication-editor-heading">{item.displayName}</h2><p>{visibleSaveState === "saved" ? "Saved" : visibleSaveState === "saving" ? "Saving…" : visibleSaveState === "error" ? "Save failed" : "Unsaved changes"}</p></div><Button size="compact" variant="danger" onClick={() => onDelete(draft)}><IconTrash size={14} /> Delete</Button></header>
         <div className={styles.publishEditorBody}>
             {error && <StatusMessage tone="danger" title="Publication draft operation failed">{error}</StatusMessage>}

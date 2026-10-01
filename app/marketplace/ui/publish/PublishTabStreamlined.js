@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { IconBox, IconRefresh } from "@tabler/icons-react";
 
 import {
@@ -24,6 +24,17 @@ import {
     uploadMarketplacePublicationPreview,
 } from "../../MarketplaceClient.js";
 import { AsyncState, Button, DialogSurface, NativeSelect, StatusMessage } from "../../../ui";
+import MarketplacePaneSplitter from "../MarketplacePaneSplitter.js";
+import {
+    clampPanelLayout,
+    publishGridTemplate,
+    resetPanel,
+    resizePanel,
+    splitterAria,
+    stepPanelSize,
+} from "../panelLayout.js";
+import { useContainerSize, useMedia } from "../useContainerSize.js";
+import { useMarketplacePanelLayout } from "../useMarketplacePanelLayout.js";
 import LocalContentBrowser from "./LocalContentBrowser.js";
 import PublicationDraftEditor from "./PublicationDraftEditorStreamlined.js";
 import PublicationReviewDialog from "./PublicationReviewDialogStreamlined.js";
@@ -33,6 +44,10 @@ import styles from "../MarketplaceWorkspace.module.css";
 const INITIAL_QUERY = Object.freeze({ q: "", contentKind: "", status: "all", sort: "name", direction: "asc", offset: 0, limit: 50 });
 
 export default function PublishTabStreamlined({ onOpenPublished }) {
+    const narrowPublish = useMedia("(max-width: 900px)");
+    const splitMode = narrowPublish ? "stacked" : "wide";
+    const bodyRef = useRef(null);
+    const [panelLayout, updatePanelLayout] = useMarketplacePanelLayout();
     const [query, setQuery] = useState(INITIAL_QUERY);
     const [inventory, setInventory] = useState(null);
     const [draftsDocument, setDraftsDocument] = useState(null);
@@ -168,22 +183,33 @@ export default function PublishTabStreamlined({ onOpenPublished }) {
     const resume = async (current) => { const result = await run(() => resumeMarketplacePublishJob(current.jobId, current.revision)); if (result) setJob(result); };
     const replan = async (current) => { const result = await run(() => replanMarketplacePublishJob(current.jobId, current.revision)); if (result) { setJob({ job: result.job }); setPlan(result.plan); await loadContext(); } };
 
-    if (!profilesDocument || !draftsDocument || !readiness) return <AsyncState title="Loading publisher workspace" />;
+    const publishReady = Boolean(profilesDocument && draftsDocument && readiness);
+    const container = useContainerSize(bodyRef, publishReady && splitMode === "wide");
+    useEffect(() => {
+        updatePanelLayout((current) => clampPanelLayout(current, "publish", container, splitMode));
+    }, [container, splitMode, updatePanelLayout]);
+    if (!publishReady) return <AsyncState title="Loading publisher workspace" />;
     const selected = draftsDocument.drafts.find((entry) => entry.draftId === selectedDraftId) ?? null;
     const readyIdentities = readiness.identities.filter((entry) => entry.status === "ready");
+    const template = splitMode === "wide" ? publishGridTemplate(panelLayout) : null;
+    const resizePublish = (id, size) => updatePanelLayout((current) => resizePanel(current, "publish", id, size, container, splitMode));
+    const stepPublish = (id, direction, options) => updatePanelLayout((current) => stepPanelSize(current, "publish", id, direction, { ...options, container, mode: splitMode }));
+    const resetPublish = (id) => updatePanelLayout((current) => clampPanelLayout(resetPanel(current, "publish", id), "publish", container, splitMode));
     return <div className={styles.publishWorkspace}>
         {(error || !readiness.ready) && <div className={styles.publishGlobalStatus}>
             {error && <StatusMessage tone="danger" title="Publisher operation failed">{error}</StatusMessage>}
             {!readiness.ready && <StatusMessage tone="warning" title="Publishing is not configured">Connect a backend-configured source or ask the Marketplace operator to provision a publishing identity.</StatusMessage>}
         </div>}
-        <div className={styles.publishWorkspaceBody}>
+        <div ref={bodyRef} className={splitMode === "wide" ? `${styles.publishWorkspaceBody} ${styles.publishSplit}` : styles.publishWorkspaceBody} style={template ? { gridTemplateColumns: template.columns, gridTemplateRows: template.rows } : undefined}>
         <LocalContentBrowser inventory={inventory} query={query} onQueryChange={setQuery} onCreate={createDraft} assetPackDraft={selected?.contentKind === "asset-pack" ? selected : null} onAddToAssetPack={addAssetRoot} disabled={!profileId || busy} />
-        <section className={`${styles.publishColumn} ${styles.publishQueueColumn}`} aria-labelledby="publication-drafts-heading">
+        {splitMode === "wide" && <MarketplacePaneSplitter className={styles.publishDraftsSplitter} splitterId="publish-drafts" label="Resize drafts" axis="y" growDirection={-1} aria={splitterAria(panelLayout, "publish", "drafts")} controlsId="marketplace-publish-drafts" onResize={(size) => resizePublish("drafts", size)} onStep={(direction, options) => stepPublish("drafts", direction, options)} onReset={() => resetPublish("drafts")} />}
+        <section id="marketplace-publish-drafts" className={`${styles.publishColumn} ${styles.publishQueueColumn}`} aria-labelledby="publication-drafts-heading">
             <header className={styles.publishColumnHeader}><div><h2 id="publication-drafts-heading">Drafts</h2><p>Saved automatically</p></div><Button size="compact" onClick={loadContext} aria-label="Refresh publication drafts"><IconRefresh size={14} /></Button></header>
             {readyIdentities.length > 1 && <div className={styles.publishProfileBar}><NativeSelect aria-label="Publish to" value={profileId} onChange={(event) => setProfileId(event.target.value)}>{readyIdentities.map((identity) => <option value={identity.profileId} key={identity.profileId}>{identity.name} · {identity.sourceName}</option>)}</NativeSelect></div>}
             <div className={styles.publishQueueActions}><Button size="compact" disabled={!profileId} onClick={createCollection}><IconBox size={14} /> New collection</Button></div>
             <div className={styles.publishList}>{draftsDocument.drafts.map((draft) => <button type="button" className={styles.draftButton} data-selected={selectedDraftId === draft.draftId || undefined} key={draft.draftId} onClick={() => setSelectedDraftId(draft.draftId)}><span className={styles.kindLabel}>{displayKind(draft.contentKind)}</span><strong>{draft.item.displayName}</strong><small>{draft.release.releaseVersion}</small><span className={styles.draftState}>{draftStateLabel(draft.state)}</span></button>)}{draftsDocument.drafts.length === 0 ? <div className={styles.publishEmptyState}><IconBox size={22} /><p>Select local content to start a publication.</p></div> : null}</div>
         </section>
+        {splitMode === "wide" && <MarketplacePaneSplitter className={styles.publishColumnSplitter} splitterId="publish-column" label="Resize publication column" axis="x" growDirection={1} aria={splitterAria(panelLayout, "publish", "column")} controlsId="marketplace-publish-catalog" onResize={(size) => resizePublish("column", size)} onStep={(direction, options) => stepPublish("column", direction, options)} onReset={() => resetPublish("column")} />}
         <PublicationDraftEditor key={selected?.draftId ?? "empty"} draft={selected} drafts={draftsDocument.drafts} releaseOptions={releaseOptions} onSave={saveDraft} onDelete={setDeleteTarget} onPrepare={prepare} onUploadPreview={uploadPreview} onRemovePreview={removePreview} onRemoveAssetRoot={removeAssetRoot} busy={busy} error={null} />
         <PublicationReviewDialog plan={plan} job={job} open={Boolean(plan)} onOpenChange={(open) => !open && setPlan(null)} onCommit={commit} onCancel={cancel} onResume={resume} onReplan={replan} onOpenPublished={onOpenPublished} busy={busy} />
         </div>

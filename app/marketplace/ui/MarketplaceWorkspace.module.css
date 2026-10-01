@@ -35,6 +35,69 @@
     min-height: 0;
 }
 
+.discover[data-split="wide"] .filters,
+.discover[data-split="wide"] .results,
+.discover[data-split="detail-only"] .results {
+    border-right: 0;
+}
+
+.discover[data-split="detail-only"] .detailSplitter {
+    grid-column: 2;
+    grid-row: 2;
+}
+
+.discover[data-split="detail-only"] .detail,
+.discover[data-split="detail-only"] .detailSlot {
+    grid-column: 3;
+    grid-row: 2;
+}
+
+.discover[data-split="detail-only"]:has(.filters:not([hidden])) .detailSplitter,
+.discover[data-split="detail-only"]:has(.filters:not([hidden])) .detail,
+.discover[data-split="detail-only"]:has(.filters:not([hidden])) .detailSlot {
+    grid-row: 3;
+}
+
+.marketSplitter {
+    position: relative;
+    min-width: 0;
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    outline: none;
+    touch-action: none;
+}
+
+.marketSplitter[data-axis="x"] { cursor: col-resize; }
+.marketSplitter[data-axis="y"] { cursor: row-resize; }
+
+.marketSplitter:focus-visible {
+    outline: 2px solid var(--slate-ring);
+    outline-offset: -2px;
+}
+
+.marketSplitter > span {
+    position: absolute;
+    background: var(--market-line);
+}
+
+.marketSplitter[data-axis="x"] > span {
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 1px;
+    transform: translateX(-50%);
+}
+
+.marketSplitter[data-axis="y"] > span {
+    right: 0;
+    left: 0;
+    top: 50%;
+    height: 1px;
+    transform: translateY(-50%);
+}
+
 .filters,
 .results,
 .detail {
@@ -922,6 +985,12 @@
 .publishInspector { grid-column: 2; grid-row: 1 / span 2; }
 .publishQueueColumn { grid-column: 1; grid-row: 2; grid-template-rows: auto auto auto minmax(0, 1fr); border-top: 1px solid var(--market-line); }
 .publishWorkspaceBody > .publishColumn:not(.publishQueueColumn, .publishInspector) { grid-column: 1; grid-row: 1; }
+.publishWorkspaceBody.publishSplit > .publishColumn { border-right: 0; }
+.publishWorkspaceBody.publishSplit > .publishCatalog { grid-column: 1; grid-row: 1; }
+.publishWorkspaceBody.publishSplit > .publishDraftsSplitter { grid-column: 1; grid-row: 2; }
+.publishWorkspaceBody.publishSplit > .publishQueueColumn { grid-column: 1; grid-row: 3; border-top: 0; }
+.publishWorkspaceBody.publishSplit > .publishColumnSplitter { grid-column: 2; grid-row: 1 / span 3; }
+.publishWorkspaceBody.publishSplit > .publishInspector { grid-column: 3; grid-row: 1 / span 3; }
 .publishEditorBody { display: grid; align-content: start; gap: 16px; min-height: 0; overflow-y: auto; padding: 16px; scrollbar-gutter: stable; }
 .publishFormGrid { gap: 12px; }
 

@@ -395,3 +395,50 @@ test("MKT-16 primary tasks and URL-only source dialog are keyboard accessible @a
     })));
     await expect(page.getByRole("alert").filter({ hasText: "Reload required" })).toContainText("Reload required");
 });
+
+test("marketplace panel splitters resize, persist, and yield when the workspace stacks", async ({ page, request }) => {
+    test.setTimeout(120_000);
+    await openMarketplace(page);
+    await trustSource(page, request, "Panel Layout Registry");
+
+    const filtersSplitter = page.locator('[data-market-splitter="discover-filters"]');
+    const detailSplitter = page.locator('[data-market-splitter="discover-detail"]');
+    await expect(filtersSplitter).toHaveAttribute("aria-valuenow", "224");
+    await filtersSplitter.focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(filtersSplitter).toHaveAttribute("aria-valuenow", "232");
+    await expect.poll(() => page.evaluate(() => localStorage.getItem("cev-sim.ui.marketplace.panelLayout"))).toContain('"size":232');
+    await page.reload();
+    await openMarketplace(page);
+    await expect(filtersSplitter).toHaveAttribute("aria-valuenow", "232");
+    await filtersSplitter.dblclick();
+    await expect(filtersSplitter).toHaveAttribute("aria-valuenow", "224");
+
+    await page.setViewportSize({ width: 800, height: 720 });
+    await expect(page.getByRole("button", { name: "Filters", exact: true })).toBeVisible();
+    await expect(filtersSplitter).toHaveCount(0);
+    await expect(detailSplitter).toHaveAttribute("aria-orientation", "vertical");
+
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.getByRole("tab", { name: "Publish" }).click();
+    const columnSplitter = page.locator('[data-market-splitter="publish-column"]');
+    const draftsSplitter = page.locator('[data-market-splitter="publish-drafts"]');
+    await expect(page.getByRole("heading", { name: "Local catalog" })).toBeVisible();
+    await expect(columnSplitter).toHaveAttribute("aria-valuenow", "392");
+    await expect(draftsSplitter).toHaveAttribute("aria-valuenow", "220");
+    await columnSplitter.focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(columnSplitter).toHaveAttribute("aria-valuenow", "400");
+    await draftsSplitter.focus();
+    await page.keyboard.press("ArrowUp");
+    await expect(draftsSplitter).toHaveAttribute("aria-valuenow", "228");
+    await expect(page.getByRole("heading", { name: "Drafts" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Select content to publish" })).toBeVisible();
+
+    await page.setViewportSize({ width: 800, height: 720 });
+    await expect(columnSplitter).toHaveCount(0);
+    await expect(draftsSplitter).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Local catalog" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Drafts" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Select content to publish" })).toBeVisible();
+});

@@ -9,6 +9,13 @@ loadEnvConfig(REPOSITORY_ROOT, dev);
 const app = next({ dev });
 const handle = app.getRequestHandler();
 
+// just general logging + preflight checks
+const ready = require("./startup.js").startup(REPOSITORY_ROOT, process.env);
+
+if (!ready) {
+    process.exit(1);
+}
+
 app.prepare().then(async () => {
     const server = express();
 

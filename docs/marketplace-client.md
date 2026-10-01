@@ -316,7 +316,8 @@ accessible preview placeholder.
 
 The browser probes the enabled-only status route before exposing Marketplace
 navigation. Discover, Updates, Installed, Security, Sources, and Publish are
-explicit workspace tabs.
+explicit workspace tabs. Discover and Publish panel sizes are a local UI
+preference under `cev-sim.ui.marketplace.panelLayout`.
 Descriptions and changelogs use pinned CommonMark rendering with raw HTML and
 images suppressed; only HTTP(S) links are admitted and external links use
 `noopener noreferrer`. Compatibility shows both declared requirements and the

@@ -11,7 +11,7 @@ function kindLabel(value) {
 
 export default function LocalContentBrowser({ inventory, query, onQueryChange, onCreate, assetPackDraft, onAddToAssetPack, disabled }) {
     const page = inventory?.page ?? { offset: 0, limit: 50, total: 0 };
-    return <section className={styles.publishColumn} aria-labelledby="publisher-local-heading">
+    return <section id="marketplace-publish-catalog" className={`${styles.publishColumn} ${styles.publishCatalog}`} aria-labelledby="publisher-local-heading">
         <header className={styles.publishColumnHeader}><div><h2 id="publisher-local-heading">Local catalog</h2><p>{page.total} authored entries</p></div></header>
         <div className={styles.publishFilters}>
             <div className={styles.publishFilterRow}>
