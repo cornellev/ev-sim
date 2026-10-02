@@ -73,6 +73,32 @@ test("turning vehicle produces yaw-rate on IMU Z axis", () => {
     assert.ok(Math.abs(measurement.angularVelocity.z) > 0.01);
 });
 
+test("steady turn produces centripetal acceleration on IMU Y axis", () => {
+    const config = normalizeRunSensor({ type: "imu" });
+    for (const steeringAngle of [0.2, -0.2]) {
+        const rng = new SeededRNG("imu-centripetal");
+        const vehicle = mockVehicle({ velocity: { x: 3, y: 0, z: 0 }, steeringAngle });
+        const first = captureVehicleSnapshot(vehicle, 10_000_000);
+        const second = captureVehicleSnapshot(vehicle, 20_000_000, first);
+        const yawRate = second.bodyAngularVelocity.z;
+        assert.ok(Math.abs(yawRate) > 0.1);
+        // Constant body-frame velocity: the only acceleration is speed times yaw rate.
+        assert.ok(Math.abs(second.bodyAcceleration.x) < 1e-12);
+        assert.ok(Math.abs(second.bodyAcceleration.y - 3 * yawRate) < 1e-12);
+        const { measurement } = buildImuMeasurement(second, config, rng, createMeasurementSeedState(config, rng));
+        assert.ok(Math.abs(measurement.linearAcceleration.y - 3 * yawRate) < 0.2);
+        assert.equal(Math.sign(measurement.linearAcceleration.y), Math.sign(yawRate));
+    }
+});
+
+test("straight driving produces no lateral IMU acceleration", () => {
+    const vehicle = mockVehicle({ velocity: { x: 3, y: 0, z: 0 }, steeringAngle: 0 });
+    const first = captureVehicleSnapshot(vehicle, 10_000_000);
+    const second = captureVehicleSnapshot(vehicle, 20_000_000, first);
+    assert.equal(second.bodyAcceleration.x, 0);
+    assert.equal(second.bodyAcceleration.y, 0);
+});
+
 test("saturation clamps IMU axes deterministically", () => {
     const vector = saturateVector({ x: 100, y: -100, z: 5 }, 10);
     assert.equal(vector.x, 10);

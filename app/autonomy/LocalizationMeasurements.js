@@ -137,6 +137,11 @@ export function captureVehicleSnapshot(vehicle, captureTimeNs, previous = null, 
             };
         }
     }
+    // The body frame rotates with the vehicle, so the derivative of body-frame
+    // velocity omits omega x v. In a steady turn that term is the whole
+    // centripetal acceleration: yaw rate times forward speed, toward the turn.
+    bodyAcceleration.x -= yawRate * bodyVelocity.y;
+    bodyAcceleration.y += yawRate * bodyVelocity.x;
 
     return {
         captureTimeNs,
