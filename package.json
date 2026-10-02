@@ -55,7 +55,7 @@
   "dependencies": {
     "@dimforge/rapier3d": "0.19.3",
     "@dimforge/rapier3d-compat": "0.19.3",
-    "@grpc/grpc-js": "1.14.4",
+    "@grpc/grpc-js": "1.14.5",
     "@grpc/proto-loader": "0.8.1",
     "@jax-js/jax": "^0.1.9",
     "@modelcontextprotocol/sdk": "^1.29.0",
@@ -75,7 +75,7 @@
     "express": "^5.2.1",
     "gltf-validator": "2.0.0-dev.3.10",
     "leaflet": "^1.9.4",
-    "next": "^16.3.5",
+    "next": "^16.3.6",
     "noisejs": "^2.1.0",
     "postprocessing": "^6.39.1",
     "radix-ui": "^1.6.7",
