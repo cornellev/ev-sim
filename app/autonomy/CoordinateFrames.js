@@ -1,7 +1,10 @@
 /**
  * REP-103/105 coordinate helpers and Three.js scene ↔ ROS frame conversions.
- * Scene/vehicle coordinates remain Three.js (+X forward, +Y up, +Z left).
+ * Scene/vehicle coordinates remain Three.js (+X forward, +Y up, +Z right).
  * Manifest extrinsics and ROS payloads use REP-103 (+X forward, +Y left, +Z up).
+ * Both frames are right-handed, so REP-103 +Y (left) is Three.js -Z.
+ * Negations are written `0 - v` so that zero stays +0: -0 breaks strict
+ * equality and canonical hashes.
  */
 
 export function simulationStamp(timeNs) {
@@ -11,12 +14,12 @@ export function simulationStamp(timeNs) {
 
 /** Fixed basis change: REP-103 vector → Three.js vehicle-local vector. */
 export function rep103ToThreeVector({ x = 0, y = 0, z = 0 } = {}) {
-    return { x: Number(x), y: Number(z), z: Number(y) };
+    return { x: Number(x), y: Number(z), z: 0 - Number(y) };
 }
 
 /** Fixed basis change: Three.js vehicle-local vector → REP-103. */
 export function threeToRep103Vector({ x = 0, y = 0, z = 0 } = {}) {
-    return { x: Number(x), y: Number(z), z: Number(y) };
+    return { x: Number(x), y: 0 - Number(z), z: Number(y) };
 }
 
 /** REP-103 Euler XYZ (radians) → Three.js Euler XYZ (same axis order, basis-mapped components). */
@@ -27,7 +30,7 @@ export function rep103EulerToThree(euler = {}) {
         z: Number(euler.z || 0),
         order: euler.order || "XYZ",
     };
-    return { x: rep.x, y: rep.z, z: rep.y, order: rep.order };
+    return { x: rep.x, y: rep.z, z: 0 - rep.y, order: rep.order };
 }
 
 export function threeEulerToRep103(euler = {}) {
@@ -37,7 +40,7 @@ export function threeEulerToRep103(euler = {}) {
         z: Number(euler.z || 0),
         order: euler.order || "XYZ",
     };
-    return { x: three.x, y: three.z, z: three.y, order: three.order };
+    return { x: three.x, y: 0 - three.z, z: three.y, order: three.order };
 }
 
 export function rep103PoseToThree(pose = {}) {

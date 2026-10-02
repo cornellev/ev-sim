@@ -27,12 +27,12 @@ function boundsFromObject(object3D) {
     if (box.isEmpty()) return null;
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
-    // Three scene axes are +X forward, +Y up, +Z left. The swap is therefore
-    // the complete basis proof for axis-aligned world extents into REP-103.
+    // Three scene axes are +X forward, +Y up, +Z right, so REP-103 +Y is -Z.
+    // Negating an axis swaps its min and max. `0 - v` keeps zero as +0.
     return {
-        min: { x: box.min.x, y: box.min.z, z: box.min.y },
-        max: { x: box.max.x, y: box.max.z, z: box.max.y },
-        center: { x: center.x, y: center.z, z: center.y },
+        min: { x: box.min.x, y: 0 - box.max.z, z: box.min.y },
+        max: { x: box.max.x, y: 0 - box.min.z, z: box.max.y },
+        center: { x: center.x, y: 0 - center.z, z: center.y },
         size: { x: size.x, y: size.z, z: size.y },
     };
 }

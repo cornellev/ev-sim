@@ -384,11 +384,7 @@ export function normalizeLanes(payload, {
             }
             return {
                 ...position,
-                three: {
-                    x: position.x,
-                    y: position.z,
-                    z: position.y,
-                },
+                three: rep103ToThreeVector(position),
             };
         });
         return {
@@ -447,11 +443,11 @@ export function normalizeOdometry(payload, {
             w: Number(orientation.w ?? 1),
         },
         covariance,
-        threePosition: {
+        threePosition: rep103ToThreeVector({
             x: Number(position.x || 0),
-            y: Number(position.z || 0),
-            z: Number(position.y || 0),
-        },
+            y: Number(position.y || 0),
+            z: Number(position.z || 0),
+        }),
         // Horizontal (xy) covariance ellipse radii from pose covariance indices 0 and 7.
         covarianceEllipse: {
             sigmaX: Math.sqrt(Math.max(0, Number(covariance[0] || 0))),
