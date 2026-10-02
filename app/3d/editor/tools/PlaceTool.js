@@ -89,7 +89,10 @@ export class PlaceTool {
         if (!point) return;
 
         if (asset.kind === "catalog") {
-            void this.assetPlacementController?.commit(point);
+            void this.assetPlacementController?.commit(point, {
+                obstacle: asset.obstacle === true,
+                semantic: asset.semantic ?? "unknown",
+            });
             return;
         }
 

@@ -9,6 +9,39 @@ function point(value, label) {
     return value.map(canonicalFiniteNumber);
 }
 
+const LONGEST_AXIS_CELLS = 8;
+const SHORTEST_AXIS_CELLS = 2;
+const MAX_LONGEST_AXIS_CELLS = 64;
+
+/**
+ * Cell size for a mesh in the space it will be clustered.
+ * About 8 cells on the longest axis. A shorter axis that would otherwise
+ * fall inside one of those cells is given 2 cells, unless that would put
+ * more than 64 cells on the longest axis. A zero-extent axis is ignored,
+ * so a true plane stays a plane.
+ */
+export function chooseVoxelSize(vertices = []) {
+    if (!Array.isArray(vertices) || vertices.length === 0) throw new TypeError("Voxel size requires vertices.");
+    const min = [Infinity, Infinity, Infinity];
+    const max = [-Infinity, -Infinity, -Infinity];
+    for (let index = 0; index < vertices.length; index += 1) {
+        const vertex = point(vertices[index], `vertices[${index}]`);
+        for (let axis = 0; axis < 3; axis += 1) {
+            if (vertex[axis] < min[axis]) min[axis] = vertex[axis];
+            if (vertex[axis] > max[axis]) max[axis] = vertex[axis];
+        }
+    }
+    const extents = min.map((value, axis) => max[axis] - value);
+    const longest = Math.max(...extents);
+    if (!(longest > 0)) throw new TypeError("Voxel size requires a mesh with extent.");
+    const target = longest / LONGEST_AXIS_CELLS;
+    const realExtents = extents.filter((extent) => extent > longest * 1e-8);
+    const shortest = Math.min(...realExtents);
+    const fitted = shortest < target ? shortest / SHORTEST_AXIS_CELLS : target;
+    const finest = longest / MAX_LONGEST_AXIS_CELLS;
+    return fitted < finest ? finest : fitted;
+}
+
 export function simplifyVoxelMesh({ vertices = [], triangles = [] } = {}, voxelSize = 0.5) {
     if (!Number.isFinite(voxelSize) || voxelSize <= 0) throw new TypeError("voxelSize must be positive and finite.");
     const sourceVertices = vertices.map((entry, index) => point(entry, `vertices[${index}]`));

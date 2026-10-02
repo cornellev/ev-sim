@@ -1,5 +1,5 @@
 import { compareUtf8 } from "../../math/compareUtf8.js";
-import { cross3a, dot3a, sub3a } from "../../math/linalg.js";
+import { buildOutwardConvexMesh, proxyMeshFailure } from "./ConvexMesh.js";
 import { FEATURE_GEOMETRY_BY_TYPE } from "../../3d/editor/objects/types/builtinProp.js";
 import { createBuiltInIGVCEnvironmentDocument } from "../../3d/igvc/IGVCEnvironmentDocument.js";
 import {
@@ -521,17 +521,27 @@ function meshBounds(vertices) {
     };
 }
 
+function collisionMesh(record) {
+    const vertices = record.vertices;
+    const triangles = record.triangles;
+    if (proxyMeshFailure(vertices, triangles, { convex: true }) === null) {
+        return { vertices, triangles };
+    }
+    return buildOutwardConvexMesh(vertices);
+}
+
 function compileAssetProxyChannel(records, instance, instanceId, channel) {
     return records.map((record, index) => {
         const id = `${instanceId}/${identifier(record.id, `${channel} proxy ${index} ID`)}`;
-        const vertices = record.vertices.map((point, vertexIndex) => transformAssetMetricPoint(point, instance, `${id} vertex ${vertexIndex}`));
+        const source = channel === "collision" ? collisionMesh(record) : record;
+        const vertices = source.vertices.map((point, vertexIndex) => transformAssetMetricPoint(point, instance, `${id} vertex ${vertexIndex}`));
         return {
             id,
             sourceId: instanceId,
             kind: channel === "collision" ? "convex" : "mesh",
             ...(channel === "lidar" ? { semantic: identifier(record.semantic, `${id} semantic class`) } : {}),
             vertices,
-            triangles: record.triangles.map((triangle) => [...triangle]),
+            triangles: source.triangles.map((triangle) => [...triangle]),
             bounds: meshBounds(vertices),
         };
     }).sort((left, right) => compareUtf8(left.id, right.id));
@@ -756,36 +766,19 @@ export function assertWorldResource(resource) {
     return resource.description;
 }
 
-function vector3Difference(left, right) {
-    return sub3a(left, right);
-}
-
-function cross3(left, right) {
-    return cross3a(left, right);
-}
-
-function dot3(left, right) {
-    return dot3a(left, right);
-}
+const PROXY_MESH_FAILURE = {
+    "insufficient-vertices": (id) => `Asset proxy "${id}" has insufficient vertices.`,
+    "no-triangles": (id) => `Asset proxy "${id}" has no triangles.`,
+    "invalid-vertex": (id) => `Asset proxy "${id}" contains an invalid vertex.`,
+    "invalid-indices": (id) => `Asset proxy "${id}" contains invalid indices.`,
+    "degenerate-face": (id) => `Asset proxy "${id}" contains a degenerate face.`,
+    "inconsistent-winding": (id) => `Asset proxy "${id}" has inconsistent winding.`,
+    "not-convex": (id) => `Asset proxy "${id}" is not convex.`,
+};
 
 function assertProxyMesh(proxy, { convex = false } = {}) {
-    if (!Array.isArray(proxy.vertices) || proxy.vertices.length < (convex ? 4 : 3)) throw new TypeError(`Asset proxy "${proxy.id}" has insufficient vertices.`);
-    if (!Array.isArray(proxy.triangles) || proxy.triangles.length === 0) throw new TypeError(`Asset proxy "${proxy.id}" has no triangles.`);
-    proxy.vertices.forEach((point) => {
-        if (!Array.isArray(point) || point.length !== 3 || point.some((value) => !Number.isFinite(value))) throw new TypeError(`Asset proxy "${proxy.id}" contains an invalid vertex.`);
-    });
-    const center = proxy.vertices.reduce((sum, point) => sum.map((value, axis) => value + point[axis]), [0, 0, 0]).map((value) => value / proxy.vertices.length);
-    for (const triangle of proxy.triangles) {
-        if (!Array.isArray(triangle) || triangle.length !== 3 || new Set(triangle).size !== 3 || triangle.some((index) => !Number.isInteger(index) || index < 0 || index >= proxy.vertices.length)) throw new TypeError(`Asset proxy "${proxy.id}" contains invalid indices.`);
-        const [a, b, c] = triangle.map((index) => proxy.vertices[index]);
-        const normal = cross3(vector3Difference(b, a), vector3Difference(c, a));
-        if (Math.hypot(...normal) <= 1e-12) throw new TypeError(`Asset proxy "${proxy.id}" contains a degenerate face.`);
-        if (convex) {
-            const faceCenter = a.map((value, axis) => (value + b[axis] + c[axis]) / 3);
-            if (dot3(normal, vector3Difference(faceCenter, center)) <= 1e-12) throw new TypeError(`Asset proxy "${proxy.id}" has inconsistent winding.`);
-            if (proxy.vertices.some((point) => dot3(normal, vector3Difference(point, a)) > 1e-9)) throw new TypeError(`Asset proxy "${proxy.id}" is not convex.`);
-        }
-    }
+    const failure = proxyMeshFailure(proxy.vertices, proxy.triangles, { convex });
+    if (failure) throw new TypeError(PROXY_MESH_FAILURE[failure](proxy.id));
     if (JSON.stringify(canonicalizeSimulationValue(meshBounds(proxy.vertices))) !== JSON.stringify(proxy.bounds)) throw new TypeError(`Asset proxy "${proxy.id}" bounds do not match its vertices.`);
 }
 

@@ -487,7 +487,13 @@ export class EditorState {
 
     setPlacementAsset(asset) {
         const placement = !asset ? null : asset.kind === "catalog"
-            ? { kind: "catalog", assetId: String(asset.assetId), revision: Number(asset.revision), label: asset.label ?? asset.name }
+            ? {
+                kind: "catalog",
+                assetId: String(asset.assetId),
+                revision: Number(asset.revision),
+                label: asset.label ?? asset.name,
+                ...(asset.obstacle === true ? { obstacle: true, semantic: String(asset.semantic ?? "unknown") } : {}),
+            }
             : { kind: "builtin", id: String(asset.id), label: asset.label };
         this.activePlacement = placement;
         if (placement) {

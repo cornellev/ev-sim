@@ -1,5 +1,6 @@
 /** Deterministic ED-07 assembly, proxy, and metric compiler. */
 
+import { normalizePerceptionClassName } from "../autonomy/PerceptionLabelCatalog.js";
 import { canonicalizeSimulationValue, simulationSha256 } from "../simulation/kernel/SimulationHashes.js";
 import {
     ASSET_PRIMITIVE_POLICY,
@@ -10,7 +11,8 @@ import {
     staleGeneratedProxyIds,
     validateAssetDefinition,
 } from "./AssetDefinition.js";
-import { meshFromPrimitive, simplifyVoxelMesh } from "./VoxelMeshSimplifier.js";
+import { buildOutwardConvexMesh } from "../simulation/world/ConvexMesh.js";
+import { chooseVoxelSize, meshFromPrimitive, simplifyVoxelMesh } from "./VoxelMeshSimplifier.js";
 
 export const ASSET_COMPILER_VERSION = 1;
 
@@ -171,7 +173,7 @@ export function compileAssetDefinition(definitionInput, {
     };
 }
 
-export function generateVoxelProxy(definitionInput, { id, channel = "lidar", includedPartIds, voxelSize = 0.2, semantic = "unknown", sourceGeometries = {}, resolvedChildren = {} } = {}) {
+export function generateVoxelProxy(definitionInput, { id, channel = "lidar", includedPartIds, voxelSize = null, semantic = "unknown", sourceGeometries = {}, resolvedChildren = {} } = {}) {
     const rawIssues = validateAssetDefinition(definitionInput);
     if (rawIssues.some((entry) => entry.severity === "error")) throw Object.assign(new TypeError(rawIssues[0].message), { issues: rawIssues });
     const definition = normalizeAssetDefinition(definitionInput);
@@ -197,14 +199,16 @@ export function generateVoxelProxy(definitionInput, { id, channel = "lidar", inc
         }
     }
     if (merged.triangles.length === 0) throw new TypeError("Generated proxy selection contains no triangle geometry.");
-    const simplified = simplifyVoxelMesh(merged, voxelSize);
+    const size = voxelSize == null ? chooseVoxelSize(merged.vertices) : voxelSize;
+    const simplified = simplifyVoxelMesh(merged, size);
+    const geometry = channel === "collision" ? buildOutwardConvexMesh(simplified.vertices) : simplified;
     const proxy = {
         id, kind: channel === "collision" ? "convex" : "mesh", enabled: true,
         ...(channel === "lidar" ? { semantic } : {}),
         transform: { position: [0,0,0], quaternion: [0,0,0,1], scale: [1,1,1] },
-        ...simplified,
+        ...geometry,
         generated: {
-            generator: { id: "voxel-cluster", version: 1 }, parameters: { voxelSize },
+            generator: { id: "voxel-cluster", version: 1 }, parameters: { voxelSize: size },
             includedPartIds: ids,
             sourceRevisions: definition.parts.filter((part) => part.content.kind === "asset-reference").map((part) => ({ assetId: part.content.assetId, revision: part.content.revision })),
             inputGeometryHash: "0".repeat(64),
@@ -212,4 +216,29 @@ export function generateVoxelProxy(definitionInput, { id, channel = "lidar", inc
     };
     proxy.generated.inputGeometryHash = hashGeneratedProxyInput(proxy, compiled.geometryFingerprints);
     return canonicalizeSimulationValue(proxy);
+}
+
+/**
+ * One enabled collision convex and one enabled lidar mesh for the same parts.
+ * `semantic` is folded onto an existing perception class; unknown names become "unknown".
+ */
+export function createObstacleProxies(definitionInput, {
+    sourceGeometries = {},
+    resolvedChildren = {},
+    semantic = "unknown",
+    voxelSize = null,
+    partIds,
+} = {}) {
+    const definition = normalizeAssetDefinition(definitionInput);
+    const semanticName = normalizePerceptionClassName(semantic);
+    const ids = [...new Set((partIds ?? definition.parts
+        .filter((part) => part.content.kind === "model-node" || part.content.kind === "asset-reference")
+        .map((part) => part.id)).map(String))].sort();
+    if (ids.length === 0) throw new TypeError("Obstacle proxies require at least one part.");
+    const shared = { includedPartIds: ids, voxelSize, sourceGeometries, resolvedChildren };
+    return {
+        semantic: semanticName,
+        collision: generateVoxelProxy(definition, { ...shared, id: "collision-generated-1", channel: "collision" }),
+        lidar: generateVoxelProxy(definition, { ...shared, id: "lidar-generated-1", channel: "lidar", semantic: semanticName }),
+    };
 }

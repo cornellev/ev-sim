@@ -72,11 +72,12 @@ ED PR changes a contract, hash, gate, or milestone status.
   and sensor editing in the editor while mesh modeling stays external; explicit
   asset revisions and explicit instance updates; curved roads and asymmetric
   lanes; connected roads stay connected when moved; Google tiles remain a live
-  backdrop owned by the environment; imported GLTF models are visual-only until
-  proxies are set up; LiDAR authoring supports generated meshes and editable
-  primitives.
+  backdrop owned by the environment; imported GLTF models stay visual until a
+  v2 metric revision exists. Place as obstacle and a Scene-canvas drop publish
+  that revision and assign one existing perception class. LiDAR authoring
+  supports generated meshes and editable primitives.
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-10-01 — MESH-01 through MESH-04 transcode OBJ, STL, and PLY into the glTF catalog**.
+- Last updated: **2026-10-01 — generated obstacle proxies size voxels from the mesh**.
 
 ## Normative contracts
 
@@ -830,7 +831,7 @@ contracts, identities, or gates changed.
 
 **Depends on:** MESH-03 and ED-07.
 
-The asset inspector edits `normalization.orientation` with Y-up and Z-up presets (`AssetOrientation.js`) through `assetStudioCommands.setNormalization`. `materialsFromGltf()` seeds the first definition from `lease.gltfJson` when a v1 revision is opened. Generate collision calls `AssetStudioSession.generateProxy({ channel: "collision" })`, which commits a convex from `generateVoxelProxy`. A placed instance stays visual until that v2 revision is saved.
+The asset inspector edits `normalization.orientation` with Y-up and Z-up presets (`AssetOrientation.js`) through `assetStudioCommands.setNormalization`. `materialsFromGltf()` seeds the first definition from `lease.gltfJson` when a v1 revision is opened. Generate collision calls `AssetStudioSession.generateProxy({ channel: "collision" })`, which commits a convex from `generateVoxelProxy`. A visual Place stays visual until that v2 revision is saved. OBS-03 publishes the v2 revision from Place as obstacle or a Scene-canvas drop, assigning one existing perception class.
 
 **Merge gate:** `tests/mesh-document.test.js`, `tests/mesh-glb-encoder.test.js`, `tests/editor-asset-import.test.js`, `tests/gltf-material-import.test.js`, `tests/ed07-asset-studio.test.js`, plus the OBJ import and asset-studio Playwright flows.
 
@@ -1030,6 +1031,27 @@ Record in the ledger: focused-suite pass counts, `npm run lint` result,
   `6ca2ece3d5266822a2ceabba72e5f7dd9514789e76757e86f6aedd2730ab9a6a`.
 
 ## Decision log
+
+### 2026-10-02 — Collision proxies are outward convex hulls
+
+`voxel-cluster` v1 still chooses the cell size and still emits that clustered surface for LiDAR. Collision generation replaces the clustered surface with a deterministic outward convex hull of the clustered vertices. A flat point set is thickened along its thinnest axis, ties preferring Y, by at least `max(1e-4, longestExtent * 1e-4)`. A point set smaller than 1 mm is thickened until every axis reaches 1 mm, so the solid still clears the loader's winding threshold. Thickening repeats until the solid has volume. World compile repairs a stored collision record that fails the same convex predicate before the instance transform, so an already placed obstacle loads without republishing. Records that already pass, including primitive boxes, stay unchanged. `worldHash` and `metricWorldHash` change only when a collision record is repaired. A route proof bound to the previous `metricWorldHash` needs re-verification. The generator version stays 1, so saved proxies are not marked stale.
+
+### 2026-10-01 — Generated proxies size voxels from the mesh
+
+`generateVoxelProxy` and `createObstacleProxies` choose a `voxel-cluster` v1 cell size from the included mesh when the caller omits `voxelSize`. The longest axis is about 8 cells, and a shorter axis that would otherwise fall into one cell gets 2, clamped so the longest axis stays within 64 cells. The chosen size is stored on `generated.parameters.voxelSize`. An explicit size is unchanged. Studio Generate and Regenerate no longer force 0.2 m, which had collapsed a short cone to its base plane. Saved proxies stay as published until regenerated. `worldHash` changes only when a newly generated revision is placed.
+
+### 2026-10-01 — Catalog meshes can be placed as obstacles
+
+OBS-01 through OBS-03 place a catalog mesh into the environment as an
+`asset-instance` typeVersion 2 pin. A drop on the WebGL canvas, which sits
+under the pointer-events-none workspace grid, and **Place as obstacle** both
+call `AssetInstantiation.placeObstacle`. That publishes a v2 revision when the
+pin has no matching collision and lidar proxies, using
+`createObstacleProxies` and an existing name from `PERCEPTION_CLASS_IDS`.
+`"cone"` is stored as `"unknown"`. No perception class is added. `worldHash`
+changes only when the instance is placed, through the existing world
+description v3 compiler. The context-menu **Place** action stays visual for a
+v1 pin. Built-in Cone remains a feature, not a catalog obstacle.
 
 ### 2026-10-01 — OBJ, STL, and PLY enter the catalog as glTF
 

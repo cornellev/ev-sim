@@ -25,7 +25,7 @@ export class AssetStudioSession {
         this.error = null;
         this.generation = 0;
         this.view = {
-            showCollision: true, showLidar: true, includedPartIds: [],
+            showCollision: true, showLidar: true, showUnits: true, includedPartIds: [],
             camera: null, expandedPartIds: [],
         };
         this.subscribers = new Set();
@@ -101,14 +101,28 @@ export class AssetStudioSession {
     async generateProxy(options) {
         const token = ++this.generation;
         const expectedDocumentVersion = this.document.version;
-        const proxy = await Promise.resolve().then(() => generateVoxelProxy(this.document.snapshot(), { ...options, sourceGeometries: this.sourceGeometries, resolvedChildren: this.resolvedChildren }));
-        if (token !== this.generation) return { ok: false, stale: true };
-        return this.bus.execute(assetStudioCommands.replaceGeneratedProxy({
-            channel: options.channel,
-            proxy,
-            expectedDocumentVersion,
-            expectedInputGeometryHash: proxy.generated.inputGeometryHash,
-        }));
+        try {
+            const proxy = await Promise.resolve().then(() => generateVoxelProxy(this.document.snapshot(), { ...options, sourceGeometries: this.sourceGeometries, resolvedChildren: this.resolvedChildren }));
+            if (token !== this.generation) return { ok: false, stale: true };
+            const result = this.bus.execute(assetStudioCommands.replaceGeneratedProxy({
+                channel: options.channel,
+                proxy,
+                expectedDocumentVersion,
+                expectedInputGeometryHash: proxy.generated.inputGeometryHash,
+            }));
+            if (token !== this.generation) return result;
+            this.error = result?.ok === false
+                ? Object.assign(new Error(result.error ?? result.issues?.[0]?.message ?? "Proxy generation failed."), { issues: result.issues ?? [] })
+                : null;
+            this.notify();
+            return result;
+        } catch (error) {
+            if (token === this.generation) {
+                this.error = error;
+                this.notify();
+            }
+            throw error;
+        }
     }
 
     async save(input = {}) {

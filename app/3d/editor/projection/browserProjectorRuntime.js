@@ -27,7 +27,7 @@ export function createBrowserProjectorRuntime({ data = null, renderer = null } =
             previews,
             sessions,
             instantiation: data?.environment?.()?.getDocument
-                ? new AssetInstantiation({ repository, document: data.environment().getDocument() })
+                ? new AssetInstantiation({ repository, document: data.environment().getDocument(), models })
                 : null,
         },
         placeFeature({ data, scene, registry, feature }) {

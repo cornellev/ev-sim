@@ -7,6 +7,7 @@ import {
     canAcceptCatalogDrop,
     catalogDropDestination,
     folderSubtreeIds,
+    isSceneCanvasPlacementDrop,
     parseCatalogDragPayload,
 } from "../app/3d/overlay/workspace/assetCatalogDrop.js";
 
@@ -15,6 +16,16 @@ const folders = [
     { id: "bins", name: "Bins", parentId: "props" },
     { id: "yard", name: "Yard", parentId: null },
 ];
+
+test("isSceneCanvasPlacementDrop accepts only the WebGL canvas and the placement mime", () => {
+    const canvas = { id: "canvas" };
+    const other = { id: "map" };
+    const types = { includes: (value) => value === PLACEMENT_DRAG_MIME };
+    assert.equal(isSceneCanvasPlacementDrop({ target: canvas, dataTransfer: { types } }, canvas), true);
+    assert.equal(isSceneCanvasPlacementDrop({ target: other, dataTransfer: { types } }, canvas), false);
+    assert.equal(isSceneCanvasPlacementDrop({ target: canvas, dataTransfer: { types: { includes: () => false } } }, canvas), false);
+    assert.equal(isSceneCanvasPlacementDrop({ target: canvas, dataTransfer: { types } }, null), false);
+});
 
 test("catalogDropDestination accepts Unfiled and real folders only", () => {
     assert.equal(catalogDropDestination({ id: "all" }), null);

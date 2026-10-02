@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { IconFolder, IconFolderPlus, IconPhoto, IconTrafficCone } from "@tabler/icons-react";
+import { listPerceptionLabels } from "../../../autonomy/PerceptionLabelCatalog.js";
 import { EDITOR_MODES, EDITOR_TOOLS, MAP_TOOLS } from "../../editor/EditorState";
 import {
     CATALOG_GRID_GAP,
@@ -68,6 +69,7 @@ export function AssetPane({ data }) {
     const [busy, setBusy] = useState(false);
     const [message, setMessage] = useState(null);
     const [selectedAssetId, setSelectedAssetId] = useState(null);
+    const [obstacleClass, setObstacleClass] = useState("unknown");
     const [folderRename, setFolderRename] = useState(null);
     const [contextMenu, setContextMenu] = useState(null);
     const [dropTargetId, setDropTargetId] = useState(null);
@@ -196,6 +198,18 @@ export function AssetPane({ data }) {
         data.editor?.()?.setPlacementAsset?.({ kind: "catalog", assetId: asset.id, revision: asset.latestRevision, label: asset.name });
         data.simulation?.()?.render?.();
     };
+    const armObstacle = (asset, semantic) => {
+        setObstacleClass(semantic);
+        data.editor?.()?.setPlacementAsset?.({
+            kind: "catalog",
+            assetId: asset.id,
+            revision: asset.latestRevision,
+            label: asset.name,
+            obstacle: true,
+            semantic,
+        });
+        data.simulation?.()?.render?.();
+    };
     const openModel = (asset, pinned = false) => data.editor?.()?.openAssetTab?.({ id: asset.id, revision: asset.latestRevision, name: asset.name }, { pinned });
 
     const mutate = async (action) => {
@@ -302,7 +316,7 @@ export function AssetPane({ data }) {
         const payload = { kind: "asset", id: asset.id, folderId: asset.folderId ?? null };
         event.dataTransfer.effectAllowed = "copyMove";
         event.dataTransfer.setData(CATALOG_DRAG_MIME, JSON.stringify(payload));
-        event.dataTransfer.setData(PLACEMENT_DRAG_MIME, JSON.stringify({ kind: "catalog", assetId: asset.id, revision: asset.latestRevision, label: asset.name }));
+        event.dataTransfer.setData(PLACEMENT_DRAG_MIME, JSON.stringify({ kind: "catalog", assetId: asset.id, revision: asset.latestRevision, label: asset.name, semantic: obstacleClass }));
         catalogDragRef.current = payload;
     };
     const beginFolderDrag = (entry, event) => {
@@ -402,6 +416,16 @@ export function AssetPane({ data }) {
     ] : [];
     const assetMenuOptions = contextAsset ? [
         { id: "place", label: "Place", disabled: contextAsset.archived === true, run: () => armModel(contextAsset) },
+        {
+            id: "place-obstacle",
+            label: "Place as obstacle",
+            disabled: contextAsset.archived === true,
+            children: listPerceptionLabels().map((entry) => ({
+                id: `place-obstacle-${entry.name}`,
+                label: entry.name,
+                run: () => armObstacle(contextAsset, entry.name),
+            })),
+        },
         {
             id: "move-to",
             label: "Move to",
@@ -523,6 +547,12 @@ export function AssetPane({ data }) {
                 />
                 {pendingImport && <div className="flex items-center gap-2 border-b border-amber-700/40 bg-amber-950/30 px-2 py-1 text-xs"><span>Entry model</span><select aria-label="Entry model" value={pendingImport.entryPath} onChange={(event) => setPendingImport((current) => ({ ...current, entryPath: event.target.value }))}><option value="">Choose…</option>{pendingImport.entries.map((entry) => <option key={entry} value={entry}>{entry}</option>)}</select><button type="button" disabled={busy || !pendingImport.entryPath} onClick={publishImport}>Publish</button><button type="button" onClick={() => setPendingImport(null)}>Cancel</button></div>}
                 {statusText && <p id={importHintId} role="status" className="border-b border-[var(--slate-border-60)] px-2 py-1 text-xs text-amber-300">{statusText}</p>}
+                <label className="flex items-center gap-2 border-b border-[var(--slate-border-60)] px-2 py-1 text-xs text-[var(--slate-fg-2)]">
+                    Obstacle class
+                    <select aria-label="Obstacle class" value={obstacleClass} onChange={(event) => setObstacleClass(event.target.value)} className="rounded border border-[var(--slate-border)] bg-[var(--slate-surface-2)] px-2 py-1">
+                        {listPerceptionLabels().map((entry) => <option key={entry.name} value={entry.name}>{entry.name}</option>)}
+                    </select>
+                </label>
                 <div
                     ref={listRef}
                     role="list"

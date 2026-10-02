@@ -1,6 +1,18 @@
 export const CATALOG_DRAG_MIME = "application/x-cev-editor-catalog";
 export const PLACEMENT_DRAG_MIME = "application/x-cev-editor-asset";
 
+function dragTypesInclude(types, mime) {
+    if (!types) return false;
+    if (typeof types.includes === "function" && types.includes(mime)) return true;
+    if (typeof types.contains === "function" && types.contains(mime)) return true;
+    return false;
+}
+
+/** Scene drops land on the WebGL canvas, which sits under the pointer-events-none workspace grid. */
+export function isSceneCanvasPlacementDrop(event, canvas) {
+    return Boolean(canvas) && event?.target === canvas && dragTypesInclude(event.dataTransfer?.types, PLACEMENT_DRAG_MIME);
+}
+
 export function catalogDropDestination(entry) {
     const id = entry?.id;
     if (!id || id === "all" || id === "built-ins") return null;

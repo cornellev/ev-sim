@@ -428,6 +428,33 @@ test("MESH-03 OBJ import publishes a catalog model", async ({ page, request }) =
     await expect(library.locator("[data-asset-id]").filter({ hasText: objName })).toBeVisible({ timeout: 60_000 });
 });
 
+test("OBS-03 dragging a catalog mesh onto the scene places an obstacle", async ({ page, request }) => {
+    test.setTimeout(300_000);
+    const obstacleName = `tetra-${Date.now().toString(36)}`;
+    const objPath = path.join(fixtureDir, `${obstacleName}.obj`);
+    await fs.writeFile(objPath, "o cone\nv 0 0 0\nv 1 0 0\nv 0 1 0\nv 0 0 1\nf 1 2 3\nf 1 2 4\nf 1 3 4\nf 2 3 4\n");
+    const environmentId = await activateBlank(request, "OBS-03 scene obstacle");
+    await openEditor(page);
+    const library = page.locator("[data-editor-asset-library]");
+    const [chooser] = await Promise.all([
+        page.waitForEvent("filechooser"),
+        library.locator("[data-editor-asset-import]").click(),
+    ]);
+    await chooser.setFiles([objPath]);
+    await library.getByRole("button", { name: "Publish" }).click();
+    const model = library.locator("[data-asset-id]").filter({ hasText: obstacleName });
+    await expect(model).toBeVisible({ timeout: 60_000 });
+    await page.getByLabel("Obstacle class").selectOption("barrel");
+    await model.dragTo(page.locator("[data-editor-canvas-host]"));
+    await expect(page.getByRole("tree", { name: "Environment objects" }).getByRole("button", { name: obstacleName, exact: true })).toBeVisible({ timeout: 120_000 });
+    await expect(page.locator("[data-save-status]")).toHaveAttribute("data-save-status", "saved", { timeout: 30_000 });
+    const stored = await (await request.get(`/api/storage/environments/${environmentId}`)).json();
+    const manifest = stored.manifest ?? stored;
+    const instance = manifest.document.objects.find((record) => record.typeId === "asset-instance" && record.name === obstacleName);
+    expect(instance?.typeVersion).toBe(2);
+    expect(manifest.document.assetMetrics.definitions.some((entry) => entry.assetId === instance.components.asset.assetId && entry.lidar.some((proxy) => proxy.semantic === "barrel"))).toBeTruthy();
+});
+
 test("ED-06 asset library and keyboard preview flow are accessible at 1280 by 720 @a11y", async ({ page, request }) => {
     test.setTimeout(300_000);
     await page.setViewportSize({ width: 1280, height: 720 });

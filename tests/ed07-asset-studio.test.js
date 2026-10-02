@@ -9,7 +9,7 @@ import { EnvironmentDocument } from "../app/3d/editor/document/EnvironmentDocume
 import { createBuiltinObjectTypeRegistry } from "../app/3d/editor/objects/builtinObjectTypes.js";
 import { AssetStudioSession } from "../app/3d/editor/assets/AssetStudioSession.js";
 import { deltaFromTranslation } from "../app/3d/editor/objects/transformDelta.js";
-import { compileAssetDefinition, generateVoxelProxy } from "../app/editor-assets/AssetCompiler.js";
+import { compileAssetDefinition, createObstacleProxies, generateVoxelProxy } from "../app/editor-assets/AssetCompiler.js";
 import { createEmptyAssetDefinition, hashAssetMetric, validateAssetDefinition } from "../app/editor-assets/AssetDefinition.js";
 import { compileAssetVisualLayer } from "../app/editor-assets/AssetVisualLayerCompiler.js";
 import { meshFromPrimitive } from "../app/editor-assets/VoxelMeshSimplifier.js";
@@ -134,6 +134,82 @@ test("MESH-04 generateProxy commits a collision convex", async () => {
     session.dispose();
 });
 
+test("OBS-02 createObstacleProxies assigns an existing perception class", () => {
+    const tetra = {
+        0: {
+            vertices: [[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]],
+            triangles: [[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]],
+        },
+    };
+    const definition = sourceDefinition();
+    const barrel = createObstacleProxies(definition, { sourceGeometries: { source: tetra }, semantic: "barrel", partIds: ["root"] });
+    assert.equal(barrel.semantic, "barrel");
+    assert.equal(barrel.collision.kind, "convex");
+    assert.equal(barrel.collision.enabled, true);
+    assert.equal(barrel.lidar.kind, "mesh");
+    assert.equal(barrel.lidar.semantic, "barrel");
+    assert.ok(barrel.collision.vertices.length >= 4);
+    assert.ok(barrel.lidar.triangles.length > 0);
+    definition.collisionProxies.push(barrel.collision);
+    definition.lidarProxies.push(barrel.lidar);
+    const compiled = compileAssetDefinition(definition, { sourceGeometries: { source: tetra } });
+    assert.deepEqual(compiled.staleProxyIds, []);
+    assert.equal(compiled.metric.lidar[0].semantic, "barrel");
+
+    const cone = createObstacleProxies(definition, { sourceGeometries: { source: tetra }, semantic: "cone", partIds: ["root"] });
+    assert.equal(cone.semantic, "unknown");
+    assert.equal(cone.lidar.semantic, "unknown");
+});
+
+function axisExtent(vertices, axis) {
+    const values = vertices.map((vertex) => vertex[axis]);
+    return Math.max(...values) - Math.min(...values);
+}
+
+function smallConeGeometry() {
+    const segments = 8;
+    const radius = 0.08;
+    const height = 0.15;
+    const vertices = [[0, height, 0]];
+    for (let index = 0; index < segments; index += 1) {
+        const theta = (Math.PI * 2 * index) / segments;
+        vertices.push([radius * Math.cos(theta), 0, radius * Math.sin(theta)]);
+    }
+    const triangles = [];
+    for (let index = 0; index < segments; index += 1) {
+        const current = 1 + index;
+        const next = 1 + ((index + 1) % segments);
+        triangles.push([0, current, next]);
+    }
+    return { 0: { vertices, triangles } };
+}
+
+test("generated proxies keep the height of a small cone", async () => {
+    const source = smallConeGeometry();
+    const sourceHeight = axisExtent(source[0].vertices, 1);
+    const definition = sourceDefinition();
+    const lidar = generateVoxelProxy(definition, { id: "lidar", channel: "lidar", includedPartIds: ["root"], semantic: "unknown", sourceGeometries: { source } });
+    const collision = generateVoxelProxy(definition, { id: "hull", channel: "collision", includedPartIds: ["root"], sourceGeometries: { source } });
+    assert.ok(axisExtent(lidar.vertices, 1) >= sourceHeight * 0.5);
+    assert.ok(lidar.triangles.length > 0);
+    assert.equal(lidar.generated.parameters.voxelSize < 0.2, true);
+    assert.ok(axisExtent(collision.vertices, 1) >= sourceHeight * 0.5);
+    assert.ok(collision.vertices.length >= 4);
+    assert.ok(collision.triangles.length > 0);
+    const obstacles = createObstacleProxies(definition, { sourceGeometries: { source }, semantic: "barrel", partIds: ["root"] });
+    assert.ok(axisExtent(obstacles.lidar.vertices, 1) >= sourceHeight * 0.5);
+    assert.ok(obstacles.collision.vertices.length >= 4);
+
+    const collapsed = generateVoxelProxy(definition, { id: "flat", channel: "lidar", includedPartIds: ["root"], semantic: "unknown", voxelSize: 0.2, sourceGeometries: { source } });
+    assert.ok(axisExtent(collapsed.vertices, 1) < sourceHeight * 0.5);
+
+    const session = new AssetStudioSession({ assetId: "flat-asset", revision: 1, definition, sourceGeometries: { source: MODEL_GEOMETRY } });
+    const accepted = await session.generateProxy({ id: "hull", channel: "collision", includedPartIds: ["root"] });
+    assert.equal(accepted.ok, true, JSON.stringify(accepted.issues ?? accepted));
+    assert.ok(session.document.collisionProxies[0].vertices.length >= 4);
+    session.dispose();
+});
+
 test("ED-07 asset sessions keep independent history and reject stale generation commits", async () => {
     const a = new AssetStudioSession({ assetId: "a", revision: 1, definition: sourceDefinition(), sourceGeometries: { source: MODEL_GEOMETRY } });
     const b = new AssetStudioSession({ assetId: "b", revision: 1, definition: sourceDefinition(), sourceGeometries: { source: MODEL_GEOMETRY } });
@@ -170,6 +246,12 @@ test("ED-07 asset sessions cache compile and dirty, invalidate on commands and r
     assert.equal(session.dirty, dirtyBefore);
     session.setView({ showCollision: false });
     assert.equal(session.compile(), first, "no-op view patches do not invalidate compile");
+    assert.equal(session.snapshot().view.showUnits, true);
+    session.setView({ showUnits: false });
+    assert.equal(session.snapshot().view.showUnits, false);
+    assert.equal(session.compile(), first, "unit overlay toggles do not recompile");
+    session.setView({ showUnits: true });
+    assert.equal(session.compile(), first);
 
     session.bus.execute(assetStudioCommands.setNormalization({ metersPerUnit: 0.25 }));
     const afterCommand = session.compile();

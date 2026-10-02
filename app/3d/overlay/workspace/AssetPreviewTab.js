@@ -1,10 +1,12 @@
 'use client';
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { listPerceptionLabels } from "../../../autonomy/PerceptionLabelCatalog.js";
 import { assetTransformMatrix, multiplyAssetMatrices } from "../../../editor-assets/AssetCompiler.js";
 import { createEmptyAssetDefinition } from "../../../editor-assets/AssetDefinition.js";
 import { Y_UP_ORIENTATION, Z_UP_ORIENTATION, orientationId } from "../../../editor-assets/AssetOrientation.js";
 import { createImportedAssetDefinition, extractAssetSourceGeometries } from "../../editor/assets/AssetModelLoader.js";
+import { AssetStudioUnitGrid } from "../../editor/assets/AssetStudioUnitGrid.js";
 import { classifyAssetStudioChangeSet } from "../../editor/assets/assetStudioProjection.js";
 import { assetStudioCommands } from "../../editor/commands/assetStudioCommands.js";
 import { SceneProjector } from "../../editor/projection/SceneProjector.js";
@@ -49,7 +51,14 @@ function commandAccepted(result) {
 /** Interactive asset authoring viewport with an isolated renderer and history. */
 export function AssetPreviewTab({ data, tab }) {
     const canvasRef = useRef(null);
+    const onUnitLabelRef = useRef(() => {});
     const [state, setState] = useState({ status: "loading", error: null });
+    const [unitLabel, setUnitLabel] = useState("1 m");
+    const session = useAssetStudioSession(data, tab);
+    const [studioSnapshot, setStudioSnapshot] = useState(null);
+    useEffect(() => session?.subscribe(setStudioSnapshot), [session]);
+    onUnitLabelRef.current = setUnitLabel;
+    const showUnits = studioSnapshot?.view?.showUnits !== false;
 
     useEffect(() => {
         const controller = new AbortController();
@@ -114,7 +123,8 @@ export function AssetPreviewTab({ data, tab }) {
             scene.background = new THREE.Color(0x09090b);
             scene.add(new THREE.HemisphereLight(0xffffff, 0x202030, 2.5));
             const key = new THREE.DirectionalLight(0xffffff, 3); key.position.set(4, 6, 3); scene.add(key);
-            scene.add(new THREE.GridHelper(20, 20, 0x3f3f46, 0x27272a));
+            const unitGrid = new AssetStudioUnitGrid(THREE);
+            scene.add(unitGrid.group);
             const root = new THREE.Group(); scene.add(root);
             const collisionOverlayGroup = new THREE.Group(); collisionOverlayGroup.name = "asset-studio-collision"; scene.add(collisionOverlayGroup);
             const lidarOverlayGroup = new THREE.Group(); lidarOverlayGroup.name = "asset-studio-lidar"; scene.add(lidarOverlayGroup);
@@ -475,11 +485,26 @@ export function AssetPreviewTab({ data, tab }) {
                 projectors: [{ id: "asset-studio", apply: (ctx) => applyAssetProjection({ changeSet: ctx.changeSet }) }],
             }).attach();
             syncSelection();
+            unitGrid.setVisible(session.view.showUnits !== false);
+            const syncUnits = () => {
+                const rect = canvas.getBoundingClientRect();
+                const step = unitGrid.sync({
+                    camera,
+                    target: orbit.target,
+                    viewportWidth: Math.max(1, rect.width),
+                    viewportHeight: Math.max(1, rect.height),
+                });
+                if (step?.label) onUnitLabelRef.current(step.label);
+                return step;
+            };
+            syncUnits();
             requestRender();
             unsubscribe = session.subscribe((snapshot) => {
                 data?.editor?.()?.setAssetTabDirty?.(tab.id, snapshot.dirty);
                 collisionOverlayGroup.visible = snapshot.view.showCollision !== false;
                 lidarOverlayGroup.visible = snapshot.view.showLidar !== false;
+                unitGrid.setVisible(snapshot.view.showUnits !== false);
+                if (unitGrid.group.visible) syncUnits();
                 requestRender();
             });
             unsubscribeSelection = session.selection.subscribe(() => {
@@ -507,10 +532,14 @@ export function AssetPreviewTab({ data, tab }) {
                 renderer.setSize(Math.max(1, rect.width), Math.max(1, rect.height), false);
                 camera.aspect = Math.max(1, rect.width) / Math.max(1, rect.height);
                 camera.updateProjectionMatrix();
+                syncUnits();
                 requestRender();
             });
             resize.observe(canvas);
-            orbit.addEventListener("change", () => requestRender());
+            orbit.addEventListener("change", () => {
+                syncUnits();
+                requestRender();
+            });
             orbit.addEventListener("end", () => session.setView({ camera: { position: camera.position.toArray(), target: orbit.target.toArray() } }));
             canvas.dataset.appearanceRebuilds = String(appearanceRebuilds);
             disposeScene = () => {
@@ -521,6 +550,7 @@ export function AssetPreviewTab({ data, tab }) {
                 orbit.dispose();
                 transform.dispose();
                 projectedMaterials.forEach((material) => material.dispose?.());
+                unitGrid.dispose();
                 renderer.dispose();
             };
             setState({ status: "ready", error: null });
@@ -530,6 +560,19 @@ export function AssetPreviewTab({ data, tab }) {
 
     return <div className="pointer-events-auto absolute inset-0 bg-zinc-950" data-asset-preview-tab={tab.id}>
         <canvas ref={canvasRef} aria-label={`${tab.name} asset studio viewport`} className="h-full w-full touch-none" />
+        <div className="absolute left-3 top-3 z-10 flex items-center gap-2">
+            <button
+                type="button"
+                aria-pressed={showUnits}
+                aria-label="Units"
+                disabled={!session}
+                onClick={() => session.setView({ showUnits: !showUnits })}
+                className="rounded border border-zinc-700 bg-zinc-900/80 px-2 py-1 text-xs text-zinc-100 disabled:opacity-40"
+            >
+                Units
+            </button>
+            {showUnits ? <span className="text-xs text-zinc-300" data-asset-unit-label={unitLabel}>{unitLabel}</span> : null}
+        </div>
         {state.status === "loading" && <p role="status" className="absolute left-1/2 top-1/2 -translate-x-1/2 text-sm text-zinc-400">Loading asset studio…</p>}
         {state.status === "error" && <p role="alert" className="absolute left-1/2 top-1/2 max-w-md -translate-x-1/2 text-sm text-red-300">{state.error}</p>}
     </div>;
@@ -707,6 +750,7 @@ export function AssetCatalogInspector({ data, tab }) {
     const [snapshot, setSnapshot] = useState(null);
     const [selection, setSelection] = useState(null);
     const [status, setStatus] = useState(null);
+    const [draftSemantic, setDraftSemantic] = useState("unknown");
     useEffect(() => session?.document.subscribe(setSnapshot), [session]);
     useEffect(() => session?.selection.subscribe(setSelection), [session]);
     useEffect(() => session?.subscribe(setStatus), [session]);
@@ -762,6 +806,8 @@ export function AssetCatalogInspector({ data, tab }) {
     const staleLidarProxy = snapshot?.lidarProxies?.find((proxy) => staleProxyIds.includes(proxy.id) && proxy.generated) ?? null;
     const staleCollisionProxy = snapshot?.collisionProxies?.find((proxy) => staleProxyIds.includes(proxy.id) && proxy.generated) ?? null;
     const upAxis = orientationId(snapshot?.normalization?.orientation);
+    const lidarProxy = snapshot?.lidarProxies?.find((entry) => entry.enabled) ?? snapshot?.lidarProxies?.[0] ?? null;
+    const lidarSemantic = lidarProxy?.semantic ?? draftSemantic;
     if (!session || !snapshot) return <p role="status" className="p-3 text-xs text-zinc-400">Loading inspector…</p>;
     return <div className="space-y-4 p-3 text-xs" data-asset-catalog-inspector>
         <header>
@@ -772,7 +818,7 @@ export function AssetCatalogInspector({ data, tab }) {
         <section className="space-y-2"><h4 className="font-medium text-zinc-200">Normalization</h4><AssetNumberField label="Meters per unit" value={snapshot.normalization.metersPerUnit} onCommit={(metersPerUnit) => setNormalization({ metersPerUnit })} /><label className="grid grid-cols-[1fr_1.5fr] items-center gap-2"><span>Up axis</span><select aria-label="Up axis" value={upAxis} onChange={(event) => { if (event.target.value === "custom") return; setNormalization({ orientation: [...(event.target.value === "z-up" ? Z_UP_ORIENTATION : Y_UP_ORIENTATION)] }); }} className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1"><option value="y-up">Y-up</option><option value="z-up">Z-up</option>{upAxis === "custom" ? <option value="custom">Custom</option> : null}</select></label>{[0, 1, 2].map((axis) => <AssetNumberField key={axis} label={`Pivot ${"XYZ"[axis]}`} value={snapshot.normalization.pivot[axis]} onCommit={(value) => { const pivot = [...snapshot.normalization.pivot]; pivot[axis] = value; return setNormalization({ pivot }); }} />)}</section>
         {part && <section className="space-y-2"><h4 className="font-medium text-zinc-200">Part · {part.name}</h4>{[0, 1, 2].map((axis) => <AssetNumberField key={axis} label={`Position ${"XYZ"[axis]}`} value={part.transform.position[axis]} onCommit={(value) => { const next = structuredClone(part.transform); next.position[axis] = value; return session.bus.execute(assetStudioCommands.transformPart(part.id, next)); }} />)}{part.content.kind === "asset-reference" && <PinnedRevisionField value={part.content.revision} onCommit={(revision) => updateChildRevision(part, revision)} />}{part.content.kind === "model-node" && <label className="grid grid-cols-[1fr_1.5fr] items-center gap-2"><span>Material</span><select value={part.materialBindings.default ?? ""} onChange={(event) => session.bus.execute(assetStudioCommands.setMaterialBinding(part.id, "default", event.target.value || null))} className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1"><option value="">Source material</option>{snapshot.materials.map((material) => <option key={material.id} value={material.id}>{material.id}</option>)}</select></label>}</section>}
         <section className="space-y-2"><div className="flex items-center justify-between"><h4 className="font-medium text-zinc-200">Materials</h4><button type="button" onClick={() => { let suffix = snapshot.materials.length + 1; while (snapshot.materials.some((entry) => entry.id === `material-${suffix}`)) suffix += 1; session.bus.execute(assetStudioCommands.upsertMaterial(newMaterial(`material-${suffix}`))); }} className="rounded border border-zinc-700 px-2 py-1">Add</button></div>{snapshot.materials.map((material) => <fieldset key={material.id} className="space-y-2 rounded border border-zinc-800 p-2"><legend className="px-1 text-zinc-300">{material.id}</legend><label className="grid grid-cols-[1fr_84px] items-center gap-2"><span>Base color</span><input type="color" value={colorHex(material.parameters.baseColorFactor)} onChange={(event) => session.bus.execute(assetStudioCommands.upsertMaterial({ ...material, parameters: { ...material.parameters, baseColorFactor: colorFactor(event.target.value, material.parameters.baseColorFactor[3]) } }))} /></label><AssetNumberField label="Metallic" value={material.parameters.metallicFactor} onCommit={(metallicFactor) => session.bus.execute(assetStudioCommands.upsertMaterial({ ...material, parameters: { ...material.parameters, metallicFactor } }))} /><AssetNumberField label="Roughness" value={material.parameters.roughnessFactor} onCommit={(roughnessFactor) => session.bus.execute(assetStudioCommands.upsertMaterial({ ...material, parameters: { ...material.parameters, roughnessFactor } }))} /><button type="button" onClick={() => { const useHash = globalThis.prompt?.("Texture use hash"); const digest = globalThis.prompt?.("Texture byte digest"); if (!useHash || !digest) return; const texture = { slot: "baseColor", useHash, assetUri: `sha256:${digest}`, texCoord: 0, transform: { offset: [0, 0], rotation: 0, scale: [1, 1] } }; session.bus.execute(assetStudioCommands.upsertMaterial({ ...material, textures: [...material.textures.filter((entry) => entry.slot !== "baseColor"), texture] })); }} className="rounded border border-zinc-700 px-2 py-1">Replace base color texture</button>{material.textures.map((texture) => <p key={`${material.id}:${texture.slot}`} className="break-all font-mono text-[11px] text-zinc-400" data-texture-id={texture.useHash}>Texture ID · {texture.slot}: {texture.useHash || "(none)"}</p>)}</fieldset>)}</section>
-        <section className="space-y-2"><div className="flex items-center justify-between"><h4 className="font-medium text-zinc-200">Metric proxies</h4><button type="button" disabled={snapshot.parts.length === 0 || snapshot.parts.every((entry) => includedPartIds.includes(entry.id))} onClick={() => session.setView({ includedPartIds: snapshot.parts.map((entry) => entry.id) })} className="rounded border border-zinc-700 px-2 py-1 disabled:opacity-40">Select All</button></div><div className="flex gap-3"><label className="flex items-center gap-1"><input type="checkbox" checked={status?.view?.showCollision !== false} onChange={(event) => session.setView({ showCollision: event.target.checked })} />Collision overlay</label><label className="flex items-center gap-1"><input type="checkbox" checked={status?.view?.showLidar !== false} onChange={(event) => session.setView({ showLidar: event.target.checked })} />LiDAR overlay</label></div>{snapshot.parts.map((entry) => <label key={entry.id} className="flex items-center gap-2"><input type="checkbox" checked={includedPartIds.includes(entry.id)} onChange={(event) => session.setView({ includedPartIds: event.target.checked ? [...includedPartIds, entry.id] : includedPartIds.filter((id) => id !== entry.id) })} />Include {entry.name}</label>)}<div className="flex gap-2"><button type="button" disabled={includedPartIds.length === 0 && !staleLidarProxy} onClick={() => { const generated = staleLidarProxy?.generated; void session.generateProxy({ id: staleLidarProxy?.id ?? `lidar-generated-${snapshot.lidarProxies.length + 1}`, channel: "lidar", includedPartIds: staleLidarProxy ? generated.includedPartIds : includedPartIds, voxelSize: generated?.parameters?.voxelSize ?? 0.2, semantic: staleLidarProxy?.semantic ?? "unknown" }); }} className="rounded border border-zinc-700 px-2 py-1 disabled:opacity-40">{staleLidarProxy ? "Regenerate LiDAR" : "Generate LiDAR"}</button><button type="button" disabled={includedPartIds.length === 0 && !staleCollisionProxy} onClick={() => { const generated = staleCollisionProxy?.generated; void session.generateProxy({ id: staleCollisionProxy?.id ?? `collision-generated-${snapshot.collisionProxies.length + 1}`, channel: "collision", includedPartIds: staleCollisionProxy ? generated.includedPartIds : includedPartIds, voxelSize: generated?.parameters?.voxelSize ?? 0.2 }); }} className="rounded border border-zinc-700 px-2 py-1 disabled:opacity-40">{staleCollisionProxy ? "Regenerate collision" : "Generate collision"}</button><button type="button" onClick={() => session.bus.execute(assetStudioCommands.upsertProxy("collision", { id: `collision-box-${snapshot.collisionProxies.length + 1}`, kind: "box", enabled: true, transform: { position: [0, 0.5, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] }, size: [1, 1, 1] }))} className="rounded border border-zinc-700 px-2 py-1">Add collision box</button></div>{[...snapshot.lidarProxies, ...snapshot.collisionProxies].map((proxy) => { const channel = snapshot.lidarProxies.some((entry) => entry.id === proxy.id) ? "lidar" : "collision"; return <label key={`${channel}:${proxy.id}`} className="flex items-center gap-2"><input type="checkbox" checked={proxy.enabled} onChange={(event) => session.bus.execute(assetStudioCommands.setProxyEnabled(channel, proxy.id, event.target.checked))} />{proxy.id} · {channel}{staleProxyIds.includes(proxy.id) ? " · stale" : ""}</label>; })}</section>
+        <section className="space-y-2"><div className="flex items-center justify-between"><h4 className="font-medium text-zinc-200">Metric proxies</h4><button type="button" disabled={snapshot.parts.length === 0 || snapshot.parts.every((entry) => includedPartIds.includes(entry.id))} onClick={() => session.setView({ includedPartIds: snapshot.parts.map((entry) => entry.id) })} className="rounded border border-zinc-700 px-2 py-1 disabled:opacity-40">Select All</button></div><div className="flex gap-3"><label className="flex items-center gap-1"><input type="checkbox" checked={status?.view?.showCollision !== false} onChange={(event) => session.setView({ showCollision: event.target.checked })} />Collision overlay</label><label className="flex items-center gap-1"><input type="checkbox" checked={status?.view?.showLidar !== false} onChange={(event) => session.setView({ showLidar: event.target.checked })} />LiDAR overlay</label></div>{snapshot.parts.map((entry) => <label key={entry.id} className="flex items-center gap-2"><input type="checkbox" checked={includedPartIds.includes(entry.id)} onChange={(event) => session.setView({ includedPartIds: event.target.checked ? [...includedPartIds, entry.id] : includedPartIds.filter((id) => id !== entry.id) })} />Include {entry.name}</label>)}<label className="flex items-center gap-2">Perception class<select aria-label="Perception class" value={lidarSemantic} onChange={(event) => { const semantic = event.target.value; if (lidarProxy) session.bus.execute(assetStudioCommands.upsertProxy("lidar", { id: lidarProxy.id, semantic })); else setDraftSemantic(semantic); }} className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1">{listPerceptionLabels().map((entry) => <option key={entry.name} value={entry.name}>{entry.name}</option>)}</select></label><div className="flex gap-2"><button type="button" disabled={includedPartIds.length === 0 && !staleLidarProxy} onClick={() => { const generated = staleLidarProxy?.generated; void session.generateProxy({ id: staleLidarProxy?.id ?? `lidar-generated-${snapshot.lidarProxies.length + 1}`, channel: "lidar", includedPartIds: staleLidarProxy ? generated.includedPartIds : includedPartIds, semantic: lidarSemantic }).catch(() => {}); }} className="rounded border border-zinc-700 px-2 py-1 disabled:opacity-40">{staleLidarProxy ? "Regenerate LiDAR" : "Generate LiDAR"}</button><button type="button" disabled={includedPartIds.length === 0 && !staleCollisionProxy} onClick={() => { const generated = staleCollisionProxy?.generated; void session.generateProxy({ id: staleCollisionProxy?.id ?? `collision-generated-${snapshot.collisionProxies.length + 1}`, channel: "collision", includedPartIds: staleCollisionProxy ? generated.includedPartIds : includedPartIds }).catch(() => {}); }} className="rounded border border-zinc-700 px-2 py-1 disabled:opacity-40">{staleCollisionProxy ? "Regenerate collision" : "Generate collision"}</button><button type="button" onClick={() => session.bus.execute(assetStudioCommands.upsertProxy("collision", { id: `collision-box-${snapshot.collisionProxies.length + 1}`, kind: "box", enabled: true, transform: { position: [0, 0.5, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] }, size: [1, 1, 1] }))} className="rounded border border-zinc-700 px-2 py-1">Add collision box</button></div>{[...snapshot.lidarProxies, ...snapshot.collisionProxies].map((proxy) => { const channel = snapshot.lidarProxies.some((entry) => entry.id === proxy.id) ? "lidar" : "collision"; return <label key={`${channel}:${proxy.id}`} className="flex items-center gap-2"><input type="checkbox" checked={proxy.enabled} onChange={(event) => session.bus.execute(assetStudioCommands.setProxyEnabled(channel, proxy.id, event.target.checked))} />{proxy.id} · {channel}{staleProxyIds.includes(proxy.id) ? " · stale" : ""}</label>; })}</section>
         <div className="flex gap-2"><button type="button" disabled={!status?.dirty || status?.saving} onClick={() => void save().catch(() => {})} className="rounded bg-blue-600 px-3 py-1.5 disabled:opacity-40">Save revision</button><button type="button" disabled={!status?.canUndo} onClick={() => session.bus.undo()} className="rounded border border-zinc-700 px-3 py-1.5 disabled:opacity-40">Undo</button></div>
         {status?.error && <div role="alert" className="space-y-2 text-red-300"><p>{status.error.message ?? String(status.error)}</p>{status.error.code === "EDITOR_ASSET_REVISION_CONFLICT" && <div className="flex gap-2"><button type="button" onClick={() => void reloadLatest()} className="rounded border border-red-700 px-2 py-1">Reload latest</button><button type="button" onClick={() => void saveAs()} className="rounded border border-red-700 px-2 py-1">Save as new asset</button></div>}</div>}
     </div>;

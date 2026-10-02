@@ -7,6 +7,7 @@ import { RoadSceneTool } from "./RoadSceneTool.js";
 import { AssetPlacementController } from "../assets/AssetPlacementController.js";
 import { screenToWorld } from "../map/mapCoords.js";
 import { getGroundPointFromEvent } from "../editorPointerUtils.js";
+import { PLACEMENT_DRAG_MIME, isSceneCanvasPlacementDrop } from "../../overlay/workspace/assetCatalogDrop.js";
 
 export class EditorToolController {
     constructor({ data, scene, camera, renderer }) {
@@ -39,6 +40,27 @@ export class EditorToolController {
         // (`EditorCommandShortcuts`) so they never fire while typing in a
         // field; this controller only owns the Escape policy.
         this.publishEscapeFlag();
+        this.bindScenePlacementDrop();
+    }
+
+    bindScenePlacementDrop() {
+        if (typeof window === "undefined") return;
+        this.onScenePlacementDragOver = (event) => {
+            if (!isSceneCanvasPlacementDrop(event, this.renderer?.domElement)) return;
+            event.preventDefault();
+        };
+        this.onScenePlacementDrop = (event) => {
+            if (!isSceneCanvasPlacementDrop(event, this.renderer?.domElement)) return;
+            const raw = event.dataTransfer?.getData?.(PLACEMENT_DRAG_MIME);
+            if (!raw) return;
+            event.preventDefault();
+            let dropped;
+            try { dropped = JSON.parse(raw); } catch { return; }
+            const rect = this.renderer.domElement.getBoundingClientRect();
+            void this.dropAsset(dropped, event, rect);
+        };
+        window.addEventListener("dragover", this.onScenePlacementDragOver);
+        window.addEventListener("drop", this.onScenePlacementDrop);
     }
 
     /** Whether the next Escape would be consumed by the editor (so the global switcher defers). */
@@ -63,15 +85,16 @@ export class EditorToolController {
 
     async dropAsset(payload, event, rect) {
         if (payload?.kind !== "catalog") return { ok: false };
-        this.editor.setPlacementAsset(payload);
-        await this.assetPlacementController.begin(payload);
+        const placement = { ...payload, obstacle: true, semantic: payload.semantic ?? "unknown" };
+        this.editor.setPlacementAsset(placement);
+        await this.assetPlacementController.begin(placement);
         const snapshot = this.editor.snapshot();
         const map = snapshot.editorMode === EDITOR_MODES.MAP;
         const point = map
             ? screenToWorld({ x: event.clientX - rect.left, y: event.clientY - rect.top }, snapshot.map, { width: rect.width, height: rect.height })
             : getGroundPointFromEvent(event, this.camera, this.renderer);
         if (!point) { this.assetPlacementController.cancel(); return { ok: false }; }
-        const result = await this.assetPlacementController.commit(point, { map });
+        const result = await this.assetPlacementController.commit(point, { map, obstacle: true, semantic: placement.semantic });
         if (result.ok) {
             if (map) this.editor.setActiveMapTool(MAP_TOOLS.SELECT);
             else this.editor.setActiveTool(EDITOR_TOOLS.SELECT);
@@ -128,6 +151,10 @@ export class EditorToolController {
     }
 
     dispose() {
+        if (typeof window !== "undefined") {
+            window.removeEventListener("dragover", this.onScenePlacementDragOver);
+            window.removeEventListener("drop", this.onScenePlacementDrop);
+        }
         this.roadAuthoringController.cancelSubDrag();
         this.disposeEditorState?.();
         this.disposeSelection?.();

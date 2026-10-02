@@ -1,12 +1,29 @@
 import { createId } from "../document/EnvironmentDocument.js";
 import { placeAssetInstance, updateAssetInstances } from "../commands/assetCommands.js";
 import { readAssetBinding } from "../../../editor-assets/AssetBackedObject.js";
+import { AssetObstaclePublisher } from "./AssetObstaclePublisher.js";
 
 export class AssetInstantiation {
-    constructor({ repository, document } = {}) {
+    constructor({ repository, document, models = null, publisher = null } = {}) {
         if (!repository || !document) throw new TypeError("AssetInstantiation requires a repository and document.");
         this.repository = repository;
         this.document = document;
+        this.obstaclePublisher = publisher ?? (models ? new AssetObstaclePublisher({ repository, models }) : null);
+    }
+
+    async placeObstacle({ assetId, revision, position = { x: 0, y: 0, z: 0 }, rotationY = 0, scale = { x: 1, y: 1, z: 1 }, name, parentId = null, semantic = "unknown", signal } = {}) {
+        if (!this.obstaclePublisher) throw new TypeError("AssetInstantiation requires an obstacle publisher to place obstacles.");
+        const published = await this.obstaclePublisher.ensureObstacleRevision({ assetId, revision, semantic, signal });
+        return this.place({
+            assetId,
+            revision: published.revision,
+            position,
+            rotationY,
+            scale,
+            name,
+            parentId,
+            signal,
+        });
     }
 
     async place({ assetId, revision, position = { x: 0, y: 0, z: 0 }, rotationY = 0, scale = { x: 1, y: 1, z: 1 }, name, parentId = null, signal } = {}) {

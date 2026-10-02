@@ -75,16 +75,19 @@ export class AssetPlacementController {
         return snapped;
     }
 
-    async commit(point, { map = false } = {}) {
+    async commit(point, { map = false, obstacle = false, semantic = "unknown" } = {}) {
         if (!this.payload || !point) return { ok: false };
         const payload = { ...this.payload };
         const snapped = this.updatePoint(point, { map });
         const assets = this.environment?.assets?.();
         try {
-            const command = await assets.instantiation.place({
+            const placeInput = {
                 assetId: payload.assetId, revision: payload.revision,
                 position: snapped, name: payload.label ?? payload.assetId,
-            });
+            };
+            const command = obstacle
+                ? await assets.instantiation.placeObstacle({ ...placeInput, semantic: payload.semantic ?? semantic })
+                : await assets.instantiation.place(placeInput);
             if (!this.payload || this.payload.assetId !== payload.assetId || this.payload.revision !== payload.revision) return { ok: false };
             const result = this.bus.execute(command);
             if (result.ok) this.selection?.select?.(result.result.objectId);
