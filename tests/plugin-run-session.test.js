@@ -34,7 +34,7 @@ function effectPluginResource() {
         api: 1,
         id: "acme.effects",
         version: "1.0.0",
-        engines: { cevSim: ">=0.1.0 <0.2.0" },
+        engines: { cevSim: ">=0.1.0 <0.3.0" },
         entry: { runtime: "runtime/index.js" },
         capabilities: ["signals.write.mission"],
         units: [{

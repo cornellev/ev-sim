@@ -564,11 +564,15 @@ foundation deliberately has no production simulator capabilities and cannot
 admit plugins to managed runs.
 
 The fixed fixture vectors are `packageHash`
-`f9e2255bed1adcdadbe7a3fa9cb75ee6644fc791c07acd9734bd4d43f8ea52d9`,
+`5fb8ec8f4ac2176629414beaa938a48cfbe00d577e13edeae8c69806d0f0909d`,
 `runtimeHash`
-`f29ebbc784e41f926b0aba3a8de763262be2b0e8181b63031dc4b7a9107657c7`,
+`42654d815b24b61dbf836d861b84c83a3be9c0193ed67ef5fc8b79a36cbff232`,
 and `uiHash`
 `aae5470e2dbb18c3a70cd222d70aa83063fbda998b7636c8b84652ae0400823d`.
+The previous `packageHash`/`runtimeHash` pair belonged to
+`engines.cevSim: ">=0.1.0 <0.2.0"` and was intentionally superseded when
+fixtures widened to `>=0.1.0 <0.3.0` for the 0.2.0 alpha line; `uiHash` and
+`worldHash` stayed unchanged.
 The full-suite loopback run was necessary because sandboxed local listening
 causes the existing HTTP tests to fail with `EPERM`; the elevated acceptance
 run completed without failures.
@@ -862,3 +866,11 @@ change the outstanding PR-12 hosted, soak, NVIDIA x64, or Jetson ARM64 gates.
   same fixed-port fixture through verified sources, plugin-free regressions and
   characterization stayed unchanged, lint had no errors, and the complete
   repository suite passed. PLG-01 is verified but remains unmerged.
+- **2026-10-03 — 0.2.0 engine-range migration.** Bundled examples and fixtures
+  that must load on both 0.1 and 0.2 use `engines.cevSim: ">=0.1.0 <0.3.0"`.
+  New scaffolds and marketplace host defaults use next-minor ranges on 0.x
+  (`0.2.0` → `>=0.2.0 <0.3.0`). Plugin loading stays strict: a package that
+  still declares `<0.2.0` is rejected by simulator `0.2.0`. Widening the
+  fixture range changes `packageHash` and `runtimeHash` (and therefore
+  plugin-enabled `resolvedHash` / simulation / episode identities) while
+  leaving `uiHash` and `worldHash` unchanged.

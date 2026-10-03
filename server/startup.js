@@ -1,8 +1,13 @@
 const packageJson = require('../package.json');
 const pluginJson = require('../plugin.json');
 
+function isMajorZeroVersion(version) {
+    const major = Number.parseInt(String(version).split('.')[0], 10);
+    return Number.isFinite(major) && major === 0;
+}
+
 function startup(directoryRoot, env) {
-    if (packageJson.version === '0.1.0' && !process.env.IN_DEVELOPMENT) {
+    if (isMajorZeroVersion(packageJson.version) && !process.env.IN_DEVELOPMENT) {
         console.warn(
             '[WARNING] This is an early development build of ev-sim. \nIt is not intended for large scale usage and may contain bugs or incomplete features.\n\nPlease use at your own risk.'
         )

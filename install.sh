@@ -5,7 +5,8 @@
 #
 # Options (env or flags after bash -s --):
 #   EV_SIM_DIR / --dir DIR       Install directory (default: ./ev-sim)
-#   EV_SIM_BRANCH / --branch B   Git branch (default: main)
+#   EV_SIM_REF / --ref REF       Git tag, branch, or commit (default: main)
+#   EV_SIM_BRANCH / --branch B   Compatibility alias for --ref
 #   EV_SIM_REPO                  Override clone URL
 #   --no-install                 Clone only; skip npm ci
 #   --start                      Run npm run dev after install
@@ -16,7 +17,7 @@
 set -euo pipefail
 
 REPO_URL="${EV_SIM_REPO:-https://github.com/cornellev/ev-sim.git}"
-BRANCH="${EV_SIM_BRANCH:-main}"
+REF="${EV_SIM_REF:-${EV_SIM_BRANCH:-main}}"
 INSTALL_DIR="${EV_SIM_DIR:-}"
 SKIP_NPM=0
 START_DEV=0
@@ -57,13 +58,15 @@ Usage:
 
 Options:
   --dir DIR        Install into DIR (default: ./ev-sim)
-  --branch NAME    Clone branch NAME (default: main)
+  --ref REF        Clone tag, branch, or commit REF (default: main)
+  --branch NAME    Compatibility alias for --ref
   --no-install     Skip npm ci
   --start          Start the dev server after install
   --marketplace    Enable the marketplace in .env.local
   --no-marketplace Disable the marketplace in .env.local
   -h, --help       Show this help
 
+For a reproducible release install, pass a tag such as --ref v0.2.0.
 The installer creates .env.local in the install directory. Without
 --marketplace or --no-marketplace it asks whether to enable the marketplace.
 Enter, y, or yes writes CEV_SIM_MARKETPLACE_ENABLED=1. n or no writes 0.
@@ -71,7 +74,7 @@ An existing assignment is kept unless a flag is passed.
 A non-interactive run creates the file and leaves that setting unchanged.
 
 Environment:
-  EV_SIM_DIR, EV_SIM_BRANCH, EV_SIM_REPO, NO_COLOR
+  EV_SIM_DIR, EV_SIM_REF, EV_SIM_BRANCH, EV_SIM_REPO, NO_COLOR
 EOF
 }
 
@@ -79,7 +82,8 @@ EOF
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dir)        INSTALL_DIR="${2:-}"; shift 2 || fail "--dir requires a path" ;;
-    --branch)     BRANCH="${2:-}"; shift 2 || fail "--branch requires a name" ;;
+    --ref)        REF="${2:-}"; shift 2 || fail "--ref requires a tag, branch, or commit" ;;
+    --branch)     REF="${2:-}"; shift 2 || fail "--branch requires a name" ;;
     --no-install) SKIP_NPM=1; shift ;;
     --start)      START_DEV=1; shift ;;
     --marketplace)
@@ -285,26 +289,44 @@ else
 fi
 
 step "Cloning repository"
-info "$REPO_URL  (${BRANCH})"
+info "$REPO_URL  (${REF})"
 info "→ ${INSTALL_DIR}"
+
+checkout_ref() {
+  local target="$1"
+  (
+    cd "$target"
+    git fetch --quiet --tags origin
+    if git rev-parse --verify --quiet "refs/tags/${REF}" >/dev/null; then
+      git checkout --quiet "refs/tags/${REF}"
+    elif git rev-parse --verify --quiet "refs/remotes/origin/${REF}" >/dev/null; then
+      git checkout --quiet -B "$REF" "origin/${REF}"
+      git pull --ff-only --quiet origin "$REF"
+    elif git rev-parse --verify --quiet "${REF}^{commit}" >/dev/null; then
+      git checkout --quiet "$REF"
+    else
+      git fetch --quiet origin "$REF"
+      if git rev-parse --verify --quiet "refs/tags/${REF}" >/dev/null; then
+        git checkout --quiet "refs/tags/${REF}"
+      else
+        git checkout --quiet -B "$REF" "FETCH_HEAD"
+      fi
+    fi
+  )
+}
 
 if [[ -d "$INSTALL_DIR/.git" ]]; then
   warn "Existing checkout found — updating instead of cloning"
-  (
-    cd "$INSTALL_DIR"
-    git fetch --quiet origin "$BRANCH"
-    git checkout --quiet "$BRANCH"
-    git pull --ff-only --quiet origin "$BRANCH"
-  ) || fail "Failed to update existing clone at ${INSTALL_DIR}"
-  ok "Updated existing checkout"
+  checkout_ref "$INSTALL_DIR" || fail "Failed to update existing clone at ${INSTALL_DIR} to ${REF}"
+  ok "Updated existing checkout to ${REF}"
 elif [[ -e "$INSTALL_DIR" ]]; then
   fail "Path exists and is not an ev-sim clone: ${INSTALL_DIR}"
 else
   PARENT="$(dirname "$INSTALL_DIR")"
   mkdir -p "$PARENT"
   spin_start "Cloning…"
-  if git clone --branch "$BRANCH" --quiet "$REPO_URL" "$INSTALL_DIR"; then
-    spin_stop ok "Cloned into ${INSTALL_DIR}"
+  if git clone --quiet "$REPO_URL" "$INSTALL_DIR" && checkout_ref "$INSTALL_DIR"; then
+    spin_stop ok "Cloned ${REF} into ${INSTALL_DIR}"
   else
     spin_stop fail "git clone failed"
   fi

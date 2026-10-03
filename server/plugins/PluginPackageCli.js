@@ -4,6 +4,7 @@ import process from "node:process";
 import { parseArgs } from "node:util";
 
 import { createPluginPackage, verifyPluginPackage } from "../../app/plugin/PluginPackage.js";
+import { CEV_SIM_VERSION } from "../../app/version.js";
 import {
     collectPluginDirectory,
     parsePortablePluginFile,
@@ -11,6 +12,7 @@ import {
 
 function usage() {
     return [
+        "cev-sim-plugin --version",
         "cev-sim-plugin pack --directory <plugin-dir> --output <package.json>",
         "cev-sim-plugin verify --file <package.json>",
     ].join("\n");
@@ -31,6 +33,7 @@ export function parsePluginPackageCliArgs(argv = process.argv.slice(2)) {
             output: { type: "string" },
             file: { type: "string" },
             help: { type: "boolean", default: false },
+            version: { type: "boolean", short: "V", default: false },
         },
     });
     return {
@@ -40,6 +43,7 @@ export function parsePluginPackageCliArgs(argv = process.argv.slice(2)) {
         output: values.output || null,
         file: values.file || null,
         help: values.help === true,
+        version: values.version === true,
     };
 }
 
@@ -70,6 +74,10 @@ export async function main(argv = process.argv.slice(2), io = {}) {
     const stderr = io.stderr ?? process.stderr;
     try {
         const parsed = parsePluginPackageCliArgs(argv);
+        if (parsed.version) {
+            stdout.write(`${CEV_SIM_VERSION}\n`);
+            return 0;
+        }
         if (parsed.help || !parsed.command) {
             stdout.write(`${usage()}\n`);
             return parsed.command && !parsed.help ? 2 : 0;

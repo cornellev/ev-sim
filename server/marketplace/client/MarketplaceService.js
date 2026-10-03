@@ -4,6 +4,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import semver from "semver";
 
+import { defaultCevSimEngineRange } from "../../../app/plugin/PluginEngineRange.js";
 import { PluginStore } from "../../storage/PluginStore.js";
 import {
     AUTHORING_ONLY_CONTENT_KINDS,
@@ -1229,7 +1230,7 @@ export class MarketplaceService {
             changelog: "Initial marketplace publication.",
             track: null,
             compatibility: {
-                cevSim: ">=0.1.0 <0.2.0",
+                cevSim: defaultCevSimEngineRange(),
                 contracts: [],
                 platforms: [], architectures: [], runtimes: [], backends: [], features: [],
             },
@@ -1296,7 +1297,7 @@ export class MarketplaceService {
                 changelog: binding ? `Update ${releaseVersion}.` : "Initial marketplace publication.",
                 track: configuredIdentity?.defaults.track ?? "stable",
                 compatibility: {
-                    cevSim: ">=0.1.0 <0.2.0",
+                    cevSim: defaultCevSimEngineRange(),
                     contracts: [],
                     platforms: [], architectures: [], runtimes: [], backends: [], features: [],
                 },

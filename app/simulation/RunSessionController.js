@@ -2,6 +2,7 @@ import { getRecordingController } from "../logging/RecordingController.js";
 import { buildRecordingOptions } from "../logging/RecordingOptions.js";
 import { builtInProfile } from "../logging/LogProfiles.js";
 import { getTelemetryStore } from "../telemetry/TelemetryRuntime.js";
+import { CEV_SIM_VERSION } from "../version.js";
 import { resolveRunManifest } from "./RunManifestClient.js";
 import { assertEnabledCameraRenderRuntime } from "./render/RenderSceneProviderRegistry.js";
 
@@ -435,7 +436,7 @@ export class RunSessionController {
         const gl = renderer?.getContext?.();
         const debugInfo = gl?.getExtension?.("WEBGL_debug_renderer_info");
         const provenance = {
-            appVersion: process.env.NEXT_PUBLIC_APP_VERSION || "0.1.0",
+            appVersion: process.env.NEXT_PUBLIC_APP_VERSION || CEV_SIM_VERSION,
             gitHash: process.env.NEXT_PUBLIC_GIT_HASH || null,
             orchestratorCatalogHash: this.data?.client?.()?.catalogHash || null,
             userAgent: typeof navigator !== "undefined" ? navigator.userAgent : null,

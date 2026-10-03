@@ -13,8 +13,8 @@ test("plugin hashes are stable across enumeration and isolate package/runtime/UI
         runtimeHash: forward.runtimeHash,
         uiHash: forward.uiHash,
     }, {
-        packageHash: "f9e2255bed1adcdadbe7a3fa9cb75ee6644fc791c07acd9734bd4d43f8ea52d9",
-        runtimeHash: "f29ebbc784e41f926b0aba3a8de763262be2b0e8181b63031dc4b7a9107657c7",
+        packageHash: "5fb8ec8f4ac2176629414beaa938a48cfbe00d577e13edeae8c69806d0f0909d",
+        runtimeHash: "42654d815b24b61dbf836d861b84c83a3be9c0193ed67ef5fc8b79a36cbff232",
         uiHash: "aae5470e2dbb18c3a70cd222d70aa83063fbda998b7636c8b84652ae0400823d",
     });
     const reverse = createPluginPackage(Object.fromEntries(Object.entries(files).reverse()));
@@ -54,7 +54,15 @@ test("plugin document and engine compatibility fail explicitly", async () => {
     const resource = await pluginFixtureResource();
     const verified = verifyPluginPackage(resource);
     assert.doesNotThrow(() => assertPluginCompatibility(verified.document, { pluginApi: 1, simulatorVersion: "0.1.0" }));
+    assert.doesNotThrow(() => assertPluginCompatibility(verified.document, { pluginApi: 1, simulatorVersion: "0.2.0" }));
     assert.throws(() => assertPluginCompatibility(verified.document, { pluginApi: 1, simulatorVersion: "1.0.0" }), (error) => error.code === "PLUGIN_COMPATIBILITY");
+    assert.throws(
+        () => assertPluginCompatibility(
+            { ...verified.document, engines: { cevSim: ">=0.1.0 <0.2.0" } },
+            { pluginApi: 1, simulatorVersion: "0.2.0" },
+        ),
+        (error) => error.code === "PLUGIN_COMPATIBILITY",
+    );
     await assert.rejects(async () => pluginFixtureResource({ mutateDocument: (document) => { document.id = "cev.forbidden"; } }), /reserved cev namespace/);
     await assert.rejects(async () => pluginFixtureResource({ mutateDocument: (document) => { document.units[0].type = "acme.exampleish.Block"; } }), /must start/);
     await assert.rejects(async () => pluginFixtureResource({ mutateDocument: (document) => { document.units[0].defaults.factor = "2"; } }), /finite number/);

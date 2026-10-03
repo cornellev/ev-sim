@@ -42,7 +42,7 @@ function release() {
         changelog: "Initial publication.",
         track: "stable",
         compatibility: {
-            cevSim: ">=0.1.0 <0.2.0",
+            cevSim: ">=0.1.0 <0.3.0",
             contracts: [],
             platforms: [],
             architectures: [],

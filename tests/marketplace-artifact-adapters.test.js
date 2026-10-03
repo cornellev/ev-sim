@@ -74,7 +74,7 @@ test("MKT-02 plugin inspection is structural and never imports throwing module b
         packageHash: resource.packageHash,
         runtimeHash: resource.runtimeHash,
         uiHash: resource.uiHash,
-        engineRange: ">=0.1.0 <0.2.0",
+        engineRange: ">=0.1.0 <0.3.0",
         capabilities: [],
     });
     assert.equal(Object.isFrozen(inspection), true);

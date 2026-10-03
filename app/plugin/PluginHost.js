@@ -3,6 +3,7 @@ import { createPluginUnitAdapterClass } from "../scripting/PluginUnitAdapter.js"
 import { UnitBlock as PublicUnitBlock } from "../plugin-api/UnitBlock.js";
 import { createRegistrationApi } from "../plugin-api/index.js";
 import { validateCapabilityGrants } from "../plugin-api/capabilities.js";
+import { CEV_SIM_VERSION } from "../version.js";
 import { assertPluginCompatibility } from "./PluginDocument.js";
 import { clonePluginJson } from "./PluginJson.js";
 import { PLUGIN_ERROR_CODES, assertSynchronous, pluginError } from "./PluginErrors.js";
@@ -32,7 +33,7 @@ export class PluginHost {
         blockRegistry = new BlockRegistry(),
         sensorRegistry = registerBuiltInSensorTypes(new SensorTypeRegistry({ allowPlugins: true })),
         createUnitAdapterClass = createPluginUnitAdapterClass,
-        simulatorVersion = "0.1.0",
+        simulatorVersion = CEV_SIM_VERSION,
         availableCapabilities = [],
         logger = () => {},
         createFacade = null,

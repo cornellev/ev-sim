@@ -1,6 +1,7 @@
 import express from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { CEV_SIM_VERSION } from "../../app/version.js";
 import { registerEnvironmentTools } from "./environmentTools.js";
 import { registerPluginTools } from "./pluginTools.js";
 import { registerScriptingTools } from "./scriptingTools.js";
@@ -58,7 +59,7 @@ export function createMcpRouter(storage, logService, headlessExperimentService =
 export function createSensorFusionMcpServer(storage, logService, headlessExperimentService = null) {
     const server = new McpServer({
         name: "cev-sim",
-        version: "0.1.0",
+        version: CEV_SIM_VERSION,
     });
 
     registerEnvironmentTools(server, storage);

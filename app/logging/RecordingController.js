@@ -7,6 +7,7 @@ import {
 } from "./LogProfiles.js";
 import { createLogSession, finalizeLogSession, uploadLogBatch } from "./LogClient.js";
 import { getTelemetryStore } from "../telemetry/TelemetryRuntime.js";
+import { CEV_SIM_VERSION } from "../version.js";
 import { SAFE_LOG_BATCH_BYTES, TARGET_LOG_BATCH_BYTES } from "./LogLimits.js";
 import { isHeavyValue } from "../scripting/runtime/SignalStore.js";
 
@@ -204,7 +205,7 @@ export class RecordingController {
                 environmentId: options.environmentId,
                 simulator: options.simulator,
                 profile: this.profile,
-                appVersion: options.appVersion || "0.1.0",
+                appVersion: options.appVersion || CEV_SIM_VERSION,
                 gitHash: options.gitHash || null,
                 runId: options.runId || null,
                 manifestId: options.manifestId || null,

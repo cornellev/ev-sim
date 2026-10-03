@@ -16,7 +16,7 @@ import { compileGraph, listUnitCatalog } from "../server/scripting/scriptingHand
 import { StorageService } from "../server/storage/StorageService.js";
 import { pluginFixtureResource } from "./helpers/pluginFixtures.js";
 
-const RUNTIME_HASH = "f29ebbc784e41f926b0aba3a8de763262be2b0e8181b63031dc4b7a9107657c7";
+const RUNTIME_HASH = "42654d815b24b61dbf836d861b84c83a3be9c0193ed67ef5fc8b79a36cbff232";
 
 async function harness(t) {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "cev-plugin-authoring-"));

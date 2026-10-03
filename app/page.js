@@ -45,9 +45,12 @@ function MarketplaceReloadAlert() {
     const [host, setHost] = useState(null);
 
     useEffect(() => {
-        const dialogs = document.querySelectorAll(".sf-dialog");
-        const dialog = dialogs[dialogs.length - 1];
-        setHost(dialog?.querySelector(".sf-dialog__body") ?? null);
+        const frame = requestAnimationFrame(() => {
+            const dialogs = document.querySelectorAll(".sf-dialog");
+            const dialog = dialogs[dialogs.length - 1];
+            setHost(dialog?.querySelector(".sf-dialog__body") ?? null);
+        });
+        return () => cancelAnimationFrame(frame);
     }, []);
 
     const alert = (

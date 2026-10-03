@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { defaultCevSimEngineRange } from "../app/plugin/PluginEngineRange.js";
 import {
     scaffoldPluginFiles,
     verifyPluginDirectory,
@@ -42,4 +43,18 @@ test("example pure-pursuit package verifies with a UI-independent runtime hash",
 
 test("scaffold rejects reserved plugin ids", () => {
     assert.throws(() => scaffoldPluginFiles({ id: "cev.demo" }), /reserved cev namespace/);
+});
+
+test("scaffold and marketplace defaults use next-minor ranges on 0.x hosts", () => {
+    assert.equal(defaultCevSimEngineRange("0.1.0"), ">=0.1.0 <0.2.0");
+    assert.equal(defaultCevSimEngineRange("0.2.0"), ">=0.2.0 <0.3.0");
+    assert.equal(defaultCevSimEngineRange("1.2.3"), ">=1.0.0 <2.0.0");
+    assert.equal(
+        scaffoldPluginFiles({ id: "acme.demo", simulatorVersion: "0.2.0" }).document.engines.cevSim,
+        ">=0.2.0 <0.3.0",
+    );
+    assert.equal(
+        scaffoldPluginFiles({ id: "acme.demo", simulatorVersion: "0.1.0" }).document.engines.cevSim,
+        ">=0.1.0 <0.2.0",
+    );
 });

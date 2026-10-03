@@ -8,6 +8,7 @@ import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
+import { defaultCevSimEngineRange } from "../app/plugin/PluginEngineRange.js";
 import { PluginHost } from "../app/plugin/PluginHost.js";
 import { PluginLoader } from "../app/plugin/PluginLoader.js";
 import { createPluginPackage } from "../app/plugin/PluginPackage.js";
@@ -72,14 +73,12 @@ export function scaffoldPluginFiles({
     const pluginId = assertPluginScaffoldId(id);
     const catalogName = String(name || titleFromId(pluginId)).trim();
     const unitType = `${pluginId}.ScaleBlock`;
-    const major = Number.parseInt(String(simulatorVersion).split(".")[0], 10);
-    const nextMajor = Number.isFinite(major) ? major + 1 : 1;
     const document = {
         kind: "cev-sim.plugin",
         api: 1,
         id: pluginId,
         version: "1.0.0",
-        engines: { cevSim: `>=${simulatorVersion} <${nextMajor}.0.0` },
+        engines: { cevSim: defaultCevSimEngineRange(simulatorVersion) },
         entry: {
             runtime: "runtime/index.js",
             ...(withUi ? { ui: "ui/index.js" } : {}),

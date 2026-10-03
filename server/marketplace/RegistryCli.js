@@ -3,6 +3,7 @@ import { generateKeyPairSync } from "node:crypto";
 import process from "node:process";
 import path from "node:path";
 
+import { CEV_SIM_VERSION } from "../../app/version.js";
 import {
     MARKETPLACE_KINDS,
     MARKETPLACE_LIMITS,
@@ -68,6 +69,9 @@ export function registryCliHelp() {
         "  cev-mkt <command>",
         "  cev-sim mkt <command>",
         "",
+        "Global options:",
+        "  --version",
+        "",
         "Commands:",
         "  init --root DIR --offline-root-key FILE [--registry-id UUID]",
         "  validate item --file FILE",
@@ -106,6 +110,7 @@ function usage(message) {
 
 function parseArguments(argv) {
     if (argv.length === 0 || argv[0] === "--help" || argv[0] === "-h") return { help: true };
+    if (argv[0] === "--version" || argv[0] === "-V") return { version: true };
     const command = argv[0];
     const positional = [];
     const options = {};
@@ -632,6 +637,10 @@ export async function main(argv = process.argv.slice(2), io = {}) {
         const parsed = parseArguments(argv);
         if (parsed.help) {
             jsonLine(stdout, { ok: true, command: "help", help: registryCliHelp() });
+            return REGISTRY_CLI_EXIT.OK;
+        }
+        if (parsed.version) {
+            stdout.write(`${CEV_SIM_VERSION}\n`);
             return REGISTRY_CLI_EXIT.OK;
         }
         const result = await execute(parsed, abortController.signal, { stdout });

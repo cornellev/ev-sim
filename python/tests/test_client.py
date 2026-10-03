@@ -55,7 +55,7 @@ def capabilities() -> pb.GetCapabilitiesResponse:
     return pb.GetCapabilitiesResponse(
         protocol=pb.ProtocolVersion(major=PROTOCOL_MAJOR, minor=PROTOCOL_MINOR),
         runtime_name="cev-sim",
-        runtime_version="0.1.0",
+        runtime_version="0.2.0",
         transports=["unix", "tcp-insecure", "grpc+unix+shared-memory-v1"],
         observation_profiles=[
             pb.ProfileCapability(

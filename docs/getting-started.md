@@ -23,9 +23,16 @@ Options:
 # custom directory
 curl -fsSL https://raw.githubusercontent.com/cornellev/ev-sim/main/install.sh | bash -s -- --dir ~/ev-sim
 
+# reproducible Alpha release tag (once published)
+curl -fsSL https://raw.githubusercontent.com/cornellev/ev-sim/v0.2.0/install.sh \
+  | bash -s -- --ref v0.2.0
+
 # clone + install + start the dev server
 curl -fsSL https://raw.githubusercontent.com/cornellev/ev-sim/main/install.sh | bash -s -- --start
 ```
+
+`--ref` accepts a tag, branch, or commit. `--branch` remains a compatibility
+alias for `--ref`.
 
 The installer creates `.env.local` and asks whether to enable the marketplace. Enter, `y`, or `yes` writes `CEV_SIM_MARKETPLACE_ENABLED=1`. `n` or `no` writes `0`. An existing assignment is kept unless `--marketplace` or `--no-marketplace` is passed. A run with no terminal creates the file and leaves that setting unchanged, which leaves the marketplace enabled.
 

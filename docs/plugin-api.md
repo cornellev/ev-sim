@@ -19,13 +19,18 @@ ui/icon.svg          # optional, listed in editor.assets
 `plugin.json` is the authority. Unknown fields are rejected. Plugin IDs are lowercase dotted names
 outside the reserved `cev` namespace. Unit, system, and sensor types must start with `{pluginId}.`.
 
+For simulator `0.2.0`, declare `engines.cevSim` as `>=0.2.0 <0.3.0` (or
+`>=0.1.0 <0.3.0` if the package must also load on 0.1). A package that still
+declares `<0.2.0` is rejected. `npm run plugin:create` emits the next-minor
+0.x range for the current host.
+
 ```json
 {
   "kind": "cev-sim.plugin",
   "api": 1,
   "id": "acme.demo",
   "version": "1.0.0",
-  "engines": { "cevSim": ">=0.1.0 <0.2.0" },
+  "engines": { "cevSim": ">=0.2.0 <0.3.0" },
   "entry": { "runtime": "runtime/index.js", "ui": "ui/index.js" },
   "capabilities": [],
   "units": [],

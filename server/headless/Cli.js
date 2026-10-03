@@ -3,6 +3,7 @@ import process from "node:process";
 import readline from "node:readline";
 
 import { HeadlessEpisodeError } from "../../app/simulation/headless/HeadlessErrors.js";
+import { CEV_SIM_VERSION } from "../../app/version.js";
 import { loadBundleReference } from "./BundleSource.js";
 import { canonicalRunBundleStringify } from "./RunBundle.js";
 import { HEADLESS_PROTOCOL } from "./HeadlessProtocol.js";
@@ -37,6 +38,7 @@ const FLAG_OPTIONS = new Set(["sflog-on-failure", "no-sflog-on-failure", "allow-
 
 function usage() {
     return [
+        "cev-sim --version",
         "cev-sim validate (--bundle <file | use:manifestId> | --package <file>) [--episode <file>] [--config <supervisor.json>] [--sensor-transport-config <file>]",
         "cev-sim create-smoke-bundle --output <bundle.json>",
         "cev-sim inspect <bundle|package|output-directory|sflog>",
@@ -50,6 +52,7 @@ function usage() {
 function parseArguments(argv) {
     const command = argv[0];
     if (!command || command === "--help" || command === "-h") return { help: true };
+    if (command === "--version" || command === "-V") return { version: true };
     const options = {};
     const positional = [];
     for (let index = 1; index < argv.length; index += 1) {
@@ -147,6 +150,10 @@ export async function main(argv = process.argv.slice(2), io = {}) {
         parsed = parseArguments(argv);
         if (parsed.help) {
             stdout.write(`${usage()}\n`);
+            return CLI_EXIT.OK;
+        }
+        if (parsed.version) {
+            stdout.write(`${CEV_SIM_VERSION}\n`);
             return CLI_EXIT.OK;
         }
         const { command, options, positional } = parsed;

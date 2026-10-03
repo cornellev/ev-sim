@@ -75,6 +75,7 @@ import {
 } from "../../app/simulation/kernel/RunIdentity.js";
 import { PluginRunSession, PLG03_RUNTIME_CAPABILITIES } from "../../app/plugin/PluginRunSession.js";
 import { verifyPluginPackage } from "../../app/plugin/PluginPackage.js";
+import { CEV_SIM_VERSION } from "../../app/version.js";
 import {
     effectivePluginLocks,
     pluginDependencyHashes,
@@ -1735,7 +1736,7 @@ export class StorageService {
                 appVersion: requested.provenance?.appVersion
                     ?? process.env.NEXT_PUBLIC_APP_VERSION
                     ?? process.env.npm_package_version
-                    ?? "0.1.0",
+                    ?? CEV_SIM_VERSION,
                 gitCommit: requested.provenance?.gitCommit
                     ?? process.env.NEXT_PUBLIC_GIT_HASH
                     ?? process.env.GIT_COMMIT

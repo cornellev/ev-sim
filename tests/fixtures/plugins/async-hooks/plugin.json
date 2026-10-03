@@ -1,6 +1,6 @@
 {
   "kind": "cev-sim.plugin", "api": 1, "id": "acme.async", "version": "1.0.0",
-  "engines": { "cevSim": ">=0.1.0 <0.2.0" }, "entry": { "runtime": "runtime/index.js" },
+  "engines": { "cevSim": ">=0.1.0 <0.3.0" }, "entry": { "runtime": "runtime/index.js" },
   "capabilities": [],
   "units": [{
     "type": "acme.async.AsyncBlock", "ports": { "inputs": {}, "outputs": { "result": "float64" } },

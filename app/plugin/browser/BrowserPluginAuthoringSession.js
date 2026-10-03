@@ -1,6 +1,7 @@
 import { PLUGIN_CAPABILITIES } from "../../plugin-api/capabilities.js";
 import { BlockRegistry } from "../../scripting/BlockRegistry.js";
 import { registerBuiltInBlocks } from "../../scripting/registerBuiltInBlocks.js";
+import { CEV_SIM_VERSION } from "../../version.js";
 import { PluginHost } from "../PluginHost.js";
 import { PluginLoader } from "../PluginLoader.js";
 import { verifyPluginPackage } from "../PluginPackage.js";
@@ -17,7 +18,7 @@ export class BrowserPluginAuthoringSession {
     constructor({
         moduleSource = new BrowserPluginModuleSource(),
         availableCapabilities = PLUGIN_CAPABILITIES,
-        simulatorVersion = "0.1.0",
+        simulatorVersion = CEV_SIM_VERSION,
         authorizePackage = typeof window === "undefined" ? null : authorizeBrowserPackage,
         subscribePolicy = typeof window === "undefined" ? null : subscribeBrowserMarketplacePolicy,
     } = {}) {

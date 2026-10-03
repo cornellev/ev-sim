@@ -87,16 +87,20 @@ async function main() {
     const plugin = JSON.parse(await read("plugin.json"));
     const pyproject = await read("python/pyproject.toml");
     const pythonInit = await read("python/src/cev_sim/__init__.py");
+    const appVersion = await read("app/version.js");
     const mcpRouter = await read("server/mcp/createMcpRouter.js");
     const versions = {
         package: rootPackage.version,
         plugin: plugin.version,
+        app: matchVersion(appVersion, /export const CEV_SIM_VERSION\s*=\s*"([^"]+)"/, "app/version.js"),
         pythonProject: matchVersion(pyproject, /^version\s*=\s*"([^"]+)"/m, "Python project"),
         pythonRuntime: matchVersion(pythonInit, /^__version__\s*=\s*"([^"]+)"/m, "Python runtime"),
-        mcp: matchVersion(mcpRouter, /version:\s*"([^"]+)"/, "MCP"),
     };
     if (new Set(Object.values(versions)).size !== 1) {
         throw new Error(`Coordinated package versions differ: ${JSON.stringify(versions)}.`);
+    }
+    if (!/CEV_SIM_VERSION/.test(mcpRouter) || !/from ["']\.\.\/\.\.\/app\/version\.js["']/.test(mcpRouter)) {
+        throw new Error("MCP server must advertise CEV_SIM_VERSION from app/version.js.");
     }
     if (rootPackage.private !== true) throw new Error("The browser application root package must remain private.");
     if (rootPackage.engines?.node !== ">=22.22.2 <23") {

@@ -40,6 +40,10 @@ jobs:
         run: |
           npm run fixtures:headless
           git diff --exit-code -- tests/fixtures/headless/characterization.v1.json
+      - name: Verify environment-editor fixture drift
+        run: |
+          npm run fixtures:environment-editor
+          git diff --exit-code -- tests/fixtures/environment-editor/compatibility-baseline.v1.json
       - name: Verify generated protocol and Python
         run: |
           npm run proto:python

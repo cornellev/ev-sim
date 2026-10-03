@@ -10,6 +10,7 @@ import {
     IconShieldCheck,
 } from "@tabler/icons-react";
 
+import { CEV_SIM_VERSION } from "../../version.js";
 import { getRunManifest, listRunManifests } from "../../simulation/RunManifestClient.js";
 import { getRunSessionController } from "../../simulation/RunSessionController.js";
 import { getScenario, listScenarios } from "../../scenarios/ScenarioClient.js";
@@ -540,7 +541,7 @@ export default function ExperimentWorkspace({
         if (!selectedResult) return;
         setBusy(true);
         try {
-            const baseline = createExperimentBaseline(selectedResult, { name, suite: draft, provenance: { appVersion: "0.1.0" } });
+            const baseline = createExperimentBaseline(selectedResult, { name, suite: draft, provenance: { appVersion: CEV_SIM_VERSION } });
             const stored = normalizeExperimentBaseline(baselineDocument(await persistBaseline(baseline)));
             setSelectedBaseline(stored);
             setBaselines((current) => [...current, { id: stored.id, name: stored.name, suiteId: stored.suiteId, createdAt: stored.createdAt }]);

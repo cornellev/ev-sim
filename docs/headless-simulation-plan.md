@@ -1297,3 +1297,22 @@ or UDP requests because no adapter is available yet. No Protobuf fields,
 fixed-step phases, or plugin-free identity algorithms changed. This is not
 headless PR 13 and does not satisfy or change the outstanding PR 12 hosted,
 soak, x64 NVIDIA, or Jetson ARM64 evidence gates.
+
+### 2026-10-03 — Coordinated 0.2.0 alpha packaging (candidate evidence pending)
+
+Bump the coordinated product version to exact SemVer `0.2.0` while keeping the
+product labeled Alpha. Runtime defaults now read `CEV_SIM_VERSION` from
+`app/version.js`; release metadata tracks `RUN_MANIFEST_VERSION` (11); plugin
+fixtures that must load on both 0.1 and 0.2 use `engines.cevSim: ">=0.1.0 <0.3.0"`;
+new scaffolds and marketplace host defaults use next-minor 0.x ranges. Protocol
+1.4, run-bundle v1, SFLog v1, characterization fixture bytes, and semantic hash
+algorithms are unchanged.
+
+Local 2026-10-03 evidence on macOS ARM64 (Node 22.14.0): all-language parity
+passed; quick soak passed; `dist:headless` emitted `cev-sim-0.2.0` npm/Python
+artifacts with release-manifest contract `manifestVersion: 11`;
+`release:check --dist` and `artifacts:install --verify-only` passed; lint had
+zero errors. Hosted macOS/Linux parity aggregation, the full 1/8/16/32 soak and
+benchmark, the manual internal-candidate workflow (including production
+Playwright), and dedicated x64 NVIDIA / Jetson ARM64 reports remain mandatory
+before tagging a GitHub prerelease. This is not headless PR 13.

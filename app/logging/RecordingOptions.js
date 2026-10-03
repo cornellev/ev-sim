@@ -1,3 +1,4 @@
+import { CEV_SIM_VERSION } from "../version.js";
 import { projectEvidenceFromResolvedRun } from "./LogEvidenceDocument.js";
 
 /**
@@ -46,7 +47,7 @@ export function buildRecordingOptions({
         profile,
         environmentId: data?.environment?.()?.environmentId || null,
         simulator: data?.simulation?.()?.getSnapshot?.(),
-        appVersion: process.env.NEXT_PUBLIC_APP_VERSION || "0.1.0",
+        appVersion: process.env.NEXT_PUBLIC_APP_VERSION || CEV_SIM_VERSION,
         gitHash,
         runId,
         manifestId: resolvedRun?.manifest?.id ?? null,

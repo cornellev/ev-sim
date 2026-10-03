@@ -2,6 +2,7 @@ import { cloneJson } from "../util/cloneJson.js";
 import { PLUGIN_CAPABILITIES } from "../plugin-api/capabilities.js";
 import { BlockRegistry } from "../scripting/BlockRegistry.js";
 import { registerBuiltInBlocks } from "../scripting/registerBuiltInBlocks.js";
+import { CEV_SIM_VERSION } from "../version.js";
 import { PluginEffectJournal } from "./PluginEffectJournal.js";
 import { PluginHost } from "./PluginHost.js";
 import { clonePluginJson } from "./PluginJson.js";
@@ -94,7 +95,7 @@ export class PluginRunSession {
         moduleSource,
         plugins = [],
         availableCapabilities = PLG03_RUNTIME_CAPABILITIES,
-        simulatorVersion = "0.1.0",
+        simulatorVersion = CEV_SIM_VERSION,
         logger = () => {},
         authorizePackage = null,
         subscribePolicy = null,

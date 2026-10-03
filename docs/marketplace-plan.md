@@ -978,14 +978,14 @@ Baseline captured before implementation at `7a463e7` on macOS arm64, Node
 
 - Existing focused package/canonicalization/simulation-hash/characterization
   selection passed 37/37.
-- Plugin package hash:
-  `f9e2255bed1adcdadbe7a3fa9cb75ee6644fc791c07acd9734bd4d43f8ea52d9`.
+- Plugin package hash (current after 0.2.0 engine-range migration):
+  `5fb8ec8f4ac2176629414beaa938a48cfbe00d577e13edeae8c69806d0f0909d`.
 - Plugin-enabled resolved hash:
-  `bec3cb24c73ec6fae65d2377611ad78f0152e83f23543e59fa6a4a7e419a07b8`.
+  `9d12e58b3319c26470eb3f37314a0d8017cbae338e04f07a8214604c9532e428`.
 - Plugin-enabled simulation-semantic hash:
-  `8fa5b9fa937fa1a6dfc342237e9320ffe84097df3cdfdaea069ad79153ad793c`.
+  `884aff41608fd8c1010a61b399b3a2e7928a15e53155e557154c42c82f94a3ed`.
 - Plugin-enabled default episode hash:
-  `b14dfdfee0b493e4119110f6f172b45959378544a3a10f0cf55fbc25fc9f40bc`.
+  `518c82fbba425792dd8d2150fecfb227ae6ada45f3109557586a2f4ef9e813c8`.
 - Fixed vehicle-bundle hash:
   `e44e29973a958058b1726855fca84c06c444033222dbb29238a72ae9d1a60c7a`.
 - Existing run-package golden archive hash:
@@ -1484,6 +1484,18 @@ Local evidence on 2026-09-28:
   WP-10 and milestone acceptance open.
 
 ## Decision log
+
+### 2026-10-03 — Widen fixture cevSim ranges for the 0.2.0 alpha line
+
+Bundled plugin and marketplace fixtures that are verified on both 0.1 and 0.2
+now declare `compatibility.cevSim` / `engines.cevSim` as `>=0.1.0 <0.3.0`.
+Marketplace publication defaults for the current host use
+`defaultCevSimEngineRange()` (next-minor on 0.x). Plugin load stays strict and
+does not enable prerelease matching: packages that still declare `<0.2.0` fail
+on simulator `0.2.0`. The intentional fixture change updates plugin
+`packageHash`/`runtimeHash`, plugin-enabled run identities, and the frozen
+marketplace release canonical digest; vehicle-bundle and run-package golden
+vectors remain unchanged.
 
 ### 2026-10-01 — Publication preparation reports authoring failures
 

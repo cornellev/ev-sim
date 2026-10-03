@@ -7,6 +7,7 @@ import process from "node:process";
 
 import { parse } from "acorn";
 
+import { RUN_MANIFEST_VERSION } from "../app/simulation/RunManifest.js";
 import { HEADLESS_PROTOCOL } from "../server/headless/HeadlessProtocol.js";
 import { RELEASE_MANIFEST_KIND, createReport } from "../server/headless/ReleaseReports.js";
 import {
@@ -309,7 +310,7 @@ async function main() {
             protocol: { minimum: { major: 1, minor: 0 }, maximum: HEADLESS_PROTOCOL },
             contracts: {
                 protobuf: "cev_sim.headless.v1",
-                manifestVersion: 9,
+                manifestVersion: RUN_MANIFEST_VERSION,
                 runBundleVersion: 1,
                 sflogVersion: 1,
             },

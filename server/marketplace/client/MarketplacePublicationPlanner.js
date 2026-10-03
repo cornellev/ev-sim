@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createWriteStream, promises as fs } from "node:fs";
 import path from "node:path";
 
+import { defaultCevSimEngineRange } from "../../../app/plugin/PluginEngineRange.js";
 import { verifyPluginPackage } from "../../../app/plugin/PluginPackage.js";
 import { normalizeVehiclePluginLocks } from "../../../app/plugin/PluginSensorAuthoring.js";
 import { exportAssetPackage } from "../AssetPackage.js";
@@ -59,7 +60,7 @@ function planArtifactDirectory(paths, planHash) {
 function defaultCompatibility(contentKind, inspection) {
     const contract = MARKETPLACE_ARTIFACTS[contentKind];
     return {
-        cevSim: contentKind === "plugin" ? inspection.identity.engineRange : ">=0.1.0 <0.2.0",
+        cevSim: contentKind === "plugin" ? inspection.identity.engineRange : defaultCevSimEngineRange(),
         contracts: [{ kind: contract.kind, versions: [contract.version] }],
         platforms: [],
         architectures: [],
@@ -386,7 +387,7 @@ export class MarketplacePublicationPlanner {
                 const derivedCompatibility = defaultCompatibility(draft.contentKind, built.inspection);
                 const compatibility = {
                     ...draft.release.compatibility,
-                    cevSim: draft.contentKind === "plugin" && draft.release.compatibility.cevSim === ">=0.1.0 <0.2.0"
+                    cevSim: draft.contentKind === "plugin" && draft.release.compatibility.cevSim === defaultCevSimEngineRange()
                         ? derivedCompatibility.cevSim
                         : draft.release.compatibility.cevSim,
                     contracts: draft.release.compatibility.contracts.length

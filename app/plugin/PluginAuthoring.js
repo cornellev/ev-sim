@@ -5,6 +5,7 @@ import {
     describeBuiltInCatalog,
     describePluginCatalogUnit,
 } from "../scripting/UnitCatalog.describe.js";
+import { CEV_SIM_VERSION } from "../version.js";
 import { PluginHost } from "./PluginHost.js";
 import { PluginLoader } from "./PluginLoader.js";
 import { verifyPluginPackage } from "./PluginPackage.js";
@@ -51,7 +52,7 @@ export async function createAuthoringRegistry({
     locks = [],
     getPackage,
     moduleSource,
-    simulatorVersion = "0.1.0",
+    simulatorVersion = CEV_SIM_VERSION,
     availableCapabilities = PLUGIN_CAPABILITIES,
     authorizePackage = null,
 } = {}) {

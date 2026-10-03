@@ -9,7 +9,7 @@ import {
 
 function requirements(overrides = {}) {
     return {
-        cevSim: ">=0.1.0 <0.2.0",
+        cevSim: ">=0.1.0 <0.3.0",
         contracts: [{ kind: "cev-sim.plugin-package", versions: [1] }],
         platforms: [],
         architectures: [],
