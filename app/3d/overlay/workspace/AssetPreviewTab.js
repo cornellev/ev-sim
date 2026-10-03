@@ -51,13 +51,10 @@ function commandAccepted(result) {
 /** Interactive asset authoring viewport with an isolated renderer and history. */
 export function AssetPreviewTab({ data, tab }) {
     const canvasRef = useRef(null);
-    const onUnitLabelRef = useRef(() => {});
     const [state, setState] = useState({ status: "loading", error: null });
-    const [unitLabel, setUnitLabel] = useState("1 m");
     const session = useAssetStudioSession(data, tab);
     const [studioSnapshot, setStudioSnapshot] = useState(null);
     useEffect(() => session?.subscribe(setStudioSnapshot), [session]);
-    onUnitLabelRef.current = setUnitLabel;
     const showUnits = studioSnapshot?.view?.showUnits !== false;
 
     useEffect(() => {
@@ -488,14 +485,12 @@ export function AssetPreviewTab({ data, tab }) {
             unitGrid.setVisible(session.view.showUnits !== false);
             const syncUnits = () => {
                 const rect = canvas.getBoundingClientRect();
-                const step = unitGrid.sync({
+                return unitGrid.sync({
                     camera,
                     target: orbit.target,
                     viewportWidth: Math.max(1, rect.width),
                     viewportHeight: Math.max(1, rect.height),
                 });
-                if (step?.label) onUnitLabelRef.current(step.label);
-                return step;
             };
             syncUnits();
             requestRender();
@@ -571,7 +566,6 @@ export function AssetPreviewTab({ data, tab }) {
             >
                 Units
             </button>
-            {showUnits ? <span className="text-xs text-zinc-300" data-asset-unit-label={unitLabel}>{unitLabel}</span> : null}
         </div>
         {state.status === "loading" && <p role="status" className="absolute left-1/2 top-1/2 -translate-x-1/2 text-sm text-zinc-400">Loading asset studio…</p>}
         {state.status === "error" && <p role="alert" className="absolute left-1/2 top-1/2 max-w-md -translate-x-1/2 text-sm text-red-300">{state.error}</p>}

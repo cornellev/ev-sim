@@ -128,7 +128,15 @@ select the byte-compatible inline runtime before a run starts. Failure after
 preparation is an infrastructure failure and pauses the run; there is no
 mid-frame renderer switch or product omission. Hosted Chromium and the browser
 worker share `PbrCaptureEnvironment`, `BrowserPbrRenderRuntime`, and aligned
-capture code. The inline fallback exposes a renderer-availability lease rather
+capture code. Hosted Chromium keeps the injected fenced readback; the browser
+worker uses the same pooled PBO pipeline and combined analytic pass as the
+inline runtime, which a hardware-WebGL2 spec proves byte-identical. The main
+thread posts worker requests without waiting for earlier replies (the worker
+serializes them), and per-step `prepareCapture` does not await its reply: a
+failure rejects the next capture in the worker and the next main-thread call.
+`PbrCaptureEnvironment` reuses one calibration object per camera while its
+content is unchanged, so identity-keyed validation and warp-table caches hit
+for structured-clone requests. The inline fallback exposes a renderer-availability lease rather
 than blocking presentation for an entire asynchronous fixed-step advance.
 Aligned capture snapshots and restores Three.js/WebGL state around each draw,
 PBO issue/poll, or genuinely asynchronous injected readback. RAF may therefore

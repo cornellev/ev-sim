@@ -1,6 +1,6 @@
 /** Three-plane meter grid layout for the asset studio. Pure: no Three, no DOM. */
 
-import { formatUnitLabel, nextNiceStep, selectUnitStep, visibleMetersAtTarget } from "./assetStudioUnitScale.js";
+import { formatSignedUnitLabel, formatUnitLabel, nextNiceStep, selectUnitStep, visibleMetersAtTarget } from "./assetStudioUnitScale.js";
 
 const MAX_STEP_METERS = 1000;
 const PLANE_AXES = {
@@ -108,6 +108,70 @@ function planeSegments(id, origin, halfExtent, minorMeters, majorMeters) {
     return { minor, major };
 }
 
+function majorCoordinates(center, halfExtent, major) {
+    if (!(major > 0)) return [];
+    const first = Math.ceil((center - halfExtent - 1e-9) / major);
+    const last = Math.floor((center + halfExtent + 1e-9) / major);
+    const coords = [];
+    for (let index = first; index <= last; index += 1) coords.push(index * major);
+    return coords;
+}
+
+const LABEL_OFFSET_PX = 16;
+
+function isZeroTick(meters, major) {
+    return Math.abs(meters) <= Math.max(major * 1e-6, 1e-9);
+}
+
+/** Place a tick label just off its axis so the glyph does not cover the stroke. */
+function labelPosition(axis, meters, origin, offset) {
+    const position = { x: origin.x, y: origin.y, z: origin.z, [axis]: meters };
+    if (axis === "x") position.z -= offset;
+    else position.x += offset;
+    return position;
+}
+
+/**
+ * One signed measurement per major tick on X, Y, and Z.
+ * The three zero ticks collapse to a single `0` at the origin.
+ */
+export function planAxisLabels({ origin, halfExtent, majorMeters, metersPerPixel } = {}) {
+    const safeOrigin = {
+        x: finite(origin?.x),
+        y: finite(origin?.y),
+        z: finite(origin?.z),
+    };
+    const offset = LABEL_OFFSET_PX * (Number.isFinite(metersPerPixel) && metersPerPixel > 0 ? metersPerPixel : 0);
+    const labels = [];
+    let sawZero = false;
+    for (const axis of ["x", "y", "z"]) {
+        for (const meters of majorCoordinates(safeOrigin[axis], halfExtent, majorMeters)) {
+            if (isZeroTick(meters, majorMeters)) {
+                sawZero = true;
+                continue;
+            }
+            labels.push({
+                axis,
+                meters,
+                text: formatSignedUnitLabel(meters),
+                position: labelPosition(axis, meters, safeOrigin, offset),
+            });
+        }
+    }
+    if (sawZero) {
+        const atWorldZero = ["x", "y", "z"].every((axis) => Math.abs(safeOrigin[axis]) <= 1e-6);
+        labels.push({
+            axis: "origin",
+            meters: 0,
+            text: "0",
+            position: atWorldZero
+                ? { x: safeOrigin.x + offset, y: safeOrigin.y, z: safeOrigin.z - offset }
+                : { x: offset, y: 0, z: -offset },
+        });
+    }
+    return labels;
+}
+
 function cappedHalfExtent(rawHalf, step, maxLinesPerAxis) {
     let halfExtent = roundUpTo(Math.max(rawHalf, step.majorMeters), step.majorMeters);
     if (axisLineCount(halfExtent, step.minorMeters) <= maxLinesPerAxis) return halfExtent;
@@ -144,13 +208,16 @@ export function planAssetStudioUnitGrid({
         ...planeSegments(id, origin, halfExtent, step.minorMeters, step.majorMeters),
     }));
     const { x, y, z } = origin;
+    const metersPerPixel = visible.metersPerPixel;
     return {
         minorMeters: step.minorMeters,
         majorMeters: step.majorMeters,
         label: formatUnitLabel(step.minorMeters),
+        metersPerPixel,
         origin,
         halfExtent,
         planes,
+        labels: planAxisLabels({ origin, halfExtent, majorMeters: step.majorMeters, metersPerPixel }),
         axes: {
             x: [x - halfExtent, y, z, x + halfExtent, y, z],
             y: [x, y - halfExtent, z, x, y + halfExtent, z],

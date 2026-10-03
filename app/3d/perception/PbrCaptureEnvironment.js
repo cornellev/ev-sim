@@ -21,6 +21,7 @@ export class PbrCaptureEnvironment {
         sensorRig = null,
         mapProduct = identity,
         includeTimings = false,
+        alignedReadback = readRenderTargetPixelsWithFence,
     }) {
         this.environmentKey = environmentKey;
         this.slot = slot;
@@ -30,7 +31,23 @@ export class PbrCaptureEnvironment {
         this.sensorRig = sensorRig;
         this.mapProduct = mapProduct;
         this.includeTimings = includeTimings;
+        this.alignedReadback = alignedReadback;
         this.cameras = new Map();
+        this.calibrations = new Map();
+    }
+
+    /**
+     * Requests arrive as structured clones, while calibration validation and
+     * warp tables are cached by object identity. Reuse one object per camera
+     * while its content is unchanged.
+     */
+    _canonicalCalibration(cameraId, calibration) {
+        if (!calibration || typeof calibration !== "object") return calibration;
+        const key = JSON.stringify(calibration);
+        const existing = this.calibrations.get(cameraId);
+        if (existing?.key === key) return existing.calibration;
+        this.calibrations.set(cameraId, { key, calibration });
+        return calibration;
     }
 
     camera(request) {
@@ -59,7 +76,7 @@ export class PbrCaptureEnvironment {
             analyticSceneHandle: options.analyticSceneHandle,
             authorizeSourceUse: options.authorizeSourceUse,
             renderPolicy: options.renderPolicy,
-            alignedReadback: readRenderTargetPixelsWithFence,
+            alignedReadback: this.alignedReadback,
         });
         const created = { camera, products };
         this.cameras.set(cameraId, created);
@@ -85,6 +102,7 @@ export class PbrCaptureEnvironment {
             const localScene = this.runtime.cameraOptions().captureSceneHandle;
             const captureInput = {
                 ...request.captureInput,
+                calibration: this._canonicalCalibration(String(request.id), request.captureInput.calibration),
                 scene: {
                     role: localScene.role,
                     generation: localScene.generation,
@@ -123,6 +141,7 @@ export class PbrCaptureEnvironment {
     dispose() {
         for (const camera of this.cameras.values()) camera.products.dispose();
         this.cameras.clear();
+        this.calibrations.clear();
         this.runtime.dispose();
     }
 }

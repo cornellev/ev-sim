@@ -146,6 +146,36 @@ test("two pixel-pack slots can be in flight while preserving pixel-pack bindings
     second.dispose();
 });
 
+test("PixelPackSlot queries PACK_ALIGNMENT once per context and restores it", async () => {
+    const { PixelPackSlot } = await import("../app/3d/util/glReadback.js");
+    const alignmentQueries = [];
+    const stores = [];
+    const gl = {
+        PIXEL_PACK_BUFFER: 0x88eb,
+        STREAM_READ: 0x88e1,
+        PACK_ALIGNMENT: 0x0d05,
+        SYNC_GPU_COMMANDS_COMPLETE: 0x9117,
+        createBuffer: () => ({}),
+        bindBuffer() {},
+        bufferData() {},
+        getParameter(name) {
+            if (name === 0x0d05) alignmentQueries.push(name);
+            return name === 0x0d05 ? 8 : null;
+        },
+        pixelStorei(name, value) { stores.push([name, value]); },
+        readPixels() {},
+        fenceSync: () => ({}),
+        flush() {},
+        deleteSync() {},
+        deleteBuffer() {},
+    };
+    const slots = [new PixelPackSlot(gl, 8), new PixelPackSlot(gl, 8), new PixelPackSlot(gl, 8)];
+    assert.equal(alignmentQueries.length, 1);
+    assert.equal(slots[2].begin(0, 0, 1, 2, 0x1908, 0x1401), true);
+    assert.deepEqual(stores, [[0x0d05, 1], [0x0d05, 8]]);
+    for (const slot of slots) slot.dispose();
+});
+
 test("a fenced slot is replaced before it can be written again", async () => {
     const { PixelPackSlot } = await import("../app/3d/util/glReadback.js");
     const events = [];

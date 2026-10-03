@@ -7,6 +7,18 @@
  */
 
 const asyncPixelPackCapability = new WeakMap();
+const packAlignmentByContext = new WeakMap();
+
+// Readers restore PACK_ALIGNMENT after each read, so the context's value is
+// stable; caching it avoids a synchronous GPU-process query per slot.
+function contextPackAlignment(gl) {
+    const cached = packAlignmentByContext.get(gl);
+    if (cached !== undefined) return cached;
+    const alignment = gl.getParameter(gl.PACK_ALIGNMENT);
+    const value = Number.isFinite(alignment) ? alignment : 4;
+    if (gl && typeof gl === "object") packAlignmentByContext.set(gl, value);
+    return value;
+}
 
 function supportsAsyncPixelPack(gl) {
     const cached = asyncPixelPackCapability.get(gl);
@@ -141,8 +153,7 @@ export class PixelPackSlot {
     constructor(gl, byteLength) {
         this.gl = gl;
         this.byteLength = Math.max(1, byteLength);
-        const alignment = gl.getParameter(gl.PACK_ALIGNMENT);
-        this.packAlignment = Number.isFinite(alignment) ? alignment : 4;
+        this.packAlignment = contextPackAlignment(gl);
         // Allocate storage lazily in begin() so a foreign fenceSync cannot land
         // between bufferData and the first readPixels write (Chrome shadow warning).
         this.pbo = gl.createBuffer();

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+    formatSignedUnitLabel,
     formatUnitLabel,
     selectUnitStep,
     visibleMetersAtTarget,
@@ -44,4 +45,13 @@ test("formatUnitLabel names the minor cell in mm, cm, m, or km", () => {
     assert.equal(formatUnitLabel(1), "1 m");
     assert.equal(formatUnitLabel(2), "2 m");
     assert.equal(formatUnitLabel(1000), "1 km");
+});
+
+test("formatSignedUnitLabel signs the tick and keeps zero as 0", () => {
+    assert.equal(formatSignedUnitLabel(0), "0");
+    assert.equal(formatSignedUnitLabel(-0), "0");
+    assert.equal(formatSignedUnitLabel(-0.1), "-10 cm");
+    assert.equal(formatSignedUnitLabel(-1), "-1 m");
+    assert.equal(formatSignedUnitLabel(2), "2 m");
+    assert.equal(formatSignedUnitLabel(1000), "1 km");
 });

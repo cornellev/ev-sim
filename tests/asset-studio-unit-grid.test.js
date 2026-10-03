@@ -4,6 +4,7 @@ import * as THREE from "three";
 
 import { AssetStudioUnitGrid } from "../app/3d/editor/assets/AssetStudioUnitGrid.js";
 import { raiseStepToBudget, gridPlanSignature, planAssetStudioUnitGrid } from "../app/3d/editor/assets/assetStudioUnitGridPlan.js";
+import { formatSignedUnitLabel } from "../app/3d/editor/assets/assetStudioUnitScale.js";
 
 const VIEW = { fovDegrees: 45, viewportWidthPx: 800, viewportHeightPx: 600 };
 
@@ -134,6 +135,47 @@ test("major lines are the minor multiples and are not repeated", () => {
     for (const value of minorX) assert.equal(isMultiple(value, plan.majorMeters), false);
 });
 
+function majorTicks(center, halfExtent, major) {
+    const first = Math.ceil((center - halfExtent - 1e-9) / major);
+    const last = Math.floor((center + halfExtent + 1e-9) / major);
+    const coords = [];
+    for (let index = first; index <= last; index += 1) coords.push(index * major);
+    return coords;
+}
+
+test("major ticks are labeled with signed measurements and zero appears once", () => {
+    const plan = planAssetStudioUnitGrid({ target: { x: 0, y: 0, z: 0 }, distance: 12, ...VIEW });
+    const offset = 16 * plan.metersPerPixel;
+    const zeros = plan.labels.filter((label) => label.text === "0");
+    assert.equal(zeros.length, 1);
+    assert.equal(zeros[0].axis, "origin");
+    assert.equal(zeros[0].meters, 0);
+    assert.ok(Math.abs(zeros[0].position.x - offset) <= 1e-6);
+    assert.ok(Math.abs(zeros[0].position.y) <= 1e-6);
+    assert.ok(Math.abs(zeros[0].position.z + offset) <= 1e-6);
+
+    for (const axis of ["x", "y", "z"]) {
+        const ticks = majorTicks(plan.origin[axis], plan.halfExtent, plan.majorMeters);
+        const labeled = plan.labels.filter((label) => label.axis === axis);
+        assert.ok(labeled.length <= ticks.length);
+        for (const meters of ticks) {
+            if (Math.abs(meters) <= 1e-6) continue;
+            const label = labeled.find((entry) => Math.abs(entry.meters - meters) <= 1e-6);
+            assert.ok(label, `${axis} missing ${meters}`);
+            assert.equal(label.text, formatSignedUnitLabel(meters));
+            const shift = axis === "x" ? label.position.z - plan.origin.z : label.position.x - plan.origin.x;
+            assert.ok(Math.abs(shift - (axis === "x" ? -offset : offset)) <= 1e-5);
+            assert.ok(Math.abs(label.position[axis] - meters) <= 1e-6);
+        }
+    }
+
+    const far = planAssetStudioUnitGrid({ target: { x: 0, y: 0, z: 0 }, distance: 40, ...VIEW });
+    const near = planAssetStudioUnitGrid({ target: { x: 0, y: 0, z: 0 }, distance: 4, ...VIEW });
+    assert.notEqual(near.majorMeters, far.majorMeters);
+    const texts = (entry) => entry.labels.map((label) => label.text).join("|");
+    assert.notEqual(texts(near), texts(far));
+});
+
 test("AssetStudioUnitGrid rebuilds on a finer zoom and skips work while hidden", () => {
     const grid = new AssetStudioUnitGrid(THREE);
     const scene = new THREE.Scene();
@@ -151,6 +193,8 @@ test("AssetStudioUnitGrid rebuilds on a finer zoom and skips work while hidden",
     const farGeometry = grid.minor.geometry;
     assert.equal(grid.axes.length, 3);
     assert.equal(grid.axes[0].geometry.getAttribute("position").count, 2);
+    assert.equal(grid.labels.name, "asset-studio-unit-labels");
+    assert.equal(grid.labels.children.length, 0, "headless sync does not require a document canvas");
     const near = syncAt(4);
     assert.ok(near.minorMeters < far.minorMeters);
     assert.notEqual(near.label, far.label);

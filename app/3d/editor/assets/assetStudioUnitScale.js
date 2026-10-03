@@ -74,3 +74,10 @@ export function formatUnitLabel(meters) {
     if (value >= 0.01) return `${trimNumber(value * 100)} cm`;
     return `${trimNumber(value * 1000)} mm`;
 }
+
+/** Signed tick text. Zero is `0`; other values keep the mm / cm / m / km rules. */
+export function formatSignedUnitLabel(meters) {
+    if (!Number.isFinite(meters) || Math.abs(meters) < 1e-9) return "0";
+    const text = formatUnitLabel(Math.abs(meters));
+    return meters < 0 ? `-${text}` : text;
+}

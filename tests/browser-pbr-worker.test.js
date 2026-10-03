@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import * as THREE from "three";
 
@@ -110,6 +111,127 @@ test("browser PBR worker failures remain infrastructure failures and never switc
         (error) => error.infrastructureFailure === true && error.code === "TEST_FAILURE",
     );
     assert.equal(runtime.status.state, "error");
+    runtime.dispose({ immediate: true });
+});
+
+function manualWorker() {
+    const listeners = new Map();
+    const calls = [];
+    const worker = {
+        calls,
+        addEventListener(type, listener) { listeners.set(type, listener); },
+        postMessage(message) { calls.push(message); },
+        terminate() {},
+        reply(message, ok = true, result = {}) {
+            listeners.get("message")?.({ data: ok
+                ? { id: message.id, ok: true, result }
+                : { id: message.id, ok: false, error: { message: "residency failed", code: "PBR_REQUIRED_RESIDENCY_FAILED" } },
+            });
+        },
+    };
+    return worker;
+}
+
+async function preparedManualRuntime(worker) {
+    const runtime = new BrowserPbrWorkerRuntime({ workerFactory: () => worker });
+    const prepared = runtime.prepare(resolvedPbrRun(), { vehicles: [], sensorRig: { sensors: [] } });
+    await Promise.resolve();
+    worker.reply(worker.calls.at(-1), true, { webgl2: true });
+    await new Promise((resolve) => setImmediate(resolve));
+    worker.reply(worker.calls.at(-1), true, {
+        status: { state: "ready", residency: null },
+        renderPolicy: {},
+        appearance: { role: "measured-appearance", generation: 1, descriptionHash: "a" },
+        analytic: { role: "analytic-truth", generation: 1, descriptionHash: "b" },
+    });
+    await prepared;
+    worker.calls.length = 0;
+    return runtime;
+}
+
+test("prepareCapture and capture are posted back to back without awaiting replies", async () => {
+    const worker = manualWorker();
+    const runtime = await preparedManualRuntime(worker);
+    await runtime.prepareCapture({ devices: [], vehicles: [] });
+    const captured = runtime.captureCamera({ cameraId: "camera", captureInput: {}, enabled: { rgb: true } });
+    assert.deepEqual(worker.calls.map((call) => call.method), ["prepareCapture", "capture"]);
+    worker.reply(worker.calls[0], true, { status: { state: "streaming", residency: null } });
+    worker.reply(worker.calls[1], true, { aligned: true, rgb: Uint8Array.from([9]) });
+    assert.deepEqual([...(await captured).rgb], [9]);
+    runtime.dispose({ immediate: true });
+});
+
+test("a failed prepareCapture reply fails the run on the next call", async () => {
+    const worker = manualWorker();
+    const runtime = await preparedManualRuntime(worker);
+    await runtime.prepareCapture({ devices: [], vehicles: [] });
+    worker.reply(worker.calls[0], false);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(runtime.status.state, "error");
+    await assert.rejects(
+        runtime.prepareCapture({ devices: [], vehicles: [] }),
+        (error) => error.infrastructureFailure === true && error.code === "PBR_REQUIRED_RESIDENCY_FAILED",
+    );
+    await assert.rejects(
+        runtime.captureCamera({ cameraId: "camera", captureInput: {}, enabled: { rgb: true } }),
+        (error) => error.code === "PBR_REQUIRED_RESIDENCY_FAILED",
+    );
+    assert.equal(worker.calls.length, 1);
+    runtime.dispose({ immediate: true });
+});
+
+test("default PBR worker factory uses the bundler-recognized literal Worker form", async () => {
+    const source = await readFile(
+        new URL("../app/3d/perception/BrowserPbrWorkerRuntime.js", import.meta.url),
+        "utf8",
+    );
+    // `new globalThis.Worker(...)` makes Turbopack copy the raw module as a static
+    // asset, whose bare `three` import then fails to resolve in the browser.
+    assert.match(
+        source,
+        /new Worker\(new URL\("\.\/browserPbrCapture\.worker\.js", import\.meta\.url\), \{ type: "module" \}\)/,
+    );
+    assert.doesNotMatch(source, /new globalThis\.Worker\(/);
+});
+
+test("worker load failures without a message reject prepare with a diagnostic", async () => {
+    const listeners = new Map();
+    const worker = {
+        addEventListener(type, listener) { listeners.set(type, listener); },
+        postMessage() {
+            queueMicrotask(() => listeners.get("error")?.({ type: "error" }));
+        },
+        terminate() {},
+    };
+    const runtime = new BrowserPbrWorkerRuntime({ workerFactory: () => worker });
+    await assert.rejects(
+        runtime.prepare(resolvedPbrRun(), { vehicles: [], sensorRig: { sensors: [] } }),
+        (error) => error.code === "PBR_WORKER_UNAVAILABLE"
+            && /script load, module resolution, or crash/.test(error.message),
+    );
+    runtime.dispose({ immediate: true });
+});
+
+test("worker error events with a location include it in the failure message", async () => {
+    const listeners = new Map();
+    const worker = {
+        addEventListener(type, listener) { listeners.set(type, listener); },
+        postMessage() {
+            queueMicrotask(() => listeners.get("error")?.({
+                type: "error",
+                message: "Uncaught ReferenceError: document is not defined",
+                filename: "worker.js",
+                lineno: 12,
+                colno: 3,
+            }));
+        },
+        terminate() {},
+    };
+    const runtime = new BrowserPbrWorkerRuntime({ workerFactory: () => worker });
+    await assert.rejects(
+        runtime.prepare(resolvedPbrRun(), { vehicles: [], sensorRig: { sensors: [] } }),
+        (error) => error.message === "Uncaught ReferenceError: document is not defined (worker.js:12:3)",
+    );
     runtime.dispose({ immediate: true });
 });
 

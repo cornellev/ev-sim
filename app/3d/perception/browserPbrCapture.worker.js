@@ -18,6 +18,9 @@ let environment = null;
 let activeGeneration = 0;
 let actors = [];
 let operationTail = Promise.resolve();
+// The main thread posts prepareCapture without awaiting its reply, so later
+// requests in the same generation must observe its failure.
+let prepareCaptureFailure = null;
 
 function transferableProducts(products) {
     const transfers = new Set();
@@ -73,6 +76,7 @@ function materializerFactory(options) {
 }
 
 function releaseEnvironment() {
+    prepareCaptureFailure = null;
     environment?.dispose();
     environment = null;
     runtime = null;
@@ -182,6 +186,7 @@ async function dispatch(method, payload = {}) {
             vehicles: actors,
             sensorRig: payload.sensorRig,
             includeTimings: true,
+            alignedReadback: null,
         });
         const options = runtime.cameraOptions();
         return {
@@ -205,13 +210,21 @@ async function dispatch(method, payload = {}) {
         error.code = "PBR_WORKER_GENERATION_STALE";
         throw error;
     }
+    if (prepareCaptureFailure && (method === "prepareCapture" || method === "capture")) {
+        throw prepareCaptureFailure;
+    }
     if (method === "prepareCapture") {
         actors = payload.vehicles || [];
         const devices = (payload.positions || []).map((position) => ({
             renderRuntime: runtime,
             getPosition: () => position,
         }));
-        await runtime.prepareCapture({ devices, vehicles: actors });
+        try {
+            await runtime.prepareCapture({ devices, vehicles: actors });
+        } catch (error) {
+            prepareCaptureFailure = error;
+            throw error;
+        }
         return { status: runtime.status };
     }
     if (method === "capture") {

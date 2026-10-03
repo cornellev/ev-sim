@@ -60,9 +60,22 @@ function capturePosition(device) {
     };
 }
 
+function workerEventMessage(event) {
+    if (event?.message) {
+        const location = event.filename
+            ? ` (${event.filename}:${event.lineno ?? 0}:${event.colno ?? 0})`
+            : "";
+        return `${event.message}${location}`;
+    }
+    // Module fetch, resolution, or instantiation failures arrive without a message.
+    if (event?.type === "messageerror") return "PBR worker message could not be deserialized.";
+    return "PBR worker terminated before reporting an error (script load, module resolution, or crash).";
+}
+
 function defaultWorkerFactory() {
-    if (typeof globalThis.Worker !== "function") return null;
-    return new globalThis.Worker(new URL("./browserPbrCapture.worker.js", import.meta.url), { type: "module" });
+    if (typeof Worker !== "function") return null;
+    // Bundlers only emit a worker chunk for this literal `new Worker(new URL(...))` form.
+    return new Worker(new URL("./browserPbrCapture.worker.js", import.meta.url), { type: "module" });
 }
 
 /** Main-thread RPC facade for the dedicated OffscreenCanvas PBR renderer. */
@@ -81,7 +94,6 @@ export class BrowserPbrWorkerRuntime {
         this.analyticSceneHandle = null;
         this.renderPolicy = null;
         this.runtimeOwnsProducts = true;
-        this._operationTail = Promise.resolve();
         this._failure = null;
         this._prepared = false;
         this._disposeTimer = null;
@@ -140,7 +152,7 @@ export class BrowserPbrWorkerRuntime {
         }
         this.worker = worker;
         const onMessage = (event) => this._handleMessage(event?.data ?? event);
-        const onError = (event) => this._handleWorkerFailure(event?.error || new Error(event?.message || "PBR worker terminated."));
+        const onError = (event) => this._handleWorkerFailure(event?.error || new Error(workerEventMessage(event)));
         if (typeof worker.addEventListener === "function") {
             worker.addEventListener("message", onMessage);
             worker.addEventListener("error", onError);
@@ -190,24 +202,26 @@ export class BrowserPbrWorkerRuntime {
         });
     }
 
+    /**
+     * Post immediately; the worker serializes requests in arrival order, so
+     * waiting for the previous reply would only add a main-thread round trip.
+     */
     _enqueue(method, payload) {
-        const operation = this._operationTail.then(() => this._call(method, payload)).catch((error) => {
+        const generation = this.generation;
+        return this._call(method, payload).catch((error) => {
             const failure = infrastructureError(error);
-            this._failure = failure;
-            this._prepared = false;
-            this._setStatus("error", null, failure);
+            if (generation === this.generation) {
+                this._failure ||= failure;
+                this._prepared = false;
+                this._setStatus("error", null, failure);
+            }
             throw failure;
         });
-        this._operationTail = operation.catch((error) => {
-            this._failure = infrastructureError(error);
-        });
-        return operation;
     }
 
     async prepare(resolved, { sensorRig = null, vehicles = null } = {}) {
         this.dispose({ preserveListeners: true, immediate: true });
         this._failure = null;
-        this._operationTail = Promise.resolve();
         this._setStatus("preparing");
         const generation = ++this.generation;
         try {
@@ -258,16 +272,24 @@ export class BrowserPbrWorkerRuntime {
         };
     }
 
+    /**
+     * Runs every fixed step, so it does not wait for the worker's reply. A
+     * failure rejects the next capture in the worker and the next call here.
+     */
     async prepareCapture({ devices = [], vehicles = this._vehicles() } = {}) {
         if (!this.ready) throw this._failure || infrastructureError(new Error("PBR capture worker is not ready."));
-        const result = await this._enqueue("prepareCapture", {
-            generation: this.generation,
+        const generation = this.generation;
+        this._enqueue("prepareCapture", {
+            generation,
             positions: devices
                 .filter((device) => device?.renderRuntime === this)
                 .map(capturePosition),
             vehicles: serializePbrActors(vehicles),
-        });
-        if (result.status) this._setStatus(result.status.state || "streaming", result.status);
+        }).then((result) => {
+            if (generation === this.generation && this._prepared && result?.status) {
+                this._setStatus(result.status.state || "streaming", result.status);
+            }
+        }, () => {});
     }
 
     async captureCamera({ captureInput, enabled, cameraId = "camera" } = {}) {
@@ -319,7 +341,6 @@ export class BrowserPbrWorkerRuntime {
         this.analyticSceneHandle = null;
         this.renderPolicy = null;
         this._failure = null;
-        this._operationTail = Promise.resolve();
         if (worker && immediate) {
             this._terminateWorker();
         } else if (worker) {
