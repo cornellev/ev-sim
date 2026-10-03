@@ -103,19 +103,35 @@ function cloudResolutionScale(quality) {
     }
 }
 
-function loadRepeatingTexture(url) {
+function configureRepeatingCloudTexture(texture) {
+    texture.minFilter = THREE.LinearMipMapLinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.colorSpace = THREE.NoColorSpace;
+    texture.needsUpdate = true;
+    return texture;
+}
+
+function loadRepeatingTextureWithLoader(url) {
     const loader = new THREE.TextureLoader();
     return new Promise((resolve, reject) => {
         loader.load(url, (texture) => {
-            texture.minFilter = THREE.LinearMipMapLinearFilter;
-            texture.magFilter = THREE.LinearFilter;
-            texture.wrapS = THREE.RepeatWrapping;
-            texture.wrapT = THREE.RepeatWrapping;
-            texture.colorSpace = THREE.NoColorSpace;
-            texture.needsUpdate = true;
-            resolve(texture);
+            resolve(configureRepeatingCloudTexture(texture));
         }, undefined, reject);
     });
+}
+
+async function loadRepeatingTexture(url, loadImageTexture = null) {
+    if (typeof loadImageTexture === "function") {
+        const texture = await loadImageTexture(url);
+        return configureRepeatingCloudTexture(texture);
+    }
+    // Prefer the DOM-free decoder on both main and worker so cloud texels match.
+    if (typeof fetch === "function" && typeof createImageBitmap === "function") {
+        return configureRepeatingCloudTexture(await loadImageBitmapTexture(url));
+    }
+    return loadRepeatingTextureWithLoader(url);
 }
 
 function loadCloudShape(url, size) {
@@ -136,7 +152,7 @@ function loadCloudShape(url, size) {
     });
 }
 
-async function loadCloudTextures(effect) {
+async function loadCloudTextures(effect, loadImageTexture = null) {
     const loaded = [];
     const track = (promise) => promise.then((texture) => {
         loaded.push(texture);
@@ -144,8 +160,14 @@ async function loadCloudTextures(effect) {
     });
     try {
         const [weather, turbulence, shape, shapeDetail] = await Promise.all([
-            track(loadRepeatingTexture(cloudTextureUrl("local_weather.png", DEFAULT_LOCAL_WEATHER_URL))),
-            track(loadRepeatingTexture(cloudTextureUrl("turbulence.png", DEFAULT_TURBULENCE_URL))),
+            track(loadRepeatingTexture(
+                cloudTextureUrl("local_weather.png", DEFAULT_LOCAL_WEATHER_URL),
+                loadImageTexture,
+            )),
+            track(loadRepeatingTexture(
+                cloudTextureUrl("turbulence.png", DEFAULT_TURBULENCE_URL),
+                loadImageTexture,
+            )),
             track(loadCloudShape(cloudTextureUrl("shape.bin", DEFAULT_SHAPE_URL), CLOUD_SHAPE_TEXTURE_SIZE)),
             track(loadCloudShape(
                 cloudTextureUrl("shape_detail.bin", DEFAULT_SHAPE_DETAIL_URL),
@@ -273,8 +295,56 @@ export function releaseTakramSky(installation) {
     installation?.generator?.dispose?.();
 }
 
+/**
+ * Load a cloud weather/turbulence PNG as a THREE.Texture without using DOM Image.
+ * Decode to RGBA bytes and upload as a DataTexture so browser workers and the
+ * main thread share one explicit texel layout (row order flipped in software).
+ */
+export async function loadImageBitmapTexture(url) {
+    const response = await fetch(url);
+    if (!response.ok) {
+        throw new Error(`Cloud texture load failed (${response.status} ${response.statusText}): ${url}`);
+    }
+    const bitmap = await createImageBitmap(await response.blob(), {
+        colorSpaceConversion: "none",
+        premultiplyAlpha: "none",
+    });
+    try {
+        const canvas = typeof OffscreenCanvas === "function"
+            ? new OffscreenCanvas(bitmap.width, bitmap.height)
+            : Object.assign(document.createElement("canvas"), {
+                width: bitmap.width,
+                height: bitmap.height,
+            });
+        if (canvas.width !== bitmap.width) canvas.width = bitmap.width;
+        if (canvas.height !== bitmap.height) canvas.height = bitmap.height;
+        const context = canvas.getContext("2d", {
+            alpha: true,
+            colorSpace: "srgb",
+            willReadFrequently: true,
+        });
+        context.drawImage(bitmap, 0, 0);
+        const { data, width, height } = context.getImageData(0, 0, bitmap.width, bitmap.height);
+        // Match TextureLoader flipY=true: reverse row order so GL samples match.
+        const flipped = new Uint8ClampedArray(data.length);
+        const stride = width * 4;
+        for (let y = 0; y < height; y += 1) {
+            const src = y * stride;
+            const dst = (height - 1 - y) * stride;
+            flipped.set(data.subarray(src, src + stride), dst);
+        }
+        const texture = new THREE.DataTexture(flipped, width, height, THREE.RGBAFormat);
+        texture.flipY = false;
+        texture.colorSpace = THREE.NoColorSpace;
+        texture.needsUpdate = true;
+        return texture;
+    } finally {
+        bitmap.close?.();
+    }
+}
+
 /** Fullscreen Takram atmosphere quad. Clouds composite in the color pass only. */
-export async function installTakramSky({ scene, renderer, sky }) {
+export async function installTakramSky({ scene, renderer, sky, loadImageTexture = null } = {}) {
     const skyMaterial = new SkyMaterial({ ground: true, moon: true });
     skyMaterial.depthWrite = false;
     skyMaterial.depthTest = false;
@@ -298,7 +368,9 @@ export async function installTakramSky({ scene, renderer, sky }) {
         }
         if (generator.textures) assignAtmosphereTextures(skyMaterial, beauty, generator.textures);
         const generatedPromise = generator.update();
-        const texturePromise = beauty ? loadCloudTextures(beauty.cloudsEffect) : Promise.resolve([]);
+        const texturePromise = beauty
+            ? loadCloudTextures(beauty.cloudsEffect, loadImageTexture)
+            : Promise.resolve([]);
         const [generated, cloudTextures] = await Promise.all([generatedPromise, texturePromise]);
         if (beauty) beauty.cloudTextures = cloudTextures;
         if (generated) assignAtmosphereTextures(skyMaterial, beauty, generated);

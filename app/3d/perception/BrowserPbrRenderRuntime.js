@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 
 import {
     PBR_MEASURED_ASSET_OPERATIONS,
@@ -27,6 +28,9 @@ import { RendererPresentationLease } from "./RendererPresentationLease.js";
 const PROVIDER = Object.freeze({ id: "pbr-mesh", version: 1 });
 const ROAD_SURFACE_COLOR = 0x2d3034;
 const ROAD_SURFACE_ELEVATION = 0.015;
+const ANALYTIC_SIDE = THREE.DoubleSide;
+const ANALYTIC_RENDER_ORDER = 0;
+const ROAD_APPEARANCE_RENDER_ORDER = 1;
 
 function infrastructureError(error, fallbackCode = "PBR_RENDER_RUNTIME_FAILED") {
     const result = error instanceof Error ? error : new Error(String(error || "PBR render runtime failed."));
@@ -64,6 +68,85 @@ function primitiveGeometry(primitive) {
     throw new Error(`Unsupported analytic primitive shape "${primitive.shape}".`);
 }
 
+/** Non-indexed geometry so mergeGeometries preserves triangle order. */
+function geometryForMerge(primitive) {
+    const geometry = primitiveGeometry(primitive);
+    if (!geometry.index) return geometry;
+    const nonIndexed = geometry.toNonIndexed();
+    geometry.dispose();
+    nonIndexed.computeVertexNormals();
+    return nonIndexed;
+}
+
+function analyticBatchKey(primitive, {
+    side = ANALYTIC_SIDE,
+    renderOrder = ANALYTIC_RENDER_ORDER,
+} = {}) {
+    return [
+        Number(primitive.semanticId) >>> 0,
+        Number(primitive.instanceId) >>> 0,
+        side,
+        renderOrder,
+    ].join(":");
+}
+
+/**
+ * Merge only contiguous runs that share the render-equivalence key so draw
+ * order (and depth-test ties) match the one-mesh-per-triangle path.
+ */
+function groupPrimitivesForBatch(primitives, options = {}) {
+    const groups = [];
+    for (const primitive of primitives ?? []) {
+        const key = analyticBatchKey(primitive, options);
+        const previous = groups[groups.length - 1];
+        if (previous && previous.key === key) {
+            previous.primitives.push(primitive);
+            continue;
+        }
+        groups.push({
+            key,
+            semanticId: Number(primitive.semanticId) >>> 0,
+            instanceId: Number(primitive.instanceId) >>> 0,
+            side: options.side ?? ANALYTIC_SIDE,
+            renderOrder: options.renderOrder ?? ANALYTIC_RENDER_ORDER,
+            primitives: [primitive],
+        });
+    }
+    return groups;
+}
+
+function mergePrimitiveGeometries(primitives) {
+    const geometries = primitives.map((primitive) => geometryForMerge(primitive));
+    const merged = mergeGeometries(geometries, false);
+    for (const geometry of geometries) geometry.dispose();
+    if (!merged) {
+        throw new Error("Failed to merge analytic primitive geometries.");
+    }
+    // Non-indexed merge keeps per-triangle face normals from the sources.
+    if (!merged.getAttribute("normal")) merged.computeVertexNormals();
+    return merged;
+}
+
+function ownedMesh(geometry, material, {
+    name,
+    renderableId,
+    renderOrder = 0,
+    userData = {},
+} = {}) {
+    material.dithering = false;
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.name = name;
+    mesh.renderOrder = renderOrder;
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    mesh.userData = {
+        cevSimRenderRuntimeOwned: true,
+        renderableId,
+        ...userData,
+    };
+    return mesh;
+}
+
 function primitiveMesh(primitive, { appearance = false } = {}) {
     const material = appearance
         ? new THREE.MeshStandardMaterial({
@@ -73,16 +156,10 @@ function primitiveMesh(primitive, { appearance = false } = {}) {
             side: THREE.DoubleSide,
         })
         : new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide });
-    material.dithering = false;
-    const mesh = new THREE.Mesh(primitiveGeometry(primitive), material);
-    mesh.name = primitive.id;
-    mesh.castShadow = false;
-    mesh.receiveShadow = false;
-    mesh.userData = {
-        cevSimRenderRuntimeOwned: true,
+    return ownedMesh(primitiveGeometry(primitive), material, {
+        name: primitive.id,
         renderableId: primitive.id,
-    };
-    return mesh;
+    });
 }
 
 function vehicleMatrix(vehicle) {
@@ -210,6 +287,8 @@ export class BrowserPbrRenderRuntime {
         installImageSky: installImageSkyOverride = null,
         installTakramSky: installTakramSkyOverride = null,
         vehicles = () => [],
+        /** When false, keep one mesh per analytic primitive (parity / debug). */
+        batchAnalyticGeometry = true,
     } = {}) {
         this.renderer = renderer;
         this.implementation = "inline";
@@ -220,6 +299,7 @@ export class BrowserPbrRenderRuntime {
         this.installImageSky = installImageSkyOverride;
         this.installTakramSky = installTakramSkyOverride;
         this.vehicleSource = vehicles;
+        this.batchAnalyticGeometry = batchAnalyticGeometry !== false;
         this.generation = 0;
         this.controller = null;
         this.materializer = null;
@@ -229,6 +309,7 @@ export class BrowserPbrRenderRuntime {
         this.analyticSceneHandle = null;
         this.analyticRenderables = new Map();
         this.analyticBindings = [];
+        this._primitiveRenderableIds = new Map();
         this._semanticIds = null;
         this.actorGroups = new Map();
         this.assetLeases = [];
@@ -491,9 +572,16 @@ export class BrowserPbrRenderRuntime {
 
     _buildAnalyticScene(analyticTruth, actorDescriptions) {
         const actorById = new Map(actorDescriptions.map((entry) => [entry.actorId, entry]));
-        for (const primitive of analyticTruth.staticPrimitives) {
-            this._addAnalyticPrimitive(primitive, this.analyticScene);
-            this._addRoadAppearance(primitive);
+        if (this.batchAnalyticGeometry) {
+            this._addBatchedAnalyticPrimitives(analyticTruth.staticPrimitives, this.analyticScene, {
+                idPrefix: "static",
+            });
+            this._addBatchedRoadAppearance(analyticTruth.staticPrimitives);
+        } else {
+            for (const primitive of analyticTruth.staticPrimitives) {
+                this._addAnalyticPrimitive(primitive, this.analyticScene);
+                this._addRoadAppearance(primitive);
+            }
         }
         for (const actor of analyticTruth.actors) {
             const analyticGroup = new THREE.Group();
@@ -501,7 +589,15 @@ export class BrowserPbrRenderRuntime {
             analyticGroup.matrixAutoUpdate = false;
             analyticGroup.userData.cevSimCaptureDynamic = true;
             this.analyticScene.add(analyticGroup);
-            for (const primitive of actor.primitives) this._addAnalyticPrimitive(primitive, analyticGroup);
+            if (this.batchAnalyticGeometry) {
+                this._addBatchedAnalyticPrimitives(actor.primitives, analyticGroup, {
+                    idPrefix: `actor:${actor.actorId}`,
+                });
+            } else {
+                for (const primitive of actor.primitives) {
+                    this._addAnalyticPrimitive(primitive, analyticGroup);
+                }
+            }
 
             const appearanceGroup = new THREE.Group();
             appearanceGroup.name = `cev-sim.appearance-actor:${actor.actorId}`;
@@ -522,10 +618,65 @@ export class BrowserPbrRenderRuntime {
         this.analyticBindings = canonicalizeAnalyticBindings(this.analyticBindings);
     }
 
+    _addBatchedAnalyticPrimitives(primitives, parent, { idPrefix }) {
+        if (!Array.isArray(primitives) || primitives.length === 0) return;
+        const groups = groupPrimitivesForBatch(primitives, {
+            side: ANALYTIC_SIDE,
+            renderOrder: ANALYTIC_RENDER_ORDER,
+        });
+        groups.forEach((group, groupIndex) => {
+            const renderableId = `${idPrefix}:s${group.semanticId}:i${group.instanceId}:${groupIndex}`;
+            const material = new THREE.MeshBasicMaterial({
+                color: 0xffffff,
+                side: group.side,
+            });
+            const mesh = ownedMesh(mergePrimitiveGeometries(group.primitives), material, {
+                name: renderableId,
+                renderableId,
+                renderOrder: group.renderOrder,
+            });
+            parent.add(mesh);
+            this.analyticRenderables.set(renderableId, mesh);
+            this.analyticBindings.push({
+                renderableId,
+                semanticId: group.semanticId,
+                instanceId: group.instanceId,
+            });
+            for (const primitive of group.primitives) {
+                this._primitiveRenderableIds.set(primitive.id, renderableId);
+            }
+        });
+    }
+
+    _addBatchedRoadAppearance(primitives) {
+        const roads = (primitives ?? []).filter((primitive) => (
+            Array.isArray(primitive.tags) && primitive.tags.includes("road")
+        ));
+        if (roads.length === 0) return;
+        // Preserve first-appearance triangle order across the road set.
+        const material = new THREE.MeshStandardMaterial({
+            color: ROAD_SURFACE_COLOR,
+            metalness: 0,
+            roughness: 0.9,
+            side: THREE.DoubleSide,
+        });
+        const mesh = ownedMesh(mergePrimitiveGeometries(roads), material, {
+            name: "road-appearance",
+            renderableId: "road-appearance",
+            renderOrder: ROAD_APPEARANCE_RENDER_ORDER,
+            userData: { cevSimRoadAppearance: true },
+        });
+        // Corrected capture rejects polygon offset. Lift the merged surface so
+        // it wins a coplanar depth test against the analytic road mesh.
+        mesh.position.y += ROAD_SURFACE_ELEVATION;
+        this.appearanceScene.add(mesh);
+    }
+
     _addAnalyticPrimitive(primitive, parent) {
         const mesh = primitiveMesh(primitive);
         parent.add(mesh);
         this.analyticRenderables.set(primitive.id, mesh);
+        this._primitiveRenderableIds.set(primitive.id, primitive.id);
         this.analyticBindings.push({
             renderableId: primitive.id,
             semanticId: primitive.semanticId,
@@ -542,7 +693,7 @@ export class BrowserPbrRenderRuntime {
         // Corrected capture rejects polygon offset. The editor lifts road
         // surfaces by this elevation so they win a coplanar depth test.
         mesh.position.y += ROAD_SURFACE_ELEVATION;
-        mesh.renderOrder = 1;
+        mesh.renderOrder = ROAD_APPEARANCE_RENDER_ORDER;
         mesh.userData.cevSimRoadAppearance = true;
         this.appearanceScene.add(mesh);
     }
@@ -721,6 +872,7 @@ export class BrowserPbrRenderRuntime {
         this.analyticSceneHandle = null;
         this.analyticRenderables = new Map();
         this.analyticBindings = [];
+        this._primitiveRenderableIds = new Map();
         this._semanticIds = null;
         this.actorGroups = new Map();
         this.rootUseHashes = [];

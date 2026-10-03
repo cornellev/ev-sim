@@ -3,6 +3,10 @@ import { KTX2Loader } from "three/examples/jsm/loaders/KTX2Loader.js";
 
 import { BrowserPbrRenderRuntime } from "./BrowserPbrRenderRuntime.js";
 import { PbrCaptureEnvironment } from "./PbrCaptureEnvironment.js";
+import {
+    installTakramSky,
+    loadImageBitmapTexture,
+} from "./PbrAppearanceSky.js";
 import { VisualLayerMaterializer } from "../environment/visual/VisualLayerMaterializer.js";
 import { readRenderTargetPixelsWithFence } from "../util/glReadback.js";
 import { getSkyRuntimeSource } from "../skybox/EnvironmentSkyConfig.js";
@@ -161,6 +165,10 @@ async function dispatch(method, payload = {}) {
             renderer,
             materializerFactory,
             installImageSky: installWorkerImageSky,
+            installTakramSky: (args) => installTakramSky({
+                ...args,
+                loadImageTexture: loadImageBitmapTexture,
+            }),
             vehicles: () => actors,
         });
         await runtime.prepare(payload.resolved, {

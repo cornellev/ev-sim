@@ -59,7 +59,17 @@ export function formatRenderProviderStatus(renderProvider = null) {
     const chunks = residency
         ? ` · ${residency.residentChunks}/${residency.requiredChunks} chunks`
         : "";
-    return `${provider} · ${label}${chunks}`;
+    const implementation = renderProvider.implementation
+        ? ` · ${renderProvider.implementation}`
+        : "";
+    const fallback = renderProvider.fallbackReason
+        ? ` · inline fallback (${
+            renderProvider.fallbackReason.workerCauseCode
+            || renderProvider.fallbackReason.code
+            || "PBR_WORKER_UNAVAILABLE"
+        })`
+        : "";
+    return `${provider} · ${label}${chunks}${implementation}${fallback}`;
 }
 
 export function formatSimulationTime(seconds = 0) {
@@ -76,7 +86,11 @@ export function formatClockMode(simState = {}) {
     const rate = simState.stepNs > 0 ? 1e9 / simState.stepNs : 0;
     const rateLabel = rate > 0 ? `${Number(rate.toFixed(rate >= 10 ? 0 : 2))} Hz` : "Fixed step";
     const pacing = simState.realtime ? "Realtime" : "Unbounded";
-    return `${rateLabel}, ${pacing}, ${Number(simState.speed ?? 1)}x`;
+    const effective = Number(simState.effectiveRealtimeRate);
+    const effectiveLabel = Number.isFinite(effective) && effective > 0 && effective < 0.99
+        ? `, ${Number(effective.toFixed(2))}x wall`
+        : "";
+    return `${rateLabel}, ${pacing}, ${Number(simState.speed ?? 1)}x${effectiveLabel}`;
 }
 
 export function summarizeAssertions(assertions = []) {

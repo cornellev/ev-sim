@@ -500,6 +500,31 @@ test("realtime advanceSimulation respects step budget and leaves accumulator deb
     engine._advanceSimulation(0.2);
     assert.equal(engine.steps, 1);
     assert.ok(engine.accumulatorNs >= engine.stepNs * 8);
+    assert.ok(engine.accumulatorNs <= engine.stepNs * engine.maxSubSteps);
+});
+
+test("realtime accumulator debt is capped and excess is recorded as dropped debt", async () => {
+    const { engine } = harness({ nowMs: () => 0, realtimeStepBudgetMs: 1000 });
+    engine.deterministic = true;
+    engine.realtime = true;
+    engine.speed = 1;
+    engine.stepNs = 20_000_000;
+    engine.fixedDt = 0.02;
+    engine.maxSubSteps = 4;
+    engine.accumulatorNs = 0;
+    engine.droppedDebtNs = 0;
+    engine.autonomyOverlay.updateFromRuntime = () => {};
+    engine.kernel.advanceStepAsync = async () => {
+        engine.steps += 1;
+        engine.timeNs = engine.steps * engine.stepNs;
+        return true;
+    };
+    // 0.5 s of wall debt at 20 ms steps is 25 steps; cap keeps 4 and drops 21.
+    await engine._advanceSimulationAsync(0.5);
+    assert.equal(engine.steps, 4);
+    assert.ok(engine.accumulatorNs <= engine.stepNs * engine.maxSubSteps);
+    assert.equal(engine.droppedDebtNs, engine.stepNs * 21);
+    engine.dispose();
 });
 
 test("async frame preserves every due GPU sensor substep", async () => {

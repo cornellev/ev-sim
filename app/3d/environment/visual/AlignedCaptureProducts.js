@@ -342,6 +342,37 @@ function textureMatrix(texture) {
     );
 }
 
+function matrix3Key(matrix) {
+    return matrix?.elements?.join(",") ?? "";
+}
+
+function passMaterialCacheKey(source, binding, materialIndex, family) {
+    const materialId = family === VISUAL_CAPTURE_PASS_FAMILIES.visual
+        ? binding.record?.materialIds?.[materialIndex] ?? 0
+        : 0;
+    const defines = [];
+    if (source.map) defines.push("USE_MAP");
+    if (source.alphaMap) defines.push("USE_ALPHAMAP");
+    if (source.map || source.alphaMap) defines.push("USE_UV");
+    return [
+        family,
+        binding.record?.objectId ?? 0,
+        materialId,
+        binding.record?.semanticId ?? 0,
+        binding.record?.instanceId ?? 0,
+        binding.record?.confidence ?? 0,
+        Number(source.opacity ?? 1),
+        Math.max(0, Number(source.alphaTest ?? 0)),
+        source.map?.uuid ?? "",
+        source.alphaMap?.uuid ?? "",
+        matrix3Key(textureMatrix(source.map)),
+        matrix3Key(textureMatrix(source.alphaMap)),
+        source.side,
+        source.visible === false ? 0 : 1,
+        defines.join("|"),
+    ].join("\0");
+}
+
 function createPassMaterial(source, binding, materialIndex, family) {
     validateSourceMesh(binding.object, source);
     const materialId = family === VISUAL_CAPTURE_PASS_FAMILIES.visual
@@ -413,6 +444,7 @@ function prepareProxyScene(sceneHandle, passSet, renderables) {
     }
 
     const proxy = new THREE.Scene();
+    const materialCache = new Map();
     const materials = [];
     const entries = [];
     let coverBackground = checkedHandle.scene.background?.isTexture === true;
@@ -440,9 +472,14 @@ function prepareProxyScene(sceneHandle, passSet, renderables) {
             }
             const binding = { object, record };
             const proxyMaterials = sources.map((source, materialIndex) => {
-                const material = createPassMaterial(source, binding, materialIndex, passSet.family);
-                material.visible = source.visible;
-                materials.push(material);
+                const key = passMaterialCacheKey(source, binding, materialIndex, passSet.family);
+                let material = materialCache.get(key);
+                if (!material) {
+                    material = createPassMaterial(source, binding, materialIndex, passSet.family);
+                    material.visible = source.visible;
+                    materialCache.set(key, material);
+                    materials.push(material);
+                }
                 return material;
             });
             const mesh = new THREE.Mesh(
@@ -611,7 +648,7 @@ function syncPrepared(prepared, sceneHandle, passSet, renderables) {
     return true;
 }
 
-function presentBeautyComposer(composer, camera, width, height) {
+function presentBeautyComposer(composer, camera, width, height, timings = null) {
     composer.setMainCamera?.(camera);
     const input = composer.inputBuffer;
     const output = composer.outputBuffer;
@@ -625,7 +662,15 @@ function presentBeautyComposer(composer, camera, width, height) {
         composer.depthRenderTarget?.setSize?.(width, height);
         for (const pass of composer.passes ?? []) pass.setSize?.(width, height);
     }
+    const drawStart = performance.now();
+    const renderer = composer.renderer ?? null;
+    const callsBefore = Number(renderer?.info?.render?.calls) || 0;
     composer.render(0);
+    if (timings) {
+        timings.drawMs += performance.now() - drawStart;
+        const callsAfter = Number(renderer?.info?.render?.calls) || 0;
+        timings.drawCalls += Math.max(0, callsAfter - callsBefore);
+    }
     return composer.outputBuffer;
 }
 
@@ -650,6 +695,8 @@ function snapshotRenderer(renderer) {
     const gl = renderer.getContext?.() ?? null;
     const webgl2 = gl && typeof WebGL2RenderingContext !== "undefined"
         && gl instanceof WebGL2RenderingContext;
+    // Framebuffers return through setRenderTarget. PixelPackSlot restores
+    // READ_BUFFER and PACK_ALIGNMENT. Keep PIXEL_PACK_BUFFER_BINDING for Spark.
     return {
         target: renderer.getRenderTarget?.() ?? null,
         activeCubeFace: renderer.getActiveCubeFace?.() ?? 0,
@@ -669,11 +716,7 @@ function snapshotRenderer(renderer) {
         shadowEnabled: renderer.shadowMap?.enabled,
         gl: webgl2 ? {
             context: gl,
-            drawFramebuffer: gl.getParameter(gl.DRAW_FRAMEBUFFER_BINDING),
-            readFramebuffer: gl.getParameter(gl.READ_FRAMEBUFFER_BINDING),
-            readBuffer: gl.getParameter(gl.READ_BUFFER),
             pixelPackBuffer: gl.getParameter(gl.PIXEL_PACK_BUFFER_BINDING),
-            packAlignment: gl.getParameter(gl.PACK_ALIGNMENT),
         } : null,
     };
 }
@@ -694,11 +737,7 @@ function restoreRenderer(renderer, state) {
     if (renderer.shadowMap && state.shadowEnabled !== undefined) renderer.shadowMap.enabled = state.shadowEnabled;
     if (state.gl?.context && !state.gl.context.isContextLost?.()) {
         const gl = state.gl.context;
-        gl.bindFramebuffer?.(gl.DRAW_FRAMEBUFFER, state.gl.drawFramebuffer);
-        gl.bindFramebuffer?.(gl.READ_FRAMEBUFFER, state.gl.readFramebuffer);
-        gl.readBuffer?.(state.gl.readBuffer);
         gl.bindBuffer?.(gl.PIXEL_PACK_BUFFER, state.gl.pixelPackBuffer);
-        gl.pixelStorei?.(gl.PACK_ALIGNMENT, state.gl.packAlignment);
     }
 }
 
@@ -788,7 +827,27 @@ export class AlignedCaptureProducts {
         this.bufferAllocations = 0;
         this._packGl = null;
         this.disposed = false;
-        this.lastCaptureTimings = Object.freeze({ captureMs: 0, readbackMs: 0, warpMs: 0 });
+        this.lastCaptureTimings = Object.freeze({
+            captureMs: 0,
+            readbackMs: 0,
+            warpMs: 0,
+            drawMs: 0,
+            snapshotMs: 0,
+            drawCalls: 0,
+            readbackBytes: 0,
+        });
+    }
+
+    _emptyCaptureTimings() {
+        return {
+            captureMs: 0,
+            readbackMs: 0,
+            warpMs: 0,
+            drawMs: 0,
+            snapshotMs: 0,
+            drawCalls: 0,
+            readbackBytes: 0,
+        };
     }
 
     _runRendererSync(operation) {
@@ -818,7 +877,12 @@ export class AlignedCaptureProducts {
 
     _withCaptureRendererSync(operation) {
         return this._runRendererSync(() => {
+            const snapshotStart = performance.now();
             const state = snapshotRenderer(this.renderer);
+            this._snapshotCount = (this._snapshotCount || 0) + 1;
+            if (this._captureTimings) {
+                this._captureTimings.snapshotMs += performance.now() - snapshotStart;
+            }
             try {
                 this._configureRendererForCapture();
                 return operation();
@@ -830,7 +894,12 @@ export class AlignedCaptureProducts {
 
     async _withCaptureRendererAsync(operation) {
         return this._runRendererAsync(async () => {
+            const snapshotStart = performance.now();
             const state = snapshotRenderer(this.renderer);
+            this._snapshotCount = (this._snapshotCount || 0) + 1;
+            if (this._captureTimings) {
+                this._captureTimings.snapshotMs += performance.now() - snapshotStart;
+            }
             try {
                 this._configureRendererForCapture();
                 return await operation();
@@ -920,7 +989,14 @@ export class AlignedCaptureProducts {
             background ? background[3] : 0,
         );
         this.renderer.clear?.(true, true, true);
+        const drawStart = performance.now();
+        const callsBefore = Number(this.renderer.info?.render?.calls) || 0;
         this.renderer.render(scene, this.camera);
+        if (this._captureTimings) {
+            this._captureTimings.drawMs += performance.now() - drawStart;
+            const callsAfter = Number(this.renderer.info?.render?.calls) || 0;
+            this._captureTimings.drawCalls += Math.max(0, callsAfter - callsBefore);
+        }
     }
 
     _idAttachmentMaterial(source) {
@@ -968,6 +1044,9 @@ export class AlignedCaptureProducts {
         try {
             if (this.readback) {
                 await this.readback(this.renderer, target, buffer, { signal, textureIndex: attachmentIndex });
+                if (this._captureTimings) {
+                    this._captureTimings.readbackBytes += Number(buffer.byteLength) || 0;
+                }
             } else if (getWebGL2Context(this.renderer)) {
                 const slot = this._beginPackedRead(target, buffer, attachmentIndex);
                 await this._finishPackedRead(slot, buffer, signal);
@@ -984,6 +1063,9 @@ export class AlignedCaptureProducts {
                         attachmentIndex,
                     );
                 });
+                if (this._captureTimings) {
+                    this._captureTimings.readbackBytes += Number(buffer.byteLength) || 0;
+                }
             }
         } catch (error) {
             this._releaseBuffer(buffer);
@@ -1023,7 +1105,61 @@ export class AlignedCaptureProducts {
         return result;
     }
 
-    async _captureFamily(passSet, sceneHandle, prepared, signal) {
+    _pumpPackedJobs(pending, getValidity) {
+        let waiting = false;
+        for (const job of pending) {
+            if (job.settled) continue;
+            if (!job.filled) {
+                if (job.slot?.gl?.isContextLost?.()) {
+                    throw new Error("WebGL2 context was lost during asynchronous readback.");
+                }
+                if (!job.slot?.pending) {
+                    this._abandonPackSlot(job.slot);
+                    throw new Error("Asynchronous PBR readback lost its fence before readback.");
+                }
+                if (!this._runRendererSync(() => this._tryFinishPackedRead(job.slot, job.buffer))) {
+                    if (job.slot?.gl?.isContextLost?.()) {
+                        throw new Error("WebGL2 context was lost during asynchronous readback.");
+                    }
+                    if (!job.slot?.pending) {
+                        this._abandonPackSlot(job.slot);
+                        throw new Error("Asynchronous PBR readback lost its fence before readback.");
+                    }
+                    waiting = true;
+                    continue;
+                }
+                job.filled = true;
+                job.rgba = this._normalizeRead(job.buffer, job.readWidth, job.readHeight);
+            }
+            if (job.needsValidity && !getValidity()) continue;
+            job.settle(job.rgba);
+            this._releaseBuffer(job.rgba);
+            job.settled = true;
+        }
+        return waiting;
+    }
+
+    async _drainFamilies(families, signal) {
+        const hasPending = families.some((family) => family.pending.length > 0);
+        if (!hasPending) return;
+        const readbackStart = performance.now();
+        const deadline = Date.now() + 2000;
+        while (families.some((family) => family.pump())) {
+            abortIfRequested(signal);
+            if (Date.now() >= deadline) {
+                for (const family of families) {
+                    for (const job of family.pending) {
+                        if (!job.filled) this._abandonPackSlot(job.slot);
+                    }
+                }
+                throw new Error("Asynchronous PBR readback exceeded 2000 ms.");
+            }
+            await yieldForGpuReadback();
+        }
+        this._captureTimings.readbackMs += performance.now() - readbackStart;
+    }
+
+    async _issueFamily(passSet, sceneHandle, prepared, signal) {
         const { width, height } = passSet.captureInput.calibration.image;
         const calibration = passSet.captureInput.calibration;
         const requested = new Set(passSet.products);
@@ -1032,52 +1168,57 @@ export class AlignedCaptureProducts {
         const products = {};
         let validity = null;
         const pixels = width * height;
+        const queuedPipelineJobs = [];
 
-        const pump = () => {
-            let waiting = false;
-            for (const job of pending) {
-                if (job.settled) continue;
-                if (!job.filled) {
-                    if (job.slot?.gl?.isContextLost?.()) {
-                        throw new Error("WebGL2 context was lost during asynchronous readback.");
-                    }
-                    if (!job.slot?.pending) {
-                        this._abandonPackSlot(job.slot);
-                        throw new Error("Asynchronous PBR readback lost its fence before readback.");
-                    }
-                    if (!this._runRendererSync(() => this._tryFinishPackedRead(job.slot, job.buffer))) {
-                        if (job.slot?.gl?.isContextLost?.()) {
-                            throw new Error("WebGL2 context was lost during asynchronous readback.");
-                        }
-                        if (!job.slot?.pending) {
-                            this._abandonPackSlot(job.slot);
-                            throw new Error("Asynchronous PBR readback lost its fence before readback.");
-                        }
-                        waiting = true;
-                        continue;
-                    }
-                    job.filled = true;
-                    job.rgba = this._normalizeRead(job.buffer, job.readWidth, job.readHeight);
-                }
-                if (job.needsValidity && !validity) continue;
-                job.settle(job.rgba);
-                this._releaseBuffer(job.rgba);
-                job.settled = true;
-            }
-            return waiting;
-        };
+        const pump = () => this._pumpPackedJobs(pending, () => validity);
 
-        const issue = async (job) => {
-            abortIfRequested(signal);
-            const drawAndResolveTarget = () => assertCaptureTargetSize(
+        const beginPipelineJob = (job) => {
+            const target = assertCaptureTargetSize(
                 job.draw() ?? (typeof job.target === "function" ? job.target() : job.target),
                 width,
                 height,
                 job.label ?? `${passSet.family} capture`,
             );
+            const readWidth = target.width;
+            const readHeight = target.height;
+            const buffer = this._acquireBuffer(job.ArrayType, readWidth * readHeight * 4);
+            try {
+                pending.push({
+                    ...job,
+                    target,
+                    readWidth,
+                    readHeight,
+                    buffer,
+                    slot: this._beginPackedRead(target, buffer, job.attachmentIndex ?? 0),
+                    filled: false,
+                    settled: false,
+                    rgba: null,
+                });
+            } catch (error) {
+                this._releaseBuffer(buffer);
+                throw error;
+            }
+        };
+
+        const flushPipelineJobs = () => {
+            if (queuedPipelineJobs.length === 0) return;
+            const batch = queuedPipelineJobs.splice(0, queuedPipelineJobs.length);
+            this._withCaptureRendererSync(() => {
+                for (const job of batch) beginPipelineJob(job);
+            });
+            pump();
+        };
+
+        const issue = async (job) => {
+            abortIfRequested(signal);
             if (!pipeline) {
                 const rgba = await this._withCaptureRendererAsync(async () => {
-                    const target = drawAndResolveTarget();
+                    const target = assertCaptureTargetSize(
+                        job.draw() ?? (typeof job.target === "function" ? job.target() : job.target),
+                        width,
+                        height,
+                        job.label ?? `${passSet.family} capture`,
+                    );
                     return this._readRenderTarget(
                         target,
                         job.ArrayType,
@@ -1089,32 +1230,7 @@ export class AlignedCaptureProducts {
                 this._releaseBuffer(rgba);
                 return;
             }
-            const issued = this._withCaptureRendererSync(() => {
-                const target = drawAndResolveTarget();
-                const readWidth = target.width;
-                const readHeight = target.height;
-                const buffer = this._acquireBuffer(job.ArrayType, readWidth * readHeight * 4);
-                try {
-                    return {
-                        target,
-                        readWidth,
-                        readHeight,
-                        buffer,
-                        slot: this._beginPackedRead(target, buffer, job.attachmentIndex ?? 0),
-                    };
-                } catch (error) {
-                    this._releaseBuffer(buffer);
-                    throw error;
-                }
-            });
-            pending.push({
-                ...job,
-                ...issued,
-                filled: false,
-                settled: false,
-                rgba: null,
-            });
-            pump();
+            queuedPipelineJobs.push(job);
         };
 
         const queueValidity = () => issue({
@@ -1146,7 +1262,15 @@ export class AlignedCaptureProducts {
                         background ? new THREE.Color(background[0], background[1], background[2]) : 0x000000,
                         background ? background[3] : 0,
                     );
-                    if (composer) return presentBeautyComposer(composer, this.camera, width, height);
+                    if (composer) {
+                        return presentBeautyComposer(
+                            composer,
+                            this.camera,
+                            width,
+                            height,
+                            this._captureTimings,
+                        );
+                    }
                     const target = this._target("beauty", width, height);
                     this._draw(sceneHandle.scene, target, { mode: null, materials: [] });
                     return target;
@@ -1235,6 +1359,7 @@ export class AlignedCaptureProducts {
                     products[channelName] = this._warpProduct(raw, calibration, 1, validity);
                 };
                 if (!pipeline) {
+                    flushPipelineJobs();
                     const [semantic, instance] = await this._withCaptureRendererAsync(async () => {
                         this._drawIdAttachments(prepared.scene, idTarget);
                         const semantic = await this._readRenderTarget(idTarget, Uint8Array, signal, 0);
@@ -1247,26 +1372,35 @@ export class AlignedCaptureProducts {
                     this._releaseBuffer(semantic);
                     this._releaseBuffer(instance);
                 } else {
-                    const issued = this._withCaptureRendererSync(() => {
+                    // Depth+validity and id attachments share one renderer snapshot.
+                    const batch = queuedPipelineJobs.splice(0, queuedPipelineJobs.length);
+                    this._withCaptureRendererSync(() => {
+                        for (const job of batch) beginPipelineJob(job);
                         this._drawIdAttachments(prepared.scene, idTarget);
-                        return [[0, "semanticId"], [1, "instanceId"]].map(([attachmentIndex, resultName]) => {
-                            const buffer = this._acquireBuffer(Uint8Array, idTarget.width * idTarget.height * 4);
-                            const slot = this._beginPackedRead(idTarget, buffer, attachmentIndex);
-                            return {
-                                needsValidity: true,
-                                target: idTarget,
-                                readWidth: idTarget.width,
-                                readHeight: idTarget.height,
-                                buffer,
-                                slot,
-                                filled: false,
-                                settled: false,
-                                rgba: null,
-                                settle: settleId(resultName),
-                            };
-                        });
+                        for (const [attachmentIndex, resultName] of [[0, "semanticId"], [1, "instanceId"]]) {
+                            const buffer = this._acquireBuffer(
+                                Uint8Array,
+                                idTarget.width * idTarget.height * 4,
+                            );
+                            try {
+                                pending.push({
+                                    needsValidity: true,
+                                    target: idTarget,
+                                    readWidth: idTarget.width,
+                                    readHeight: idTarget.height,
+                                    buffer,
+                                    slot: this._beginPackedRead(idTarget, buffer, attachmentIndex),
+                                    filled: false,
+                                    settled: false,
+                                    rgba: null,
+                                    settle: settleId(resultName),
+                                });
+                            } catch (error) {
+                                this._releaseBuffer(buffer);
+                                throw error;
+                            }
+                        }
                     });
-                    pending.push(...issued);
                     pump();
                 }
             } else if (wantSemantic) {
@@ -1302,30 +1436,33 @@ export class AlignedCaptureProducts {
             }
         }
 
-        if (pipeline) {
-            const readbackStart = performance.now();
-            const deadline = Date.now() + 2000;
-            while (pump()) {
-                abortIfRequested(signal);
-                if (Date.now() >= deadline) {
-                    for (const job of pending) {
-                        if (!job.filled) this._abandonPackSlot(job.slot);
-                    }
-                    throw new Error("Asynchronous PBR readback exceeded 2000 ms.");
+        flushPipelineJobs();
+        return {
+            passSet,
+            pending,
+            products,
+            pump,
+            finalize: () => {
+                if (!products.validity) {
+                    throw captureError(
+                        "VISUAL_CAPTURE_PRODUCT_INVALID",
+                        "Aligned capture did not produce validity.",
+                    );
                 }
-                await yieldForGpuReadback();
-            }
-            this._captureTimings.readbackMs += performance.now() - readbackStart;
-        }
-        if (!products.validity) {
-            throw captureError("VISUAL_CAPTURE_PRODUCT_INVALID", "Aligned capture did not produce validity.");
-        }
-        return Object.freeze({
-            family: passSet.family,
-            captureInput: passSet.captureInput,
-            catalogs: passSet.catalogs,
-            products: Object.freeze(products),
-        });
+                return Object.freeze({
+                    family: passSet.family,
+                    captureInput: passSet.captureInput,
+                    catalogs: passSet.catalogs,
+                    products: Object.freeze(products),
+                });
+            },
+        };
+    }
+
+    async _captureFamily(passSet, sceneHandle, prepared, signal) {
+        const family = await this._issueFamily(passSet, sceneHandle, prepared, signal);
+        await this._drainFamilies([family], signal);
+        return family.finalize();
     }
 
     async capture({
@@ -1336,7 +1473,8 @@ export class AlignedCaptureProducts {
         signal = null,
     } = {}) {
         const captureStart = performance.now();
-        this._captureTimings = { captureMs: 0, readbackMs: 0, warpMs: 0 };
+        this._captureTimings = this._emptyCaptureTimings();
+        this._snapshotCount = 0;
         if (this.disposed) throw captureError("VISUAL_CAPTURE_DISPOSED", "Aligned capture renderer is disposed.");
         if (!visualPassSet && !analyticPassSet) {
             throw captureError("VISUAL_CAPTURE_PASS_SET_INVALID", "At least one capture pass set is required.");
@@ -1384,22 +1522,28 @@ export class AlignedCaptureProducts {
                 : null;
             const input = visual?.captureInput ?? analytic.captureInput;
             applyCaptureCamera(this.camera, input);
+            const families = [];
             if (visual) {
-                visualResult = await this._captureFamily(
+                families.push(await this._issueFamily(
                     visual,
                     this.visualSceneHandle,
                     visualPrepared,
                     signal,
-                );
+                ));
             }
             if (analytic) {
-                analyticResult = await this._captureFamily(
+                families.push(await this._issueFamily(
                     analytic,
                     this.analyticSceneHandle,
                     analyticPrepared,
                     signal,
-                );
+                ));
             }
+            await this._drainFamilies(families, signal);
+            visualResult = visual ? families[0].finalize() : null;
+            analyticResult = analytic
+                ? families[visual ? 1 : 0].finalize()
+                : null;
             abortIfRequested(signal);
             return Object.freeze({
                 captureTimeNs: input.captureTimeNs,
@@ -1452,6 +1596,9 @@ export class AlignedCaptureProducts {
         if (slot.begin(0, 0, target.width, target.height, gl.RGBA, type, attachmentIndex) === false) {
             this._abandonPackSlot(slot);
             throw new Error("Asynchronous PBR readback buffer is still awaiting readback.");
+        }
+        if (this._captureTimings) {
+            this._captureTimings.readbackBytes += Number(buffer.byteLength) || 0;
         }
         return slot;
     }

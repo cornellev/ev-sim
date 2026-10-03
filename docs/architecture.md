@@ -116,7 +116,9 @@ loaded.
 For browser `pbr-mesh@1`, `BrowserPbrWorkerRuntime` owns a dedicated module
 worker. The worker creates its own `OffscreenCanvas`, WebGL2 renderer, detached
 appearance and analytic scenes, per-camera `CameraRenderProducts`, aligned
-capture pipeline, PBO slots, and visual-resource leases. Preparation sends the
+capture pipeline, PBO slots, and visual-resource leases. Takram cloud weather/turbulence PNGs decode through a DOM-free
+`createImageBitmap` → `DataTexture` path (injectable in the worker) so
+preparation does not depend on `TextureLoader` / `<img>`. Preparation sends the
 immutable resolved run once. Fixed-step capture sends generation-scoped actor
 matrices, camera positions, canonical capture input, and enabled-product flags;
 the worker transfers product `ArrayBuffer`s back without cloning. Main-thread

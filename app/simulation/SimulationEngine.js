@@ -84,6 +84,9 @@ export class SimulationEngine {
         this.frames = 0;
         this.accumulator = 0;
         this.accumulatorNs = 0;
+        this.droppedDebtNs = 0;
+        this._pacingAdvancedNs = 0;
+        this._pacingWallMs = 0;
         this.lastFrameMs = 0;
         this.rafId = null;
         this.looping = false;
@@ -240,9 +243,18 @@ export class SimulationEngine {
             fallbackReason: fallbackReason ? {
                 code: fallbackReason.code ?? "PBR_WORKER_UNAVAILABLE",
                 message: fallbackReason.message,
+                workerCauseCode: fallbackReason.workerCauseCode ?? fallbackReason.code ?? null,
             } : null,
         };
         browserSimulationPerformance.recordRenderRuntime(operational);
+        if (fallbackReason && operational.implementation === "inline") {
+            const cause = fallbackReason.workerCauseCode ?? fallbackReason.code ?? "PBR_WORKER_UNAVAILABLE";
+            console.warn(
+                `[cev-sim] PBR capture fell back to inline main-thread rendering (${cause}): ${
+                    fallbackReason.message || "PBR worker was unavailable."
+                }`,
+            );
+        }
         runtime?.subscribe?.((status) => {
             this.renderProviderStatus = { ...status, ...operational };
         });
@@ -328,8 +340,9 @@ export class SimulationEngine {
                     throw error;
                 }
                 fallbackReason = {
-                    code: error.workerCauseCode ?? error.code ?? "PBR_WORKER_UNAVAILABLE",
+                    code: error.code ?? "PBR_WORKER_UNAVAILABLE",
                     message: error.message,
+                    workerCauseCode: error.workerCauseCode ?? error.code ?? "PBR_WORKER_UNAVAILABLE",
                 };
             }
         } else if (this.pbrWorkerEnabled) {
@@ -418,9 +431,36 @@ export class SimulationEngine {
         return {
             ...this.kernel.getSnapshot(),
             frames: this.frames,
+            droppedDebtNs: this.droppedDebtNs,
+            effectiveRealtimeRate: this._effectiveRealtimeRate(),
             scenarioDiagnostics: { enabled: this.scenarioDiagnostics.enabled },
             autonomyOverlay: { ...this._autonomyOverlayEnabled },
         };
+    }
+
+    _effectiveRealtimeRate() {
+        if (!(this._pacingWallMs > 0) || !(this._pacingAdvancedNs > 0)) return null;
+        return this._pacingAdvancedNs / (this._pacingWallMs * 1e6);
+    }
+
+    _clampAccumulatorDebt() {
+        const capNs = this.stepNs * Math.max(1, this.maxSubSteps);
+        if (this.accumulatorNs <= capNs) {
+            this.accumulator = this.accumulatorNs / 1e9;
+            return 0;
+        }
+        const dropped = this.accumulatorNs - capNs;
+        this.accumulatorNs = capNs;
+        this.droppedDebtNs += dropped;
+        browserSimulationPerformance.recordDroppedDebt(dropped);
+        this.accumulator = this.accumulatorNs / 1e9;
+        return dropped;
+    }
+
+    _resetPacingState() {
+        this.droppedDebtNs = 0;
+        this._pacingAdvancedNs = 0;
+        this._pacingWallMs = 0;
     }
 
     /** Shallow HUD snapshot for the RAF play path — no structuredClone of assertions/scenario. */
@@ -469,6 +509,8 @@ export class SimulationEngine {
             } : null,
             renderProvider: this.renderProviderStatus,
             frames: this.frames,
+            droppedDebtNs: this.droppedDebtNs,
+            effectiveRealtimeRate: this._effectiveRealtimeRate(),
             scenarioDiagnostics: { enabled: this.scenarioDiagnostics.enabled },
             autonomyOverlay: { ...this._autonomyOverlayEnabled },
         };
@@ -553,6 +595,7 @@ export class SimulationEngine {
         this._invalidatePendingPresentation();
         this.accumulator = 0;
         this.accumulatorNs = 0;
+        this._resetPacingState();
         if (reset) this.frames = 0;
         this.kernel.stop({ reset, dispatchEpisode });
         if (reset) this.autonomyOverlay?.clear?.();
@@ -568,6 +611,7 @@ export class SimulationEngine {
         this.frames = 0;
         this.accumulator = 0;
         this.accumulatorNs = 0;
+        this._resetPacingState();
         this.kernel.reset(episodeSpec);
         this.autonomyOverlay?.clear?.();
         this._emit();
@@ -684,6 +728,7 @@ export class SimulationEngine {
         this.frames = 0;
         this.accumulator = 0;
         this.accumulatorNs = 0;
+        this._resetPacingState();
 
         await this.kernel.prepare(resolved, options);
         this.scenarioDiagnostics.configure(this.resolvedRun?.scenario?.scenario ?? null);
@@ -802,15 +847,18 @@ export class SimulationEngine {
     _advanceSimulation(frameDt) {
         const scaledDt = frameDt * this.speed;
         const frameStartMs = this.realtime ? this._nowMs() : 0;
+        const pacingStartMs = this._nowMs();
+        const pacingStartNs = this.timeNs;
         if (!this.deterministic) {
             this._fixedStep(scaledDt);
+            this._recordPacingWindow(pacingStartNs, pacingStartMs);
             return;
         }
 
         this.accumulatorNs += this.realtime
             ? Math.max(0, Math.round(scaledDt * 1e9))
             : this.stepNs * Math.max(1, this.maxSubSteps);
-        this.accumulator = this.accumulatorNs / 1e9;
+        this._clampAccumulatorDebt();
 
         let subSteps = 0;
         while (this.accumulatorNs >= this.stepNs && subSteps < this.maxSubSteps) {
@@ -824,6 +872,14 @@ export class SimulationEngine {
                 break;
             }
         }
+        this._recordPacingWindow(pacingStartNs, pacingStartMs);
+    }
+
+    _recordPacingWindow(startTimeNs, startWallMs) {
+        const advancedNs = Math.max(0, this.timeNs - startTimeNs);
+        const wallMs = Math.max(0, this._nowMs() - startWallMs);
+        this._pacingAdvancedNs += advancedNs;
+        this._pacingWallMs += wallMs;
     }
 
     _fixedStep(dt) {
@@ -836,15 +892,18 @@ export class SimulationEngine {
     async _advanceSimulationAsync(frameDt) {
         const scaledDt = frameDt * this.speed;
         const frameStartMs = this.realtime ? this._nowMs() : 0;
+        const pacingStartMs = this._nowMs();
+        const pacingStartNs = this.timeNs;
         if (!this.deterministic) {
             await this._fixedStepAsync(scaledDt);
+            this._recordPacingWindow(pacingStartNs, pacingStartMs);
             return;
         }
 
         this.accumulatorNs += this.realtime
             ? Math.max(0, Math.round(scaledDt * 1e9))
             : this.stepNs * Math.max(1, this.maxSubSteps);
-        this.accumulator = this.accumulatorNs / 1e9;
+        this._clampAccumulatorDebt();
 
         let subSteps = 0;
         while (this.accumulatorNs >= this.stepNs && subSteps < this.maxSubSteps) {
@@ -856,6 +915,7 @@ export class SimulationEngine {
             if (shouldContinue === false) break;
             if (this.realtime && this._nowMs() - frameStartMs > this.realtimeStepBudgetMs) break;
         }
+        this._recordPacingWindow(pacingStartNs, pacingStartMs);
     }
 
     async _fixedStepAsync(dt) {

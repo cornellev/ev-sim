@@ -55,6 +55,7 @@ class BrowserSimulationPerformanceMonitor {
         this.renderRuntime = { implementation: null, fallbackReason: null };
         this.timings = new Map();
         this.simulation = [];
+        this.droppedDebt = [];
         this.sensorTotals = new Map();
         this.sensorSamples = [];
         this.queueSamples = [];
@@ -133,6 +134,9 @@ class BrowserSimulationPerformanceMonitor {
             fallbackReason: fallbackReason ? {
                 code: String(fallbackReason.code || "PBR_WORKER_UNAVAILABLE"),
                 message: String(fallbackReason.message || "PBR worker was unavailable."),
+                ...(fallbackReason.workerCauseCode
+                    ? { workerCauseCode: String(fallbackReason.workerCauseCode) }
+                    : {}),
             } : null,
         };
     }
@@ -152,6 +156,11 @@ class BrowserSimulationPerformanceMonitor {
             advancedSteps: Math.max(0, Number(advancedSteps) || 0),
             durationMs,
         });
+    }
+
+    recordDroppedDebt(droppedNs, time = this.now()) {
+        if (!this.active || !Number.isFinite(droppedNs) || droppedNs <= 0) return;
+        this.droppedDebt.push({ time, value: Math.max(0, Number(droppedNs) || 0) });
     }
 
     recordSensorState(sensorId, health, time = this.now()) {
@@ -271,6 +280,8 @@ class BrowserSimulationPerformanceMonitor {
                 advancedNs,
                 realtimeRate,
                 stepsPerSecond,
+                droppedDebtNs: this._measured(this.droppedDebt)
+                    .reduce((sum, entry) => sum + entry.value, 0),
             },
             sensors: {
                 ...counts,

@@ -37,11 +37,30 @@ test("simulation status formats exact clock, pacing, and assertion summaries", (
     assert.equal(formatSimulationTime(65.432), "01:05.432");
     assert.equal(formatSimulationTime(3661.25), "01:01:01.250");
     assert.equal(formatClockMode({ stepNs: 16_666_667, realtime: true, speed: 1 }), "60 Hz, Realtime, 1x");
+    assert.equal(
+        formatClockMode({ stepNs: 16_666_667, realtime: true, speed: 1, effectiveRealtimeRate: 0.72 }),
+        "60 Hz, Realtime, 1x, 0.72x wall",
+    );
     assert.equal(formatRenderProviderStatus({
         provider: { id: "pbr-mesh", version: 1 },
         state: "ready",
         residency: { residentChunks: 2, requiredChunks: 2 },
     }), "pbr-mesh@1 · Ready · 2/2 chunks");
+    assert.equal(formatRenderProviderStatus({
+        provider: { id: "pbr-mesh", version: 1 },
+        state: "ready",
+        implementation: "inline",
+        fallbackReason: {
+            code: "PBR_WORKER_UNAVAILABLE",
+            workerCauseCode: "document is not defined",
+            message: "TextureLoader unavailable",
+        },
+    }), "pbr-mesh@1 · Ready · inline · inline fallback (document is not defined)");
+    assert.equal(formatRenderProviderStatus({
+        provider: { id: "pbr-mesh", version: 1 },
+        state: "streaming",
+        implementation: "worker",
+    }), "pbr-mesh@1 · Streaming · worker");
     assert.deepEqual(summarizeAssertions([]), { label: "None", tone: "zinc" });
     assert.deepEqual(summarizeAssertions([{ status: "passed" }, { status: "pending" }]), { label: "1 pending", tone: "amber" });
     assert.deepEqual(summarizeAssertions([{ status: "failed" }]), { label: "1 failed", tone: "rose" });

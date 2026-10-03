@@ -76,6 +76,7 @@ class FakeRenderer {
         this.onRender = null;
         this.onRead = null;
         this.mode = null;
+        this.info = { render: { calls: 0 } };
     }
 
     getRenderTarget() { return this.target; }
@@ -87,6 +88,7 @@ class FakeRenderer {
     clear() {}
     render(scene) {
         this.renderCalls += 1;
+        this.info.render.calls += 1;
         this.onRender?.();
         if (this.failRender) throw new Error("injected render failure");
         let mode = null;
@@ -344,6 +346,167 @@ test("aligned renderer publishes visual and separate analytic products atomicall
     assert.equal(renderer.xr.enabled, true);
     assert.equal(renderer.shadowMap.enabled, true);
     aligned.dispose();
+});
+
+test("proxy scene reuses ShaderMaterials for identical analytic bindings", async () => {
+    const analyticScene = new THREE.Scene();
+    const shared = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const near = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), shared);
+    const far = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), shared);
+    far.position.z = -2;
+    analyticScene.add(near, far);
+    const analyticHandle = createOwnedCaptureScene({
+        role: "analytic-truth",
+        scene: analyticScene,
+        generation: 1,
+        descriptionHash: "shared-materials",
+    });
+    const analyticPassSet = createVisualCapturePassSet({
+        family: VISUAL_CAPTURE_PASS_FAMILIES.analytic,
+        captureInput: passInput(analyticHandle),
+        products: ["validity"],
+        bindings: [
+            { renderableId: "near", semanticId: 7, instanceId: 70 },
+            { renderableId: "far", semanticId: 7, instanceId: 70 },
+        ],
+    });
+    const renderer = new FakeRenderer();
+    const capture = new AlignedCaptureProducts({
+        renderer,
+        camera: new THREE.PerspectiveCamera(),
+        analyticSceneHandle: analyticHandle,
+    });
+    await capture.capture({
+        analyticPassSet,
+        analyticRenderables: new Map([["near", near], ["far", far]]),
+        signal: new AbortController().signal,
+    });
+    const prepared = capture.preparedFamilies.get(VISUAL_CAPTURE_PASS_FAMILIES.analytic);
+    assert.equal(prepared.entries.length, 2);
+    assert.equal(prepared.entries[0].proxy.material, prepared.entries[1].proxy.material);
+    assert.equal(prepared.materials.length, 1);
+    assert.equal(
+        prepared.entries[0].proxy.material.uniforms.semanticId.value,
+        7,
+    );
+    capture.dispose();
+});
+
+test("aligned capture reports draw, snapshot, and readback timing keys", async () => {
+    const state = scenes();
+    const { visualPassSet, analyticPassSet } = passSets(state);
+    const renderer = new FakeRenderer();
+    const camera = new THREE.PerspectiveCamera();
+    const aligned = new AlignedCaptureProducts({
+        renderer,
+        camera,
+        visualSceneHandle: state.visualHandle,
+        analyticSceneHandle: state.analyticHandle,
+        authorizeSourceUse: async () => {},
+    });
+    await aligned.capture({
+        visualPassSet,
+        visualRenderables: new Map([
+            ["occluder-mesh", state.occluder],
+            ["target-mesh", state.target],
+        ]),
+        analyticPassSet,
+        analyticRenderables: new Map([
+            ["truth-near", state.truthNear],
+            ["truth-far", state.truthFar],
+        ]),
+        signal: new AbortController().signal,
+    });
+    const timings = aligned.lastCaptureTimings;
+    for (const key of [
+        "captureMs",
+        "readbackMs",
+        "warpMs",
+        "drawMs",
+        "snapshotMs",
+        "drawCalls",
+        "readbackBytes",
+    ]) {
+        assert.equal(typeof timings[key], "number", key);
+        assert.ok(Number.isFinite(timings[key]), key);
+        assert.ok(timings[key] >= 0, key);
+    }
+    assert.ok(timings.drawCalls >= 1);
+    assert.ok(timings.readbackBytes >= 1);
+    aligned.dispose();
+});
+
+test("WebGL2 pipeline capture takes at most one renderer snapshot per family", async () => {
+    class FakeWebGL2 {}
+    const previous = globalThis.WebGL2RenderingContext;
+    globalThis.WebGL2RenderingContext = FakeWebGL2;
+    const gl = Object.assign(Object.create(FakeWebGL2.prototype), {
+        RGBA: 0x1908,
+        UNSIGNED_BYTE: 0x1401,
+        FLOAT: 0x1406,
+        PIXEL_PACK_BUFFER: 0x88eb,
+        PIXEL_PACK_BUFFER_BINDING: 0x88ed,
+        STREAM_READ: 0x88e1,
+        PACK_ALIGNMENT: 0x0d05,
+        SYNC_GPU_COMMANDS_COMPLETE: 0x9117,
+        CONDITION_SATISFIED: 0x9119,
+        createBuffer: () => ({ id: "pbo" }),
+        bindBuffer() {},
+        bufferData() {},
+        getParameter: () => 4,
+        pixelStorei() {},
+        readPixels() {},
+        fenceSync: () => ({ id: "sync" }),
+        flush() {},
+        clientWaitSync: () => 0x9119,
+        deleteSync() {},
+        deleteBuffer() {},
+        getBufferSubData(_target, _offset, dest) {
+            if (dest instanceof Float32Array) dest.set([2, 1, 0, 1, 4, 1, 0, 1]);
+            else dest.fill(255);
+        },
+        isContextLost: () => false,
+        getExtension: () => ({ UNMASKED_RENDERER_WEBGL: 0x9246 }),
+    });
+    try {
+        const state = scenes();
+        const { visualPassSet, analyticPassSet } = passSets(state);
+        const renderer = new FakeRenderer();
+        renderer.context = gl;
+        const aligned = new AlignedCaptureProducts({
+            renderer,
+            camera: new THREE.PerspectiveCamera(),
+            visualSceneHandle: state.visualHandle,
+            analyticSceneHandle: state.analyticHandle,
+            authorizeSourceUse: async () => {},
+        });
+        await aligned.capture({
+            visualPassSet: createVisualCapturePassSet({
+                family: VISUAL_CAPTURE_PASS_FAMILIES.visual,
+                captureInput: passInput(state.visualHandle),
+                products: ["beauty", "validity"],
+                bindings: [],
+                sourceUseHashes: [USE_A],
+            }),
+            visualRenderables: new Map(),
+            analyticPassSet: createVisualCapturePassSet({
+                family: VISUAL_CAPTURE_PASS_FAMILIES.analytic,
+                captureInput: passInput(state.analyticHandle),
+                products: ["axial-depth", "semantic-id", "instance-id", "validity"],
+                bindings: analyticPassSet.bindings,
+            }),
+            analyticRenderables: new Map([
+                ["truth-near", state.truthNear],
+                ["truth-far", state.truthFar],
+            ]),
+            signal: new AbortController().signal,
+        });
+        assert.ok(aligned._snapshotCount <= 2, `snapshots=${aligned._snapshotCount}`);
+        aligned.dispose();
+    } finally {
+        if (previous === undefined) delete globalThis.WebGL2RenderingContext;
+        else globalThis.WebGL2RenderingContext = previous;
+    }
 });
 
 test("VIS-15a aligned capture accepts asynchronous readback without using the browser default", async () => {
@@ -919,7 +1082,9 @@ test("PBO beauty readback allocates after a 320x180 composer resize and survives
         const rendererLease = {
             runSync(operation) {
                 const result = operation();
-                if (!presentationInterleaved && composerRenders > 0 && result?.slot) {
+                // Presentation may reclaim the shared composer after a capture
+                // family releases the renderer lease (batched issue, then drain).
+                if (!presentationInterleaved && composerRenders > 0) {
                     presentationInterleaved = true;
                     output.setSize(1280, 720);
                 }

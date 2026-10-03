@@ -141,13 +141,12 @@ export class PixelPackSlot {
     constructor(gl, byteLength) {
         this.gl = gl;
         this.byteLength = Math.max(1, byteLength);
-        this.pbo = gl.createBuffer();
         const alignment = gl.getParameter(gl.PACK_ALIGNMENT);
         this.packAlignment = Number.isFinite(alignment) ? alignment : 4;
-        const previous = gl.getParameter(gl.PIXEL_PACK_BUFFER_BINDING);
-        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, this.pbo);
-        gl.bufferData(gl.PIXEL_PACK_BUFFER, this.byteLength, gl.STREAM_READ);
-        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, previous);
+        // Allocate storage lazily in begin() so a foreign fenceSync cannot land
+        // between bufferData and the first readPixels write (Chrome shadow warning).
+        this.pbo = gl.createBuffer();
+        this._needsStorage = true;
         this.sync = null;
         this.dropped = false;
         this.pollAttempts = 0;
@@ -192,6 +191,10 @@ export class PixelPackSlot {
             : null;
         try {
             gl.bindBuffer(gl.PIXEL_PACK_BUFFER, this.pbo);
+            if (this._needsStorage) {
+                gl.bufferData(gl.PIXEL_PACK_BUFFER, this.byteLength, gl.STREAM_READ);
+                this._needsStorage = false;
+            }
             gl.pixelStorei(gl.PACK_ALIGNMENT, 1);
             if (attachmentIndex > 0 && typeof gl.readBuffer === "function") {
                 gl.readBuffer((gl.COLOR_ATTACHMENT0 ?? 0x8CE0) + attachmentIndex);
@@ -224,6 +227,7 @@ export class PixelPackSlot {
                 this._deleteSync();
                 this.pollAttempts = 0;
                 this.begunAtMs = 0;
+                this._replaceBuffer();
             }
             return false;
         }
@@ -249,6 +253,7 @@ export class PixelPackSlot {
         this.begunAtMs = 0;
         if (this.pbo && this.gl) this.gl.deleteBuffer(this.pbo);
         this.pbo = null;
+        this._needsStorage = false;
         this.gl = null;
     }
 
@@ -260,10 +265,7 @@ export class PixelPackSlot {
             this.pbo = null;
         }
         this.pbo = gl.createBuffer();
-        const previous = gl.getParameter(gl.PIXEL_PACK_BUFFER_BINDING);
-        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, this.pbo);
-        gl.bufferData(gl.PIXEL_PACK_BUFFER, this.byteLength, gl.STREAM_READ);
-        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, previous);
+        this._needsStorage = true;
     }
 
     _deleteSync() {

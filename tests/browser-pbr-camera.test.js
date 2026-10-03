@@ -5,6 +5,10 @@ import * as THREE from "three";
 import { BrowserPbrRenderRuntime } from "../app/3d/perception/BrowserPbrRenderRuntime.js";
 import { addPbrRoadMarkings } from "../app/3d/perception/PbrRoadMarkings.js";
 import {
+    installTakramSky,
+    loadImageBitmapTexture,
+} from "../app/3d/perception/PbrAppearanceSky.js";
+import {
     createVisualCameraCalibration,
     createVisualCaptureInput,
     takeAnalyticBindingNormalizeCount,
@@ -255,16 +259,25 @@ test("road-tagged analytic surfaces are drawn into the measured appearance scene
     runtime.appearanceScene.traverse((object) => {
         if (object.userData?.cevSimRoadAppearance === true) roads.push(object);
     });
-    assert.ok(roads.length > 0);
+    assert.equal(roads.length, 1, "road-tagged triangles merge into one appearance mesh");
+    assert.equal(roads[0].name, "road-appearance");
     assert.equal(roads[0].material.color.getHex(), 0x2d3034);
     assert.equal(roads[0].material.roughness, 0.9);
     assert.equal(roads[0].material.metalness, 0);
     assert.equal(roads[0].position.y, 0.015);
-    const analyticRoad = runtime.analyticScene.getObjectByName(roads[0].name);
-    assert.ok(analyticRoad);
-    assert.equal(analyticRoad.userData.cevSimRoadAppearance, undefined);
-    assert.equal(runtime.analyticRenderables.get(roads[0].name), analyticRoad);
+    assert.equal(roads[0].renderOrder, 1);
+    assert.equal(roads[0].userData.cevSimRoadAppearance, true);
     assert.equal([...runtime.analyticRenderables.values()].includes(roads[0]), false);
+    const analyticMeshes = [];
+    runtime.analyticScene.traverse((object) => {
+        if (object.isMesh) analyticMeshes.push(object);
+    });
+    assert.ok(analyticMeshes.length > 0);
+    assert.ok(analyticMeshes.every((mesh) => mesh.userData.cevSimRoadAppearance !== true));
+    assert.ok(runtime.analyticBindings.length > 0);
+    assert.ok(runtime.analyticBindings.every((binding) => (
+        runtime.analyticRenderables.has(binding.renderableId)
+    )));
     const markings = [];
     runtime.appearanceScene.traverse((object) => {
         if (object.name === "RoadMarking") markings.push(object);
@@ -334,6 +347,40 @@ test("a resolved Takram sky is installed behind measured appearance", async () =
     const quad = runtime.appearanceScene.getObjectByName("TakramSkyQuad");
     assert.equal(quad.userData.cevSimSky, true);
     assert.equal(quad.frustumCulled, false);
+    runtime.dispose();
+});
+
+test("worker Takram install override injects the ImageBitmap texture loader", async () => {
+    const resolved = resolvedPbrRun({
+        sky: {
+            mode: "takram",
+            takram: { timeOfDay: 12, date: "2026-06-28", cloudsEnabled: true },
+        },
+    });
+    let receivedLoader = null;
+    // Matches browserPbrCapture.worker.js: wrap installTakramSky with loadImageBitmapTexture.
+    const workerTakramInstall = (args) => {
+        const forwarded = {
+            ...args,
+            loadImageTexture: loadImageBitmapTexture,
+        };
+        receivedLoader = forwarded.loadImageTexture;
+        const group = new THREE.Group();
+        group.name = "TakramEnvironmentSky";
+        group.userData.cevSimSky = true;
+        forwarded.scene.add(group);
+        return { generator: null, composer: null, beauty: null };
+    };
+    assert.equal(typeof installTakramSky, "function");
+    const runtime = new BrowserPbrRenderRuntime({
+        renderer: {},
+        assetClient: { async validateClosure() {} },
+        materializerFactory: fakeMaterializer,
+        vehicles: () => [{ telemetryId: "ego", position: new THREE.Vector3(), rotation: new THREE.Euler() }],
+        installTakramSky: workerTakramInstall,
+    });
+    await runtime.prepare(resolved);
+    assert.equal(receivedLoader, loadImageBitmapTexture);
     runtime.dispose();
 });
 

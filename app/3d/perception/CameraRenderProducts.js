@@ -178,6 +178,7 @@ export class CameraRenderProducts {
         this.materials = new Map();
         this._slots = Object.create(null);
         this._inflight = null;
+        this._inflightDone = new Set();
         this._asyncDisabled = false;
         this._depthScratch = new Float32Array(this.width * this.height);
         this._depthValidityScratch = new Uint8Array(this.width * this.height);
@@ -357,14 +358,17 @@ export class CameraRenderProducts {
     poll() {
         if (!this._inflight) return null;
         for (const key of this._inflight) {
+            if (this._inflightDone.has(key)) continue;
             const slot = this._slots[key];
             if (!slot?.pack.poll(slot.cpu)) {
                 if (slot?.pack?.isStale?.()) {
                     slot.pack.reset?.();
                     this._inflight = null;
+                    this._inflightDone.clear();
                 }
                 return null;
             }
+            this._inflightDone.add(key);
         }
         const result = {};
         for (const key of this._inflight) {
@@ -374,6 +378,7 @@ export class CameraRenderProducts {
             }
         }
         this._inflight = null;
+        this._inflightDone.clear();
         return result;
     }
 
@@ -399,6 +404,7 @@ export class CameraRenderProducts {
             }
         }
         this._inflight = keys;
+        this._inflightDone.clear();
         return true;
     }
 
@@ -498,6 +504,7 @@ export class CameraRenderProducts {
     reset() {
         for (const slot of Object.values(this._slots)) slot.pack?.reset?.();
         this._inflight = null;
+        this._inflightDone.clear();
         this._asyncDisabled = false;
     }
 
@@ -511,6 +518,7 @@ export class CameraRenderProducts {
         for (const slot of Object.values(this._slots)) slot.pack?.dispose?.();
         this._slots = Object.create(null);
         this._inflight = null;
+        this._inflightDone.clear();
         this.pixelBuffer = null;
         this.flipBuffer = null;
         this._depthScratch = null;
