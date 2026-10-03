@@ -199,6 +199,72 @@ test("calibrated warping shares validity while RGB is bilinear and depth/labels 
     assert.deepEqual([...again.validity], [...rgbResult.validity]);
 });
 
+function referenceWarp(table, data, channels, interpolation, ArrayType) {
+    const destination = new ArrayType(data.length);
+    const integer = !(destination instanceof Float32Array || destination instanceof Float64Array);
+    for (let pixel = 0; pixel < table.width * table.height; pixel += 1) {
+        if (table.valid[pixel] !== 1) continue;
+        for (let channel = 0; channel < channels; channel += 1) {
+            if (interpolation === "nearest") {
+                destination[pixel * channels + channel] = data[table.nearestPixel[pixel] * channels + channel];
+                continue;
+            }
+            const tx = table.linearTx[pixel];
+            const ty = table.linearTy[pixel];
+            const a = data[table.linear00[pixel] * channels + channel];
+            const b = data[table.linear01[pixel] * channels + channel];
+            const c = data[table.linear10[pixel] * channels + channel];
+            const d = data[table.linear11[pixel] * channels + channel];
+            const value = (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty;
+            destination[pixel * channels + channel] = integer ? Math.round(value) : value;
+        }
+    }
+    return destination;
+}
+
+test("zero-distortion warps take the identity copy path with slow-path bytes", () => {
+    for (const intrinsics of [
+        { fx: 277.1, fy: 277.1, cx: 159.5, cy: 89.5 },
+        { fx: 311.3, fy: 290.7, cx: 160, cy: 90 },
+    ]) {
+        const calibration = createVisualCameraCalibration({
+            width: 320,
+            height: 180,
+            intrinsics,
+            near: 0.1,
+            far: 100,
+            distortionModel: "none",
+            distortion: [],
+        });
+        const table = calibrationWarpTable(calibration);
+        const pixels = 320 * 180;
+        const rgba = new Uint8Array(pixels * 4).map((_, index) => (index * 37) % 256);
+        const depth = new Float32Array(pixels).map((_, index) => index * 0.013);
+        const linear = warpCalibratedImage({ data: rgba, calibration, channels: 4, interpolation: "linear" });
+        const nearest = warpCalibratedImage({ data: depth, calibration, channels: 1, interpolation: "nearest" });
+        assert.deepEqual(linear.data, referenceWarp(table, rgba, 4, "linear", Uint8Array));
+        assert.deepEqual(nearest.data, referenceWarp(table, depth, 1, "nearest", Float32Array));
+        assert.ok(linear.validity.every((value, index) => value === table.valid[index]));
+        // (w - 1) / 2 principal points used to round row 0 below zero and blank it.
+        assert.equal(table.nearestIdentity, true);
+        assert.equal(table.smallIntegerLinearIdentity, true);
+        assert.ok(linear.validity.every((value) => value === 1));
+        assert.deepEqual(nearest.data, depth);
+        assert.deepEqual(linear.data, rgba);
+    }
+    const distorted = createVisualCameraCalibration({
+        width: 5,
+        height: 5,
+        intrinsics: { fx: 2, fy: 2, cx: 2, cy: 2 },
+        near: 0.1,
+        far: 20,
+        distortionModel: "brown-conrady",
+        distortion: [-0.01, 0, 0, 0, 0],
+    });
+    assert.equal(calibrationWarpTable(distorted).nearestIdentity, false);
+    assert.equal(calibrationWarpTable(distorted).smallIntegerLinearIdentity, false);
+});
+
 test("manifest none distortion accepts the normalized all-zero coefficient vector", () => {
     const calibration = createVisualCameraCalibration({
         width: 4,

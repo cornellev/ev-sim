@@ -32,7 +32,8 @@ from [nodejs.org](https://nodejs.org/en/download/) or use the repository
 curl -fsSL https://raw.githubusercontent.com/cornellev/ev-sim/main/install.sh | bash
 ```
 
-The installer writes the clone to `./ev-sim`.
+The installer writes the clone to `./ev-sim`, creates `.env.local`, and asks whether to enable the marketplace.
+Enter enables it. `n` writes `CEV_SIM_MARKETPLACE_ENABLED=0`. An existing value is kept.
 To start up the app, run these commands:
 
 ```bash
@@ -53,7 +54,7 @@ curl -fsSL https://raw.githubusercontent.com/cornellev/ev-sim/main/install.sh | 
 If ev-sim is already on this computer, run these commands:
 
 ```bash
-npm install
+npm ci
 npm run dev
 ```
 

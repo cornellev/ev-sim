@@ -53,7 +53,17 @@ function startup(directoryRoot, env) {
         console.error("Invalid CEV_SIM_HEADLESS_JSON_LIMIT environment variable. It cannot be greater than CEV_SIM_JSON_LIMIT.");
         return false;
     }
-    if (env.CEV_SIM_MARKETPLACE_ENABLED) {
+    const marketplaceRaw = env.CEV_SIM_MARKETPLACE_ENABLED;
+    let marketplaceEnabled;
+    if (marketplaceRaw === undefined || marketplaceRaw === "" || marketplaceRaw === "1" || marketplaceRaw === "true") {
+        marketplaceEnabled = true;
+    } else if (marketplaceRaw === "0" || marketplaceRaw === "false") {
+        marketplaceEnabled = false;
+    } else {
+        console.error("Invalid CEV_SIM_MARKETPLACE_ENABLED environment variable. CEV_SIM_MARKETPLACE_ENABLED must be one of: 0, 1, false, true.");
+        return false;
+    }
+    if (marketplaceEnabled) {
         console.log("[MARKETPLACE] Marketplace is enabled.");
     } else {
         console.log("[MARKETPLACE] Marketplace is disabled.");

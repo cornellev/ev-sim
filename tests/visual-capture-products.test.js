@@ -1109,7 +1109,8 @@ test("PBO beauty readback allocates after a 320x180 composer resize and survives
         assert.equal(first.visual.products.beauty.length, 230400);
         assert.equal(second.visual.products.beauty.length, 230400);
         assert.ok(allocations.length >= 1);
-        assert.ok(allocations.every((byteLength) => byteLength === 230400));
+        // Validity and beauty share one packed 320x180 RGBA8 pixel-pack batch.
+        assert.ok(allocations.every((byteLength) => byteLength === 2 * 230400));
         assert.ok(reads.length >= 4);
         assert.ok(reads.every(([width, height]) => width === 320 && height === 180));
         capture.dispose();
@@ -1267,6 +1268,117 @@ test("WebGL2 aligned capture queues the next draw before the previous read finis
         const deletes = events.map((event, index) => event === "delete" ? index : -1).filter((index) => index >= 0);
         assert.equal(reads.length, deletes.length);
         reads.forEach((index, offset) => assert.ok(index < deletes[offset]));
+        aligned.dispose();
+    } finally {
+        if (previous === undefined) delete globalThis.WebGL2RenderingContext;
+        else globalThis.WebGL2RenderingContext = previous;
+    }
+});
+
+test("WebGL2 pipelined families pack every read into one pixel-pack copy with exact bytes", async () => {
+    class FakeWebGL2 {}
+    const previous = globalThis.WebGL2RenderingContext;
+    globalThis.WebGL2RenderingContext = FakeWebGL2;
+    const renderer = new FakeRenderer();
+    const counters = { allocations: 0, copies: 0, offsets: [] };
+    let memory = null;
+    let readBuffer = 0;
+    const gl = Object.assign(Object.create(FakeWebGL2.prototype), {
+        RGBA: 0x1908,
+        UNSIGNED_BYTE: 0x1401,
+        FLOAT: 0x1406,
+        PIXEL_PACK_BUFFER: 0x88eb,
+        PIXEL_PACK_BUFFER_BINDING: 0x88ed,
+        READ_BUFFER: 0x0c02,
+        COLOR_ATTACHMENT0: 0x8ce0,
+        STREAM_READ: 0x88e1,
+        PACK_ALIGNMENT: 0x0d05,
+        SYNC_GPU_COMMANDS_COMPLETE: 0x9117,
+        TIMEOUT_EXPIRED: 0x911b,
+        WAIT_FAILED: 0x911d,
+        getExtension: (name) => (name === "EXT_color_buffer_float" ? {} : null),
+        createBuffer: () => ({ id: "pbo" }),
+        bindBuffer() {},
+        bufferData(_target, byteLength) {
+            counters.allocations += 1;
+            memory = new ArrayBuffer(byteLength);
+        },
+        getParameter(name) {
+            if (name === 0x0c02) return readBuffer;
+            if (name === 0x88ed) return null;
+            return 4;
+        },
+        pixelStorei() {},
+        readBuffer(buffer) { readBuffer = buffer; },
+        readPixels(x, y, width, height, _format, type, offset) {
+            counters.offsets.push(offset);
+            const ArrayType = type === 0x1406 ? Float32Array : Uint8Array;
+            const view = new ArrayType(memory, offset, width * height * 4);
+            const attachment = readBuffer >= 0x8ce0 ? readBuffer - 0x8ce0 : 0;
+            renderer.readRenderTargetPixels(renderer.target, x, y, width, height, view, undefined, attachment);
+        },
+        fenceSync: () => ({ id: "sync" }),
+        flush() {},
+        clientWaitSync: () => 0x9119,
+        deleteSync() {},
+        deleteBuffer() {},
+        getBufferSubData(_target, offset, dest) {
+            counters.copies += 1;
+            new Uint8Array(dest.buffer, dest.byteOffset, dest.byteLength)
+                .set(new Uint8Array(memory, offset, dest.byteLength));
+        },
+        isContextLost: () => false,
+    });
+    renderer.context = gl;
+    try {
+        const state = scenes();
+        const aligned = new AlignedCaptureProducts({
+            renderer,
+            camera: new THREE.PerspectiveCamera(),
+            visualSceneHandle: state.visualHandle,
+            analyticSceneHandle: state.analyticHandle,
+            authorizeSourceUse: async () => {},
+        });
+        const analytic = await aligned.capture({
+            analyticPassSet: createVisualCapturePassSet({
+                family: VISUAL_CAPTURE_PASS_FAMILIES.analytic,
+                captureInput: passInput(state.analyticHandle),
+                products: ["axial-depth", "semantic-id", "instance-id"],
+                bindings: [
+                    { renderableId: "truth-near", semanticId: 7, instanceId: 70 },
+                    { renderableId: "truth-far", semanticId: 8, instanceId: 80 },
+                ],
+            }),
+            analyticRenderables: new Map([
+                ["truth-near", state.truthNear],
+                ["truth-far", state.truthFar],
+            ]),
+            signal: new AbortController().signal,
+        });
+        assert.equal(counters.copies, 1);
+        assert.equal(counters.allocations, 1);
+        // RGBA32F depth+validity, then two RGBA8 id attachments, for 2x1 pixels.
+        assert.deepEqual(counters.offsets, [0, 32, 40]);
+        assert.deepEqual([...analytic.analytic.products.axialDepth], [2, 4]);
+        assert.deepEqual([...analytic.analytic.products.semanticId], [7, 8]);
+        assert.deepEqual([...analytic.analytic.products.instanceId], [70, 80]);
+        assert.deepEqual([...analytic.analytic.products.validity], [1, 1]);
+
+        const visual = await aligned.capture({
+            visualPassSet: createVisualCapturePassSet({
+                family: VISUAL_CAPTURE_PASS_FAMILIES.visual,
+                captureInput: passInput(state.visualHandle),
+                products: ["validity", "object-id"],
+                bindings: [
+                    { renderableId: "target-mesh", objectKey: "target", materialKeys: ["brick"] },
+                ],
+            }),
+            visualRenderables: new Map([["target-mesh", state.target]]),
+            signal: new AbortController().signal,
+        });
+        assert.equal(counters.copies, 2);
+        assert.deepEqual([...visual.visual.products.validity], [1, 1]);
+        assert.deepEqual([...visual.visual.products.objectId], [1, 2]);
         aligned.dispose();
     } finally {
         if (previous === undefined) delete globalThis.WebGL2RenderingContext;

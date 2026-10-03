@@ -142,21 +142,32 @@ export async function waitForPixelPack(slot, dest, { timeoutMs = 2000, signal = 
 /**
  * One GPU pixel-pack buffer + fence. `begin` is non-blocking; `poll` copies
  * to CPU only after the GPU signals the fence (timeout 0 — never stalls).
- * Dropping an unread fence replaces the buffer so the next write cannot
- * discard Chrome's readback shadow.
+ *
+ * Chrome allocates a client shadow copy for every written READ-usage buffer
+ * at `fenceSync`, and since M149 `getBufferSubData` no longer consumes or
+ * frees it. Only `bufferData` or `deleteBuffer` releases the shadow, so
+ * storage is re-specified before the first write of every batch.
+ *
+ * A batch (`openBatch` → `readRegion`… → `closeBatch`) packs several reads at
+ * distinct byte offsets behind one fence, so `poll` costs one synchronous
+ * `getBufferSubData` round trip regardless of the region count.
  */
 export class PixelPackSlot {
     /**
      * @param {WebGL2RenderingContext} gl
      * @param {number} byteLength
+     * @param {{ usage?: number }} [options]
      */
-    constructor(gl, byteLength) {
+    constructor(gl, byteLength, { usage = gl.STREAM_READ } = {}) {
         this.gl = gl;
         this.byteLength = Math.max(1, byteLength);
+        this.usage = usage ?? gl.STREAM_READ;
         this.packAlignment = contextPackAlignment(gl);
-        // Allocate storage lazily in begin() so a foreign fenceSync cannot land
-        // between bufferData and the first readPixels write (Chrome shadow warning).
+        // Storage is specified immediately before the first readPixels of a
+        // batch so a foreign fenceSync cannot land between bufferData and the
+        // write (Chrome shadow warning).
         this.pbo = gl.createBuffer();
+        this._batchOpen = false;
         this._needsStorage = true;
         this.sync = null;
         this.dropped = false;
@@ -180,6 +191,7 @@ export class PixelPackSlot {
 
     reset() {
         this._deleteSync();
+        this._batchOpen = false;
         this.dropped = false;
         this.pollAttempts = 0;
         this.begunAtMs = 0;
@@ -191,11 +203,35 @@ export class PixelPackSlot {
      * (Three.js `setRenderTarget`).
      */
     begin(x, y, width, height, format, type, attachmentIndex = 0) {
-        if (this.pending || !this.pbo) return false;
-        const gl = this.gl;
+        if (!this.openBatch()) return false;
+        try {
+            this.readRegion(x, y, width, height, format, type, attachmentIndex, 0);
+        } catch (error) {
+            this._batchOpen = false;
+            throw error;
+        }
+        return this.closeBatch();
+    }
+
+    /** Start a packed batch. Returns false while a previous fence is unread. */
+    openBatch() {
+        if (this.pending || this._batchOpen || !this.pbo) return false;
+        this._batchOpen = true;
+        this._needsStorage = true;
         this.pollAttempts = 0;
         this.dropped = false;
         this.begunAtMs = Date.now();
+        return true;
+    }
+
+    /**
+     * Issue one `readPixels` into the open batch at `byteOffset`. The source
+     * framebuffer must already be bound. Offsets must be multiples of the
+     * element size of `type`.
+     */
+    readRegion(x, y, width, height, format, type, attachmentIndex = 0, byteOffset = 0) {
+        if (!this._batchOpen) throw new Error("PixelPackSlot.readRegion requires an open batch.");
+        const gl = this.gl;
         const previous = gl.getParameter(gl.PIXEL_PACK_BUFFER_BINDING);
         const previousReadBuffer = typeof gl.readBuffer === "function"
             ? gl.getParameter(gl.READ_BUFFER)
@@ -203,22 +239,36 @@ export class PixelPackSlot {
         try {
             gl.bindBuffer(gl.PIXEL_PACK_BUFFER, this.pbo);
             if (this._needsStorage) {
-                gl.bufferData(gl.PIXEL_PACK_BUFFER, this.byteLength, gl.STREAM_READ);
+                gl.bufferData(gl.PIXEL_PACK_BUFFER, this.byteLength, this.usage);
                 this._needsStorage = false;
             }
             gl.pixelStorei(gl.PACK_ALIGNMENT, 1);
             if (attachmentIndex > 0 && typeof gl.readBuffer === "function") {
                 gl.readBuffer((gl.COLOR_ATTACHMENT0 ?? 0x8CE0) + attachmentIndex);
             }
-            gl.readPixels(x, y, width, height, format, type, 0);
+            gl.readPixels(x, y, width, height, format, type, byteOffset);
             gl.pixelStorei(gl.PACK_ALIGNMENT, this.packAlignment);
-            this.sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
-            gl.flush();
         } finally {
             gl.bindBuffer(gl.PIXEL_PACK_BUFFER, previous);
             if (previousReadBuffer !== null) gl.readBuffer(previousReadBuffer);
         }
+    }
+
+    /** Fence every region issued since `openBatch`. */
+    closeBatch() {
+        if (!this._batchOpen) return false;
+        this._batchOpen = false;
+        const gl = this.gl;
+        this.sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+        gl.flush();
         return Boolean(this.sync);
+    }
+
+    /** Discard an open batch without fencing it. */
+    abortBatch() {
+        if (!this._batchOpen) return;
+        this._batchOpen = false;
+        this._replaceBuffer();
     }
 
     /**
@@ -260,6 +310,7 @@ export class PixelPackSlot {
 
     dispose() {
         this._deleteSync();
+        this._batchOpen = false;
         this.pollAttempts = 0;
         this.begunAtMs = 0;
         if (this.pbo && this.gl) this.gl.deleteBuffer(this.pbo);

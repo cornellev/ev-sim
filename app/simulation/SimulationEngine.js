@@ -89,6 +89,7 @@ export class SimulationEngine {
         this._pacingWallMs = 0;
         this.lastFrameMs = 0;
         this.rafId = null;
+        this._dueAdvanceTimer = null;
         this.looping = false;
         this.listeners = new Set();
         this.viewportActive = true;
@@ -549,6 +550,7 @@ export class SimulationEngine {
         this.looping = false;
         this._advanceGeneration += 1;
         this._pendingFrameNs = 0;
+        this._clearDueAdvance();
         this._invalidatePendingPresentation();
         if (this.rafId !== null) {
             cancelAnimationFrame(this.rafId);
@@ -584,6 +586,7 @@ export class SimulationEngine {
     pause() {
         this._advanceGeneration += 1;
         this._pendingFrameNs = 0;
+        this._clearDueAdvance();
         this._invalidatePendingPresentation();
         this.kernel.pause();
         this._emit();
@@ -592,6 +595,7 @@ export class SimulationEngine {
     stop({ reset = true, dispatchEpisode = true } = {}) {
         this._advanceGeneration += 1;
         this._pendingFrameNs = 0;
+        this._clearDueAdvance();
         this._invalidatePendingPresentation();
         this.accumulator = 0;
         this.accumulatorNs = 0;
@@ -607,6 +611,7 @@ export class SimulationEngine {
     reset(episodeSpec = null) {
         this._advanceGeneration += 1;
         this._pendingFrameNs = 0;
+        this._clearDueAdvance();
         this._invalidatePendingPresentation();
         this.frames = 0;
         this.accumulator = 0;
@@ -763,9 +768,7 @@ export class SimulationEngine {
         this.rafId = requestAnimationFrame(this._frame);
         browserSimulationPerformance.recordRaf(nowMs);
 
-        const rawFrameDt = (nowMs - this.lastFrameMs) / 1000;
-        this.lastFrameMs = nowMs;
-        const frameDt = clamp(rawFrameDt, 0, this.maxFrameDt);
+        const frameDt = this._takeFrameDt(nowMs);
 
         if (this.controls) {
             const cameraControlsEnabled = this.modules.controls
@@ -776,11 +779,8 @@ export class SimulationEngine {
 
         if (this.status === "playing") {
             if (this.renderRuntime) {
-                const maxDebtNs = Math.max(this.stepNs, Math.round(this.maxFrameDt * 1e9));
-                this._pendingFrameNs = Math.min(
-                    maxDebtNs,
-                    this._pendingFrameNs + Math.max(0, Math.round(frameDt * 1e9)),
-                );
+                this._clearDueAdvance();
+                this._accruePendingFrame(frameDt);
                 this._launchAsyncAdvance();
             } else {
                 try {
@@ -826,10 +826,61 @@ export class SimulationEngine {
             if (this._advanceInFlight !== pending) return;
             this._advanceInFlight = null;
             this._servicePendingPresentation();
-            if (generation === this._advanceGeneration && this._pendingFrameNs > 0) {
-                queueMicrotask(() => this._launchAsyncAdvance());
-            }
+            if (generation !== this._advanceGeneration) return;
+            if (this._pendingFrameNs > 0) queueMicrotask(() => this._launchAsyncAdvance());
+            else this._armDueAdvance();
         });
+    }
+
+    // Wall time is shared by RAF and the due-step timer. RAF timestamps can
+    // precede a timer's `now`, so the accounted point only moves forward.
+    _takeFrameDt(nowMs) {
+        const elapsedMs = nowMs - this.lastFrameMs;
+        if (!(elapsedMs > 0)) return 0;
+        this.lastFrameMs = nowMs;
+        return clamp(elapsedMs / 1000, 0, this.maxFrameDt);
+    }
+
+    _accruePendingFrame(frameDt) {
+        const maxDebtNs = Math.max(this.stepNs, Math.round(this.maxFrameDt * 1e9));
+        this._pendingFrameNs = Math.min(
+            maxDebtNs,
+            this._pendingFrameNs + Math.max(0, Math.round(frameDt * 1e9)),
+        );
+    }
+
+    /**
+     * Launch the next realtime step when it falls due instead of waiting for
+     * the next RAF. A capture step that overruns the budget otherwise idles
+     * until the following display frame. Hidden documents keep RAF pacing.
+     */
+    _armDueAdvance() {
+        this._clearDueAdvance();
+        if (!this.looping || this.status !== "playing" || !this.renderRuntime) return;
+        if (!this.realtime || !this.deterministic || !(this.stepNs > 0)) return;
+        if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+        if (typeof setTimeout !== "function") return;
+        const speed = this.speed > 0 ? this.speed : 1;
+        const elapsedMs = Math.max(0, this._nowMs() - this.lastFrameMs);
+        const remainingNs = Math.max(0, this.stepNs - this.accumulatorNs) / speed;
+        const dueMs = Math.max(0, remainingNs / 1e6 - elapsedMs);
+        const generation = this._advanceGeneration;
+        this._dueAdvanceTimer = setTimeout(() => {
+            this._dueAdvanceTimer = null;
+            if (generation !== this._advanceGeneration || !this.looping || this.status !== "playing") return;
+            this._accruePendingFrame(this._takeFrameDt(this._nowMs()));
+            if (this.accumulatorNs + this._pendingFrameNs * speed < this.stepNs) {
+                this._armDueAdvance();
+                return;
+            }
+            this._launchAsyncAdvance();
+        }, dueMs);
+    }
+
+    _clearDueAdvance() {
+        if (this._dueAdvanceTimer === null) return;
+        clearTimeout(this._dueAdvanceTimer);
+        this._dueAdvanceTimer = null;
     }
 
     _handleAdvanceError(error) {

@@ -668,6 +668,123 @@ test("inline lease release presents the latest camera frame and retains fallback
     engine.dispose();
 });
 
+function withFakeTimers(run) {
+    const originalSetTimeout = globalThis.setTimeout;
+    const originalClearTimeout = globalThis.clearTimeout;
+    const timers = new Map();
+    let nextId = 1;
+    globalThis.setTimeout = (callback, delay) => {
+        const id = nextId++;
+        timers.set(id, { callback, delay });
+        return id;
+    };
+    globalThis.clearTimeout = (id) => { timers.delete(id); };
+    const fire = (id) => {
+        const timer = timers.get(id);
+        timers.delete(id);
+        timer.callback();
+    };
+    return Promise.resolve(run({ timers, fire })).finally(() => {
+        globalThis.setTimeout = originalSetTimeout;
+        globalThis.clearTimeout = originalClearTimeout;
+    });
+}
+
+function dueStepHarness(clock) {
+    const { engine } = harness({ nowMs: () => clock.now });
+    const advances = [];
+    engine.renderRuntime = { implementation: "worker", presentationBlocked: false };
+    engine.render = () => {};
+    engine._emitFrame = () => {};
+    engine._advanceSimulationAsync = (frameDt) => {
+        advances.push(frameDt);
+        return Promise.resolve();
+    };
+    engine.status = "playing";
+    engine.looping = true;
+    engine.realtime = true;
+    engine.deterministic = true;
+    engine.speed = 1;
+    engine.stepNs = 20_000_000;
+    engine.accumulatorNs = 5_000_000;
+    engine.lastFrameMs = 100;
+    return { engine, advances };
+}
+
+const flushAdvance = () => new Promise((resolve) => setImmediate(resolve));
+
+test("realtime advance launches the next step when due instead of waiting for RAF", async () => {
+    await withFakeTimers(async ({ timers, fire }) => {
+        const clock = { now: 103 };
+        const { engine, advances } = dueStepHarness(clock);
+        try {
+            engine._pendingFrameNs = 1;
+            engine._launchAsyncAdvance();
+            await flushAdvance();
+            assert.equal(advances.length, 1);
+            assert.equal(timers.size, 1);
+            const [[id, timer]] = [...timers];
+            // 15 ms of step debt remain, 3 ms of which already elapsed since the last accounting.
+            assert.ok(Math.abs(timer.delay - 12) < 1e-9);
+            clock.now = 115;
+            fire(id);
+            await flushAdvance();
+            assert.equal(advances.length, 2);
+            assert.ok(Math.abs(advances[1] - 0.015) < 1e-12);
+            assert.equal(engine.lastFrameMs, 115);
+            // An earlier RAF timestamp must not re-credit the time the timer consumed.
+            assert.equal(engine._takeFrameDt(110), 0);
+            assert.equal(engine.lastFrameMs, 115);
+            engine.stopLoop();
+            assert.equal(timers.size, 0);
+        } finally {
+            engine.dispose();
+        }
+    });
+});
+
+test("an early due-step timer re-arms without launching an empty advance", async () => {
+    await withFakeTimers(async ({ timers, fire }) => {
+        const clock = { now: 100 };
+        const { engine, advances } = dueStepHarness(clock);
+        try {
+            engine._armDueAdvance();
+            const [[id]] = [...timers];
+            clock.now = 110;
+            fire(id);
+            await flushAdvance();
+            assert.equal(advances.length, 0);
+            assert.equal(timers.size, 1);
+            assert.equal(engine._pendingFrameNs, 10_000_000);
+            engine.pause();
+            assert.equal(timers.size, 0);
+        } finally {
+            engine.dispose();
+        }
+    });
+});
+
+test("hidden documents and non-realtime runs keep RAF-only pacing", async () => {
+    await withFakeTimers(async ({ timers }) => {
+        const clock = { now: 100 };
+        const { engine } = dueStepHarness(clock);
+        const previousDocument = globalThis.document;
+        globalThis.document = { visibilityState: "hidden" };
+        try {
+            engine._armDueAdvance();
+            assert.equal(timers.size, 0);
+            globalThis.document = { visibilityState: "visible" };
+            engine.realtime = false;
+            engine._armDueAdvance();
+            assert.equal(timers.size, 0);
+        } finally {
+            if (previousDocument === undefined) delete globalThis.document;
+            else globalThis.document = previousDocument;
+            engine.dispose();
+        }
+    });
+});
+
 test("late async advancement cannot emit state after stop invalidates its generation", async () => {
     const originalRaf = globalThis.requestAnimationFrame;
     const originalCancel = globalThis.cancelAnimationFrame;

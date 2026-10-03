@@ -1288,15 +1288,23 @@ export function calibrationWarpTable(calibration) {
     const linearTx = new Float64Array(count);
     const linearTy = new Float64Array(count);
     const { fx, fy, cx, cy } = checked.intrinsics;
+    // Zero distortion is the identity map. The pixel→normalized→pixel round
+    // trip is not exact in floating point and can push a border row below 0,
+    // which would mark it invalid.
+    const zeroDistortion = checked.distortion.coefficients.every((value) => value === 0);
     for (let y = 0; y < height; y += 1) {
         for (let x = 0; x < width; x += 1) {
             const index = y * width + x;
-            const source = undistortWithCheckedDistortion(
-                { x: (x - cx) / fx, y: (y - cy) / fy },
-                checked.distortion,
-            );
-            const mappedX = source.x * fx + cx;
-            const mappedY = source.y * fy + cy;
+            let mappedX = x;
+            let mappedY = y;
+            if (!zeroDistortion) {
+                const source = undistortWithCheckedDistortion(
+                    { x: (x - cx) / fx, y: (y - cy) / fy },
+                    checked.distortion,
+                );
+                mappedX = source.x * fx + cx;
+                mappedY = source.y * fy + cy;
+            }
             sourceX[index] = mappedX;
             sourceY[index] = mappedY;
             if (mappedX >= 0 && mappedX <= width - 1 && mappedY >= 0 && mappedY <= height - 1) {
@@ -1318,7 +1326,24 @@ export function calibrationWarpTable(calibration) {
             }
         }
     }
+    // Identity flags only admit tables whose slow-path result is already an
+    // exact copy: every pixel valid and mapped onto itself. Linear output is a
+    // copy only when the residual offset cannot move a rounded value of a
+    // small-integer image (max 65535 * 2e-9 < 0.5).
+    let nearestIdentity = true;
+    let maxResidual = 0;
+    for (let index = 0; index < count && nearestIdentity; index += 1) {
+        if (valid[index] !== 1 || nearestPixel[index] !== index) {
+            nearestIdentity = false;
+            break;
+        }
+        const x = index % width;
+        const y = (index - x) / width;
+        maxResidual = Math.max(maxResidual, Math.abs(sourceX[index] - x), Math.abs(sourceY[index] - y));
+    }
     const table = Object.freeze({
+        nearestIdentity,
+        smallIntegerLinearIdentity: nearestIdentity && maxResidual <= 1e-9,
         sourceX,
         sourceY,
         valid,
@@ -1357,11 +1382,24 @@ export function warpCalibratedImage({
     if (destination === data) {
         throw contractError("VISUAL_IMAGE_BUFFER_INVALID", "Warping requires a separate output buffer.");
     }
-    destination.fill(0);
     const mask = validity && validity.length >= width * height ? validity : new Uint8Array(width * height);
-    mask.fill(0);
     const table = calibrationWarpTable(checked);
     const integerOutput = isIntegerTypedArray(destination);
+    const identityCopy = interpolation === "nearest"
+        ? table.nearestIdentity
+        : table.smallIntegerLinearIdentity
+            && integerOutput
+            && destination.constructor === data.constructor
+            && destination.BYTES_PER_ELEMENT <= 2;
+    if (identityCopy) {
+        destination.set(data);
+        destination.fill(0, count);
+        mask.fill(1, 0, width * height);
+        mask.fill(0, width * height);
+        return Object.freeze({ data: destination, validity: mask });
+    }
+    destination.fill(0);
+    mask.fill(0);
     for (let pixelIndex = 0; pixelIndex < width * height; pixelIndex += 1) {
         if (table.valid[pixelIndex] !== 1) continue;
         mask[pixelIndex] = 1;

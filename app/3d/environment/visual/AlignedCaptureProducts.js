@@ -1036,6 +1036,18 @@ export class AlignedCaptureProducts {
         return normalized;
     }
 
+    _normalizePackedRegion(packed, job) {
+        const length = job.readWidth * job.readHeight * 4;
+        const view = new job.ArrayType(packed.buffer, packed.byteOffset + job.byteOffset, length);
+        const flipped = this._acquireBuffer(job.ArrayType, length);
+        const normalized = normalizeImageRows(view, job.readWidth, job.readHeight, 4, {
+            inputRows: "bottom-left",
+            output: flipped,
+        });
+        if (normalized !== flipped) flipped.set(normalized);
+        return flipped;
+    }
+
     async _readRenderTarget(target, ArrayType, signal, attachmentIndex = 0) {
         const readbackStart = performance.now();
         abortIfRequested(signal);
@@ -1110,26 +1122,33 @@ export class AlignedCaptureProducts {
         for (const job of pending) {
             if (job.settled) continue;
             if (!job.filled) {
-                if (job.slot?.gl?.isContextLost?.()) {
-                    throw new Error("WebGL2 context was lost during asynchronous readback.");
-                }
-                if (!job.slot?.pending) {
-                    this._abandonPackSlot(job.slot);
-                    throw new Error("Asynchronous PBR readback lost its fence before readback.");
-                }
-                if (!this._runRendererSync(() => this._tryFinishPackedRead(job.slot, job.buffer))) {
-                    if (job.slot?.gl?.isContextLost?.()) {
+                const group = job.group;
+                if (!group.filled) {
+                    const slot = group.slot;
+                    if (slot?.gl?.isContextLost?.()) {
                         throw new Error("WebGL2 context was lost during asynchronous readback.");
                     }
-                    if (!job.slot?.pending) {
-                        this._abandonPackSlot(job.slot);
+                    if (!slot?.pending) {
+                        this._abandonPackSlot(slot);
                         throw new Error("Asynchronous PBR readback lost its fence before readback.");
                     }
-                    waiting = true;
-                    continue;
+                    if (!this._runRendererSync(() => this._tryFinishPackedRead(slot, group.packed))) {
+                        if (slot?.gl?.isContextLost?.()) {
+                            throw new Error("WebGL2 context was lost during asynchronous readback.");
+                        }
+                        if (!slot?.pending) {
+                            this._abandonPackSlot(slot);
+                            throw new Error("Asynchronous PBR readback lost its fence before readback.");
+                        }
+                        waiting = true;
+                        continue;
+                    }
+                    group.filled = true;
                 }
                 job.filled = true;
-                job.rgba = this._normalizeRead(job.buffer, job.readWidth, job.readHeight);
+                job.rgba = this._normalizePackedRegion(group.packed, job);
+                group.remaining -= 1;
+                if (group.remaining === 0) this._releaseBuffer(group.packed);
             }
             if (job.needsValidity && !getValidity()) continue;
             job.settle(job.rgba);
@@ -1172,40 +1191,52 @@ export class AlignedCaptureProducts {
 
         const pump = () => this._pumpPackedJobs(pending, () => validity);
 
-        const beginPipelineJob = (job) => {
-            const target = assertCaptureTargetSize(
-                job.draw() ?? (typeof job.target === "function" ? job.target() : job.target),
-                width,
-                height,
-                job.label ?? `${passSet.family} capture`,
-            );
-            const readWidth = target.width;
-            const readHeight = target.height;
-            const buffer = this._acquireBuffer(job.ArrayType, readWidth * readHeight * 4);
+        // Every job draws, then reads into its own offset of one shared PBO
+        // behind one fence, so the family costs one getBufferSubData.
+        const beginPipelineBatch = (batch) => {
+            const byteLengths = batch.map((job) => pixels * 4 * job.ArrayType.BYTES_PER_ELEMENT);
+            const totalBytes = byteLengths.reduce((sum, value) => sum + value, 0);
+            const slot = this._openPackedBatch(totalBytes);
+            const packed = this._acquireBuffer(Uint8Array, totalBytes);
+            const group = { slot, packed, remaining: batch.length, filled: false };
+            const issued = [];
+            let byteOffset = 0;
             try {
-                pending.push({
-                    ...job,
-                    target,
-                    readWidth,
-                    readHeight,
-                    buffer,
-                    slot: this._beginPackedRead(target, buffer, job.attachmentIndex ?? 0),
-                    filled: false,
-                    settled: false,
-                    rgba: null,
-                });
+                for (const [index, job] of batch.entries()) {
+                    const target = assertCaptureTargetSize(
+                        job.draw() ?? (typeof job.target === "function" ? job.target() : job.target),
+                        width,
+                        height,
+                        job.label ?? `${passSet.family} capture`,
+                    );
+                    this._readPackedRegion(slot, target, job.ArrayType, job.attachmentIndex ?? 0, byteOffset);
+                    issued.push({
+                        ...job,
+                        target,
+                        readWidth: target.width,
+                        readHeight: target.height,
+                        group,
+                        slot,
+                        byteOffset,
+                        filled: false,
+                        settled: false,
+                        rgba: null,
+                    });
+                    byteOffset += byteLengths[index];
+                }
+                this._closePackedBatch(slot, totalBytes);
             } catch (error) {
-                this._releaseBuffer(buffer);
+                this._abandonPackSlot(slot);
+                this._releaseBuffer(packed);
                 throw error;
             }
+            pending.push(...issued);
         };
 
         const flushPipelineJobs = () => {
             if (queuedPipelineJobs.length === 0) return;
             const batch = queuedPipelineJobs.splice(0, queuedPipelineJobs.length);
-            this._withCaptureRendererSync(() => {
-                for (const job of batch) beginPipelineJob(job);
-            });
+            this._withCaptureRendererSync(() => beginPipelineBatch(batch));
             pump();
         };
 
@@ -1372,35 +1403,27 @@ export class AlignedCaptureProducts {
                     this._releaseBuffer(semantic);
                     this._releaseBuffer(instance);
                 } else {
-                    // Depth+validity and id attachments share one renderer snapshot.
+                    // Depth+validity and id attachments share one renderer snapshot and one PBO.
                     const batch = queuedPipelineJobs.splice(0, queuedPipelineJobs.length);
-                    this._withCaptureRendererSync(() => {
-                        for (const job of batch) beginPipelineJob(job);
-                        this._drawIdAttachments(prepared.scene, idTarget);
-                        for (const [attachmentIndex, resultName] of [[0, "semanticId"], [1, "instanceId"]]) {
-                            const buffer = this._acquireBuffer(
-                                Uint8Array,
-                                idTarget.width * idTarget.height * 4,
-                            );
-                            try {
-                                pending.push({
-                                    needsValidity: true,
-                                    target: idTarget,
-                                    readWidth: idTarget.width,
-                                    readHeight: idTarget.height,
-                                    buffer,
-                                    slot: this._beginPackedRead(idTarget, buffer, attachmentIndex),
-                                    filled: false,
-                                    settled: false,
-                                    rgba: null,
-                                    settle: settleId(resultName),
-                                });
-                            } catch (error) {
-                                this._releaseBuffer(buffer);
-                                throw error;
-                            }
-                        }
-                    });
+                    let idDrawn = false;
+                    for (const [attachmentIndex, resultName] of [[0, "semanticId"], [1, "instanceId"]]) {
+                        batch.push({
+                            needsValidity: true,
+                            ArrayType: Uint8Array,
+                            attachmentIndex,
+                            label: "Analytic id attachments",
+                            target: idTarget,
+                            draw: () => {
+                                if (!idDrawn) {
+                                    this._drawIdAttachments(prepared.scene, idTarget);
+                                    idDrawn = true;
+                                }
+                                return idTarget;
+                            },
+                            settle: settleId(resultName),
+                        });
+                    }
+                    this._withCaptureRendererSync(() => beginPipelineBatch(batch));
                     pump();
                 }
             } else if (wantSemantic) {
@@ -1601,6 +1624,30 @@ export class AlignedCaptureProducts {
             this._captureTimings.readbackBytes += Number(buffer.byteLength) || 0;
         }
         return slot;
+    }
+
+    _openPackedBatch(byteLength) {
+        const slot = this._acquirePackSlot(byteLength);
+        if (!slot.openBatch()) {
+            this._abandonPackSlot(slot);
+            throw new Error("Asynchronous PBR readback buffer is still awaiting readback.");
+        }
+        return slot;
+    }
+
+    _readPackedRegion(slot, target, ArrayType, attachmentIndex, byteOffset) {
+        const gl = slot.gl;
+        const type = ArrayType === Float32Array ? gl.FLOAT : gl.UNSIGNED_BYTE;
+        slot.readRegion(0, 0, target.width, target.height, gl.RGBA, type, attachmentIndex, byteOffset);
+    }
+
+    _closePackedBatch(slot, byteLength) {
+        if (!slot.closeBatch()) {
+            throw new Error("Asynchronous PBR readback could not fence its pixel-pack batch.");
+        }
+        if (this._captureTimings) {
+            this._captureTimings.readbackBytes += Number(byteLength) || 0;
+        }
     }
 
     _tryFinishPackedRead(slot, buffer) {

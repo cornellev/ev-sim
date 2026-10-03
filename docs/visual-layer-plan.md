@@ -3513,3 +3513,45 @@ the post-render target, and allocate and issue the PBO within the same short
 lease. Issued dimensions are retained independently while the fence is pending,
 so an intervening presentation cannot change row normalization. Worker, inline
 PBO, and synchronous readback retain identical product and cadence contracts.
+
+### 2026-10-02 — Capture readback batching, shadow-copy warning, and due-step pacing
+
+Performance maintenance only; no VIS milestone, provider version, product
+encoding, run/episode/world hash, or fixed-step sensor contract changes.
+
+A Chrome 154 trace showed the corrected camera step blocking 11–17 ms on the
+PBR worker for a 320x180 RGB capture, plus an idle wait for the next RAF after
+each capture step, which together held the run near 0.94x realtime. It also
+showed `READ-usage buffer was written, then fenced, but written again before
+being read back` on every capture. Root cause: Chromium change 7cc1fc67ea
+(“Remove buffer mapping commands from the gles2 cmd decoder”) made WebGL2
+`getBufferSubData` a synchronous `GetBufferSubDataCHROMIUM` round trip that
+never consumes or frees the client readback shadow allocated at `fenceSync`.
+Only `bufferData` or `deleteBuffer` frees it, so every reuse of a pooled
+`PixelPackSlot` triggered the warning and a wasted GPU-process shadow copy.
+
+- `PixelPackSlot` re-specifies storage (`bufferData`) immediately before the
+  first `readPixels` of every batch. It also exposes `openBatch` /
+  `readRegion(byteOffset)` / `closeBatch` so several reads share one fence and
+  one `getBufferSubData`.
+- `AlignedCaptureProducts` issues each pass family as one packed batch. Visual
+  validity+beauty is one round trip instead of two. Analytic
+  depth/validity+semantic+instance is one instead of three. Draw/read order,
+  renderer snapshots, and row normalization are unchanged. The hardware parity
+  spec asserts byte equality with injected fenced readback and no
+  shadow-copy warning across pooled-slot reuse.
+- `calibrationWarpTable` maps zero-distortion calibrations exactly onto
+  themselves. The previous pixel→normalized→pixel round trip landed at
+  `y = -1.4e-14` for the whole top row when `cy = (height - 1) / 2`, which
+  marked row 0 invalid and zeroed it. This is the only product byte change:
+  row 0 of zero-distortion cameras is now valid image data. `warpCalibratedImage`
+  copies directly when the table is an exact identity. Distorted calibrations
+  keep the existing path and bytes.
+- `SimulationEngine` arms one timer for the next realtime step's due time
+  after an async advance leaves less than one step of debt, instead of waiting
+  for the next RAF. RAF and the timer share a monotonic wall-time accounting
+  point. Hidden documents, non-realtime, and non-deterministic pacing keep
+  RAF-only behavior. Budget, sub-step cap, debt clamp, and
+  `effectiveRealtimeRate` are unchanged.
+
+The action-tape characterization regenerates without delta.

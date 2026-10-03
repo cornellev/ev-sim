@@ -4,9 +4,9 @@ cev-sim is a browser-based autonomous vehicle and cev-sim workbench. It uses Nex
 
 ## Requirements
 
-- Node.js and npm.
-- Python 3.9+ only if you plan to run the external orchestrator.
-- Optional ROS 2 environment if you want the orchestrator to bridge real ROS 2 topics.
+- Node.js `>=22.22.2 <23` and npm.
+- Python 3.10–3.13 only for the Gymnasium client in `python/`. See [Python headless](python-headless.md).
+- The ROS orchestrator is a separate optional repository. See [ROS Integration](ros-integration.md).
 
 ## Install
 
@@ -27,10 +27,12 @@ curl -fsSL https://raw.githubusercontent.com/cornellev/ev-sim/main/install.sh | 
 curl -fsSL https://raw.githubusercontent.com/cornellev/ev-sim/main/install.sh | bash -s -- --start
 ```
 
+The installer creates `.env.local` and asks whether to enable the marketplace. Enter, `y`, or `yes` writes `CEV_SIM_MARKETPLACE_ENABLED=1`. `n` or `no` writes `0`. An existing assignment is kept unless `--marketplace` or `--no-marketplace` is passed. A run with no terminal creates the file and leaves that setting unchanged, which leaves the marketplace enabled.
+
 If you already cloned the repo:
 
 ```bash
-npm install
+npm ci
 ```
 
 ## Run The App

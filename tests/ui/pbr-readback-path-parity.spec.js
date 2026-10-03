@@ -25,6 +25,10 @@ test.use({ launchOptions: { args: ["--enable-gpu", "--ignore-gpu-blocklist", "--
 
 test("pipelined PBO readback matches injected fenced readback bytes", async ({ page }) => {
     test.setTimeout(180_000);
+    const shadowWarnings = [];
+    page.on("console", (message) => {
+        if (/READ-usage buffer/.test(message.text())) shadowWarnings.push(message.text());
+    });
     await installModuleRoutes(page);
     await page.goto("/");
     const softwareRenderer = await page.evaluate(() => {
@@ -214,13 +218,18 @@ test("pipelined PBO readback matches injected fenced readback bytes", async ({ p
                     products: ["axial-depth", "semantic-id", "instance-id", "validity"],
                     bindings: runtime.analyticBindings,
                 });
-                const captured = await products.captureAlignedProducts({
-                    visualPassSet,
-                    visualRenderables: new Map(),
-                    analyticPassSet,
-                    analyticRenderables: runtime.analyticRenderables,
-                    signal: new AbortController().signal,
-                });
+                // The second capture reuses pooled pixel-pack slots, which is
+                // where Chrome reports a discarded readback shadow copy.
+                let captured = null;
+                for (let attempt = 0; attempt < 2; attempt += 1) {
+                    captured = await products.captureAlignedProducts({
+                        visualPassSet,
+                        visualRenderables: new Map(),
+                        analyticPassSet,
+                        analyticRenderables: runtime.analyticRenderables,
+                        signal: new AbortController().signal,
+                    });
+                }
                 const pipelined = products._alignedProducts?._pipelinesReads?.() ?? null;
                 products.dispose();
                 return {
@@ -282,4 +291,5 @@ test("pipelined PBO readback matches injected fenced readback bytes", async ({ p
         semantic: true,
         instance: true,
     });
+    expect(shadowWarnings).toEqual([]);
 });

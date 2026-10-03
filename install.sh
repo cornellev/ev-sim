@@ -7,8 +7,10 @@
 #   EV_SIM_DIR / --dir DIR       Install directory (default: ./ev-sim)
 #   EV_SIM_BRANCH / --branch B   Git branch (default: main)
 #   EV_SIM_REPO                  Override clone URL
-#   --no-install                 Clone only; skip npm install
+#   --no-install                 Clone only; skip npm ci
 #   --start                      Run npm run dev after install
+#   --marketplace                Write CEV_SIM_MARKETPLACE_ENABLED=1 to .env.local
+#   --no-marketplace             Write CEV_SIM_MARKETPLACE_ENABLED=0 to .env.local
 #   -h, --help                   Show help
 
 set -euo pipefail
@@ -18,6 +20,9 @@ BRANCH="${EV_SIM_BRANCH:-main}"
 INSTALL_DIR="${EV_SIM_DIR:-}"
 SKIP_NPM=0
 START_DEV=0
+# Empty means ask. 1 or 0 skips the prompt.
+MARKETPLACE_CHOICE=""
+MARKETPLACE_FLAG_SET=0
 REQUIRED_NODE_VERSION="22.22.2"
 SUPPORTED_NODE_MAJOR=22
 
@@ -53,9 +58,17 @@ Usage:
 Options:
   --dir DIR        Install into DIR (default: ./ev-sim)
   --branch NAME    Clone branch NAME (default: main)
-  --no-install     Skip npm install
+  --no-install     Skip npm ci
   --start          Start the dev server after install
+  --marketplace    Enable the marketplace in .env.local
+  --no-marketplace Disable the marketplace in .env.local
   -h, --help       Show this help
+
+The installer creates .env.local in the install directory. Without
+--marketplace or --no-marketplace it asks whether to enable the marketplace.
+Enter, y, or yes writes CEV_SIM_MARKETPLACE_ENABLED=1. n or no writes 0.
+An existing assignment is kept unless a flag is passed.
+A non-interactive run creates the file and leaves that setting unchanged.
 
 Environment:
   EV_SIM_DIR, EV_SIM_BRANCH, EV_SIM_REPO, NO_COLOR
@@ -69,6 +82,22 @@ while [[ $# -gt 0 ]]; do
     --branch)     BRANCH="${2:-}"; shift 2 || fail "--branch requires a name" ;;
     --no-install) SKIP_NPM=1; shift ;;
     --start)      START_DEV=1; shift ;;
+    --marketplace)
+      if [[ "$MARKETPLACE_FLAG_SET" -eq 1 && "$MARKETPLACE_CHOICE" != "1" ]]; then
+        fail "Pass only one of --marketplace or --no-marketplace"
+      fi
+      MARKETPLACE_CHOICE=1
+      MARKETPLACE_FLAG_SET=1
+      shift
+      ;;
+    --no-marketplace)
+      if [[ "$MARKETPLACE_FLAG_SET" -eq 1 && "$MARKETPLACE_CHOICE" != "0" ]]; then
+        fail "Pass only one of --marketplace or --no-marketplace"
+      fi
+      MARKETPLACE_CHOICE=0
+      MARKETPLACE_FLAG_SET=1
+      shift
+      ;;
     -h|--help)    usage; exit 0 ;;
     *)            fail "Unknown option: $1 (try --help)" ;;
   esac
@@ -153,6 +182,81 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# Replace KEY= in .env.local, or append it. Other lines stay as they are.
+write_env_assignment() {
+  local file="$1"
+  local key="$2"
+  local value="$3"
+  local tmp
+  tmp="$(mktemp -t ev-sim-env.XXXXXX)"
+  if [[ -f "$file" ]] && grep -q "^${key}=" "$file"; then
+    awk -v key="$key" -v value="$value" '
+      index($0, key "=") == 1 { print key "=" value; next }
+      { print }
+    ' "$file" >"$tmp"
+    cat "$tmp" >"$file"
+    rm -f "$tmp"
+    return
+  fi
+  rm -f "$tmp"
+  if [[ -s "$file" && -n "$(tail -c 1 "$file" || true)" ]]; then
+    printf '\n' >>"$file"
+  fi
+  printf '%s=%s\n' "$key" "$value" >>"$file"
+}
+
+configure_local_env() {
+  local env_file="${INSTALL_DIR}/.env.local"
+  local answer=""
+
+  step "Local environment"
+
+  if [[ -e "$env_file" && ! -f "$env_file" ]]; then
+    fail "${env_file} exists and is not a file"
+  fi
+  if [[ ! -e "$env_file" ]]; then
+    (
+      umask 077
+      cat >"$env_file" <<'EOF'
+# Local environment for ev-sim. Not committed.
+# NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=
+EOF
+    )
+    ok "Created .env.local"
+  else
+    info "Found existing .env.local"
+  fi
+
+  if [[ "$MARKETPLACE_FLAG_SET" -eq 0 ]] && grep -q "^CEV_SIM_MARKETPLACE_ENABLED=" "$env_file"; then
+    info "Kept existing CEV_SIM_MARKETPLACE_ENABLED"
+    return
+  fi
+
+  if [[ -z "$MARKETPLACE_CHOICE" ]]; then
+    if [[ -r /dev/tty && -w /dev/tty ]] && : >/dev/tty </dev/tty 2>/dev/null; then
+      printf '  Enable the marketplace? [%sY%s/n] ' "$BOLD" "$RESET" >/dev/tty
+      if ! IFS= read -r answer </dev/tty; then
+        answer=""
+      fi
+      answer="$(printf '%s' "$answer" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+      case "$answer" in
+        n|no) MARKETPLACE_CHOICE=0 ;;
+        *) MARKETPLACE_CHOICE=1 ;;
+      esac
+    else
+      info "No terminal — left CEV_SIM_MARKETPLACE_ENABLED unchanged"
+      return
+    fi
+  fi
+
+  write_env_assignment "$env_file" "CEV_SIM_MARKETPLACE_ENABLED" "$MARKETPLACE_CHOICE"
+  if [[ "$MARKETPLACE_CHOICE" == "1" ]]; then
+    ok "Marketplace enabled in .env.local"
+  else
+    ok "Marketplace disabled in .env.local"
+  fi
+}
+
 # ── main ────────────────────────────────────────────────────────────────────
 banner
 
@@ -199,7 +303,7 @@ else
   PARENT="$(dirname "$INSTALL_DIR")"
   mkdir -p "$PARENT"
   spin_start "Cloning…"
-  if git clone --branch "$BRANCH" --depth 1 --quiet "$REPO_URL" "$INSTALL_DIR"; then
+  if git clone --branch "$BRANCH" --quiet "$REPO_URL" "$INSTALL_DIR"; then
     spin_stop ok "Cloned into ${INSTALL_DIR}"
   else
     spin_stop fail "git clone failed"
@@ -210,22 +314,24 @@ if [[ "$SKIP_NPM" -eq 1 ]]; then
   step "Skipping dependency install (--no-install)"
 else
   step "Installing dependencies"
-  info "npm install  (this may take a minute)"
+  info "npm ci  (this may take a minute)"
   LOG_FILE="$(mktemp -t ev-sim-npm.XXXXXX)"
-  spin_start "npm install…"
+  spin_start "npm ci…"
   if (
     cd "$INSTALL_DIR"
-    npm install --no-fund --no-audit >"$LOG_FILE" 2>&1
+    npm ci --include=dev --no-fund --no-audit >"$LOG_FILE" 2>&1
   ); then
     spin_stop ok "Dependencies installed"
     rm -f "$LOG_FILE"
   else
     spin_stop quiet
-    printf '  %s✗%s  npm install failed — last lines:\n' "$RED" "$RESET" >&2
+    printf '  %s✗%s  npm ci failed — last lines:\n' "$RED" "$RESET" >&2
     tail -n 20 "$LOG_FILE" >&2 || true
     fail "Full log: ${LOG_FILE}"
   fi
 fi
+
+configure_local_env
 
 # ── done ────────────────────────────────────────────────────────────────────
 printf '\n'
@@ -239,6 +345,13 @@ printf '    %snpm run dev%s\n' "$CYAN" "$RESET"
 printf '\n'
 printf '  Open the URL Next prints (usually %slocalhost:3000%s).\n' "$BOLD" "$RESET"
 printf '  Press %sEscape%s in the app for the mode menu.\n' "$BOLD" "$RESET"
+if [[ "$MARKETPLACE_CHOICE" == "1" ]]; then
+  printf '  Marketplace is enabled in %s.env.local%s.\n' "$BOLD" "$RESET"
+elif [[ "$MARKETPLACE_CHOICE" == "0" ]]; then
+  printf '  Marketplace is disabled in %s.env.local%s.\n' "$BOLD" "$RESET"
+fi
+printf '  Optional: %spython -m pip install -e ./python%s (Python 3.10–3.13, docs/python-headless.md)\n' "$CYAN" "$RESET"
+printf '  Optional: %snpx cev-sim --help%s (cameras need CEV_SIM_HEADLESS_SUPERVISOR_CONFIG)\n' "$CYAN" "$RESET"
 printf '\n'
 printf '  Docs → %sdocs/getting-started.md%s\n' "$DIM" "$RESET"
 printf '  %s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n' "$GREEN" "$RESET"

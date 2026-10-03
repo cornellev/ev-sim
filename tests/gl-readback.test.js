@@ -216,7 +216,7 @@ test("a fenced slot is replaced before it can be written again", async () => {
     slot.dispose();
 });
 
-test("PixelPackSlot allocates STREAM_READ storage lazily immediately before readPixels", async () => {
+test("PixelPackSlot re-specifies STREAM_READ storage immediately before every readPixels", async () => {
     const { PixelPackSlot } = await import("../app/3d/util/glReadback.js");
     const events = [];
     const gl = {
@@ -243,7 +243,72 @@ test("PixelPackSlot allocates STREAM_READ storage lazily immediately before read
     assert.deepEqual(events, ["allocate", "write"]);
     assert.equal(slot.poll(new Uint8Array(8)), true);
     assert.equal(slot.begin(0, 0, 1, 2, 0x1908, 0x1401), true);
-    assert.deepEqual(events, ["allocate", "write", "write"]);
+    // Chrome only frees a fenced buffer's readback shadow on bufferData/deleteBuffer.
+    assert.deepEqual(events, ["allocate", "write", "allocate", "write"]);
+    slot.dispose();
+});
+
+function batchGl(events) {
+    return {
+        PIXEL_PACK_BUFFER: 0x88eb,
+        STREAM_READ: 0x88e1,
+        STREAM_COPY: 0x88e2,
+        PACK_ALIGNMENT: 0x0d05,
+        READ_BUFFER: 0x0c02,
+        COLOR_ATTACHMENT0: 0x8ce0,
+        SYNC_GPU_COMMANDS_COMPLETE: 0x9117,
+        createBuffer: () => ({ id: "pbo" }),
+        bindBuffer() {},
+        bufferData(_target, size, usage) { events.push(["allocate", size, usage]); },
+        getParameter: () => 4,
+        pixelStorei() {},
+        readBuffer(buffer) { events.push(["read-buffer", buffer]); },
+        readPixels(_x, _y, _w, _h, _format, type, offset) { events.push(["write", type, offset]); },
+        fenceSync() { events.push("fence"); return { id: "sync" }; },
+        flush() {},
+        deleteSync() {},
+        deleteBuffer() {},
+        getBufferSubData(_target, offset, dest) { events.push(["copy", offset, dest.byteLength]); },
+        clientWaitSync: () => 0x9119,
+    };
+}
+
+test("PixelPackSlot batches regions at byte offsets behind one fence and one copy", async () => {
+    const { PixelPackSlot } = await import("../app/3d/util/glReadback.js");
+    const events = [];
+    const slot = new PixelPackSlot(batchGl(events), 8 + 32 + 8);
+    assert.equal(slot.openBatch(), true);
+    assert.equal(slot.openBatch(), false);
+    slot.readRegion(0, 0, 1, 2, 0x1908, 0x1401, 0, 0);
+    slot.readRegion(0, 0, 1, 2, 0x1908, 0x1406, 0, 8);
+    slot.readRegion(0, 0, 1, 2, 0x1908, 0x1401, 1, 40);
+    assert.equal(slot.pending, false);
+    assert.equal(slot.closeBatch(), true);
+    assert.equal(slot.pending, true);
+    assert.equal(slot.poll(new Uint8Array(48)), true);
+    assert.deepEqual(events, [
+        ["allocate", 48, 0x88e1],
+        ["write", 0x1401, 0],
+        ["read-buffer", 4],
+        ["write", 0x1406, 8],
+        ["read-buffer", 4],
+        ["read-buffer", 0x8ce1],
+        ["write", 0x1401, 40],
+        ["read-buffer", 4],
+        "fence",
+        ["copy", 0, 48],
+    ]);
+    slot.dispose();
+});
+
+test("PixelPackSlot honors a non-read usage and rejects regions outside a batch", async () => {
+    const { PixelPackSlot } = await import("../app/3d/util/glReadback.js");
+    const events = [];
+    const gl = batchGl(events);
+    const slot = new PixelPackSlot(gl, 8, { usage: gl.STREAM_COPY });
+    assert.throws(() => slot.readRegion(0, 0, 1, 2, 0x1908, 0x1401), /open batch/);
+    assert.equal(slot.begin(0, 0, 1, 2, 0x1908, 0x1401), true);
+    assert.deepEqual(events[0], ["allocate", 8, 0x88e2]);
     slot.dispose();
 });
 
