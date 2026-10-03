@@ -16,7 +16,7 @@ import {
     writeExclusiveDurable,
 } from "../registry/RegistryFs.js";
 import { marketplaceClientPaths } from "./MarketplaceClientLayout.js";
-import { MarketplacePublisherClient } from "./MarketplacePublisherClient.js";
+import { MARKETPLACE_PUBLICATION_TIMEOUT_MESSAGE, MarketplacePublisherClient } from "./MarketplacePublisherClient.js";
 import { fsyncDir } from "../../storage/visual-assets/atomicFs.js";
 
 const JOB_KIND = "cev-sim.marketplace-publish-job";
@@ -40,8 +40,11 @@ function conflict(message) {
     return marketplaceError(MARKETPLACE_ERROR_CODES.CONFLICT, message);
 }
 
-function sanitizedError(error) {
+export function publicationJobPublicError(error) {
     const code = error instanceof MarketplaceError ? error.code : MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED;
+    if (code === MARKETPLACE_ERROR_CODES.SOURCE_UNAVAILABLE && error?.message === MARKETPLACE_PUBLICATION_TIMEOUT_MESSAGE) {
+        return Object.freeze({ code, message: MARKETPLACE_PUBLICATION_TIMEOUT_MESSAGE });
+    }
     const messages = {
         [MARKETPLACE_ERROR_CODES.SOURCE_UNAVAILABLE]: "Marketplace registry is unavailable.",
         [MARKETPLACE_ERROR_CODES.AUTHENTICATION_REQUIRED]: "Publisher authentication failed.",
@@ -545,7 +548,7 @@ export class MarketplacePublishJobManager {
             if (plan) await this.#setDraftStates(plan, "needs-attention");
             await this.#update(jobId, (current) => TERMINAL_PHASES.has(current.phase) ? null : ({
                 phase: journal.completions.length ? "needs-attention" : "failed",
-                error: sanitizedError(error),
+                error: publicationJobPublicError(error),
                 progress: { ...current.progress, currentOperation: null },
             })).catch(() => {});
         } finally {

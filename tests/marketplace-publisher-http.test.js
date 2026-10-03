@@ -405,6 +405,10 @@ test("MKT-14 plugin publication prepares without mutation and commits an exact s
     const interrupted = await waitForPublishJob(service, interruptedJob.jobId);
     assert.equal(interrupted.job.phase, "needs-attention");
     assert.equal(interrupted.job.progress.operationsComplete, 1);
+    await assert.rejects(
+        () => service.replanPublishJob(interruptedJob.jobId, interrupted.job.revision),
+        (error) => error.code === "CONFLICT" && error.message === "A partially published job cannot be replanned.",
+    );
     await service.close();
     service = await MarketplaceService.open(dataDir, {
         pluginStore: storage.plugins,

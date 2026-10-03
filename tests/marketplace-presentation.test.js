@@ -10,6 +10,7 @@ import {
     formatCompatibilityIssue,
     healthTone,
     installPhaseLabel,
+    publicationRecoveryActions,
     publishPhaseLabel,
     releaseMatchesAdvisory,
     sortLabel,
@@ -66,6 +67,16 @@ test("marketplace presentation labels every install phase, publish phase, and dr
         assert.equal(label.includes("-"), false, phase);
         assert.notEqual(label, phase);
     }
+    assert.deepEqual(publicationRecoveryActions({ progress: { operationsComplete: 0, operationsTotal: 13 } }), {
+        replan: true,
+        resume: true,
+        detail: null,
+    });
+    const partial = publicationRecoveryActions({ progress: { operationsComplete: 3, operationsTotal: 13 } });
+    assert.equal(partial.replan, false);
+    assert.equal(partial.resume, true);
+    assert.match(partial.detail, /3 of 13 registry writes finished/u);
+    assert.equal(publicationRecoveryActions(null).replan, true);
     assert.equal(draftStateLabel("incomplete"), "Draft");
     assert.equal(draftStateLabel("ready"), "Ready");
     for (const state of PUBLICATION_DRAFT_STATES) {

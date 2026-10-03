@@ -3,7 +3,7 @@ import http from "node:http";
 import https from "node:https";
 
 import { assertCanonicalUuid, assertMarketplaceId, assertReleaseVersion, assertSha256 } from "../MarketplaceFormats.js";
-import { MARKETPLACE_LIMITS, MARKETPLACE_PREVIEW_MEDIA_TYPES } from "../MarketplaceContract.js";
+import { MARKETPLACE_CLIENT_LIMITS, MARKETPLACE_LIMITS, MARKETPLACE_PREVIEW_MEDIA_TYPES, MARKETPLACE_PUBLISHER_TRANSFER } from "../MarketplaceContract.js";
 import { MARKETPLACE_ERROR_CODES, MarketplaceError, marketplaceError } from "../MarketplaceErrors.js";
 import { MarketplaceRegistryReader, REGISTRY_HTTP_MAX_RANGE_BYTES } from "./RegistryReader.js";
 import { MarketplaceRegistryStore } from "./RegistryStore.js";
@@ -182,8 +182,8 @@ export class MarketplaceRegistryHttpServer {
         this.server = tls
             ? https.createServer({ ...tls, maxHeaderSize: 16 * 1024 }, handler)
             : http.createServer({ maxHeaderSize: 16 * 1024 }, handler);
-        this.server.headersTimeout = 15_000;
-        this.server.requestTimeout = 30_000;
+        this.server.headersTimeout = MARKETPLACE_CLIENT_LIMITS.requestTimeoutMs;
+        this.server.requestTimeout = MARKETPLACE_PUBLISHER_TRANSFER.capMs;
         this.server.keepAliveTimeout = 5_000;
     }
 

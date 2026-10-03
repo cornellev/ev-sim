@@ -76,6 +76,21 @@ export const MARKETPLACE_CLIENT_LIMITS = Object.freeze({
     requestTimeoutMs: 15_000,
 });
 
+// Publication bodies are budgeted separately from catalog and TUF fetches.
+// Floor covers item and release JSON. Transfer time assumes 256 KiB/s.
+// The cap is also the registry's whole-request body deadline.
+export const MARKETPLACE_PUBLISHER_TRANSFER = Object.freeze({
+    floorMs: 30_000,
+    bytesPerSecond: 256 * 1024,
+    capMs: 60 * 60 * 1000,
+});
+
+export function publisherTransferTimeoutMs(sizeBytes, limits = MARKETPLACE_PUBLISHER_TRANSFER) {
+    const bytes = Number.isSafeInteger(sizeBytes) && sizeBytes > 0 ? sizeBytes : 0;
+    const transferMs = Math.ceil((bytes * 1000) / limits.bytesPerSecond);
+    return Math.min(limits.capMs, limits.floorMs + transferMs);
+}
+
 export const MARKETPLACE_LIMITS = Object.freeze({
     jsonBytes: 8 * 1024 ** 2,
     catalogBytes: 64 * 1024 ** 2,

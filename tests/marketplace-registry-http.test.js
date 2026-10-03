@@ -7,6 +7,7 @@ import test from "node:test";
 
 import { Updater } from "tuf-js";
 
+import { MARKETPLACE_CLIENT_LIMITS, MARKETPLACE_PUBLISHER_TRANSFER } from "../server/marketplace/MarketplaceContract.js";
 import { marketplaceDocumentBytes } from "../server/marketplace/MarketplaceContracts.js";
 import {
     MarketplaceRegistryHttpServer,
@@ -88,6 +89,8 @@ test("MKT-04 loopback API serves one atomic TUF view with exact HTTP and range s
     const { root, artifact, artifactBytes, item, release } = await populatedRegistry(t);
     const server = await MarketplaceRegistryHttpServer.open(root);
     t.after(() => server.close());
+    assert.equal(server.server.requestTimeout, MARKETPLACE_PUBLISHER_TRANSFER.capMs);
+    assert.equal(server.server.headersTimeout, MARKETPLACE_CLIENT_LIMITS.requestTimeoutMs);
     const address = await server.listen({ port: 0 });
     const origin = `http://127.0.0.1:${address.port}`;
 

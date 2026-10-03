@@ -6,7 +6,10 @@ import path from "node:path";
 import test from "node:test";
 
 import { MarketplacePublicationCatalog } from "../server/marketplace/client/MarketplacePublicationCatalog.js";
-import { MarketplacePublisherClient } from "../server/marketplace/client/MarketplacePublisherClient.js";
+import { MARKETPLACE_PUBLICATION_TIMEOUT_MESSAGE, MarketplacePublisherClient } from "../server/marketplace/client/MarketplacePublisherClient.js";
+import { publicationJobPublicError } from "../server/marketplace/client/MarketplacePublishJobManager.js";
+import { MARKETPLACE_ERROR_CODES, marketplaceError } from "../server/marketplace/MarketplaceErrors.js";
+import { MARKETPLACE_PUBLISHER_TRANSFER, publisherTransferTimeoutMs } from "../server/marketplace/MarketplaceContract.js";
 import {
     MarketplacePublicationDraftStore,
     MarketplacePublisherProfileStore,
@@ -163,6 +166,63 @@ test("MKT-14 local publication catalog is deterministic, filterable, and exclude
     });
     assert.equal((await draftedCatalog.list({ status: "drafted" })).entries[0].contentKind, "plugin");
     await assert.rejects(catalog.list({ contentKind: "run-package" }), (error) => error.code === "DOCUMENT_INVALID");
+});
+
+test("MKT-14 publisher transfer budget grows with body size and caps at one hour", () => {
+    assert.equal(publisherTransferTimeoutMs(0), MARKETPLACE_PUBLISHER_TRANSFER.floorMs);
+    assert.equal(publisherTransferTimeoutMs(-1), MARKETPLACE_PUBLISHER_TRANSFER.floorMs);
+    assert.equal(publisherTransferTimeoutMs(43_804_672), 197_102);
+    assert.equal(publisherTransferTimeoutMs(8 * 1024 ** 3), MARKETPLACE_PUBLISHER_TRANSFER.capMs);
+});
+
+test("MKT-14 publisher transport reports a timeout separately from a connection failure", async () => {
+    const hanging = new MarketplacePublisherClient({
+        baseUrl: "https://registry.example.test/",
+        writeToken: "secret-write-token",
+        timeoutMs: 30,
+        fetchImpl: (_url, init) => new Promise((_resolve, reject) => {
+            const abort = () => reject(init.signal.reason ?? new Error("aborted"));
+            if (init.signal.aborted) abort();
+            else init.signal.addEventListener("abort", abort, { once: true });
+        }),
+    });
+    await new Promise((resolve, reject) => {
+        const keepAlive = setTimeout(() => reject(new Error("publisher timeout did not abort")), 1000);
+        hanging.publishItem(Buffer.from("{}")).then(
+            () => {
+                clearTimeout(keepAlive);
+                reject(new Error("expected the publication upload to time out"));
+            },
+            (error) => {
+                clearTimeout(keepAlive);
+                if (error.code === "SOURCE_UNAVAILABLE" && error.message === MARKETPLACE_PUBLICATION_TIMEOUT_MESSAGE) resolve();
+                else reject(error);
+            },
+        );
+    });
+    const down = new MarketplacePublisherClient({
+        baseUrl: "https://registry.example.test/",
+        writeToken: "secret-write-token",
+        fetchImpl: async () => { throw new Error("connect ECONNREFUSED"); },
+    });
+    await assert.rejects(
+        down.publishItem(Buffer.from("{}")),
+        (error) => error.code === "SOURCE_UNAVAILABLE" && error.message === "Marketplace registry is unavailable." && !error.message.includes("ECONNREFUSED"),
+    );
+    const closed = new MarketplacePublisherClient({
+        baseUrl: "https://registry.example.test/",
+        writeToken: "secret-write-token",
+        fetchImpl: async () => new Response(null, { status: 408 }),
+    });
+    await assert.rejects(
+        closed.publishItem(Buffer.from("{}")),
+        (error) => error.code === "SOURCE_UNAVAILABLE" && error.message === MARKETPLACE_PUBLICATION_TIMEOUT_MESSAGE,
+    );
+    const preserved = publicationJobPublicError(marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_UNAVAILABLE, MARKETPLACE_PUBLICATION_TIMEOUT_MESSAGE));
+    assert.equal(preserved.message, MARKETPLACE_PUBLICATION_TIMEOUT_MESSAGE);
+    const redacted = publicationJobPublicError(marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_UNAVAILABLE, "connect ECONNREFUSED 10.0.0.1 secret-write-token"));
+    assert.equal(redacted.code, "SOURCE_UNAVAILABLE");
+    assert.equal(redacted.message, "Marketplace registry is unavailable.");
 });
 
 test("MKT-14 publisher transport permits only fixed-origin publication operations and rejects redirects", async () => {

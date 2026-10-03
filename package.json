@@ -15,7 +15,7 @@
   "scripts": {
     "dev": "node server/App.js",
     "build": "next build",
-    "start": "node server/App.js",
+    "start": "NODE_ENV=production node server/App.js",
     "lint": "eslint",
     "test": "node --experimental-default-type=module --test tests/*.test.js",
     "test:marketplace": "node --experimental-default-type=module --test tests/marketplace-*.test.js",

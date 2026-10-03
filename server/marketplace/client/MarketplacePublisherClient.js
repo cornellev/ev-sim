@@ -1,16 +1,19 @@
 import https from "node:https";
 import { Readable } from "node:stream";
 
-import { MARKETPLACE_CLIENT_LIMITS, MARKETPLACE_CONTENT_KINDS } from "../MarketplaceContract.js";
+import { MARKETPLACE_CONTENT_KINDS, publisherTransferTimeoutMs } from "../MarketplaceContract.js";
 import { MARKETPLACE_ERROR_CODES, marketplaceError } from "../MarketplaceErrors.js";
 import { assertSourceUrl } from "../MarketplaceFormats.js";
 
 const EXACT_PATHS = new Set(["/v1/previews", "/v1/items", "/v1/releases"]);
 const ARTIFACT_PATH = /^\/v1\/artifacts\/([a-z-]+)$/u;
 
+export const MARKETPLACE_PUBLICATION_TIMEOUT_MESSAGE = "Marketplace publication timed out before the registry finished receiving it.";
+
 function failForStatus(status) {
     if (status === 401) return marketplaceError(MARKETPLACE_ERROR_CODES.AUTHENTICATION_REQUIRED, "Marketplace publisher authentication failed.");
     if (status === 403) return marketplaceError(MARKETPLACE_ERROR_CODES.RIGHTS_DENIED, "Marketplace publisher operation is not authorized.");
+    if (status === 408) return marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_UNAVAILABLE, MARKETPLACE_PUBLICATION_TIMEOUT_MESSAGE);
     if (status === 409) return marketplaceError(MARKETPLACE_ERROR_CODES.CONFLICT, "Marketplace registry rejected a conflicting publication.");
     if (status === 413) return marketplaceError(MARKETPLACE_ERROR_CODES.LIMIT_EXCEEDED, "Marketplace registry rejected an oversized publication.");
     if (status >= 400 && status < 500) return marketplaceError(MARKETPLACE_ERROR_CODES.DOCUMENT_INVALID, "Marketplace registry rejected the publication document.");
@@ -55,9 +58,10 @@ function privateTlsFetch(credential) {
 }
 
 export class MarketplacePublisherClient {
-    constructor({ baseUrl, writeToken, transportCredential = null, fetchImpl = globalThis.fetch, timeoutMs = MARKETPLACE_CLIENT_LIMITS.requestTimeoutMs }) {
+    constructor({ baseUrl, writeToken, transportCredential = null, fetchImpl = globalThis.fetch, timeoutMs = null }) {
         assertSourceUrl(baseUrl);
         if (typeof writeToken !== "string" || !writeToken || /\s/u.test(writeToken)) throw new TypeError("Publisher write token is invalid.");
+        if (timeoutMs !== null && (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1)) throw new TypeError("Publisher timeout is invalid.");
         this.baseUrl = baseUrl;
         this.origin = new URL(baseUrl).origin;
         this.writeToken = writeToken;
@@ -80,7 +84,7 @@ export class MarketplacePublisherClient {
 
     async request(pathName, { method, body, mediaType, sizeBytes, track = null, signal = null } = {}) {
         if (!["POST", "PUT"].includes(method)) throw new TypeError("Publisher method is not allowed.");
-        const timeout = AbortSignal.timeout(this.timeoutMs);
+        const timeout = AbortSignal.timeout(this.timeoutMs ?? publisherTransferTimeoutMs(sizeBytes));
         const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
         const headers = {
             authorization: `Bearer ${this.writeToken}`,
@@ -100,6 +104,7 @@ export class MarketplacePublisherClient {
             });
         } catch (error) {
             if (signal?.aborted) throw marketplaceError(MARKETPLACE_ERROR_CODES.CANCELLED, "Marketplace publication was cancelled.");
+            if (timeout.aborted) throw marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_UNAVAILABLE, MARKETPLACE_PUBLICATION_TIMEOUT_MESSAGE, { cause: error });
             throw marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_UNAVAILABLE, "Marketplace registry is unavailable.", { cause: error });
         }
         if (response.status >= 300 && response.status < 400) {

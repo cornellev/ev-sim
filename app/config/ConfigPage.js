@@ -738,13 +738,15 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                     </div>
                     {draft && (
                         <div className="space-y-2 border-t border-[var(--slate-border)] p-3">
-                            <div className="flex gap-2">
-                                <Action compact icon={<IconCopy size={14} stroke={1.75} />} label="Duplicate" onClick={duplicate} disabled={busy} />
-                                <Action compact icon={<IconDownload size={14} stroke={1.75} />} label="Export bundle" onClick={exportBundle} disabled={busy} />
-                                <Action compact icon={<IconDownload size={14} stroke={1.75} />} label="Export template" onClick={exportTemplate} disabled={busy} />
+                            <div className="grid min-w-0 gap-1.5">
+                                <Action compact align="start" className="w-full" icon={<IconCopy size={14} stroke={1.75} />} label="Duplicate" onClick={duplicate} disabled={busy} />
+                                <Action compact align="start" className="w-full" icon={<IconDownload size={14} stroke={1.75} />} label="Export bundle" onClick={exportBundle} disabled={busy} />
+                                <Action compact align="start" className="w-full" icon={<IconDownload size={14} stroke={1.75} />} label="Export template" onClick={exportTemplate} disabled={busy} />
+                            </div>
+                            <div className="flex min-w-0 items-center gap-2">
+                                <p className="min-w-0 flex-1 truncate font-mono text-[11px] text-[var(--slate-muted)]" title={saved?.definitionHash || undefined}>{saved?.definitionHash || "Unsaved"}</p>
                                 <IconButton label="Delete manifest" onClick={remove} disabled={busy} className="text-[var(--slate-danger)]"><IconTrash size={14} stroke={1.75} /></IconButton>
                             </div>
-                            <p className="truncate font-mono text-[11px] text-[var(--slate-muted)]">{saved?.definitionHash || "Unsaved"}</p>
                         </div>
                     )}
                 </aside>
@@ -2300,6 +2302,17 @@ function Toggle({ label, value, onChange }) {
     return <SharedSwitch label={label} checked={value} onCheckedChange={onChange} />;
 }
 
-function Action({ icon, label, onClick, disabled = false, primary = false, compact = false }) {
-    return <Button disabled={disabled} size={compact ? "compact" : "default"} variant={primary ? "primary" : "default"} onClick={() => Promise.resolve(onClick?.()).catch(() => {})}>{icon}{label}</Button>;
+function Action({ icon, label, onClick, disabled = false, primary = false, compact = false, align = "center", className }) {
+    return (
+        <Button
+            className={className}
+            disabled={disabled}
+            size={compact ? "compact" : "default"}
+            style={align === "start" ? { justifyContent: "flex-start" } : undefined}
+            variant={primary ? "primary" : "default"}
+            onClick={() => Promise.resolve(onClick?.()).catch(() => {})}
+        >
+            {icon}{label}
+        </Button>
+    );
 }

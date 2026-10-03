@@ -36,7 +36,12 @@ npm ci
 
 then run:
 ```
-npm run dev
+npm run build
+```
+
+then once done:
+```
+npm start
 ```
 
 then ur app should be running on localhost:3000 (amazing)

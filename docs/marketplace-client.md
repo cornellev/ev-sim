@@ -178,7 +178,14 @@ Imported publisher tokens and Ed25519 PKCS#8 keys are immutable owner-only
 secret files. The source read credential is never reused for writes.
 `MarketplacePublisherClient` permits only the configured origin and exact
 publication paths/methods, reuses the source TLS/mTLS transport material,
-rejects redirects and URL credentials, and sanitizes all failures.
+rejects redirects and URL credentials, and sanitizes all failures. Item and
+release writes use a 30-second floor. Artifact and preview uploads add transfer
+time at 256 KiB/s from `Content-Length`, capped at one hour. A client-side
+deadline or HTTP 408 is stored as "Marketplace publication timed out before
+the registry finished receiving it." Connection failures, redirects, and HTTP
+5xx stay "Marketplace registry is unavailable." The registry uses the same
+one-hour limit for a complete request body and still closes incomplete headers
+after 15 seconds. Catalog and TUF fetches keep the separate 15-second limit.
 
 Drafts are revisioned local documents. A draft pins one local selection and is
 either `create-item` or `new-release`; existing-item mode loads verified item
@@ -193,9 +200,11 @@ returns a canonical `planHash`. `POST /publisher/jobs` creates a durable job in
 `awaiting-confirmation`; `/commit` requires the current job revision and exact
 final plan hash. Artifact, preview, item, and locally signed release writes are
 journaled individually. SSE reports persisted job revisions. Pre-write jobs can
-be cancelled; interrupted committed jobs can be resumed or replanned only when
-no remote completion exists. Refresh failure after all writes is a warning, not
-a claim that the immutable publication rolled back.
+be cancelled. Interrupted committed jobs can be resumed. They can be replanned
+only when the journal has no remote completion; after the first journaled write,
+Prepare again is unavailable and Resume continues the remaining uploads.
+Refresh failure after all writes is a warning, not a claim that the immutable
+publication rolled back.
 
 The local publisher API is:
 

@@ -114,6 +114,19 @@ export function publishPhaseLabel(phase) {
     return PUBLISH_PHASE_LABELS[phase] ?? "Unavailable";
 }
 
+export function publicationRecoveryActions(job) {
+    const operationsComplete = Number.isSafeInteger(job?.progress?.operationsComplete) ? job.progress.operationsComplete : 0;
+    const operationsTotal = Number.isSafeInteger(job?.progress?.operationsTotal) ? job.progress.operationsTotal : 0;
+    if (operationsComplete > 0) {
+        return Object.freeze({
+            replan: false,
+            resume: true,
+            detail: `${operationsComplete} of ${operationsTotal} registry writes finished. Those writes stay on the registry. Resume continues the remaining uploads.`,
+        });
+    }
+    return Object.freeze({ replan: true, resume: true, detail: null });
+}
+
 export function sourceHealthLabel(status) {
     return HEALTH_LABELS[status] ?? "Unavailable";
 }

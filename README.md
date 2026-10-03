@@ -66,7 +66,8 @@ If ev-sim is already on this computer, run these commands:
 
 ```bash
 npm ci
-npm run dev
+npm run build
+npm start
 ```
 
 ## Workspaces
@@ -152,7 +153,7 @@ An import also registers the MCP endpoint `http://localhost:3000/mcp`.
 The transport is Streamable HTTP.
 
 Import does not run the app.
-Run `npm run dev` or `npm start` before MCP discovery.
+Run `npm start` (or `npm run dev` for dev) before MCP discovery.
 The server id is `cev-sim`.
 
 Load the plugin in one of these ways:

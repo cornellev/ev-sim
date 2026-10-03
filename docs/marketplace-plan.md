@@ -1485,6 +1485,17 @@ Local evidence on 2026-09-28:
 
 ## Decision log
 
+### 2026-10-03 — Publisher uploads use a size-based deadline
+
+Publication item and release writes use a 30-second floor. Artifact and preview
+uploads add transfer time at 256 KiB/s and cap at one hour. The registry body
+deadline matches that cap; incomplete headers still close after 15 seconds.
+Catalog and TUF fetches stay on the 15-second client limit. A client timeout
+or HTTP 408 is stored as a publication timeout instead of a generic
+registry-unavailable error. Prepare again remains available only before the
+first journaled registry write; Resume continues a partial publication. No
+marketplace schema, trust rule, semantic hash, or milestone status changed.
+
 ### 2026-10-03 — Widen fixture cevSim ranges for the 0.2.0 alpha line
 
 Bundled plugin and marketplace fixtures that are verified on both 0.1 and 0.2
