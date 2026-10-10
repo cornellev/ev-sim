@@ -250,6 +250,7 @@ function projectLockedVehicleRecord(record) {
         version: lock.version,
         runtimeHash: lock.runtimeHash,
         sensorTypes: [...(lock.sensorTypes ?? [])],
+        ...(lock.plants?.length ? { plants: [...lock.plants] } : {}),
     }));
     return {
         ...record,

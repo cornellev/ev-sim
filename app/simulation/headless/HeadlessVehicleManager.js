@@ -2,6 +2,7 @@ import {
     createVehiclePlantDefinition,
     KinematicVehiclePlant,
 } from "../vehicles/KinematicVehiclePlant.js";
+import { compilePlantModules, resolveVehiclePlantMount } from "../vehicles/WasmPlantStepper.js";
 import { bindRoadGroundSampler } from "../vehicles/roadGroundSampler.js";
 import { compareUtf8 } from "../world/WorldDescription.js";
 
@@ -14,11 +15,21 @@ export class HeadlessVehicleManager {
     async configureFromManifest(entries = [], _scene = null, options = {}) {
         const resolvedVehicles = options.resolvedVehicles ?? [];
         const dependencies = new Map(resolvedVehicles.map((entry) => [entry.actorId, entry]));
+        const plants = options.plants;
+        const compiled = plants instanceof Map ? await compilePlantModules(plants) : null;
         this.vehicles = [...entries]
             .sort((left, right) => compareUtf8(left.id, right.id))
-            .map((entry) => new KinematicVehiclePlant(
-                createVehiclePlantDefinition(entry, dependencies.get(entry.id)),
-            ));
+            .map((entry) => {
+                const dependency = dependencies.get(entry.id);
+                const mount = resolveVehiclePlantMount(dependency?.manifest, plants, compiled);
+                return new KinematicVehiclePlant(
+                    createVehiclePlantDefinition(entry, dependency, {
+                        plantPluginId: mount.plantPluginId,
+                        plantRuntimeHash: mount.plantRuntimeHash,
+                    }),
+                    { stepper: mount.plantStepper ?? null, unresolved: mount.unresolvedPluginPlant === true },
+                );
+            });
         bindRoadGroundSampler(this.vehicles, options);
         this.initialState = { vehicles: structuredClone(entries) };
         return this.vehicles;

@@ -33,12 +33,13 @@ import {
     sensorTypeRegistry,
 } from "../../3d/devices/SensorTypeRegistry.js";
 import { createAuthoringSensorRuntimeRegistry } from "../../3d/devices/SensorRuntimeRegistry.js";
-import { fetchSensorCatalog } from "../../plugin/PluginClient.js";
+import { fetchPlantCatalog, fetchSensorCatalog } from "../../plugin/PluginClient.js";
 import { BrowserSensorAuthoringSession } from "../../plugin/browser/BrowserSensorAuthoringSession.js";
 import PluginSensorAuthoringPanel from "../../plugin/browser/PluginSensorAuthoringPanel.js";
 import {
     pluginSensorCatalogEntryForType,
     sensorCatalogEntries,
+    stampVehiclePluginPlantLock,
     stampVehiclePluginSensorLock,
 } from "../../plugin/PluginSensorAuthoring.js";
 import SensorTypeAdder from "../../ui/SensorTypeAdder.js";
@@ -157,6 +158,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     const sensorSessionRef = useRef(null);
     if (!sensorSessionRef.current) sensorSessionRef.current = new BrowserSensorAuthoringSession();
     const [sensorCatalog, setSensorCatalog] = useState({ revision: 0, sensors: [] });
+    const [plantCatalog, setPlantCatalog] = useState([]);
     const [sensorRegistryTick, setSensorRegistryTick] = useState(0);
     const authoringOptions = () => ({
         sensorRegistry: sensorSessionRef.current?.registry ?? sensorTypeRegistry,
@@ -280,10 +282,14 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
         let mounted = true;
         const refresh = async () => {
             try {
-                const snapshot = await fetchSensorCatalog();
+                const [snapshot, plants] = await Promise.all([
+                    fetchSensorCatalog(),
+                    fetchPlantCatalog().catch(() => ({ plants: [] })),
+                ]);
                 if (!mounted) return;
                 sensorSessionRef.current?.registerCatalog(snapshot);
                 setSensorCatalog(snapshot);
+                setPlantCatalog(Array.isArray(plants?.plants) ? plants.plants : []);
                 bumpSensorRegistry();
             } catch (caught) {
                 if (mounted) setError(caught.message);
@@ -780,7 +786,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                                                     bumpRegistry={bumpSensorRegistry}
                                                 />
                                             )}
-                                            {item === "Wheels" && <WheelsTab draft={draft} update={update} selection={selection} setSelection={setSelection} derivedWheelbase={derivedWheelbase} />}
+                                            {item === "Wheels" && <WheelsTab draft={draft} update={update} selection={selection} setSelection={setSelection} derivedWheelbase={derivedWheelbase} plantCatalog={plantCatalog} onError={setError} />}
                                             {item === "Body" && <BodyTab draft={draft} update={update} selection={selection} setSelection={setSelection} fitBodyToModel={fitBodyToModel} />}
                                             {item === "JSON" && (
                                                 <div className="space-y-2">
@@ -1035,7 +1041,38 @@ function VehicleSensorDefinitionField({ field, sensor, change }) {
     );
 }
 
-function WheelsTab({ draft, update, selection, setSelection, derivedWheelbase }) {
+function WheelsTab({ draft, update, selection, setSelection, derivedWheelbase, plantCatalog = [], onError = () => {} }) {
+    const selectDynamics = (value) => {
+        const next = structuredClone(draft);
+        try {
+        if (!value) {
+            const currentPlant = draft.dynamics?.plant;
+            delete next.dynamics;
+            next.pluginLocks = (next.pluginLocks ?? []).flatMap((lock) => {
+                const plants = (lock.plants ?? []).filter((plantId) => plantId !== currentPlant);
+                const record = { ...lock };
+                if (plants.length > 0) record.plants = plants;
+                else delete record.plants;
+                if ((record.sensorTypes?.length ?? 0) === 0 && plants.length === 0) return [];
+                return [record];
+            });
+            if (next.pluginLocks.length === 0) delete next.pluginLocks;
+        } else {
+            const entry = plantCatalog.find((plant) => `${plant.packageHash}:${plant.id}` === value);
+            if (!entry) return;
+            next.dynamics = { plant: entry.id };
+            next.pluginLocks = stampVehiclePluginPlantLock(next.pluginLocks, entry);
+        }
+            update([], next);
+        } catch (caught) {
+            onError(caught.message);
+        }
+    };
+    const dynamicsValue = draft.dynamics?.plant
+        ? (plantCatalog.find((plant) => plant.id === draft.dynamics.plant)?.packageHash
+            ? `${plantCatalog.find((plant) => plant.id === draft.dynamics.plant).packageHash}:${draft.dynamics.plant}`
+            : "")
+        : "";
     const add = (mirrored) => {
         const base = { position: { x: 0.75, y: 0.25, z: 0.55 }, radius: 0.25, width: 0.15, steerable: false };
         const added = mirrored
@@ -1091,6 +1128,15 @@ function WheelsTab({ draft, update, selection, setSelection, derivedWheelbase })
             })}
             <Section title="Actuator limits">
                 <div className="grid grid-cols-2 gap-2">
+                    <Field label="Dynamics">
+                        <select aria-label="Dynamics" value={dynamicsValue} onChange={(event) => selectDynamics(event.target.value)}>
+                            <option value="">Built-in bicycle</option>
+                            {plantCatalog.map((plant) => (
+                                <option key={`${plant.packageHash}:${plant.id}`} value={`${plant.packageHash}:${plant.id}`}>{plant.id}</option>
+                            ))}
+                        </select>
+                    </Field>
+                    {draft.dynamics?.plant ? <p className="text-[11px] text-[var(--slate-muted)]">Plugin dynamics run only in a resolved run.</p> : null}
                     <Field label="Wheelbase (m)"><input type="number" min="0.01" step="0.01" value={draft.kinematics.wheelbase} onChange={(event) => update(["kinematics", "wheelbase"], Number(event.target.value))} /></Field>
                     <Field label="Max steering (rad)"><input type="number" min="0.01" step="0.01" value={draft.kinematics.maxSteeringAngle} onChange={(event) => update(["kinematics", "maxSteeringAngle"], Number(event.target.value))} /></Field>
                     <Field label="Max speed (m/s)"><input type="number" min="0.01" step="0.1" value={draft.kinematics.maxSpeed ?? 15} onChange={(event) => update(["kinematics", "maxSpeed"], Number(event.target.value))} /></Field>

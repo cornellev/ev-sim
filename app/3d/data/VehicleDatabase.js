@@ -2,6 +2,7 @@ import { Vehicle } from "../vehicles/Vehicle";
 import { Database } from "./Database";
 import { isBuiltInVehicleType, matchesVehicleType } from "../../vehicles/vehicleTypeResolution.js";
 import { bindRoadGroundSampler } from "../../simulation/vehicles/roadGroundSampler.js";
+import { compilePlantModules, resolveVehiclePlantMount } from "../../simulation/vehicles/WasmPlantStepper.js";
 import { syncVehicleFromPlant } from "../vehicles/VehiclePlantAdapter.js";
 import { createBrowserVehicle } from "../vehicles/createBrowserVehicle.js";
 
@@ -48,6 +49,8 @@ export class VehicleDatabase extends Database {
     async configureFromManifest(entries = [], scene = this.parent?.scene, options = {}) {
         const resolvedVehicles = options.resolvedVehicles ?? [];
         const dependencies = new Map(resolvedVehicles.map((entry) => [entry.actorId, entry]));
+        const plants = options.plants;
+        const compiled = plants instanceof Map ? await compilePlantModules(plants) : null;
         const desired = [...entries].sort((left, right) => left.id.localeCompare(right.id));
         const desiredIds = new Set(desired.map((entry) => entry.id));
         for (const vehicle of [...this.vehicles]) {
@@ -70,12 +73,18 @@ export class VehicleDatabase extends Database {
                 ?? (entry.type && !isBuiltInVehicleType(entry.type)
                     ? await this._loadVehicleManifest(entry.type)
                     : null);
+            const mount = resolveVehiclePlantMount(manifest, plants, compiled);
             vehicle = createBrowserVehicle(this, {
                 type: entry.type,
                 id: entry.id,
                 pose: { position, rotation },
                 manifest,
                 keyframes: entry.keyframes,
+                plantStepper: mount.plantStepper ?? null,
+                unresolvedPluginPlant: mount.unresolvedPluginPlant === true,
+                plantPluginId: mount.plantPluginId,
+                plantRuntimeHash: mount.plantRuntimeHash,
+                plants,
             });
             vehicle.telemetryId = entry.id;
             if (vehicle.plant) {

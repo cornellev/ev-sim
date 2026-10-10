@@ -3,6 +3,8 @@ import express from "express";
 import { storageEvents } from "../mcp/events.js";
 import { installPluginSource, removePluginSource } from "../plugins/pluginLibrary.js";
 import { installDetectedPlugin, listLocalPlugins } from "../plugins/localPlugins.js";
+import { readLocalBuilds } from "../plugins/plantBuild.js";
+import { listPlantCatalog } from "../plugins/plantCatalog.js";
 import { listSensorCatalog } from "../plugins/sensorCatalog.js";
 import { PLUGIN_PACKAGE_MEDIA_TYPE, PORTABLE_PLUGIN_MAX_JSON_BYTES } from "../plugins/PortablePluginFile.js";
 
@@ -74,10 +76,19 @@ export function createPluginRouter(service, { jsonParser } = {}) {
         }
     });
 
+    router.get("/plants", async (_req, res) => {
+        try {
+            res.json(await listPlantCatalog(service));
+        } catch (error) {
+            sendError(res, error);
+        }
+    });
+
     router.get("/local", async (_req, res) => {
         try {
             const packages = await listLocalPlugins();
-            res.json({ ok: true, packages });
+            const builds = await readLocalBuilds(service.plugins?.root);
+            res.json({ ok: true, packages, builds });
         } catch (error) {
             sendError(res, error);
         }

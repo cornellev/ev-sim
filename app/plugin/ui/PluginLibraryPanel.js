@@ -17,11 +17,11 @@ export function PluginLibraryPanel({ onOpenMarketplace = null }) {
     const [installFailure, setInstallFailure] = useState(null);
     const selectedDirectory = selectLocalPackage(library.packages, preferredDirectory);
     const entry = library.packages.find((item) => item.directory === selectedDirectory) ?? null;
-    const installState = localPackageInstallState(entry, library.installed);
+    const installState = localPackageInstallState(entry, library.installed, library.builds);
     const installError = installFailure?.directory === selectedDirectory ? installFailure.message : null;
 
     const install = async () => {
-        if (!entry || installState !== "detected" || installingDirectory) return;
+        if (!entry || (installState !== "detected" && installState !== "update-available") || installingDirectory) return;
         setInstallingDirectory(entry.directory);
         setInstallFailure(null);
         try {
@@ -63,6 +63,7 @@ export function PluginLibraryPanel({ onOpenMarketplace = null }) {
             <PluginPackageList
                 packages={library.packages}
                 installed={library.installed}
+                builds={library.builds}
                 selectedDirectory={selectedDirectory}
                 onSelect={setPreferredDirectory}
             />

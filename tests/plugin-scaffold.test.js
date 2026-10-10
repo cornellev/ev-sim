@@ -6,6 +6,7 @@ import test from "node:test";
 
 import { defaultCevSimEngineRange } from "../app/plugin/PluginEngineRange.js";
 import {
+    scaffoldPlantFiles,
     scaffoldPluginFiles,
     verifyPluginDirectory,
     writePluginScaffold,
@@ -39,6 +40,25 @@ test("example pure-pursuit package verifies with a UI-independent runtime hash",
         new TextDecoder().decode(Buffer.from(resource.files.find((entry) => entry.path === "runtime/index.js").data, "base64")),
         /SteerBlock/,
     );
+});
+
+test("plant scaffold writes a wasm crate and no JavaScript entry", async (t) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "cev-plant-scaffold-"));
+    t.after(() => fs.rm(root, { recursive: true, force: true }));
+    const files = scaffoldPlantFiles({ id: "acme.dynamics" });
+    assert.equal(files.document.entry, undefined);
+    assert.equal(files.document.plants[0].id, "acme.dynamics.bicycle");
+    assert.match(files.files["Cargo.toml"], /crate-type = \["rlib", "cdylib"\]/);
+    assert.match(files.files["src/lib.rs"], /pub fn step/);
+    assert.match(files.files["src/abi.rs"], /cev_plant_step/);
+    const written = await writePluginScaffold({
+        id: "acme.dynamics",
+        kind: "plant",
+        out: path.join(root, "acme.dynamics"),
+        verify: false,
+    });
+    assert.equal(written.document.entry, undefined);
+    assert.match(await fs.readFile(path.join(root, "acme.dynamics", "src", "lib.rs"), "utf8"), /pub fn step/);
 });
 
 test("scaffold rejects reserved plugin ids", () => {

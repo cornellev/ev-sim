@@ -203,7 +203,10 @@ version-scoped compatibility validation.
 
 Vehicle motion is owned by the Three.js-free `KinematicVehiclePlant`.
 Bicycle integration is planar (XZ + yaw); a cached road-ground sampler then
-sets pose Y and pitch from the paved surface. BigCar, IGVCCar, ScenarioCar, and
+sets pose Y and pitch from the paved surface. A manifest `dynamics.plant`
+asks a plugin WASM module to integrate that same planar state. The host
+still drapes Y and pitch, and the default bicycle stays in JavaScript.
+BigCar, IGVCCar, ScenarioCar, and
 manifest-backed browser vehicles are
 presentation adapters over the same numeric state used by
 `HeadlessVehicleManager`; GLTF models, wheels, paths, cameras, lane visuals,

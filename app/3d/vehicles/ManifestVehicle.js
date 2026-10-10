@@ -38,11 +38,19 @@ export class ManifestVehicle extends PhysicalVehicle {
 
         // Physics reads collisionDimensions for the swept AABB half extents.
         this.collisionDimensions = { ...this.manifest.boundingBox.size };
+        const catalogProvided = options.plants !== undefined;
         attachVehiclePlant(this, {
             id: this.telemetryId || this.manifest.id,
             type: this.manifest.id,
             pose: { position: this.position, rotation: this.rotation },
-        }, { manifest: this.manifest });
+        }, { manifest: this.manifest }, {
+            plantPluginId: options.plantPluginId,
+            plantRuntimeHash: options.plantRuntimeHash,
+            stepper: options.plantStepper ?? null,
+            unresolved: Boolean(this.manifest.dynamics?.plant)
+                && !options.plantStepper
+                && (options.unresolvedPluginPlant === true || !catalogProvided),
+        });
 
         this.cameraFocusOffset = new THREE.Vector3(
             this.manifest.egoCenter.x,

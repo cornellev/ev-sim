@@ -4133,6 +4133,8 @@ function vehicleManifestSummary(manifest) {
         definitionHash: manifest.definitionHash,
         modelAsset: manifest.model?.asset ?? null,
         updatedAt: manifest.updatedAt,
+        ...(manifest.pluginLocks ? { pluginLocks: manifest.pluginLocks } : {}),
+        ...(manifest.dynamics ? { dynamics: manifest.dynamics } : {}),
     };
 }
 

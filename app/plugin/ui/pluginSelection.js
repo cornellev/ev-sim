@@ -1,9 +1,11 @@
-export function localPackageInstallState(entry, installedPackages) {
+export function localPackageInstallState(entry, installedPackages, builds = []) {
     if (!entry?.document || entry.error) return "unavailable";
     const pluginId = typeof entry.document.id === "string" && entry.document.id ? entry.document.id : entry.id;
     const version = typeof entry.document.version === "string" ? entry.document.version : "";
     const packages = Array.isArray(installedPackages) ? installedPackages : [];
     const installed = packages.some((item) => item?.pluginId === pluginId && item?.version === version);
+    const record = (Array.isArray(builds) ? builds : []).find((item) => item?.directoryKey === entry.directory);
+    if (record && entry.sourceFingerprint && record.sourceFingerprint !== entry.sourceFingerprint) return "update-available";
     return installed ? "installed" : "detected";
 }
 

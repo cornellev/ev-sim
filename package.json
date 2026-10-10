@@ -48,6 +48,7 @@
     "plugin:pack": "node --experimental-default-type=module bin/cev-sim-plugin.js pack",
     "plugin:verify": "node --experimental-default-type=module bin/cev-sim-plugin.js verify",
     "fixtures:headless": "node --experimental-default-type=module scripts/generate-headless-fixtures.mjs",
+    "fixtures:plant": "node --experimental-default-type=module scripts/generate-plant-fixture.mjs",
     "fixtures:environment-editor": "node --experimental-default-type=module scripts/generate-environment-editor-fixtures.mjs",
     "test:ui": "playwright test --grep-invert @a11y",
     "test:a11y": "playwright test --grep @a11y"

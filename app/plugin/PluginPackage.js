@@ -6,6 +6,7 @@ import {
     sha256ExactBytes,
 } from "../simulation/visual/VisualLayer.js";
 import { assertPluginDocument, runtimeManifestProjection } from "./PluginDocument.js";
+import { assertPlantModuleBytes } from "./PlantModule.js";
 import { PLUGIN_ERROR_CODES, pluginError } from "./PluginErrors.js";
 
 export const PLUGIN_PACKAGE_KIND = "cev-sim.plugin-package";
@@ -154,11 +155,21 @@ export function analyzePluginModuleGraph(filesInput, document) {
         }
         imports.set(entry.path, staticImports(ast, entry.path).map((specifier) => resolveImport(entry.path, specifier, files)));
     }
-    for (const entry of [document.entry.runtime, document.entry.ui].filter(Boolean)) {
+    for (const entry of [document.entry?.runtime, document.entry?.ui].filter(Boolean)) {
         if (!files.has(entry)) throw pluginError(PLUGIN_ERROR_CODES.IMPORT_INVALID, `Plugin entry "${entry}" is missing.`, { path: entry });
     }
     for (const asset of document.editor?.assets ?? []) {
         if (!files.has(asset)) throw pluginError(PLUGIN_ERROR_CODES.INTEGRITY, `Declared editor asset "${asset}" is missing.`, { path: asset });
+    }
+    const editorAssets = new Set(document.editor?.assets ?? []);
+    const plantModules = [...new Set((document.plants ?? []).map((plant) => plant.module))].sort(utf8Compare);
+    for (const modulePath of plantModules) {
+        if (editorAssets.has(modulePath)) {
+            throw pluginError(PLUGIN_ERROR_CODES.INTEGRITY, `Plant module "${modulePath}" cannot be an editor asset.`, { path: modulePath });
+        }
+        const member = files.get(modulePath);
+        if (!member) throw pluginError(PLUGIN_ERROR_CODES.INTEGRITY, `Plant module "${modulePath}" is missing.`, { path: modulePath });
+        assertPlantModuleBytes(member.bytes, modulePath);
     }
     const closure = (root) => {
         if (!root) return [];
@@ -171,12 +182,15 @@ export function analyzePluginModuleGraph(filesInput, document) {
         visit(root);
         return [...found].sort(utf8Compare);
     };
-    const runtimeFiles = closure(document.entry.runtime);
-    const forbiddenRuntime = new Set([document.entry.ui, ...(document.editor?.assets ?? [])].filter(Boolean));
+    const runtimeFiles = [...new Set([
+        ...closure(document.entry?.runtime),
+        ...plantModules,
+    ])].sort(utf8Compare);
+    const forbiddenRuntime = new Set([document.entry?.ui, ...(document.editor?.assets ?? [])].filter(Boolean));
     const violation = runtimeFiles.find((path) => forbiddenRuntime.has(path));
     if (violation) throw pluginError(PLUGIN_ERROR_CODES.IMPORT_INVALID, `Runtime graph reaches UI/editor member "${violation}".`, { path: violation });
     const uiFiles = [...new Set([
-        ...closure(document.entry.ui),
+        ...closure(document.entry?.ui),
         ...(document.editor?.assets ?? []),
     ])].sort(utf8Compare);
     return Object.freeze({ runtimeFiles: Object.freeze(runtimeFiles), uiFiles: Object.freeze(uiFiles) });
@@ -209,9 +223,9 @@ function buildPackage(entries) {
         manifest: runtimeManifestProjection(document),
         files: metadata(graph.runtimeFiles),
     });
-    const hasUi = Boolean(document.entry.ui || document.editor?.assets?.length);
+    const hasUi = Boolean(document.entry?.ui || document.editor?.assets?.length);
     const uiHash = hasUi ? hashProjection("cev-sim.plugin-ui", {
-        entry: document.entry.ui ? { ui: document.entry.ui } : {},
+        entry: document.entry?.ui ? { ui: document.entry.ui } : {},
         editor: document.editor ?? null,
         files: metadata(graph.uiFiles),
     }) : null;

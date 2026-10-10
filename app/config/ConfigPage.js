@@ -62,6 +62,7 @@ import PluginSensorAuthoringPanel from "../plugin/browser/PluginSensorAuthoringP
 import {
     pluginSensorCatalogEntryForType,
     sensorCatalogEntries,
+    stampManifestPluginSelectionForPlant,
     stampManifestPluginSelectionForSensor,
 } from "../plugin/PluginSensorAuthoring.js";
 import SensorTypeAdder from "../ui/SensorTypeAdder.js";
@@ -1119,6 +1120,26 @@ function RunParameterDeclarations({ parameters, update }) {
     );
 }
 
+function PlantGrantAction({ draft, update, vehicle, vehicleCatalog }) {
+    const record = vehicleCatalog.find((entry) => entry.id === vehicle.type);
+    const plantId = record?.dynamics?.plant;
+    if (!plantId) return null;
+    const lock = (record.pluginLocks ?? []).find((entry) => entry.plants?.includes(plantId));
+    if (!lock) return null;
+    const artifact = (draft.plugins?.artifacts ?? []).find((entry) => entry.pluginId === lock.pluginId);
+    const ready = artifact
+        && artifact.expectedHash === lock.packageHash
+        && artifact.capabilities?.includes("plant.step");
+    if (ready) return null;
+    return (
+        <div className="mt-2">
+            <button type="button" className="text-[11px] text-[var(--slate-fg-2)]" onClick={() => update(["plugins"], stampManifestPluginSelectionForPlant(draft.plugins, lock))}>
+                Grant plant.step for {lock.pluginId}
+            </button>
+        </div>
+    );
+}
+
 function InitialState({ draft, update, vehicleCatalog = [] }) {
     if (draft.scenario) {
         return <StatusMessage tone="info" title="Initial state comes from the scenario">Actors, poses, routes, and initial speeds are resolved from the selected scenario. Clear the scenario selection to edit manifest-owned vehicles.</StatusMessage>;
@@ -1162,6 +1183,7 @@ function InitialState({ draft, update, vehicleCatalog = [] }) {
                         <button type="button" onClick={() => update(["initialState", "vehicles"], draft.initialState.vehicles.filter((_, candidate) => candidate !== index))} className="self-end pb-2 text-left text-[11px] text-[var(--slate-danger)]">Remove vehicle</button>
                     </div>
                     {!knownTypes.has(vehicle.type) && <p className="mt-2 text-[11px] text-[var(--slate-warning)]">This vehicle type no longer exists in the catalog; the run will fail to spawn it.</p>}
+                    <PlantGrantAction draft={draft} update={update} vehicle={vehicle} vehicleCatalog={vehicleCatalog} />
                     <VectorFields label="Position (m)" value={vehicle.pose.position} onChange={(axis, value) => update(["initialState", "vehicles", index, "pose", "position", axis], value)} />
                     <VectorFields label="Rotation (rad)" value={vehicle.pose.rotation} onChange={(axis, value) => update(["initialState", "vehicles", index, "pose", "rotation", axis], value)} />
                     <VectorFields label="Linear velocity (m/s)" value={vehicle.linearVelocity} onChange={(axis, value) => update(["initialState", "vehicles", index, "linearVelocity", axis], value)} />

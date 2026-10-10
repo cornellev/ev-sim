@@ -12,7 +12,9 @@ import {
     sensorCatalogEntries,
     sensorCatalogEntryKey,
     sensorCatalogEntryLabel,
+    stampManifestPluginSelectionForPlant,
     stampManifestPluginSelectionForSensor,
+    stampVehiclePluginPlantLock,
     stampVehiclePluginSensorLock,
     assertVehiclePluginLocksMatchRun,
 } from "../app/plugin/PluginSensorAuthoring.js";
@@ -338,4 +340,95 @@ test("stamping a run plugin selection adds required range-image grants", async (
     assert.equal(selection.enabled, true);
     assert.equal(selection.artifacts[0].expectedHash, resource.packageHash);
     assert.ok(selection.artifacts[0].capabilities.includes("sensors.sample.range-image"));
+});
+
+test("plant locks survive reconcile, block sensor replacement, and stamp run grants", async () => {
+    const hash = "a".repeat(64);
+    const runtime = "b".repeat(64);
+    const plant = {
+        pluginId: "acme.dynamics",
+        version: "1.0.0",
+        packageHash: hash,
+        runtimeHash: runtime,
+        plantId: "acme.dynamics.bicycle",
+    };
+    const locked = stampVehiclePluginPlantLock(undefined, plant);
+    assert.equal(locked[0].plants[0], "acme.dynamics.bicycle");
+    assert.equal(locked[0].sensorTypes.length, 0);
+    const kept = reconcileVehiclePluginLocks(locked, [], {
+        dynamics: { plant: "acme.dynamics.bicycle" },
+    });
+    assert.equal(kept[0].plants[0], "acme.dynamics.bicycle");
+    assert.equal(reconcileVehiclePluginLocks(locked, []), undefined);
+    const replaced = stampVehiclePluginPlantLock(locked, { ...plant, packageHash: "c".repeat(64), runtimeHash: "d".repeat(64) });
+    assert.equal(replaced[0].packageHash, "c".repeat(64));
+    const withSensor = stampVehiclePluginSensorLock([{
+        pluginId: plant.pluginId,
+        version: plant.version,
+        packageHash: hash,
+        runtimeHash: runtime,
+        sensorTypes: ["acme.dynamics.sensor"],
+    }], {
+        type: "acme.dynamics.sensor",
+        ownership: {
+            pluginId: plant.pluginId,
+            version: plant.version,
+            packageHash: hash,
+            runtimeHash: runtime,
+        },
+    });
+    assert.throws(() => stampVehiclePluginPlantLock(withSensor, {
+        ...plant,
+        packageHash: "e".repeat(64),
+        runtimeHash: "f".repeat(64),
+    }), /previous build/);
+    const manifest = normalizeVehicleManifest({
+        id: "plant-car",
+        dynamics: { plant: "acme.dynamics.bicycle" },
+        pluginLocks: locked,
+    });
+    assert.equal(manifest.dynamics.plant, "acme.dynamics.bicycle");
+    assert.equal(manifest.pluginLocks[0].plants[0], "acme.dynamics.bicycle");
+    const issues = validateVehicleManifest({
+        ...manifest,
+        dynamics: { plant: "missing.plant" },
+        pluginLocks: locked,
+    }).issues;
+    assert.ok(issues.some((issue) => issue.path === "dynamics.plant"));
+    const selection = stampManifestPluginSelectionForPlant(undefined, locked[0]);
+    assert.deepEqual(selection.artifacts[0].capabilities, ["plant.step"]);
+    const moved = stampManifestPluginSelectionForPlant(selection, { ...locked[0], packageHash: "9".repeat(64) });
+    assert.equal(moved.artifacts[0].expectedHash, "9".repeat(64));
+    assert.ok(moved.artifacts[0].capabilities.includes("plant.step"));
+    const resource = await pluginFixtureResource({ fixture: "test.plant-fixture" });
+    const verified = verifyPluginPackage(resource);
+    const vehicleLock = stampVehiclePluginPlantLock(undefined, {
+        pluginId: verified.document.id,
+        version: verified.document.version,
+        packageHash: resource.packageHash,
+        runtimeHash: resource.runtimeHash,
+        plantId: verified.document.plants[0].id,
+    });
+    assert.throws(() => assertVehiclePluginLocksMatchRun({
+        vehicles: [{ vehicleId: "ego", manifest: { pluginLocks: vehicleLock } }],
+        plugins: [{
+            pluginId: verified.document.id,
+            version: verified.document.version,
+            packageHash: resource.packageHash,
+            runtimeHash: resource.runtimeHash,
+            capabilities: [],
+        }],
+        pluginPackages: [resource],
+    }), /plant\.step/);
+    assertVehiclePluginLocksMatchRun({
+        vehicles: [{ vehicleId: "ego", manifest: { pluginLocks: vehicleLock } }],
+        plugins: [{
+            pluginId: verified.document.id,
+            version: verified.document.version,
+            packageHash: resource.packageHash,
+            runtimeHash: resource.runtimeHash,
+            capabilities: ["plant.step"],
+        }],
+        pluginPackages: [resource],
+    });
 });

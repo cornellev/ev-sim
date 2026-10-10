@@ -28,6 +28,11 @@ export function createBrowserVehicle(db, {
     manifest,
     keyframes,
     skipManifestDevices = false,
+    plantStepper = null,
+    unresolvedPluginPlant = false,
+    plantPluginId = "",
+    plantRuntimeHash = "",
+    plants = undefined,
 } = {}) {
     const resolvedType = type || "big-car";
     const position = toVector3(pose?.position);
@@ -45,5 +50,12 @@ export function createBrowserVehicle(db, {
         throw new Error(`Vehicle "${id || resolvedType}" references unknown type "${resolvedType}"; no built-in or saved vehicle manifest matches.`);
     }
 
-    return new ManifestVehicle(db, resolvedManifest, position, rotation, { skipManifestDevices });
+    return new ManifestVehicle(db, resolvedManifest, position, rotation, {
+        skipManifestDevices,
+        plantStepper,
+        unresolvedPluginPlant,
+        plantPluginId,
+        plantRuntimeHash,
+        plants,
+    });
 }

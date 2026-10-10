@@ -77,6 +77,15 @@ export async function fetchSensorCatalog() {
     return payload;
 }
 
+export async function fetchPlantCatalog() {
+    const response = await fetch("/api/storage/plugins/plants", { headers: { Accept: "application/json" } });
+    const payload = await response.json();
+    if (!response.ok || payload?.ok === false) {
+        throw new Error(payload?.error || payload?.message || "Could not load the plant catalog.");
+    }
+    return payload;
+}
+
 export async function fetchUnitCatalog() {
     const response = await fetch("/api/scripting/units", { headers: { Accept: "application/json" } });
     const payload = await response.json();

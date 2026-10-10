@@ -13,8 +13,12 @@ function copyRotation(target, source) {
 }
 
 export function attachVehiclePlant(vehicle, entry, dependency = null, options = {}) {
-    const plant = new KinematicVehiclePlant(createVehiclePlantDefinition(entry, dependency, options));
+    const plant = new KinematicVehiclePlant(
+        createVehiclePlantDefinition(entry, dependency, options),
+        { stepper: options.stepper ?? null, unresolved: options.unresolved === true },
+    );
     vehicle.plant = plant;
+    if (plant.dynamicsStatus) vehicle.dynamicsStatus = plant.dynamicsStatus;
     vehicle.collisionDimensions = { ...plant.collisionDimensions };
     syncPlantFromVehicle(vehicle);
     if (options.world || options.environment || options.getEnvironment) {

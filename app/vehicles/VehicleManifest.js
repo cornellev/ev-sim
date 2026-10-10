@@ -42,6 +42,15 @@ export const DEFAULT_ACTUATOR_LIMITS = Object.freeze({
     responseDelayNs: 0,
 });
 
+function normalizeVehicleDynamics(value) {
+    if (value == null) return undefined;
+    const source = object(value);
+    const unknown = Object.keys(source).find((key) => key !== "plant");
+    if (unknown) throw new Error(`vehicle manifest.dynamics contains unknown field "${unknown}".`);
+    const plant = text(source.plant, "vehicle manifest.dynamics.plant");
+    return plant ? { plant } : undefined;
+}
+
 function wheel(value = {}, index = 0) {
     const source = object(value);
     return {
@@ -170,9 +179,10 @@ export function normalizeVehicleManifest(value, {
     }, { migrateFromV1: sourceVersion < VEHICLE_MANIFEST_VERSION });
     const sensors = (Array.isArray(source.sensors) ? source.sensors : [])
         .map((entry, index) => normalizeVehicleSensor(entry, index, sensorRegistry));
+    const dynamics = normalizeVehicleDynamics(source.dynamics);
     const pluginLocks = source.pluginLocks === undefined || source.pluginLocks === null
         ? undefined
-        : reconcileVehiclePluginLocks(source.pluginLocks, sensors, { sensorRegistry });
+        : reconcileVehiclePluginLocks(source.pluginLocks, sensors, { sensorRegistry, dynamics });
     return {
         kind: VEHICLE_MANIFEST_KIND,
         version: VEHICLE_MANIFEST_VERSION,
@@ -194,6 +204,7 @@ export function normalizeVehicleManifest(value, {
         kinematics,
         sensors,
         ...(pluginLocks ? { pluginLocks } : {}),
+        ...(dynamics ? { dynamics } : {}),
         lidarZone: lidarZone(source.lidarZone),
     };
 }
@@ -201,6 +212,7 @@ export function normalizeVehicleManifest(value, {
 export function validateVehicleManifest(value, {
     sensorRegistry = sensorTypeRegistry,
     allowUnknownSensors = false,
+    plants = null,
 } = {}) {
     let manifest;
     try {
@@ -231,6 +243,17 @@ export function validateVehicleManifest(value, {
         }
     }
     issues.push(...collectVehiclePluginLockIssues(manifest, { sensorRegistry }));
+    if (manifest.dynamics?.plant && plants) {
+        const known = typeof plants.has === "function"
+            ? plants.has(manifest.dynamics.plant)
+            : Boolean(plants[manifest.dynamics.plant]);
+        if (!known) {
+            issues.push({
+                path: "dynamics.plant",
+                message: `Plant "${manifest.dynamics.plant}" is not declared by the resolved plugins.`,
+            });
+        }
+    }
     const vertexCount = manifest.lidarZone.vertices.length;
     for (const [index, triangle] of manifest.lidarZone.triangles.entries()) {
         if (triangle.some((vertexIndex) => vertexIndex < 0 || vertexIndex >= vertexCount)) {

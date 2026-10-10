@@ -39,6 +39,19 @@ test("localPackageInstallState matches plugin id and version", () => {
     assert.equal(localPackageInstallState(detected, [same]), "installed");
     assert.equal(localPackageInstallState({ id: "broken", error: "plugin.json is not valid JSON.", document: null }, [same]), "unavailable");
     assert.equal(localPackageInstallState(null, [same]), "unavailable");
+    const plant = {
+        ...detected,
+        sourceFingerprint: "abc",
+        directory: "acme.controls",
+    };
+    assert.equal(localPackageInstallState(plant, [same], [{
+        directoryKey: "acme.controls",
+        sourceFingerprint: "abc",
+    }]), "installed");
+    assert.equal(localPackageInstallState(plant, [same], [{
+        directoryKey: "acme.controls",
+        sourceFingerprint: "def",
+    }]), "update-available");
 });
 
 test("selectPackageHash distinguishes versions of the same plugin id", () => {

@@ -437,6 +437,7 @@ export class SimulationKernel {
                 resolvedVehicles: this.resolvedRun.vehicles || [],
                 world: this.resolvedRun.world,
                 environment: this.resolvedRun.environment,
+                plants: candidatePluginSession?.plants ?? new Map(),
             });
             this._configureControlRuntimeLimits(manifest);
             const renderRuntime = await this.context.rendering?.prepare?.(this.resolvedRun, {
