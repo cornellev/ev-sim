@@ -1,6 +1,6 @@
 # Vehicle manifests
 
-Custom vehicles are defined by saved `cev-sim.vehicle` version 1 documents. Each manifest is a single human-editable JSON file stored at `server/data/vehicles/<id>.json`, and the vehicle's 3D model (a self-contained `.glb` or `.gltf`) lives next to it under `server/data/vehicle-assets/<id>/`. The manifest id doubles as the vehicle `type` string used by run manifests, so a run's initial state can reference custom vehicles the same way it references `big-car`, `igvc-car`, or `scenario-car`.
+Custom vehicles are defined by saved `cev-sim.vehicle` documents. Version 2 is the default writer. Version 1 documents still load and migrate to version 2, including the permissive actuator defaults used by recorded replays. Version 3 is an explicit authoring migration and is never produced by a blank vehicle or by a built-in projection. Each manifest is a single human-editable JSON file stored at `server/data/vehicles/<id>.json`, and the vehicle's 3D model lives next to it under `server/data/vehicle-assets/<id>/`. The manifest id doubles as the vehicle `type` string used by run manifests, so a run's initial state can reference custom vehicles the same way it references `big-car`, `igvc-car`, or `scenario-car`.
 
 ## Authoring workflow
 
@@ -19,7 +19,7 @@ Editing areas:
 ```json
 {
     "kind": "cev-sim.vehicle",
-    "version": 1,
+    "version": 2,
     "id": "my-truck",
     "name": "My Truck",
     "description": "",
@@ -55,6 +55,21 @@ Editing areas:
 ```
 
 Conventions: all lengths are meters and angles radians, in the vehicle-local frame (`+X` forward, `+Y` up, `+Z` left, matching the built-in cars). `model.asset` is a file name resolved against `/api/storage/vehicle-assets/<vehicleId>/`. `lidarZone.vertices` is an array of `[x, y, z]` triples and `lidarZone.triangles` indexes into it; both are baked by the editor and regenerable from `params`.
+
+## Versions
+
+Version 1 and version 2 normalize to the version 2 shape above. That shape has no `model.dependencies`, `model.hiddenNodeIndices`, wheel `axle`, wheel `side`, or wheel `visual`. Built-in projections of `big-car`, `igvc-car`, and `scenario-car` are pinned to version 2, so opening, duplicating, or displaying them does not add axle roles or change their resolved hashes. New blank vehicles stay version 2 until transactional publication exists.
+
+Version 3 adds:
+
+- `model.dependencies`: sorted unique sibling filenames for the canonical model closure. Empty when `model.asset` is null.
+- `model.hiddenNodeIndices`: sorted unique source node indices whose subtrees are hidden. Empty on a model-free vehicle.
+- Optional wheel `axle` (`front` or `rear`) and `side` (`left` or `right`, with `+Z` left). Both are omitted on an unclassified wheel.
+- Optional wheel `visual: { kind: "model-node", nodeIndex }` when that wheel is bound to a source node. The display name comes from the model, not from a second stored name.
+
+Version 3 geometric scalars — model placement, body bounds, wheel position, radius, width, wheelbase, and maximum steering angle — are stored at six decimal places. Actuator speed, acceleration, jerk, steering rate, and delay keep the existing coercion. A standard axle is one left/right pair with shared X, Y, radius, width, and steerability, and mirrored Z. Front wheels steer and rear wheels are fixed. A complete front and rear layout, with no unclassified wheels, must store `kinematics.wheelbase` as the distance between the axle X positions. Normalization does not average a pair or overwrite that wheelbase; validation reports the mismatch instead. A partial layout or any unclassified wheel keeps the authored wheelbase.
+
+`planVehicleMigration()` proposes a version 3 draft, an asset plan, diagnostics, and the field changes. It does not write the vehicle. A layout whose derived wheelbase differs from the stored value, such as BigCar's 1.2446 m wheels at ±0.75 m (derived 1.5 m), stays blocked until that motion change is acknowledged. External model URLs stay blocked until a local package is selected. Saving a version 2 document over a stored version 3 document is rejected so a legacy writer cannot drop the version 3 fields. The pre-migration snapshot returned by the planner is persisted later, outside semantic asset storage.
 
 ## Runtime behavior
 

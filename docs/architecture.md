@@ -206,6 +206,11 @@ Bicycle integration is planar (XZ + yaw); a cached road-ground sampler then
 sets pose Y and pitch from the paved surface. A manifest `dynamics.plant`
 asks a plugin WASM module to integrate that same planar state. The host
 still drapes Y and pitch, and the default bicycle stays in JavaScript.
+Version 3 vehicle manifests add authoring fields for model dependencies,
+hidden nodes, and standard axles. Built-in projections and new blank vehicles
+stay version 2. The plant still integrates the authored `kinematics.wheelbase`;
+a version 3 document changes resolved identity only because the existing hash
+covers those fields.
 BigCar, IGVCCar, ScenarioCar, and
 manifest-backed browser vehicles are
 presentation adapters over the same numeric state used by

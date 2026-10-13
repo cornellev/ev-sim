@@ -118,7 +118,7 @@ const definitions = {
 
 const manifests = Object.fromEntries(BUILT_IN_VEHICLE_TYPES.map((id) => [
     id,
-    normalizeVehicleManifest(definitions[id], { allowMissingKind: true }),
+    normalizeVehicleManifest(definitions[id], { allowMissingKind: true, version: 2 }),
 ]));
 
 export function isBuiltInVehicleManifest(id) {

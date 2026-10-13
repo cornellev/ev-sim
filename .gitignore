@@ -94,3 +94,5 @@ public/visual-lab/experiment-1/browser/**/*.exr
 .next-verify
 
 supervisor.json
+
+todo.md

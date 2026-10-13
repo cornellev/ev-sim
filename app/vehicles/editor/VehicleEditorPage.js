@@ -81,6 +81,7 @@ import {
     useAuthoringMode,
     useWorkspaceGuard,
 } from "../../ui";
+import { degToRad, radToDeg } from "three/src/math/MathUtils.js";
 
 const TABS = ["Model", "LiDAR Zone", "Sensors", "Wheels", "Body", "JSON"];
 const HISTORY_LIMIT = 100;
@@ -807,7 +808,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     );
 }
 
-function ModelTab({ draft, update, busy, modelFileRef, uploadModelFile, selection, setSelection, modelVisible, setModelVisible, fitTarget, setFitTarget, fitModelToSize }) {
+function ModelTab({ draft, update, busy, modelFileRef, uploadModelFile, selection, setSelection, modelVisible, setModelVisible, fitTarget, setFitTarget, fitModelToSize }) {    
     return (
         <div className="space-y-4">
             <Section title="Source model">
@@ -836,7 +837,7 @@ function ModelTab({ draft, update, busy, modelFileRef, uploadModelFile, selectio
                 <Field label="Scale">
                     <input type="number" min="0.0001" step="0.0001" value={draft.model.scale} onChange={(event) => update(["model", "scale"], Number(event.target.value))} />
                 </Field>
-                <VectorFields label="Rotation (rad)" value={draft.model.rotation} onChange={(axis, value) => update(["model", "rotation", axis], value)} />
+                <VectorFields label="Rotation (rad)" value={(draft.model.rotation)} onChange={(axis, value) => update(["model", "rotation", axis], (value))} />
                 <VectorFields label="Offset (m)" value={draft.model.offset} onChange={(axis, value) => update(["model", "offset", axis], value)} scrub />
             </Section>
 

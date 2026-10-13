@@ -1,6 +1,7 @@
 'use client';
 
 import { cloneElement, isValidElement, useEffect, useMemo, useRef, useState } from "react";
+import { AlertDialog } from "radix-ui";
 import {
     IconCheck,
     IconCopy,
@@ -86,7 +87,6 @@ import {
     AsyncState,
     Button,
     Field as SharedField,
-    IconButton,
     StatusMessage,
     Switch as SharedSwitch,
     TabsContent,
@@ -98,6 +98,8 @@ import {
     readLastOpenWorkspaceId,
     writeLastOpenWorkspaceId,
 } from "../ui";
+import { radToDeg } from "three/src/math/MathUtils.js";
+import { degToRad } from "../util/Math.js";
 
 const TABS = ["Overview", "Scenario", "Initial State", "Clock", "Controls", "Sensors", "Scripts", "Topics", "Assertions", "Logging", "Provenance", "JSON"];
 const CANDIDATE_MODEL_ROLE_OPTIONS = [
@@ -258,6 +260,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
     const [rawError, setRawError] = useState(null);
     const [tab, setTab] = useState("Overview");
     const [busy, setBusy] = useState(false);
+    const [pendingDelete, setPendingDelete] = useState(null);
     const [error, setError] = useState(null);
     const [validation, setValidation] = useState(null);
     const [runState, setRunState] = useState(() => controller.getSnapshot());
@@ -657,14 +660,23 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
         await refreshCatalog(created.id);
     });
 
-    const remove = () => perform(async () => {
-        if (!window.confirm(`Delete “${draft.name}”?`)) return;
-        await deleteRunManifest(selectedId);
-        setSelectedId(null);
-        setSaved(null);
-        setDraft(null);
-        await refreshCatalog();
-    });
+    const requestDelete = () => {
+        if (!draft || !selectedId || busy) return;
+        setPendingDelete({ id: selectedId, name: draft.name, discardEdits: dirty });
+    };
+
+    const confirmDelete = () => {
+        const target = pendingDelete;
+        setPendingDelete(null);
+        if (!target) return Promise.resolve();
+        return perform(async () => {
+            await deleteRunManifest(target.id);
+            setSelectedId(null);
+            setSaved(null);
+            setDraft(null);
+            await refreshCatalog();
+        });
+    };
 
     const exportBundle = () => perform(async () => {
         const current = dirty ? await save() : saved;
@@ -718,6 +730,9 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                     </select>
                     <Action icon={<IconCheck size={14} stroke={1.75} />} label="Validate" onClick={validate} disabled={!draft || busy} />
                     <Action icon={<IconDeviceFloppy size={14} stroke={1.75} />} label="Save" onClick={save} disabled={!draft || !dirty || busy} />
+                    <div className="hidden max-[1023px]:block">
+                        <Action danger icon={<IconTrash size={14} stroke={1.75} />} label="Delete" onClick={requestDelete} disabled={!draft || busy} />
+                    </div>
                     <Action primary icon={<IconPlayerPlay size={14} stroke={1.75} />} label="Launch" onClick={launch} disabled={!draft || busy} />
                 </div>
             </header>
@@ -743,11 +758,9 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                                 <Action compact align="start" className="w-full" icon={<IconCopy size={14} stroke={1.75} />} label="Duplicate" onClick={duplicate} disabled={busy} />
                                 <Action compact align="start" className="w-full" icon={<IconDownload size={14} stroke={1.75} />} label="Export bundle" onClick={exportBundle} disabled={busy} />
                                 <Action compact align="start" className="w-full" icon={<IconDownload size={14} stroke={1.75} />} label="Export template" onClick={exportTemplate} disabled={busy} />
+                                <Action compact align="start" danger className="w-full" icon={<IconTrash size={14} stroke={1.75} />} label="Delete" onClick={requestDelete} disabled={busy} />
                             </div>
-                            <div className="flex min-w-0 items-center gap-2">
-                                <p className="min-w-0 flex-1 truncate font-mono text-[11px] text-[var(--slate-muted)]" title={saved?.definitionHash || undefined}>{saved?.definitionHash || "Unsaved"}</p>
-                                <IconButton label="Delete manifest" onClick={remove} disabled={busy} className="text-[var(--slate-danger)]"><IconTrash size={14} stroke={1.75} /></IconButton>
-                            </div>
+                            <p className="truncate font-mono text-[11px] text-[var(--slate-muted)]" title={saved?.definitionHash || undefined}>{saved?.definitionHash || "Unsaved"}</p>
                         </div>
                     )}
                 </aside>
@@ -865,6 +878,28 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                 </section>
             </div>
         </main>
+        <AlertDialog.Root open={Boolean(pendingDelete)} onOpenChange={(open) => !open && setPendingDelete(null)}>
+            <AlertDialog.Portal>
+                <AlertDialog.Overlay className="sf-dialog-overlay" onClick={() => setPendingDelete(null)} />
+                <AlertDialog.Content className="sf-dialog sf-guard-dialog">
+                    <header className="sf-dialog__header">
+                        <div>
+                            <AlertDialog.Title className="sf-dialog__title">
+                                Delete “{pendingDelete?.name}”?
+                            </AlertDialog.Title>
+                            <AlertDialog.Description className="sf-dialog__description">
+                                This removes the run configuration from the catalog. This cannot be undone.
+                                {pendingDelete?.discardEdits ? " Unsaved edits will be discarded." : ""}
+                            </AlertDialog.Description>
+                        </div>
+                    </header>
+                    <div className="sf-dialog__footer">
+                        <AlertDialog.Cancel asChild><Button>Cancel</Button></AlertDialog.Cancel>
+                        <Button variant="danger" disabled={busy} onClick={() => { confirmDelete().catch(() => {}); }}>Delete</Button>
+                    </div>
+                </AlertDialog.Content>
+            </AlertDialog.Portal>
+        </AlertDialog.Root>
         </AuthoringModeProvider>
     );
 }
@@ -2324,14 +2359,15 @@ function Toggle({ label, value, onChange }) {
     return <SharedSwitch label={label} checked={value} onCheckedChange={onChange} />;
 }
 
-function Action({ icon, label, onClick, disabled = false, primary = false, compact = false, align = "center", className }) {
+function Action({ icon, label, onClick, disabled = false, primary = false, danger = false, compact = false, align = "center", className }) {
+    const variant = primary ? "primary" : danger ? "danger" : "default";
     return (
         <Button
             className={className}
             disabled={disabled}
             size={compact ? "compact" : "default"}
             style={align === "start" ? { justifyContent: "flex-start" } : undefined}
-            variant={primary ? "primary" : "default"}
+            variant={variant}
             onClick={() => Promise.resolve(onClick?.()).catch(() => {})}
         >
             {icon}{label}

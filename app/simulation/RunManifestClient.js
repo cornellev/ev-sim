@@ -1,6 +1,7 @@
 import {
     storageDelete,
     storageGet,
+    storagePatch,
     storagePost,
     storagePostBinary,
     storagePut,

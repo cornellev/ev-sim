@@ -132,6 +132,7 @@ import {
 import {
     VEHICLE_BUNDLE_KIND,
     VEHICLE_BUNDLE_VERSION,
+    assertNoVehicleManifestDowngrade,
     normalizeVehicleManifest,
     validateVehicleManifest,
 } from "../../app/vehicles/VehicleManifest.js";
@@ -3035,6 +3036,7 @@ export class StorageService {
             if (!create && expectedRevision !== undefined && Number(expectedRevision) !== currentRevision) {
                 throw new Error(`Vehicle manifest revision conflict: expected ${expectedRevision}, current revision is ${currentRevision}.`);
             }
+            assertNoVehicleManifestDowngrade(current, manifest);
             const now = new Date().toISOString();
             const { registry } = await this._sensorRegistryForVehicle({ ...manifest, id: vehicleId });
             const normalized = normalizeVehicleManifest({ ...manifest, id: vehicleId }, { sensorRegistry: registry });

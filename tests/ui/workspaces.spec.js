@@ -188,6 +188,59 @@ test("scenario, experiment, and run configuration restore the last open document
     }
 });
 
+test("run configuration delete asks for confirmation before removing the manifest", async ({ page, request }) => {
+    test.setTimeout(120_000);
+    const suffix = Date.now().toString(36);
+    const manifestId = `pw-delete-run-${suffix}`;
+    const manifestName = `Delete me ${suffix}`;
+
+    const manifestResponse = await request.get("/api/storage/run-manifests");
+    expect(manifestResponse.ok()).toBeTruthy();
+    const manifestList = await manifestResponse.json();
+    const sourceManifest = (Array.isArray(manifestList) ? manifestList : manifestList.manifests || [])[0];
+    expect(sourceManifest?.id).toBeTruthy();
+
+    const created = await request.post(`/api/storage/run-manifests/${sourceManifest.id}/duplicate`, {
+        data: { id: manifestId, name: manifestName },
+    });
+    expect(created.ok(), await created.text()).toBeTruthy();
+
+    try {
+        await page.goto("/");
+        await openWorkspace(page, "Run configuration");
+        const manifestButton = page.getByRole("button", { name: new RegExp(`${manifestName}[\\s\\S]*${manifestId}`) });
+        await expect(manifestButton).toBeVisible({ timeout: 30_000 });
+        page.once("dialog", (dialog) => dialog.accept());
+        await manifestButton.click();
+        await expect(manifestButton).toHaveAttribute("aria-current", "page");
+
+        const deleteButton = page.locator("aside").getByRole("button", { name: "Delete", exact: true });
+        await deleteButton.click();
+        const dialog = page.getByRole("alertdialog", { name: new RegExp(`Delete “${manifestName}”`) });
+        await expect(dialog).toBeVisible();
+        await expect(dialog.getByText("This removes the run configuration from the catalog.")).toBeVisible();
+        await dialog.getByRole("button", { name: "Cancel" }).click();
+        await expect(dialog).toBeHidden();
+        await expect(manifestButton).toHaveAttribute("aria-current", "page");
+        const stillThere = await request.get(`/api/storage/run-manifests/${manifestId}`);
+        expect(stillThere.ok()).toBeTruthy();
+        expect((await stillThere.json())?.id).toBe(manifestId);
+
+        await deleteButton.click();
+        await expect(dialog).toBeVisible();
+        await dialog.getByRole("button", { name: "Delete" }).click();
+        await expect(dialog).toBeHidden();
+        await expect(page.getByRole("button", { name: new RegExp(`${manifestName}[\\s\\S]*${manifestId}`) })).toHaveCount(0);
+        await expect(page.getByRole("heading", { name: manifestName })).toHaveCount(0);
+
+        const gone = await request.get(`/api/storage/run-manifests/${manifestId}`);
+        expect(gone.ok()).toBeTruthy();
+        expect(await gone.json()).toBeNull();
+    } finally {
+        await request.delete(`/api/storage/run-manifests/${manifestId}`);
+    }
+});
+
 test("phone widths show the deliberate desktop requirement", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/");

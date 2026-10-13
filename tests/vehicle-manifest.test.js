@@ -4,8 +4,12 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { fileURLToPath } from "node:url";
+
+import { computeResolvedRunHash } from "../app/simulation/RunManifest.js";
 import {
     VEHICLE_BUNDLE_KIND,
+    VEHICLE_MANIFEST_DOWNGRADE,
     VEHICLE_MANIFEST_KIND,
     createDefaultVehicleManifest,
     deriveWheelbase,
@@ -65,7 +69,7 @@ test("vehicle manifest normalization derives wheelbase and drops malformed zone 
 });
 
 test("vehicle manifest validation rejects future versions, reserved ids, duplicates, and bad triangles", () => {
-    assert.throws(() => normalizeVehicleManifest({ kind: VEHICLE_MANIFEST_KIND, version: 3 }), /version 3/);
+    assert.throws(() => normalizeVehicleManifest({ kind: VEHICLE_MANIFEST_KIND, version: 4 }), /version 4/);
     assert.throws(() => normalizeVehicleManifest({ kind: "cev-sim.run-manifest" }), /Unsupported vehicle manifest kind/);
 
     const reserved = validateVehicleManifest(createDefaultVehicleManifest({ id: "big-car" }));
@@ -109,9 +113,13 @@ test("built-in vehicles expose read-only manifest projections that can be copied
     assert.equal(isBuiltInVehicleManifest("custom-car"), false);
 
     const bigCar = getBuiltInVehicleManifest("big-car");
+    assert.equal(bigCar.version, 2);
     assert.equal(bigCar.sensors.length, 2);
     assert.equal(bigCar.wheels.length, 4);
+    assert.equal(bigCar.wheels[0].axle, undefined);
+    assert.equal(bigCar.model.dependencies, undefined);
     assert.equal(bigCar.model.asset, "/shell/shell.gltf");
+    assert.equal(bigCar.kinematics.wheelbase, 1.2446);
     assert.equal(resolveVehicleModelUrl("big-car", bigCar.model.asset), "/shell/shell.gltf");
     assert.equal(
         resolveVehicleModelUrl("custom", "model.glb", { cacheBust: 3 }),
@@ -182,6 +190,7 @@ test("vehicle bundles round-trip manifests and assets, suffixing conflicting ids
 
         const bundle = await source.service.exportVehicleBundle("portable-truck");
         assert.equal(bundle.kind, VEHICLE_BUNDLE_KIND);
+        assert.equal(bundle.bundleHash, "9c093454c448845a3ade39417d175c3a89c0b11d217d368d197d57d60c0c50cd");
         assert.equal(bundle.bundleHash.length, 64);
         assert.equal(bundle.assets["model.glb"], model.toString("base64"));
 
@@ -200,6 +209,99 @@ test("vehicle bundles round-trip manifests and assets, suffixing conflicting ids
     } finally {
         await fs.rm(source.dir, { recursive: true, force: true });
         await fs.rm(target.dir, { recursive: true, force: true });
+    }
+});
+
+test("v2 vehicle identity hashes stay pinned", async () => {
+    const fixturePath = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures/vehicles/builtin-identity.v2.json");
+    const fixture = JSON.parse(await fs.readFile(fixturePath, "utf8"));
+    assert.equal(computeResolvedRunHash(getBuiltInVehicleManifest("big-car")), fixture.documents["big-car"]);
+    assert.equal(computeResolvedRunHash(getBuiltInVehicleManifest("igvc-car")), fixture.documents["igvc-car"]);
+    assert.equal(computeResolvedRunHash(getBuiltInVehicleManifest("scenario-car")), fixture.documents["scenario-car"]);
+    assert.equal(computeResolvedRunHash(createDefaultVehicleManifest()), fixture.documents.default);
+});
+
+test("version 3 preserves axle fields and rounds geometric scalars without upgrading blanks", () => {
+    assert.equal(createDefaultVehicleManifest({ version: 3 }).version, 2);
+    const stayed = normalizeVehicleManifest({ id: "stay", version: 2 }, { version: 3 });
+    assert.equal(stayed.version, 2);
+    assert.equal(stayed.model.dependencies, undefined);
+
+    const rounded = normalizeVehicleManifest({
+        version: 3,
+        id: "rounded",
+        wheels: [{ id: "fl", position: { x: 0.123456789, y: 0.2, z: 0.3 }, radius: 0.2500004, width: 0.15 }],
+    });
+    assert.equal(rounded.version, 3);
+    assert.deepEqual(rounded.model.dependencies, []);
+    assert.deepEqual(rounded.model.hiddenNodeIndices, []);
+    assert.equal(rounded.wheels[0].axle, undefined);
+    assert.equal(rounded.wheels[0].position.x, 0.123457);
+    assert.equal(rounded.wheels[0].radius, 0.25);
+
+    const legacy = normalizeVehicleManifest({
+        version: 2,
+        id: "raw",
+        wheels: [{ id: "fl", position: { x: 0.123456789, y: 0.2, z: 0.3 } }],
+    });
+    assert.equal(legacy.wheels[0].position.x, 0.123456789);
+    assert.equal(legacy.model.dependencies, undefined);
+
+    assert.throws(
+        () => normalizeVehicleManifest({ version: 3, id: "keep" }, { version: 2 }),
+        (error) => error.code === VEHICLE_MANIFEST_DOWNGRADE,
+    );
+
+    const unsorted = validateVehicleManifest({
+        version: 3,
+        id: "deps",
+        model: { asset: "car.glb", dependencies: ["b.png", "a.png"], hiddenNodeIndices: [2, 0] },
+    });
+    assert.equal(unsorted.ok, true);
+    assert.deepEqual(unsorted.manifest.model.dependencies, ["a.png", "b.png"]);
+    assert.deepEqual(unsorted.manifest.model.hiddenNodeIndices, [0, 2]);
+
+    const duplicate = validateVehicleManifest({
+        version: 3,
+        id: "deps",
+        model: { asset: "car.glb", dependencies: ["a.png", "a.png", "../escape.png"] },
+    });
+    assert.equal(duplicate.ok, false);
+    assert.ok(duplicate.issues.some((entry) => entry.code === "vehicle.model.dependencies"));
+
+    const modelFree = validateVehicleManifest({
+        version: 3,
+        id: "free",
+        model: { asset: null, dependencies: ["a.png"], hiddenNodeIndices: [1] },
+    });
+    assert.equal(modelFree.ok, false);
+    assert.deepEqual(modelFree.manifest.model.dependencies, []);
+    assert.deepEqual(modelFree.manifest.model.hiddenNodeIndices, []);
+});
+
+test("a legacy writer cannot overwrite a stored version 3 vehicle", async () => {
+    const { dir, service } = await temporaryService();
+    try {
+        const seeded = normalizeVehicleManifest({
+            ...createDefaultVehicleManifest({ id: "v3-car" }),
+            version: 3,
+        });
+        const created = await service.createVehicleManifest(seeded);
+        assert.equal(created.version, 3);
+        assert.equal(created.revision, 1);
+        await assert.rejects(
+            service.putVehicleManifest("v3-car", {
+                manifest: createDefaultVehicleManifest({ id: "v3-car", description: "legacy" }),
+                expectedRevision: 1,
+            }),
+            (error) => error.code === VEHICLE_MANIFEST_DOWNGRADE,
+        );
+        const stored = await service.getVehicleManifest("v3-car");
+        assert.equal(stored.version, 3);
+        assert.equal(stored.revision, 1);
+        assert.equal(stored.description, created.description);
+    } finally {
+        await fs.rm(dir, { recursive: true, force: true });
     }
 });
 
