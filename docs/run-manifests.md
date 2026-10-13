@@ -67,7 +67,10 @@ package and UI bytes.
 VIS-12a activates manifest v11 and the plugin-free
 `resolved.identityProfile = { id: "world-bound", version: 2 }`, semantic and
 episode identity v2, protocol 1.3 identity negotiation, and protocol 1.4
-same-host run-package admission. Existing v10
+same-host run-package admission. The current supervisor advertises protocol
+1.5. `EpisodeSpec.overrides` (field 10) carries an optional start pose and
+goal; that message enters `episodeHash` only when one of them is present.
+Existing v10
 bundles retain their bytes, legacy algorithms, analytic resources and backend
 identities. Authoring import verifies before normalization; a newly resolved
 import uses v11. Missing or unknown identity selectors fail explicitly.

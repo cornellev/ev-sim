@@ -1,4 +1,5 @@
 import { createReadStream, promises as fs } from "node:fs";
+import path from "node:path";
 import process from "node:process";
 import readline from "node:readline";
 
@@ -11,6 +12,7 @@ import { HeadlessRunner } from "./HeadlessRunner.js";
 import { HeadlessRunnerError } from "./HeadlessRunnerErrors.js";
 import { inspectTarget } from "./Inspection.js";
 import { stringifyJsonProtocol } from "./JsonProtocol.js";
+import { createPlanningBundle } from "./PlanningBundle.js";
 import { createHeadlessSmokeBundle } from "./SmokeBundle.js";
 import { readSupervisorConfig } from "./SupervisorConfig.js";
 import { resolveSensorTransportHostConfig } from "../sensor-transports/SensorTransportConfig.js";
@@ -33,6 +35,7 @@ export const CLI_EXIT = Object.freeze({
 const VALUE_OPTIONS = new Set([
     "bundle", "episode", "output", "actions", "tape", "artifact-profile", "sflog-sample-rate",
     "socket", "tcp", "preset", "config", "package", "sensor-transport-config",
+    "manifest", "environment", "data-dir", "road", "start-node", "finish-node", "sensors", "max-steps",
 ]);
 const FLAG_OPTIONS = new Set(["sflog-on-failure", "no-sflog-on-failure", "allow-remote-tcp"]);
 
@@ -41,6 +44,7 @@ function usage() {
         "cev-sim --version",
         "cev-sim validate (--bundle <file | use:manifestId> | --package <file>) [--episode <file>] [--config <supervisor.json>] [--sensor-transport-config <file>]",
         "cev-sim create-smoke-bundle --output <bundle.json>",
+        "cev-sim create-bundle --output <bundle.json> [--manifest <id>] [--environment <id>] [--data-dir <dir>] [--road <edge>] [--start-node <id>] [--finish-node <id>] [--sensors state|all] [--max-steps <n>]",
         "cev-sim inspect <bundle|package|output-directory|sflog>",
         "cev-sim run (--bundle <file | use:manifestId> | --package <file>) --output <directory> [--episode <file>] [--actions <jsonl-file>] [--config <supervisor.json>] [--sensor-transport-config <file>]",
         "cev-sim replay (--bundle <file | use:manifestId> | --package <file>) --tape <file> --output <directory> [--config <supervisor.json>] [--sensor-transport-config <file>]",
@@ -192,6 +196,51 @@ export async function main(argv = process.argv.slice(2), io = {}) {
             });
             await stopped;
             await running.close();
+            return CLI_EXIT.OK;
+        }
+        if (command === "create-bundle") {
+            if (positional.length > 0 || !options.output) {
+                throw new HeadlessRunnerError("USAGE", "create-bundle requires --output <bundle.json>.");
+            }
+            if (options.sensors && !["state", "all"].includes(options.sensors)) {
+                throw new HeadlessRunnerError("USAGE", '--sensors must be "state" or "all".');
+            }
+            const maxSteps = options["max-steps"] == null ? null : Number(options["max-steps"]);
+            if (maxSteps != null && (!Number.isInteger(maxSteps) || maxSteps < 0)) {
+                throw new HeadlessRunnerError("USAGE", "--max-steps must be a non-negative integer.");
+            }
+            let bundle;
+            try {
+                bundle = await createPlanningBundle({
+                    sourceManifestId: options.manifest,
+                    environmentId: options.environment,
+                    dataDir: options["data-dir"],
+                    roadId: options.road,
+                    startNodeId: options["start-node"],
+                    finishNodeId: options["finish-node"],
+                    sensors: options.sensors || "state",
+                    maxSteps,
+                    bundleId: path.basename(options.output, path.extname(options.output)) || "planning-route",
+                });
+            } catch (error) {
+                throw new HeadlessRunnerError("INVALID_INPUT", error.message, null, { cause: error });
+            }
+            try {
+                await fs.writeFile(options.output, canonicalRunBundleStringify(bundle));
+            } catch (error) {
+                throw new HeadlessRunnerError(
+                    "ARTIFACT_FAILURE",
+                    `Could not write planning bundle ${options.output}: ${error.message}`,
+                    null,
+                    { cause: error },
+                );
+            }
+            writeJson(stdout, {
+                kind: "cev-sim.headless.planning-bundle",
+                version: 1,
+                output: options.output,
+                resolvedHash: bundle.resolvedHash,
+            });
             return CLI_EXIT.OK;
         }
         if (command === "create-smoke-bundle") {

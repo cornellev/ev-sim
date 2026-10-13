@@ -14,6 +14,7 @@ verified bundle.
 ```bash
 cev-sim validate (--bundle bundle.json | --bundle use:manifestId | --package run.run-package) [--episode episode.json] [--config supervisor.json] [--sensor-transport-config host.json]
 cev-sim create-smoke-bundle --output bundle.json
+cev-sim create-bundle --output bundle.json [--manifest igvc-default] [--environment ID] [--data-dir DIR] [--road EDGE | --start-node A --finish-node B] [--sensors state|all] [--max-steps N]
 cev-sim inspect bundle.json
 cev-sim inspect run.run-package
 cev-sim inspect output-directory
@@ -22,6 +23,12 @@ cev-sim run (--bundle bundle.json | --bundle use:manifestId | --package run.run-
 cev-sim replay (--bundle bundle.json | --bundle use:manifestId | --package run.run-package) --tape tape.json --output result-dir [--config supervisor.json] [--sensor-transport-config host.json]
 cev-sim gpu-preflight --config supervisor.json
 ```
+
+`create-bundle` writes a validated planning run bundle. It copies the selected
+environment into a temporary workspace, verifies a route, keeps state sensors
+unless `--sensors all` is set, and advances the start pose until the vehicle
+box is clear of obstacles. `--data-dir` is read-only. The command deletes its
+temporary workspace and writes only `--output`.
 
 `validate` checks bundle integrity, semantic identity, episode profiles,
 backend capabilities, world/vehicle/sensor prerequisites, and spaces without
@@ -206,7 +213,7 @@ Bundle inspection reports the exact `bundleBytesHash`, identity version, and
 required protocol minor. File ingestion preserves the original bytes and
 rejects invalid UTF-8, duplicate keys, and malformed exact JSON. v10 bundles
 remain executable with unchanged hashes; v11 uses `world-bound@2` and the
-local protocol 1.4 runtime. `run-bundle.json` artifacts preserve received bytes
+local protocol 1.5 runtime. `run-bundle.json` artifacts preserve received bytes
 for direct file execution; canonical supervisor wire serialization is a
 separate representation. Historical unsupported bundle versions require
 verified authoring import and re-resolution. Package artifacts preserve exact

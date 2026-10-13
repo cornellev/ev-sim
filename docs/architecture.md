@@ -212,7 +212,10 @@ Version 3 vehicle manifests add authoring fields for model dependencies,
 hidden nodes, and standard axles. Built-in projections stay version 2.
 `createDefaultVehicleManifest()` stays version 2. Blanks created through
 vehicle publication are version 3. The plant still integrates the authored
-`kinematics.wheelbase`. A version 3 document changes resolved identity only
+`kinematics.wheelbase`. The vehicle plan and per-wheel visual yaw are
+presentation: a version 3 standard layout draws an ideal inner and outer
+angle on the front wheels, and every other steerable wheel keeps the shared
+plant angle. A version 3 document changes resolved identity only
 because the existing hash covers those fields and, once publication commits,
 the asset directory. In-flight publication files are omitted from that hash
 until the manifest write is durable. A committed migration also keeps
@@ -240,7 +243,9 @@ capabilities, while the sensor-disabled PR 4 kernel path remains valid.
 
 `HeadlessEpisode` is the policy-facing facade over `SimulationKernel`. It
 validates immutable episode prerequisites before kernel preparation, owns the
-`measured-state` observation and `route-safety` reward profiles, maps the
+`measured-state` observation and `route-safety` reward profiles, and can
+select the opt-in `planning-oracle@1` profile without changing measured-state
+hashes. It maps the
 `normalized-speed-steering` action through `ControlRuntime`, and implements
 policy-step limits, action repeat, rewards, and Gym termination/truncation
 semantics. Every repeated substep still passes through the authoritative

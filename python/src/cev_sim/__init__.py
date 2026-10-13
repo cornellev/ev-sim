@@ -1,4 +1,7 @@
+from gymnasium.envs.registration import register, registry
+
 from .bundle import LoadedRunPackage, load_run_package
+from .bundles import create_bundle
 from .client import AssetAdmission
 from .config import (
     CPU_LIDAR_CAPABILITY,
@@ -15,6 +18,11 @@ from .config import (
     GPU_SENSOR_KIND,
     GPU_SENSOR_VERSION,
     MEASURED_PERCEPTION_OBSERVATION_PROFILE,
+    PLANNING_ORACLE_CONFIG_HASH,
+    PLANNING_ORACLE_OBSERVATION_PROFILE,
+    PLANNING_ORACLE_PROFILE,
+    PLANNING_ORACLE_PROFILE_VERSION,
+    PLANNING_ORACLE_SCHEMA_HASH,
     ROUTED_GPU_SENSOR_BACKEND,
     ROUTED_GPU_SENSOR_CONFIG_HASH,
     ROUTED_GPU_SENSOR_VERSION,
@@ -35,6 +43,7 @@ from .errors import (
     CevSimSupervisorError,
     CevSimTransportError,
 )
+from .world import PlanningWorld, load_world
 
 __all__ = [
     "ArtifactPolicy",
@@ -52,6 +61,14 @@ __all__ = [
     "CevSimLaunchError",
     "CevSimSupervisorError",
     "CevSimTransportError",
+    "PLANNING_ORACLE_CONFIG_HASH",
+    "PLANNING_ORACLE_OBSERVATION_PROFILE",
+    "PLANNING_ORACLE_PROFILE",
+    "PLANNING_ORACLE_PROFILE_VERSION",
+    "PLANNING_ORACLE_SCHEMA_HASH",
+    "PlanningWorld",
+    "create_bundle",
+    "load_world",
     "DEFAULT_CPU_LIDAR_BACKEND",
     "EXPLICIT_CPU_LIDAR_BACKEND",
     "EXPLICIT_CPU_LIDAR_CONFIG_HASH",
@@ -74,3 +91,6 @@ __all__ = [
 ]
 
 __version__ = "0.2.0"
+
+if "CevSim-v0" not in registry:
+    register(id="CevSim-v0", entry_point="cev_sim.env:CevSimEnv")

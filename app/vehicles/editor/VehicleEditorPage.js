@@ -18,6 +18,7 @@ import {
     IconUpload,
 } from "@tabler/icons-react";
 
+import { deriveCompleteWheelbase } from "../axle/standardAxle.js";
 import {
     createBlankVehicleManifest,
     deriveWheelbase,
@@ -71,7 +72,10 @@ import {
     suppressSourceWheels,
 } from "../document/vehicleCommands.js";
 import { measurePlacedVehicleModel } from "../model/measurePlacedVehicle.js";
+import { createAxleGesture } from "./axleGesture.js";
+import { AxleInspector, standardAxleCards } from "./AxleInspector.js";
 import { DragNumber } from "./DragNumber.js";
+import { VehiclePlanView } from "./VehiclePlanView.js";
 import { PlacementAcceptanceDialog, WheelAssignmentDialog } from "./WheelAssignmentDialog.js";
 import { canonicalVehicleGlb, rolesFromManifest } from "./wheelAssignmentState.js";
 import { VehicleStudio } from "./VehicleStudio.js";
@@ -148,6 +152,8 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     const undoStack = useRef([]);
     const redoStack = useRef([]);
     const lastEdit = useRef(null);
+    const axleGestureRef = useRef(null);
+    const axleActions = useRef({});
 
     const [catalog, setCatalog] = useState([]);
     const [loadState, setLoadState] = useState("loading");
@@ -177,6 +183,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     const [sensorRegistryTick, setSensorRegistryTick] = useState(0);
     const [assignment, setAssignment] = useState(null);
     const [placementPrompt, setPlacementPrompt] = useState(null);
+    const [steeringPreview, setSteeringPreview] = useState(0);
     const authoringOptions = () => ({
         sensorRegistry: sensorSessionRef.current?.registry ?? sensorTypeRegistry,
     });
@@ -208,6 +215,8 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
         setRawError(null);
         setValidation(null);
         setSelection(null);
+        setSteeringPreview(0);
+        axleGestureRef.current = null;
     };
 
     const loadCatalog = async (preferredId = null) => {
@@ -286,6 +295,10 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
         const url = resolveVehicleModelUrl(selectedId, draft.model.asset, { cacheBust: assetVersion });
         studioRef.current.setManifest(draft, url);
     }, [draft, selectedId, assetVersion]);
+
+    useEffect(() => {
+        studioRef.current?.setSteeringPreview(steeringPreview);
+    }, [steeringPreview, draft]);
 
     useEffect(() => {
         studioRef.current?.setSensorRuntime(authoringRuntime);
@@ -385,6 +398,56 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
         });
     };
 
+    const installDraft = (manifest) => {
+        const normalized = normalizeVehicleManifest(manifest, authoringOptions());
+        setDraft(normalized);
+        setRaw(JSON.stringify(normalized, null, 2));
+        setValidation(null);
+    };
+
+    const commitAxleGesture = () => {
+        const active = axleGestureRef.current;
+        if (!active) return null;
+        axleGestureRef.current = null;
+        const result = active.gesture.commit();
+        if (result.changed) recordHistory(active.gesture.capture(), `axle-${active.axle}`, { coalesce: false });
+        installDraft(result.manifest);
+        if (result.ok) setError(null);
+        return result.manifest;
+    };
+
+    const beginAxleGesture = (axle) => {
+        if (readOnly || !draft) return;
+        if (axleGestureRef.current?.axle === axle) return;
+        const base = axleGestureRef.current ? commitAxleGesture() : draft;
+        if (!base) return;
+        axleGestureRef.current = { axle, gesture: createAxleGesture(base, { axle }) };
+    };
+
+    const previewAxleGesture = (axle, patch) => {
+        if (!axleGestureRef.current || axleGestureRef.current.axle !== axle) beginAxleGesture(axle);
+        const active = axleGestureRef.current;
+        if (!active) return;
+        const result = active.gesture.preview(patch);
+        installDraft(result.manifest);
+        setError(result.ok ? null : (result.issues[0]?.message ?? "Axle edit was rejected."));
+    };
+
+    const cancelAxleGesture = () => {
+        const active = axleGestureRef.current;
+        if (!active) return;
+        axleGestureRef.current = null;
+        installDraft(active.gesture.capture());
+        setError(null);
+    };
+
+    axleActions.current = {
+        begin: beginAxleGesture,
+        preview: previewAxleGesture,
+        commit: commitAxleGesture,
+        cancel: cancelAxleGesture,
+    };
+
     useEffect(() => {
         const restore = (source, destination) => {
             if (source.current.length === 0) return false;
@@ -409,6 +472,11 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
             const wantsUndo = key === "z" && !event.shiftKey;
             const wantsRedo = (key === "z" && event.shiftKey) || (key === "y" && event.ctrlKey);
             if (!wantsUndo && !wantsRedo) return;
+            if (axleGestureRef.current) {
+                axleActions.current.cancel?.();
+                event.preventDefault();
+                return;
+            }
 
             const changed = wantsUndo
                 ? restore(undoStack, redoStack)
@@ -970,6 +1038,13 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                                                     assignmentReady={draft.version === 3 && canonicalVehicleGlb(draft.model.asset)}
                                                     onAssign={openAssignment}
                                                     onDetach={detachBoundWheel}
+                                                    readOnly={readOnly}
+                                                    steeringPreview={steeringPreview}
+                                                    onSteeringPreview={setSteeringPreview}
+                                                    onBeginGesture={beginAxleGesture}
+                                                    onPreviewGesture={previewAxleGesture}
+                                                    onCommitGesture={commitAxleGesture}
+                                                    onCancelGesture={cancelAxleGesture}
                                                 />
                                             )}
                                             {item === "Body" && <BodyTab draft={draft} update={update} commitPlacement={commitPlacement} selection={selection} setSelection={setSelection} fitBodyToModel={fitBodyToModel} fieldReset={`${selectedId}:${placementRevision}`} />}
@@ -1250,7 +1325,26 @@ function VehicleSensorDefinitionField({ field, sensor, change }) {
     );
 }
 
-function WheelsTab({ draft, update, selection, setSelection, derivedWheelbase, plantCatalog = [], onError = () => {}, assignButtonRef, assignmentReady = false, onAssign, onDetach }) {
+function WheelsTab({
+    draft,
+    update,
+    selection,
+    setSelection,
+    derivedWheelbase,
+    plantCatalog = [],
+    onError = () => {},
+    assignButtonRef,
+    assignmentReady = false,
+    onAssign,
+    onDetach,
+    readOnly = false,
+    steeringPreview = 0,
+    onSteeringPreview,
+    onBeginGesture,
+    onPreviewGesture,
+    onCommitGesture,
+    onCancelGesture,
+}) {
     const selectDynamics = (value) => {
         const next = structuredClone(draft);
         try {
@@ -1293,8 +1387,37 @@ function WheelsTab({ draft, update, selection, setSelection, derivedWheelbase, p
         update(["wheels"], [...draft.wheels, ...added]);
         setSelection({ kind: "wheel", id: added[0].id });
     };
+    const axles = draft.version === 3 ? standardAxleCards(draft.wheels) : [];
+    const showAxles = axles.length > 0;
+    const axleWheelIds = new Set(axles.flatMap((axle) => [axle.left.id, axle.right.id]));
+    const listedWheels = draft.wheels
+        .map((wheel, index) => ({ wheel, index }))
+        .filter(({ wheel }) => !showAxles || !axleWheelIds.has(wheel.id));
+    const completeWheelbase = draft.version === 3 ? deriveCompleteWheelbase(draft.wheels) : null;
+    const wheelCards = listedWheels.map(({ wheel, index }) => (
+        <WheelCard
+            key={wheel.id}
+            draft={draft}
+            wheel={wheel}
+            index={index}
+            selected={selection?.kind === "wheel" && selection.id === wheel.id}
+            update={update}
+            setSelection={setSelection}
+            onDetach={onDetach}
+        />
+    ));
     return (
-        <div className="space-y-3">
+        <div className="space-y-3" data-vehicle-wheels>
+            <VehiclePlanView
+                draft={draft}
+                steeringPreview={steeringPreview}
+                onSteeringPreview={onSteeringPreview}
+                readOnly={readOnly}
+                onBeginGesture={onBeginGesture}
+                onPreviewGesture={onPreviewGesture}
+                onCommitGesture={onCommitGesture}
+                onCancelGesture={onCancelGesture}
+            />
             <div className="flex flex-wrap gap-1.5">
                 <Action compact icon={<FaPlus />} label="Add wheel" onClick={() => add(false)} />
                 <Action compact icon={<FaPlus />} label="Add mirrored pair" onClick={() => add(true)} />
@@ -1303,46 +1426,23 @@ function WheelsTab({ draft, update, selection, setSelection, derivedWheelbase, p
             {!assignmentReady && (
                 <p className="text-[11px] leading-relaxed text-[var(--slate-muted)]">Wheel assignment needs a version 3 vehicle and a canonical model closure. A legacy model.glb upload cannot be bound.</p>
             )}
-            {draft.wheels.map((wheel, index) => {
-                const selected = selection?.kind === "wheel" && selection.id === wheel.id;
-                const bound = wheel.visual?.kind === "model-node";
-                const change = (parts, value) => update(["wheels", index, ...parts], value);
-                return (
-                    <div key={`wheel-${index}`} className={`rounded-[var(--radius)] border p-3 transition-[background-color,border-color] ${selected ? "border-[var(--slate-border)] bg-[var(--slate-surface-3)]" : "border-[var(--slate-border-60)] bg-[var(--slate-surface-1)]"}`}>
-                        <button type="button" onClick={() => setSelection(selected ? null : { kind: "wheel", id: wheel.id })} className="mb-2 flex w-full items-center justify-between text-left">
-                            <span className="text-[11px] font-semibold">{wheel.id}</span>
-                            {wheel.steerable && <span className="text-[11px] font-medium text-[var(--slate-muted)]">Steerable</span>}
-                        </button>
-                        <div className="grid grid-cols-2 gap-2">
-                            <Field label="Stable ID">
-                                <input
-                                    value={wheel.id}
-                                    onChange={(event) => {
-                                        const nextId = event.target.value;
-                                        change(["id"], nextId);
-                                        if (selected) setSelection({ kind: "wheel", id: nextId });
-                                    }}
-                                />
-                            </Field>
-                            <Toggle label="Steerable" value={wheel.steerable} onChange={(value) => { if (!bound) change(["steerable"], value); }} />
-                            <Field label="Radius (m)"><input type="number" min="0.01" step="0.01" value={wheel.radius} disabled={bound} onChange={(event) => change(["radius"], Number(event.target.value))} /></Field>
-                        </div>
-                        {bound && <p className="mt-2 text-[11px] text-[var(--slate-muted)]">Bound to model node {wheel.visual.nodeIndex}. Detach it before editing this geometry.</p>}
-                        <VectorFields label="Position (m)" value={wheel.position} onChange={(axis, value) => { if (!bound) change(["position", axis], value); }} scrub />
-                        <AdvancedFields label="Wheel geometry">
-                            <div className="grid grid-cols-2 gap-2">
-                                <Field label="Width (m)"><input type="number" min="0.01" step="0.01" value={wheel.width} disabled={bound} onChange={(event) => change(["width"], Number(event.target.value))} /></Field>
-                            </div>
-                        </AdvancedFields>
-                        <div className="mt-3 flex items-center justify-between">
-                            {bound
-                                ? <button type="button" onClick={() => onDetach(wheel.id)} className="text-[11px] text-[var(--slate-fg-2)]">Detach</button>
-                                : <button type="button" onClick={() => update(["wheels", index, "position", "z"], -wheel.position.z)} className="text-[11px] text-[var(--slate-fg-2)]">Mirror across X</button>}
-                            {!bound && <button type="button" onClick={() => update(["wheels"], draft.wheels.filter((_, candidate) => candidate !== index))} className="text-[11px] text-[var(--slate-danger)]">Remove</button>}
-                        </div>
-                    </div>
-                );
-            })}
+            {showAxles && (
+                <AxleInspector
+                    axles={axles}
+                    onBeginGesture={onBeginGesture}
+                    onPreviewGesture={onPreviewGesture}
+                    onCommitGesture={onCommitGesture}
+                    onCancelGesture={onCancelGesture}
+                    onDetach={onDetach}
+                />
+            )}
+            {showAxles ? (
+                listedWheels.length > 0 && (
+                    <AdvancedFields label="Unclassified wheels">
+                        {wheelCards}
+                    </AdvancedFields>
+                )
+            ) : wheelCards}
             <Section title="Actuator limits">
                 <div className="grid grid-cols-2 gap-2">
                     <Field label="Dynamics">
@@ -1354,12 +1454,21 @@ function WheelsTab({ draft, update, selection, setSelection, derivedWheelbase, p
                         </select>
                     </Field>
                     {draft.dynamics?.plant ? <p className="text-[11px] text-[var(--slate-muted)]">Plugin dynamics run only in a resolved run.</p> : null}
-                    <Field label="Wheelbase (m)"><input type="number" min="0.01" step="0.01" value={draft.kinematics.wheelbase} onChange={(event) => update(["kinematics", "wheelbase"], Number(event.target.value))} /></Field>
+                    {completeWheelbase != null ? (
+                        <Field label="Wheelbase (m)">
+                            <input readOnly aria-label="Wheelbase (m)" value={draft.kinematics.wheelbase} />
+                        </Field>
+                    ) : (
+                        <Field label="Wheelbase (m)"><input type="number" min="0.01" step="0.01" value={draft.kinematics.wheelbase} onChange={(event) => update(["kinematics", "wheelbase"], Number(event.target.value))} /></Field>
+                    )}
                     <Field label="Max steering (rad)"><input type="number" min="0.01" step="0.01" value={draft.kinematics.maxSteeringAngle} onChange={(event) => update(["kinematics", "maxSteeringAngle"], Number(event.target.value))} /></Field>
                     <Field label="Max speed (m/s)"><input type="number" min="0.01" step="0.1" value={draft.kinematics.maxSpeed ?? 15} onChange={(event) => update(["kinematics", "maxSpeed"], Number(event.target.value))} /></Field>
                     <Field label="Max steer rate (rad/s)"><input type="number" min="0.01" step="0.1" value={draft.kinematics.maxSteeringRate ?? 1.2} onChange={(event) => update(["kinematics", "maxSteeringRate"], Number(event.target.value))} /></Field>
                 </div>
-                {derivedWheelbase !== null && (
+                {completeWheelbase != null && (
+                    <p className="mt-2 text-[11px] text-[var(--slate-muted)]">Derived from the standard axles.</p>
+                )}
+                {completeWheelbase == null && derivedWheelbase !== null && (
                     <div className="mt-2 flex items-center justify-between">
                         <p className="text-[11px] text-[var(--slate-muted)]">Derived from wheel placement: <span className="font-mono text-[var(--slate-fg-2)]">{derivedWheelbase.toFixed(3)} m</span></p>
                         <button type="button" onClick={() => update(["kinematics", "wheelbase"], round3(derivedWheelbase))} className="text-[11px] text-[var(--slate-fg-2)]">Use derived</button>
@@ -1374,6 +1483,46 @@ function WheelsTab({ draft, update, selection, setSelection, derivedWheelbase, p
                     <Field label="Response delay (ns)"><input type="number" min="0" step="1000000" value={draft.kinematics.responseDelayNs ?? 0} onChange={(event) => update(["kinematics", "responseDelayNs"], Number(event.target.value))} /></Field>
                 </div>
             </AdvancedFields>
+        </div>
+    );
+}
+
+function WheelCard({ draft, wheel, index, selected, update, setSelection, onDetach }) {
+    const bound = wheel.visual?.kind === "model-node";
+    const change = (parts, value) => update(["wheels", index, ...parts], value);
+    return (
+        <div className={`rounded-[var(--radius)] border p-3 transition-[background-color,border-color] ${selected ? "border-[var(--slate-border)] bg-[var(--slate-surface-3)]" : "border-[var(--slate-border-60)] bg-[var(--slate-surface-1)]"}`}>
+            <button type="button" onClick={() => setSelection(selected ? null : { kind: "wheel", id: wheel.id })} className="mb-2 flex w-full items-center justify-between text-left">
+                <span className="text-[11px] font-semibold">{wheel.id}</span>
+                {wheel.steerable && <span className="text-[11px] font-medium text-[var(--slate-muted)]">Steerable</span>}
+            </button>
+            <div className="grid grid-cols-2 gap-2">
+                <Field label="Stable ID">
+                    <input
+                        value={wheel.id}
+                        onChange={(event) => {
+                            const nextWheelId = event.target.value;
+                            change(["id"], nextWheelId);
+                            if (selected) setSelection({ kind: "wheel", id: nextWheelId });
+                        }}
+                    />
+                </Field>
+                <Toggle label="Steerable" value={wheel.steerable} onChange={(value) => { if (!bound) change(["steerable"], value); }} />
+                <Field label="Radius (m)"><input type="number" min="0.01" step="0.01" value={wheel.radius} disabled={bound} onChange={(event) => change(["radius"], Number(event.target.value))} /></Field>
+            </div>
+            {bound && <p className="mt-2 text-[11px] text-[var(--slate-muted)]">Bound to model node {wheel.visual.nodeIndex}. Detach it before editing this geometry.</p>}
+            <VectorFields label="Position (m)" value={wheel.position} onChange={(axis, value) => { if (!bound) change(["position", axis], value); }} scrub />
+            <AdvancedFields label="Wheel geometry">
+                <div className="grid grid-cols-2 gap-2">
+                    <Field label="Width (m)"><input type="number" min="0.01" step="0.01" value={wheel.width} disabled={bound} onChange={(event) => change(["width"], Number(event.target.value))} /></Field>
+                </div>
+            </AdvancedFields>
+            <div className="mt-3 flex items-center justify-between">
+                {bound
+                    ? <button type="button" onClick={() => onDetach(wheel.id)} className="text-[11px] text-[var(--slate-fg-2)]">Detach</button>
+                    : <button type="button" onClick={() => update(["wheels", index, "position", "z"], -wheel.position.z)} className="text-[11px] text-[var(--slate-fg-2)]">Mirror across X</button>}
+                {!bound && <button type="button" onClick={() => update(["wheels"], draft.wheels.filter((_, candidate) => candidate !== index))} className="text-[11px] text-[var(--slate-danger)]">Remove</button>}
+            </div>
         </div>
     );
 }

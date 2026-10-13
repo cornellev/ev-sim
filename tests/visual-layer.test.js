@@ -236,7 +236,7 @@ test("VIS-12a activates identity negotiation while package declarations remain i
     assert.equal(RUN_PACKAGE_PROFILE.container, "ustar");
     assert.equal(RUN_PACKAGE_PROFILE.compression, "none");
     assert.equal(RUN_PACKAGE_PROFILE.limits.archiveBytes, 8 * 1024 ** 3);
-    assert.deepEqual(HEADLESS_PROTOCOL, { major: 1, minor: 4 });
+    assert.deepEqual(HEADLESS_PROTOCOL, { major: 1, minor: 5 });
 
     const proto = await readFile(protoUrl, "utf8");
     assert.match(proto, /repeated string identity_profiles = 12;/);

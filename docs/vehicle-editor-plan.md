@@ -1,8 +1,8 @@
 # Vehicle editor plan
 
 This document records the vehicle-editor program decisions that are in force.
-VEH-01 through VEH-04 are implemented. Later packages add the plan view,
-URDF, and editor chrome.
+VEH-01 through VEH-05 are implemented. Later packages add URDF and editor
+chrome.
 
 ## Status
 
@@ -14,8 +14,10 @@ URDF, and editor chrome.
   guarded migration.
 - Implemented: **VEH-04** — placed-node measurement, wheel binding commands,
   bound-wheel rendering, and the assignment dialog.
-- Not in this package: the 2D plan (VEH-05), URDF parsing (VEH-06), GitHub
-  acquisition (VEH-07), and workspace chrome (VEH-08).
+- Implemented: **VEH-05** — the XZ plan, one-undo axle gestures, and ideal
+  visual yaw for a version 3 standard front axle.
+- Not in this package: URDF parsing (VEH-06), GitHub acquisition (VEH-07),
+  and workspace chrome (VEH-08).
 - Built-in projections stay version 2. `createDefaultVehicleManifest()` stays
   version 2. New blanks created through publication are version 3. The current
   editor still uploads a single legacy file; that path does not require a
@@ -219,8 +221,9 @@ the measured proposal, is rejected and the stored manifest stays unchanged.
 A version 3 lease carries the canonical `glbBytes`. `presentBoundWheels`
 hides `hiddenNodeIndices`, parents each bound mesh to a pivot at the accepted
 wheel center, and preserves that mesh's world matrix so the rest pose matches
-the placed source. Unbound wheels stay cylinders. Steerable pivots still use
-`rotation.y` from `displaySteeringAngle`. Legacy URL loads keep
+the placed source. Unbound wheels stay cylinders. Steerable pivots use
+`rotation.y`. A version 3 standard front pair uses the ideal inner and outer
+yaw; every other steerable pivot uses the shared display angle. Legacy URL loads keep
 `applyModelPlacement` and cylinders. A stale or aborted lease does not
 present. While the model gizmo is dragging a bound vehicle, presentation is
 suspended so the source meshes move with the body, then restored on commit.
@@ -238,3 +241,29 @@ studio and asks for acceptance before the draft changes. The dialog
 reports how far the stored axle geometry would move. An out-of-tolerance
 nudge snaps the draft and the gizmo back. Model replacement clears previous
 bindings and hidden indexes in that undo entry.
+
+### VEH-05a — turn geometry
+
+`turnGeometry.js` copies the plant clamp: the limit is `min(maxSteeringAngle, π × 0.49)`, with `0.6` when the authored limit is not finite. Positive steering curves toward −Z. The simulator radius is `L / tan(δ)` about `(0, −R)`, where `L` is the stored `kinematics.wheelbase`. Straight means the applied angle is exactly zero. The extreme code is the plant cap, not a smaller authored limit.
+
+Ideal Ackermann is a separate illustration. It uses the authored rear axle, `L_g = front.x − rear.x`, and the center `(rear.x, −R_a)`. It is available only for a version 3 front and rear pair with `L_g > 0`. The wheel yaw is `atan2(L_g × sign(lateral), abs(lateral))`, which stays in `(−π/2, π/2)` so a negative command mirrors the positive one instead of wrapping toward π. When `|R_a|` is at or inside the half-track, the inner ray is omitted and the visual yaw falls back to the shared angle. Neither construction is a swept path, and neither changes `KinematicVehiclePlant`.
+
+### VEH-05b — plan projection
+
+`projectVehiclePlan` freezes the body, standard axles, unclassified wheels, stored and derived wheelbase, both constructions, and named diagnostics: straight, steering-clamped, extreme-angle, ackermann-singular, ackermann-unavailable, and geometry-locked. `layoutVehiclePlan` maps +X up and +Z left. The fit includes the body, the wheels, and the origin. It does not include the turn center, so a large radius does not zoom the vehicle out. Arc endpoints are clipped into the padded view while the record keeps the true meter radius.
+
+### VEH-05c — axle gestures
+
+The editor undo stack stays the page history. `createAxleGesture` previews `applyAxlePatch` from the captured manifest and does not push a second history. A preview writes the draft without `recordHistory`. Commit pushes the capture once. Cancel and Escape restore the capture. Undo during an open gesture cancels it and does not also undo the previous entry. Steering preview is view state and does not enter undo.
+
+### VEH-05d — axle inspector
+
+A version 3 vehicle with a standard pair edits that axle as one card. Model-bound geometry stays read-only until detach. A complete version 3 wheelbase is a read-only field. Version 2 keeps the per-wheel list as the primary editor. Unclassified wheels on a version 3 vehicle that already has standard axles sit in Advanced. Built-in documents stay inside the disabled fieldset, and the plan handles receive `readOnly` because an SVG slider is not a form control.
+
+### VEH-05e — plan view
+
+The wheels tab leads with the SVG plan. The simulator arc is solid and labelled “Simulator turn”. The Ackermann arc is dashed and labelled as an illustration referenced to the rear axle, not the predicted path. Axle and track handles are sliders. Arrow keys and pointer drags share one axle gesture. The steering range only changes the preview.
+
+### VEH-05f — visual yaw
+
+`visualWheelYaws` assigns the ideal inner and outer angles to the version 3 front pair when Ackermann is available and not singular. Every other steerable wheel, including version 2, uses the shared applied angle. Fixed wheels stay at zero. `ManifestVehicle` and the studio apply that yaw. `stepVehiclePlant` is unchanged. Two manifests with the same kinematics and different axle positions take the same plant step.

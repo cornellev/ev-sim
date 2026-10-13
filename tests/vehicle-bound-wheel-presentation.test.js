@@ -264,3 +264,139 @@ test("ManifestVehicle ignores a stale canonical load", async () => {
     assert.equal(vehicle.sceneObject.children.some((child) => child.name === "model-1"), false);
     vehicle.dispose();
 });
+
+function editorDatabase() {
+    return {
+        devices: () => ({ addDevice() {} }),
+        bindings: () => null,
+        getParent() { return null; },
+        scene: null,
+    };
+}
+
+function wheel(id, axle, side, x, steerable) {
+    return {
+        id,
+        ...(axle ? { axle, side } : {}),
+        position: { x, y: 0.25, z: side === "right" ? -0.55 : 0.55 },
+        radius: 0.25,
+        width: 0.15,
+        steerable,
+    };
+}
+
+async function spawn(manifest) {
+    const { VehicleDatabase } = await import("../app/3d/data/VehicleDatabase.js");
+    const { ManifestVehicle } = await import("../app/3d/vehicles/ManifestVehicle.js");
+    const database = new VehicleDatabase(editorDatabase());
+    const vehicle = new ManifestVehicle(database, manifest, new THREE.Vector3(), new THREE.Euler(), {
+        skipManifestDevices: true,
+    });
+    await vehicle.addToScene({ add() {} });
+    return vehicle;
+}
+
+function yaw(vehicle, id) {
+    return vehicle._wheels.find((wheel) => wheel.wheelId === id).pivot.rotation.y;
+}
+
+function settleDisplay(vehicle) {
+    for (let step = 0; step < 30; step += 1) vehicle.update(0);
+}
+
+test("ideal front yaw does not change the plant step", async () => {
+    const { applyManualDrive } = await import("../app/3d/vehicles/VehiclePlantAdapter.js");
+    const { createVehiclePlantDefinition, KinematicVehiclePlant } = await import("../app/simulation/vehicles/KinematicVehiclePlant.js");
+    const manifest = normalizeVehicleManifest({
+        version: 3,
+        id: "ideal-yaw",
+        wheels: [
+            wheel("front-left", "front", "left", 1.3, true),
+            wheel("front-right", "front", "right", 1.3, true),
+            wheel("rear-left", "rear", "left", -0.2, false),
+            wheel("rear-right", "rear", "right", -0.2, false),
+        ],
+        kinematics: { wheelbase: 1.5, maxSteeringAngle: 0.6 },
+    });
+    const shifted = normalizeVehicleManifest({
+        ...manifest,
+        wheels: manifest.wheels.map((entry) => ({
+            ...entry,
+            position: { ...entry.position, x: entry.position.x + 0.4 },
+        })),
+        kinematics: { ...manifest.kinematics, wheelbase: 1.5 },
+    });
+    const vehicle = await spawn(manifest);
+    const other = await spawn(shifted);
+    applyManualDrive(vehicle, { speedMps: 2, steeringRad: 0.25 });
+    applyManualDrive(other, { speedMps: 2, steeringRad: 0.25 });
+    const reference = new KinematicVehiclePlant(createVehiclePlantDefinition({}, null, {
+        manifest,
+        motionModel: "bicycle",
+    }));
+    reference.velocity.x = 2;
+    reference.steeringAngle = 0.25;
+    vehicle.update(0.05);
+    other.update(0.05);
+    reference.update(0.05);
+    closeTo(vehicle.position.x, reference.position.x);
+    closeTo(vehicle.position.z, reference.position.z);
+    closeTo(vehicle.rotation.y, reference.rotation.y);
+    closeTo(other.position.x, reference.position.x);
+    closeTo(other.position.z, reference.position.z);
+    closeTo(other.rotation.y, reference.rotation.y);
+    const pose = { x: vehicle.position.x, z: vehicle.position.z, yaw: vehicle.rotation.y };
+    settleDisplay(vehicle);
+    closeTo(vehicle.position.x, pose.x);
+    closeTo(vehicle.position.z, pose.z);
+    closeTo(vehicle.rotation.y, pose.yaw);
+    const left = yaw(vehicle, "front-left");
+    const right = yaw(vehicle, "front-right");
+    assert.ok(right > left);
+    assert.ok(left > 0);
+    assert.equal(yaw(vehicle, "rear-left"), 0);
+    vehicle.dispose();
+    other.dispose();
+});
+
+test("version 2 steerable wheels share one visual yaw", async () => {
+    const { applyManualDrive } = await import("../app/3d/vehicles/VehiclePlantAdapter.js");
+    const manifest = normalizeVehicleManifest({
+        version: 2,
+        id: "legacy-yaw",
+        wheels: [
+            wheel("front-left", null, "left", 0.75, true),
+            wheel("front-right", null, "right", 0.75, true),
+        ],
+        kinematics: { wheelbase: 1.5, maxSteeringAngle: 0.6 },
+    });
+    const vehicle = await spawn(manifest);
+    applyManualDrive(vehicle, { steeringRad: 0.25 });
+    settleDisplay(vehicle);
+    closeTo(yaw(vehicle, "front-left"), vehicle.displaySteeringAngle);
+    closeTo(yaw(vehicle, "front-right"), vehicle.displaySteeringAngle);
+    closeTo(vehicle.displaySteeringAngle, 0.25, 1e-3);
+    vehicle.dispose();
+});
+
+test("a singular Ackermann layout falls back to the shared angle", async () => {
+    const { applyManualDrive } = await import("../app/3d/vehicles/VehiclePlantAdapter.js");
+    const manifest = normalizeVehicleManifest({
+        version: 3,
+        id: "singular-yaw",
+        wheels: [
+            wheel("front-left", "front", "left", 0.75, true),
+            wheel("front-right", "front", "right", 0.75, true),
+            wheel("rear-left", "rear", "left", -0.75, false),
+            wheel("rear-right", "rear", "right", -0.75, false),
+        ],
+        kinematics: { wheelbase: 1.5, maxSteeringAngle: 1.4 },
+    });
+    const vehicle = await spawn(manifest);
+    applyManualDrive(vehicle, { steeringRad: 1.4 });
+    settleDisplay(vehicle);
+    closeTo(yaw(vehicle, "front-left"), vehicle.displaySteeringAngle);
+    closeTo(yaw(vehicle, "front-right"), vehicle.displaySteeringAngle);
+    closeTo(vehicle.displaySteeringAngle, 1.4, 1e-3);
+    vehicle.dispose();
+});

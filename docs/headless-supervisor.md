@@ -67,8 +67,10 @@ Use the long-lived listener form for Python, batching, or repeated episodes.
 
 ## Protocol and loading
 
-The server advertises protocol `1.4` and identity profile `world-bound@2`.
-It accepts clients with major `1` and a minor version no greater than `4`.
+The server advertises protocol `1.5` and identity profile `world-bound@2`.
+It accepts clients with major `1` and a minor version no greater than `5`.
+Protocol 1.5 adds optional `EpisodeSpec.overrides` for a planner start pose
+and goal. Clients that negotiate a lower minor cannot send that field.
 Protocol 1.1 state-only and CPU-LiDAR
 clients remain compatible and receive inline tensors. Schema changes remain
 additive within v1; `ResourceLimits` fields 11 and 12 are

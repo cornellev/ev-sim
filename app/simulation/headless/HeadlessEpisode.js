@@ -15,7 +15,15 @@ import {
     perceptionSensorDescriptor,
 } from "./MeasuredPerceptionObservation.js";
 import {
+    createPlanningOracleObservationSpace,
+    PlanningOracleObservationBuilder,
+    planningActorIds,
+} from "./PlanningOracleObservation.js";
+import { assertStartPoseClear, goalReached } from "./EpisodeOverrides.js";
+import { canonicalEpisodeOverrides } from "../kernel/SimulationHashes.js";
+import {
     MEASURED_PERCEPTION_PROFILE_ID,
+    PLANNING_ORACLE_PROFILE_ID,
     measuredStateProfileRef,
     resolveObservationProfile,
     resolveRewardProfile,
@@ -135,6 +143,7 @@ export function normalizeEpisodeSpec(resolvedRun, spec = {}) {
         observationProfile: spec.observationProfile || spec.observation_profile || measuredStateProfileRef(),
         rewardProfile: spec.rewardProfile || spec.reward_profile || routeSafetyProfileRef(),
         backendSelections: backends,
+        overrides: canonicalEpisodeOverrides(spec.overrides),
     };
 }
 
@@ -242,6 +251,7 @@ export class HeadlessEpisode {
             throw new HeadlessEpisodeError("INVALID_REQUEST", "reset_seed must be a uint64 value.");
         }
         const observationConfig = resolveObservationProfile(spec.observationProfile);
+        const planningOracle = spec.observationProfile.id === PLANNING_ORACLE_PROFILE_ID;
         const measuredPerception = spec.observationProfile.id === MEASURED_PERCEPTION_PROFILE_ID;
         const rewardConfig = resolveRewardProfile(spec.rewardProfile);
         const normalized = spec.backendSelections.map(normalizedBackend);
@@ -405,11 +415,13 @@ export class HeadlessEpisode {
         }
         const spaces = {
             actionSpace: ACTION_SPACE,
-            observationSpace: measuredPerception
-                ? createMeasuredPerceptionObservationSpace(descriptors, perceptionDescriptors)
-                : createMeasuredStateObservationSpace(descriptors),
+            observationSpace: planningOracle
+                ? createPlanningOracleObservationSpace(descriptors, planningActorIds(resolvedRun))
+                : measuredPerception
+                    ? createMeasuredPerceptionObservationSpace(descriptors, perceptionDescriptors)
+                    : createMeasuredStateObservationSpace(descriptors),
         };
-        return { spec, rewardConfig, route, spaces, observationConfig, measuredPerception };
+        return { spec, rewardConfig, route, spaces, observationConfig, measuredPerception, planningOracle };
     }
 
     async prepare(resolvedRun, episodeSpec = {}) {
@@ -424,9 +436,12 @@ export class HeadlessEpisode {
         this.rewardConfig = prepared.rewardConfig;
         this.route = prepared.route;
         this.spaces = prepared.spaces;
-        this.observationBuilder = prepared.measuredPerception
-            ? new MeasuredPerceptionObservationBuilder(this.runtime.devices, this.route, () => this.runtime.vehicles)
-            : new MeasuredStateObservationBuilder(this.runtime.devices, this.route, () => this.runtime.vehicles);
+        const vehicleSource = () => this.runtime.vehicles;
+        this.observationBuilder = prepared.planningOracle
+            ? new PlanningOracleObservationBuilder(this.runtime.devices, this.route, vehicleSource, resolvedRun)
+            : prepared.measuredPerception
+                ? new MeasuredPerceptionObservationBuilder(this.runtime.devices, this.route, vehicleSource)
+                : new MeasuredStateObservationBuilder(this.runtime.devices, this.route, vehicleSource);
         this.lifecycleState = "prepared";
         return {
             episodeHash: this.kernel.episodeHash,
@@ -446,6 +461,7 @@ export class HeadlessEpisode {
             }
         }
         assertCompatibleSpaces(this.spaces, prepared.spaces);
+        if (prepared.spec.overrides?.startPose) assertStartPoseClear(this.resolvedRun, prepared.spec.overrides.startPose);
         this.episodeSpec = prepared.spec;
         this.rewardConfig = prepared.rewardConfig;
         this.kernel.reset(prepared.spec);
@@ -458,7 +474,12 @@ export class HeadlessEpisode {
         this.previousProgress = initialTask;
         this.lifecycleState = "ready";
         return {
-            observation: this.observationBuilder.build({ step: 0, policyStep: 0, scenario }),
+            observation: this.observationBuilder.build({
+                step: 0,
+                policyStep: 0,
+                scenario,
+                overrides: this.episodeSpec.overrides,
+            }),
             info: {
                 episodeHash: this.kernel.episodeHash,
                 resolvedHash: this.resolvedRun.resolvedHash,
@@ -468,6 +489,20 @@ export class HeadlessEpisode {
                 observationSpaceHash: hashSpace(this.spaces.observationSpace),
             },
         };
+    }
+
+    _reachedGoalOverride() {
+        const goal = this.episodeSpec?.overrides?.goal;
+        if (!goal) return false;
+        const vehicles = this.runtime.vehicles?.vehicles || [];
+        const egoId = this.resolvedRun?.manifest?.controls?.targetVehicleId || "ego";
+        const ego = vehicles.find((vehicle) => (vehicle.telemetryId || vehicle.id) === egoId) ?? vehicles[0];
+        if (!ego?.position) return false;
+        return goalReached({
+            x: Number(ego.position.x) || 0,
+            z: Number(ego.position.z) || 0,
+            yaw: Number(ego.rotation?.y) || 0,
+        }, goal);
     }
 
     _taskProgress(scenario) {
@@ -521,6 +556,7 @@ export class HeadlessEpisode {
             transition.assertion ||= assertionFailure(snapshot);
             const scenarioOutcome = classifyScenarioTerminal(scenario?.terminal);
             transition.success ||= scenarioOutcome === "success";
+            transition.success ||= this._reachedGoalOverride();
             transition.simulationTime ||= scenarioOutcome === "simulation-time";
             transition.collision ||= scenarioOutcome === "collision";
             transition.assertion ||= scenarioOutcome === "assertion";
@@ -570,7 +606,12 @@ export class HeadlessEpisode {
             diagnostics: { advancedSubsteps: substeps, requestedActionRepeat: this.episodeSpec.actionRepeat },
         };
         const result = {
-            observation: this.observationBuilder.build({ step: this.kernel.steps, policyStep: this.policyStep, scenario }),
+            observation: this.observationBuilder.build({
+                step: this.kernel.steps,
+                policyStep: this.policyStep,
+                scenario,
+                overrides: this.episodeSpec.overrides,
+            }),
             reward,
             terminated,
             truncated,

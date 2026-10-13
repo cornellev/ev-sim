@@ -13,6 +13,7 @@ import {
     presentBoundWheels,
 } from "./presentBoundWheels.js";
 import { attachVehiclePlant, resetVehiclePlant, stepVehiclePlant } from "./VehiclePlantAdapter.js";
+import { visualWheelYaws } from "../../vehicles/plan/turnGeometry.js";
 import { resetEgoPresentation, updateEgoPresentation } from "./EgoPresentation.js";
 
 export { applyModelPlacement } from "./ModelPlacement.js";
@@ -193,6 +194,7 @@ export class ManifestVehicle extends PhysicalVehicle {
             THREE,
         });
         this._wheels = [...presented.pivots, ...presented.cylinders].map((entry) => ({
+            wheelId: entry.wheelId,
             pivot: entry.pivot,
             steerable: entry.steerable,
         }));
@@ -222,7 +224,19 @@ export class ManifestVehicle extends PhysicalVehicle {
             pivot.position.set(wheel.position.x, wheel.position.y, wheel.position.z);
             pivot.add(mesh);
             this.sceneObject.add(pivot);
-            this._wheels.push({ pivot, steerable: wheel.steerable });
+            this._wheels.push({ wheelId: wheel.id, pivot, steerable: wheel.steerable });
+        }
+    }
+
+    _applyVisualSteering() {
+        const yaws = visualWheelYaws(this.manifest, this.displaySteeringAngle);
+        const byId = new Map(yaws.map((entry) => [entry.wheelId, entry.yaw]));
+        for (const wheel of this._wheels) {
+            if (wheel.wheelId && byId.has(wheel.wheelId)) {
+                wheel.pivot.rotation.y = byId.get(wheel.wheelId);
+            } else {
+                wheel.pivot.rotation.y = wheel.steerable ? this.displaySteeringAngle : 0;
+            }
         }
     }
 
@@ -281,9 +295,7 @@ export class ManifestVehicle extends PhysicalVehicle {
         stepVehiclePlant(this, deltaTime);
 
         this.displaySteeringAngle += (steering - this.displaySteeringAngle) * 0.25;
-        for (const wheel of this._wheels) {
-            if (wheel.steerable) wheel.pivot.rotation.y = this.displaySteeringAngle;
-        }
+        this._applyVisualSteering();
 
         this._updateLidarZoneTransform();
         updateEgoPresentation(this, deltaTime);
@@ -308,9 +320,7 @@ export class ManifestVehicle extends PhysicalVehicle {
         super.resetRunState(entry);
         resetVehiclePlant(this, entry);
         this.displaySteeringAngle = Number(entry.steeringAngle) || 0;
-        for (const wheel of this._wheels) {
-            if (wheel.steerable) wheel.pivot.rotation.y = this.displaySteeringAngle;
-        }
+        this._applyVisualSteering();
         this._updateLidarZoneTransform();
         resetEgoPresentation(this);
     }

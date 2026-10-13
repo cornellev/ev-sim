@@ -2333,3 +2333,16 @@ body [class~="uppercase"] {
 }
 
 .hide-scrollbar::-webkit-scrollbar { display: none; }
+
+.vehicle-plan__handle {
+  cursor: grab;
+}
+
+.vehicle-plan__handle:focus-visible {
+  outline: 2px solid var(--slate-fg);
+}
+
+.vehicle-plan__label {
+  font-size: 11px;
+  fill: currentColor;
+}

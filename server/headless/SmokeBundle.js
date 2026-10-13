@@ -3,37 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { StorageService } from "../storage/StorageService.js";
-
-function routeEndpoints(environment, initialPosition) {
-    const roads = environment?.document?.roads;
-    const nodes = new Map((roads?.nodes || []).map((node) => [node.id, node]));
-    const candidates = (roads?.edges || []).flatMap((edge) => {
-        const start = nodes.get(edge.startNodeId);
-        const end = nodes.get(edge.endNodeId);
-        if (!start || !end) return [];
-        return [
-            { edge, start, finish: end, startFraction: 0, finishFraction: 1 },
-            ...(edge.bidirectional
-                ? [{ edge, start: end, finish: start, startFraction: 1, finishFraction: 0 }]
-                : []),
-        ];
-    });
-    candidates.sort((left, right) => {
-        const leftDistance = Math.hypot(
-            left.start.x - initialPosition.x,
-            left.start.z - initialPosition.z,
-        );
-        const rightDistance = Math.hypot(
-            right.start.x - initialPosition.x,
-            right.start.z - initialPosition.z,
-        );
-        return leftDistance - rightDistance
-            || Buffer.from(left.edge.id).compare(Buffer.from(right.edge.id))
-            || left.startFraction - right.startFraction;
-    });
-    if (candidates.length === 0) throw new Error("The smoke-bundle environment has no routable road edge.");
-    return candidates[0];
-}
+import { selectRouteEndpoints } from "./PlanningBundle.js";
 
 function scenarioDraft({ environmentId, actorId, endpoints }) {
     const point = (node) => ({ x: node.x, y: 0, z: node.z });
@@ -114,7 +84,7 @@ export async function createHeadlessSmokeBundle({
         const scenario = scenarioDraft({
             environmentId,
             actorId: initial.id,
-            endpoints: routeEndpoints(environment, initial.pose.position),
+            endpoints: selectRouteEndpoints(environment, { initialPosition: initial.pose.position }),
         });
         const verified = await storage.verifyScenarioRoute(scenario.id, {
             scenario,

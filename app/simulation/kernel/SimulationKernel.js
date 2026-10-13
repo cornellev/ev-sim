@@ -15,6 +15,7 @@ import {
     computeEpisodeHash,
     computeSimulationSemanticHash,
     defaultEpisodeIdentity,
+    initialStateWithStartPose,
     TrajectoryHasher,
 } from "./SimulationHashes.js";
 
@@ -253,7 +254,12 @@ export class SimulationKernel {
         this._episodeStartArmed = episodePhase === "start";
         this._applyEpisodeOverlayProducts(resetSeed);
         if (this.resolvedRun) {
-            this.context.vehicles.reset(this.resolvedRun.manifest.initialState, { resetSeed });
+            const targetId = this.resolvedRun.manifest.controls?.targetVehicleId || "ego";
+            this.context.vehicles.reset(initialStateWithStartPose(
+                this.resolvedRun.manifest.initialState,
+                episodeSpec?.overrides?.startPose,
+                targetId,
+            ), { resetSeed });
             this.context.physics.resetRun({ resetSeed });
             this.context.devices.reset({
                 resetSeed,
@@ -269,6 +275,7 @@ export class SimulationKernel {
                 ...(episodeSpec || {}),
                 simulationSemanticHash: this.simulationSemanticHash,
                 resetSeed,
+                overrides: episodeSpec?.overrides ?? null,
             });
             this.episodeHash = computeEpisodeHash(this.episodeIdentity);
             this.trajectoryHasher = new TrajectoryHasher(this.episodeHash);

@@ -208,7 +208,7 @@ def test_action_encoding_validates_shape_finiteness_and_bounds() -> None:
 
 
 def test_non_box_wire_spaces_fail_explicitly() -> None:
-    with pytest.raises(CevSimCompatibilityError, match="does not define"):
+    with pytest.raises(CevSimCompatibilityError, match="No packed tensor layout is defined"):
         space_from_proto(pb.SpaceSpec(id="discrete", version=1, discrete=pb.DiscreteSpace(count=2)))
 
 

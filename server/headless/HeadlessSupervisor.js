@@ -14,7 +14,7 @@ import {
     gpuSensorBackendCapability,
     routedGpuSensorBackendCapability,
 } from "../../app/simulation/sensors/GpuSensorBackend.js";
-import { computeEpisodeHash } from "../../app/simulation/kernel/SimulationHashes.js";
+import { canonicalEpisodeOverrides, computeEpisodeHash } from "../../app/simulation/kernel/SimulationHashes.js";
 import { canonicalStringify } from "../../app/simulation/RunManifest.js";
 import { canonicalRunBundleStringify, verifyRunBundle, verifyRunBundleBytes } from "./RunBundle.js";
 import {
@@ -483,6 +483,9 @@ export class HeadlessSupervisor {
                 if (perceptionProfile && batch.protocolMinor < 2) {
                     throw supervisorError("PROTOCOL_MISMATCH", "measured-perception requires headless protocol 1.2.");
                 }
+                if (canonicalEpisodeOverrides(episodeSpec.overrides) && batch.protocolMinor < 5) {
+                    throw supervisorError("PROTOCOL_MISMATCH", "Episode start and goal overrides require headless protocol 1.5.");
+                }
                 const arenaBytes = calculateSharedTensorArenaBytes(bundle.verified.resolved, episodeSpec);
                 const requestsCamera = bundle.verified.resolved.manifest.sensorRig?.sensors?.some(
                     (sensor) => sensor.enabled !== false && sensor.type === "camera",
@@ -635,6 +638,9 @@ export class HeadlessSupervisor {
                 if (!environment || environment.index !== Number(episode.environmentIndex)) throw supervisorError("INVALID_REQUEST", `Unknown environment_index ${episode.environmentIndex}.`);
                 if (String(episode.environmentId) !== environment.id || String(episode.runBundleId) !== String(environment.episodeSpec.runBundleId)) {
                     throw supervisorError("INVALID_REQUEST", `Reset episode ${episode.environmentIndex} may not change environment_id or run_bundle_id.`);
+                }
+                if (canonicalEpisodeOverrides(episode.overrides) && batch.protocolMinor < 5) {
+                    throw supervisorError("PROTOCOL_MISMATCH", "Episode start and goal overrides require headless protocol 1.5.");
                 }
             }
             const results = await Promise.all(episodes.map(async (episode) => {

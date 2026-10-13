@@ -17,6 +17,7 @@ import {
 import {
     DEFAULT_ROUTE_SAFETY_CONFIG_HASH,
     measuredStateProfileRef,
+    planningOracleProfileRef,
     ROUTE_SAFETY_PRESETS,
     routeSafetyProfileRef,
 } from "../app/simulation/headless/ProfileRegistry.js";
@@ -197,6 +198,68 @@ test("episode maps signed actions, repeats commands, and counts policy steps", a
     ]);
     assert.equal(result.info.rewardTerms[5].weight, 0);
     assert.throws(() => episode.step([0, 0]), (error) => error.code === "EPISODE_TERMINAL");
+});
+
+test("planning-oracle reports ego pose and a start override changes the episode hash", async () => {
+    const resolved = await episodeBundle();
+    const baseline = new HeadlessEpisode();
+    await baseline.prepare(resolved, { observationProfile: planningOracleProfileRef() });
+    const reset = baseline.reset();
+    const names = reset.observation.entries.map((entry) => entry.name);
+    assert.ok(names.includes("oracle/ego/pose"));
+    assert.ok(names.includes("sensors/imu/value"));
+    const pose = unpackTensor(reset.observation.entries.find((entry) => entry.name === "oracle/ego/pose").tensor);
+    const vehicle = baseline.runtime.vehicles.vehicles[0];
+    assert.ok(Math.abs(pose[0] - vehicle.position.x) < 1e-6);
+    assert.ok(Math.abs(pose[1] - vehicle.position.z) < 1e-6);
+    const polyline = resolved.scenario.scenario.routes[0].verification.polyline;
+    const point = polyline[Math.min(4, polyline.length - 2)];
+    const next = polyline[Math.min(5, polyline.length - 1)];
+    const yaw = Math.atan2(-(next.z - point.z), next.x - point.x);
+    const shifted = new HeadlessEpisode();
+    await shifted.prepare(resolved, { observationProfile: planningOracleProfileRef() });
+    const moved = shifted.reset({
+        observationProfile: planningOracleProfileRef(),
+        overrides: { startPose: { x: point.x, z: point.z, yaw, speedMps: 0 } },
+    });
+    const movedPose = unpackTensor(moved.observation.entries.find((entry) => entry.name === "oracle/ego/pose").tensor);
+    assert.ok(Math.hypot(movedPose[0] - point.x, movedPose[1] - point.z) < 0.2);
+    assert.notEqual(reset.info.episodeHash, moved.info.episodeHash);
+    const plain = new HeadlessEpisode();
+    await plain.prepare(resolved);
+    plain.reset();
+    const oracle = new HeadlessEpisode();
+    await oracle.prepare(resolved, { observationProfile: planningOracleProfileRef() });
+    oracle.reset();
+    assert.notEqual(plain.kernel.episodeHash, oracle.kernel.episodeHash);
+});
+
+test("a nearby goal override terminates the episode successfully", async () => {
+    const resolved = await episodeBundle();
+    const episode = new HeadlessEpisode();
+    await episode.prepare(resolved, { observationProfile: planningOracleProfileRef(), maxEpisodeSteps: 5 });
+    const start = resolved.manifest.initialState.vehicles[0].pose.position;
+    episode.reset({
+        observationProfile: planningOracleProfileRef(),
+        overrides: {
+            goal: { x: start.x, z: start.z, yaw: null, positionToleranceM: 2, yawToleranceRad: Math.PI },
+        },
+    });
+    const result = episode.step([0, 0]);
+    assert.equal(result.terminated, true);
+    assert.equal(result.info.terminationReason, TERMINATION_REASON.SUCCESS);
+});
+
+test("an obstacle start pose is rejected before the episode advances", async () => {
+    const resolved = await episodeBundle();
+    const obstacle = resolved.world.description.obstacles?.[0];
+    if (!obstacle) return;
+    const episode = new HeadlessEpisode();
+    await episode.prepare(resolved);
+    const blocked = obstacle.footprint?.[0] || obstacle.bounds?.min;
+    assert.throws(() => episode.reset({
+        overrides: { startPose: { x: blocked.x, z: blocked.z, yaw: 0, speedMps: 0 } },
+    }), (error) => error.code === "INVALID_REQUEST");
 });
 
 test("action changes are represented in authoritative trajectory hashes", async () => {

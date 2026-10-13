@@ -13,6 +13,7 @@ import {
 import { VehicleModelLoader, publishedVehicleModelSource } from "../../3d/vehicles/VehicleModelLoader.js";
 import { sensorRuntimeRegistry } from "../../3d/devices/SensorRuntimeRegistry.js";
 import { measurePlacedVehicleModel } from "../model/measurePlacedVehicle.js";
+import { visualWheelYaws } from "../plan/turnGeometry.js";
 
 const COLORS = {
     background: 0x09090b,
@@ -113,6 +114,7 @@ export class VehicleStudio {
         this.sensorsGroup = new THREE.Group();
         this.zoneGroup = new THREE.Group();
         this.scene.add(this.modelRoot, this.wheelsGroup, this.sensorsGroup, this.zoneGroup);
+        this._steeringPreview = 0;
 
         this.bboxMesh = new THREE.Mesh(
             new THREE.BoxGeometry(1, 1, 1),
@@ -224,6 +226,23 @@ export class VehicleStudio {
         this._syncSensors(manifest.sensors);
         this._syncBody(manifest);
         this._syncZone(manifest.lidarZone);
+        this._applySteeringPreview();
+    }
+
+    setSteeringPreview(angle) {
+        this._steeringPreview = Number(angle) || 0;
+        this._applySteeringPreview();
+    }
+
+    _applySteeringPreview() {
+        if (!this._manifest || !this.wheelsGroup) return;
+        const yaws = visualWheelYaws(this._manifest, this._steeringPreview);
+        const byId = new Map(yaws.map((entry) => [entry.wheelId, entry.yaw]));
+        for (const child of this.wheelsGroup.children) {
+            const id = child.userData?.pick?.id;
+            if (!id || !byId.has(id) || this._isDragging(child)) continue;
+            child.rotation.y = byId.get(id);
+        }
     }
 
     getModelLease() {
@@ -348,6 +367,7 @@ export class VehicleStudio {
         });
         this._canonical = true;
         this._presentationSuspended = false;
+        this._applySteeringPreview();
     }
 
     _suspendPresentation() {

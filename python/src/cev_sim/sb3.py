@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import shutil
 import weakref
 from pathlib import Path
 from typing import Any
@@ -13,8 +14,9 @@ from stable_baselines3.common.vec_env.base_vec_env import VecEnvIndices, VecEnvO
 from .bundle import BundleInput
 from .client import CevSimBatch, SupervisorClient
 from .config import ArtifactPolicy, EpisodeConfig, ResourceLimits, SupervisorLaunch
-from .env import _finalize_resources
+from .env import _finalize_resources, resolve_session_paths
 from .errors import CevSimConfigurationError
+from .overrides import normalize_reset_options
 from .tensors import batch_observations
 
 
@@ -25,7 +27,6 @@ def _copy_observation(observation: dict[str, np.ndarray[Any, Any]]) -> dict[str,
 class CevSimVecEnv(VecEnv):
     """Stable-Baselines3 VecEnv backed by one process-isolated supervisor batch."""
 
-    render_mode = None
     metadata = {"render_modes": []}
 
     def __init__(
@@ -33,7 +34,7 @@ class CevSimVecEnv(VecEnv):
         bundle: BundleInput,
         num_envs: int,
         *,
-        output_dir: str | Path,
+        output_dir: str | Path | None = None,
         target: str | None = None,
         launch: SupervisorLaunch | None = None,
         episode: EpisodeConfig | None = None,
@@ -47,9 +48,17 @@ class CevSimVecEnv(VecEnv):
         self._closed = False
         self._broken = False
         self._pending_actions: np.ndarray[Any, Any] | None = None
+        self._temporary_output: str | None = None
+        self._reset_overrides: list[dict[str, Any] | None] | None = None
         self._finalizer: weakref.finalize | None = None
         self._rngs = [np.random.default_rng() for _ in range(num_envs)]
         self.episode_config = episode or EpisodeConfig()
+        output_dir, target, launch, artifact_policy, self._temporary_output = resolve_session_paths(
+            output_dir=output_dir,
+            target=target,
+            launch=launch,
+            artifact_policy=artifact_policy,
+        )
         try:
             self._client = SupervisorClient(
                 target=target,
@@ -63,12 +72,15 @@ class CevSimVecEnv(VecEnv):
                 output_directory=output_dir,
                 episode=self.episode_config,
                 resource_limits=resource_limits or ResourceLimits(),
-                artifact_policy=artifact_policy or ArtifactPolicy(),
+                artifact_policy=artifact_policy,
             )
             super().__init__(num_envs, self._batch.observation_space, self._batch.action_space)
-            self._finalizer = weakref.finalize(self, _finalize_resources, self._batch, self._client)
+            self._finalizer = weakref.finalize(
+                self, _finalize_resources, self._batch, self._client, self._temporary_output
+            )
         except Exception:
-            _finalize_resources(self._batch, self._client)
+            _finalize_resources(self._batch, self._client, self._temporary_output)
+            self._temporary_output = None
             raise
 
     @property
@@ -80,7 +92,9 @@ class CevSimVecEnv(VecEnv):
     def reset(self) -> VecEnvObs:
         batch = self._require_usable()
         if any(self._options):
-            raise CevSimConfigurationError("CevSimVecEnv does not support reset options in PR 8")
+            raise CevSimConfigurationError(
+                "Pass planner overrides with set_reset_options(); VecEnv.reset() does not take an options argument"
+            )
         seeds = []
         for index, pending in enumerate(self._seeds):
             if pending is None:
@@ -93,7 +107,7 @@ class CevSimVecEnv(VecEnv):
             active = [index for index, state in enumerate(batch.states) if state in {"ready", "terminal"}]
             if active:
                 batch.finalize(active)
-            resets = batch.reset(list(range(self.num_envs)), seeds)
+            resets = batch.reset(list(range(self.num_envs)), seeds, self._overrides_for(list(range(self.num_envs))))
         except Exception:
             self._broken = True
             try:
@@ -144,7 +158,7 @@ class CevSimVecEnv(VecEnv):
                     info["terminal_finalization"] = copy.deepcopy(finalization["result"])
                     info["cev_sim.final_result"] = finalization
                 reset_seeds = [self._next_seed(index) for index in done_indexes]
-                resets = batch.reset(done_indexes, reset_seeds)
+                resets = batch.reset(done_indexes, reset_seeds, self._overrides_for(done_indexes))
                 for index, (observation, info) in zip(done_indexes, resets, strict=True):
                     observations[index] = observation
                     self.reset_infos[index] = info
@@ -163,17 +177,29 @@ class CevSimVecEnv(VecEnv):
         self._closed = True
         self._pending_actions = None
         batch, client = self._batch, self._client
+        temporary_output = self._temporary_output
         self._batch = None
         self._client = None
+        self._temporary_output = None
         try:
             try:
                 batch and batch.close(finalize_active_episodes=True)
             finally:
                 client and client.close()
         finally:
+            if temporary_output:
+                shutil.rmtree(temporary_output, ignore_errors=True)
             if self._finalizer is not None:
                 self._finalizer.detach()
                 self._finalizer = None
+
+    def set_reset_options(self, options: Any, indices: VecEnvIndices = None) -> None:
+        """Apply the same start-pose and goal options used by ``CevSimEnv.reset``."""
+        normalized = normalize_reset_options(options)
+        if self._reset_overrides is None:
+            self._reset_overrides = [None] * self.num_envs
+        for index in self._get_indices(indices):
+            self._reset_overrides[index] = normalized
 
     def get_attr(self, attr_name: str, indices: VecEnvIndices = None) -> list[Any]:
         selected = self._get_indices(indices)
@@ -216,6 +242,11 @@ class CevSimVecEnv(VecEnv):
         if self._broken:
             raise CevSimConfigurationError("Vector environment failed during a partial batch; close and recreate it")
         return self._batch
+
+    def _overrides_for(self, indexes: list[int]) -> list[dict[str, Any] | None] | None:
+        if self._reset_overrides is None or not any(self._reset_overrides[index] for index in indexes):
+            return None
+        return [self._reset_overrides[index] for index in indexes]
 
     def _next_seed(self, index: int) -> int:
         return int(self._rngs[index].integers(0, 1 << 64, dtype=np.uint64))
