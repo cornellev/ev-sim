@@ -45,6 +45,7 @@ export function DragNumber({
     const inputRef = useRef(null);
     const dragRef = useRef(null);
     const suppressClickRef = useRef(false);
+    const textRef = useRef(null);
 
     useEffect(() => () => {
         const state = dragRef.current;
@@ -105,12 +106,15 @@ export function DragNumber({
             }}
             onChange={(event) => {
                 const raw = event.target.value;
+                textRef.current = raw;
                 setText(raw);
                 commitText(raw);
             }}
             onBlur={() => {
-                if (text !== null) commitText(text);
+                const raw = textRef.current;
+                textRef.current = null;
                 setText(null);
+                if (raw !== null) commitText(raw);
             }}
             onKeyDown={(event) => {
                 if (event.key === "Enter") {

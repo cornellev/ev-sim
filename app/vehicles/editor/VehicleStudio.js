@@ -3,8 +3,16 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { TriangleOptimizer } from "../../optimization/TriangleOptimizer.js";
 import { applyModelPlacement } from "../../3d/vehicles/ModelPlacement.js";
+import {
+    applyMeasuredPlacement,
+    captureModelRest,
+    clearPresentedWheels,
+    presentBoundWheels,
+    restoreModelRest,
+} from "../../3d/vehicles/presentBoundWheels.js";
 import { VehicleModelLoader, publishedVehicleModelSource } from "../../3d/vehicles/VehicleModelLoader.js";
 import { sensorRuntimeRegistry } from "../../3d/devices/SensorRuntimeRegistry.js";
+import { measurePlacedVehicleModel } from "../model/measurePlacedVehicle.js";
 
 const COLORS = {
     background: 0x09090b,
@@ -29,12 +37,14 @@ export class VehicleStudio {
      * @param {{
      *   onTransform?: (selection: {kind: string, id: string|null}, transform: {position: {x,y,z}, rotation: {x,y,z}}) => void,
      *   onSelect?: (selection: {kind: string, id: string|null} | null) => void,
+     *   onPlacementCommit?: (selection: {kind: string, id: string|null}, transform: {position: {x,y,z}, rotation: {x,y,z}}) => void,
      * }} callbacks
      */
-    constructor(container, { onTransform, onSelect, sensorRuntime = sensorRuntimeRegistry, modelLoader = null } = {}) {
+    constructor(container, { onTransform, onSelect, onPlacementCommit, sensorRuntime = sensorRuntimeRegistry, modelLoader = null } = {}) {
         this.container = container;
         this.onTransform = onTransform;
         this.onSelect = onSelect;
+        this.onPlacementCommit = onPlacementCommit;
         this.sensorRuntime = sensorRuntime;
 
         this.scene = new THREE.Scene();
@@ -77,7 +87,24 @@ export class VehicleStudio {
         this.gizmo.addEventListener("dragging-changed", (event) => {
             this.orbit.enabled = !event.value;
         });
-        this.gizmo.addEventListener("objectChange", () => this._emitTransform());
+        this.gizmo.addEventListener("mouseDown", () => {
+            this.orbit.enabled = false;
+            this._beginPlacementDrag();
+        });
+        this.gizmo.addEventListener("mouseUp", () => {
+            this.orbit.enabled = true;
+            const selectedWheel = this._selection?.kind === "wheel"
+                ? this._manifest?.wheels?.find((wheel) => wheel.id === this._selection.id)
+                : null;
+            const snapBoundWheel = selectedWheel?.visual?.kind === "model-node" && !this._placementDrag;
+            this._finishPlacementDrag();
+            if (snapBoundWheel) {
+                queueMicrotask(() => {
+                    if (!this._disposed && this._manifest) this.setManifest(this._manifest, this._modelUrl);
+                });
+            }
+        });
+        this.gizmo.addEventListener("objectChange", () => this._onGizmoChange());
         this.scene.add(this.gizmo.getHelper ? this.gizmo.getHelper() : this.gizmo);
 
         // Manifest-driven groups, all in the vehicle-local frame at the origin.
@@ -117,6 +144,12 @@ export class VehicleStudio {
         this._modelAlignment = { x: 0, y: 0, z: 0 };
         this._pendingBoundingBox = null;
         this._pendingModel = null;
+        this._manifest = null;
+        this._modelUrl = null;
+        this._canonical = false;
+        this._modelRest = null;
+        this._presentationSuspended = false;
+        this._placementDrag = null;
         this._loadToken = 0;
         this._disposed = false;
 
@@ -183,11 +216,18 @@ export class VehicleStudio {
      * @param {string|null} modelUrl resolved asset URL, or null when no model
      */
     setManifest(manifest, modelUrl) {
+        this._manifest = manifest;
+        this._modelUrl = modelUrl;
+        if (this._presentationSuspended && !this._placementDrag) this._presentationSuspended = false;
         this._syncModel(manifest, modelUrl);
-        this._syncWheels(manifest.wheels);
+        if (!this._canonical || this._presentationSuspended) this._syncWheels(manifest.wheels);
         this._syncSensors(manifest.sensors);
         this._syncBody(manifest);
         this._syncZone(manifest.lidarZone);
+    }
+
+    getModelLease() {
+        return this._modelLease;
     }
 
     _syncModel(manifest, modelUrl) {
@@ -203,6 +243,9 @@ export class VehicleStudio {
             this._modelAbort?.abort();
             this._modelLease?.dispose();
             this._modelLease = null;
+            this._canonical = false;
+            this._modelRest = null;
+            this._presentationSuspended = false;
             this.modelRoot.clear();
             this._modelObject = null;
             this._placeholder = null;
@@ -228,13 +271,19 @@ export class VehicleStudio {
                     this._placeholder = null;
                     this._modelLease = lease;
                     this._modelObject = lease.root;
-                    this._modelAlignment = applyModelPlacement(
-                        this._modelObject,
-                        this._pendingModel ?? model,
-                        this._pendingBoundingBox,
-                    );
                     this.modelRoot.add(this._modelObject);
-                    if (this._selection?.kind === "model") this.setSelection(this._selection);
+                    if (this._manifest?.version === 3 && lease.glbBytes) {
+                        this._presentCanonical(this._manifest);
+                    } else {
+                        this._canonical = false;
+                        this._modelAlignment = applyModelPlacement(
+                            this._modelObject,
+                            this._pendingModel ?? model,
+                            this._pendingBoundingBox,
+                        );
+                        if (this._manifest) this._syncWheels(this._manifest.wheels);
+                    }
+                    if (this._selection) this.setSelection(this._selection);
                 }).catch((error) => {
                     console.warn("Vehicle editor could not load model:", error);
                     if (this._disposed || token !== this._loadToken) return;
@@ -247,13 +296,129 @@ export class VehicleStudio {
             this._syncPlaceholder(boundingBox);
         }
         this._pendingModel = model;
-        if (this._modelObject && !this._isDragging(this._modelObject)) {
+        if (this._modelObject && !this._isDragging(this._modelObject) && !this._presentationSuspended) {
+            if (this._canonical) this._presentCanonical(manifest);
+            else {
+                this._modelAlignment = applyModelPlacement(
+                    this._modelObject,
+                    model,
+                    this._pendingBoundingBox,
+                );
+            }
+        }
+    }
+
+    _presentCanonical(manifest) {
+        const lease = this._modelLease;
+        if (!lease?.glbBytes || !this._modelObject || manifest?.version !== 3) {
+            this._canonical = false;
+            return;
+        }
+        try {
+            this._presentMeasured(manifest, lease);
+        } catch (error) {
+            console.warn("Vehicle editor could not present bound wheels:", error);
+            this._canonical = false;
             this._modelAlignment = applyModelPlacement(
                 this._modelObject,
-                model,
-                this._pendingBoundingBox,
+                manifest.model,
+                manifest.boundingBox,
             );
         }
+    }
+
+    _presentMeasured(manifest, lease) {
+        if (this._modelRest) restoreModelRest(this._modelRest);
+        const measurement = measurePlacedVehicleModel({
+            glbBytes: lease.glbBytes,
+            model: manifest.model,
+            boundingBox: manifest.boundingBox,
+            hiddenNodeIndices: manifest.model?.hiddenNodeIndices ?? [],
+        });
+        applyMeasuredPlacement(this._modelObject, measurement.placement);
+        this._modelAlignment = { ...(measurement.placement.alignment ?? { x: 0, y: 0, z: 0 }) };
+        this._modelRest = captureModelRest(this._modelObject, lease.nodeMappings);
+        this._clearMarkerWheels();
+        presentBoundWheels({
+            root: this._modelObject,
+            wheelsGroup: this.wheelsGroup,
+            manifest,
+            nodeMappings: lease.nodeMappings,
+            THREE,
+        });
+        this._canonical = true;
+        this._presentationSuspended = false;
+    }
+
+    _suspendPresentation() {
+        if (!this._canonical || this._presentationSuspended) return;
+        restoreModelRest(this._modelRest ?? []);
+        clearPresentedWheels(this.wheelsGroup);
+        this._presentationSuspended = true;
+    }
+
+    _clearMarkerWheels() {
+        for (const child of [...this.wheelsGroup.children]) {
+            if (child.userData?.presentedWheel) continue;
+            this._detachIfAttached(child);
+            child.traverse((object) => {
+                object.geometry?.dispose?.();
+                const materials = Array.isArray(object.material) ? object.material : [object.material];
+                materials.forEach((material) => material?.dispose?.());
+            });
+            this.wheelsGroup.remove(child);
+        }
+    }
+
+    _hasBoundWheels() {
+        return (this._manifest?.wheels ?? []).some((wheel) => wheel.visual?.kind === "model-node");
+    }
+
+    _beginPlacementDrag() {
+        const kind = this._selection?.kind;
+        if (!this._canonical || !this._hasBoundWheels() || (kind !== "model" && kind !== "body")) return;
+        this._suspendPresentation();
+        this._placementDrag = {
+            kind,
+            modelPosition: this._modelObject ? this._modelObject.position.clone() : null,
+            center: {
+                x: this._manifest?.boundingBox?.center?.x || 0,
+                y: this._manifest?.boundingBox?.center?.y || 0,
+                z: this._manifest?.boundingBox?.center?.z || 0,
+            },
+        };
+    }
+
+    _onGizmoChange() {
+        const drag = this._placementDrag;
+        if (drag?.kind === "body" && this._modelObject && drag.modelPosition) {
+            this._modelObject.position.set(
+                drag.modelPosition.x + (this.bboxMesh.position.x - drag.center.x),
+                drag.modelPosition.y + (this.bboxMesh.position.y - drag.center.y),
+                drag.modelPosition.z + (this.bboxMesh.position.z - drag.center.z),
+            );
+            return;
+        }
+        if (drag?.kind === "model") return;
+        this._emitTransform();
+    }
+
+    _finishPlacementDrag() {
+        const drag = this._placementDrag;
+        this._placementDrag = null;
+        if (!drag) return;
+        const object = drag.kind === "body" ? this.bboxMesh : this._modelObject;
+        if (!object) return;
+        const transform = {
+            position: { x: object.position.x, y: object.position.y, z: object.position.z },
+            rotation: { x: object.rotation.x, y: object.rotation.y, z: object.rotation.z },
+        };
+        const selection = this._selection ? { ...this._selection } : { kind: drag.kind, id: null };
+        queueMicrotask(() => {
+            if (this._disposed) return;
+            if (this.onPlacementCommit) this.onPlacementCommit(selection, transform);
+            else if (this._manifest) this.setManifest(this._manifest, this._modelUrl);
+        });
     }
 
     /** AABB alignment used by the last applyModelPlacement (before model.offset). */
@@ -459,8 +624,11 @@ export class VehicleStudio {
      */
     getModelBounds() {
         if (!this._modelObject) return null;
+        const resume = this._canonical && !this._presentationSuspended;
+        if (resume) this._suspendPresentation();
         this.modelRoot.updateMatrixWorld(true);
         const bounds = new THREE.Box3().setFromObject(this.modelRoot);
+        if (resume && this._manifest) this._presentCanonical(this._manifest);
         if (bounds.isEmpty()) return null;
         const size = bounds.getSize(new THREE.Vector3());
         const center = bounds.getCenter(new THREE.Vector3());

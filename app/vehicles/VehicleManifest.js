@@ -285,6 +285,27 @@ export function createDefaultVehicleManifest(overrides = {}) {
     );
 }
 
+/**
+ * Version 3 blank used by transactional publication.
+ * `createDefaultVehicleManifest()` stays version 2 so its pinned hash does not move.
+ * Wheels stay unclassified; dependencies and hidden nodes start empty.
+ */
+export function createBlankVehicleManifest(overrides = {}) {
+    const base = createDefaultVehicleManifest(overrides);
+    return normalizeVehicleManifest({
+        ...base,
+        version: VEHICLE_MANIFEST_VERSION_V3,
+        model: {
+            asset: null,
+            dependencies: [],
+            hiddenNodeIndices: [],
+            scale: base.model.scale,
+            rotation: base.model.rotation,
+            offset: base.model.offset,
+        },
+    });
+}
+
 export function normalizeVehicleManifest(value, {
     allowMissingKind = false,
     sensorRegistry = sensorTypeRegistry,

@@ -516,6 +516,50 @@ export function assertVehicleMemberBytes(member, bytes) {
     return data;
 }
 
+function vehicleNodeTable(json) {
+    const nodes = json?.nodes ?? [];
+    const parents = Array.from({ length: nodes.length }, () => -1);
+    nodes.forEach((node, index) => {
+        for (const child of node?.children ?? []) {
+            if (!Number.isInteger(child) || child < 0 || child >= nodes.length) continue;
+            if (parents[child] === -1) parents[child] = index;
+        }
+    });
+    return { count: nodes.length, parents };
+}
+
+/**
+ * Describe one staged vehicle file. Content-addressed names must match the
+ * bytes. Other package names stay opaque so legacy bundles can be staged.
+ */
+export function describeVehicleStageMember(name, bytes) {
+    const data = bytesOf(bytes);
+    if (data.byteLength === 0) throw new Error("Vehicle stage member is empty.");
+    if (!isCanonicalDependencyName(name)) {
+        throw new Error(`Invalid vehicle stage member name ${JSON.stringify(name)}.`);
+    }
+    const digest = sha256ExactBytes(data);
+    const named = CONTENT_NAME.exec(name);
+    if (named) {
+        assertVehicleMemberBytes({ name, sha256: digest, size: data.byteLength }, data);
+        return {
+            name,
+            sha256: digest,
+            size: data.byteLength,
+            mediaType: EXTENSION_MEDIA[named[2]],
+        };
+    }
+    let mediaType = "application/octet-stream";
+    try {
+        mediaType = sniffImageMediaType(data);
+    } catch {
+        if (data.length >= 4 && data[0] === 0x67 && data[1] === 0x6c && data[2] === 0x54 && data[3] === 0x46) {
+            mediaType = "model/gltf-binary";
+        }
+    }
+    return { name, sha256: digest, size: data.byteLength, mediaType };
+}
+
 /**
  * Validate a packed vehicle GLB and its sibling image files.
  * Image URIs must be `<sha256>.png`, `<sha256>.jpg`, or `<sha256>.ktx2`.
@@ -586,5 +630,5 @@ export function validateVehicleModelClosure({ glbBytes, dependencies = [], limit
     if (decodedBytesEstimate > limits.decodedClosureBytes) {
         throw new Error(`Decoded model closure exceeds the ${limits.decodedClosureBytes}-byte ceiling.`);
     }
-    return { ...graph, decodedBytesEstimate };
+    return { ...graph, decodedBytesEstimate, nodeTable: vehicleNodeTable(parsed.json) };
 }

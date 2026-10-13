@@ -1,17 +1,23 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { publishVehicleDraft } from "../app/vehicles/document/publishVehicleDraft.js";
 import { VehicleDocumentSession } from "../app/vehicles/document/VehicleDocumentSession.js";
 import {
     applyMigration,
     applyModelReplacement,
+    applyPlacementChange,
     applyReviewedUrdfPatch,
+    assignModelWheels,
     detachWheel,
     editAxle,
     editKinematics,
     reattachWheel,
     setStagedResources,
+    suppressSourceWheels,
 } from "../app/vehicles/document/vehicleCommands.js";
+import { measurePlacedVehicleModel } from "../app/vehicles/model/measurePlacedVehicle.js";
+import { buildBoxGlb, symmetricWheelParts } from "./helpers/vehicle-wheel-glb.js";
 import { planVehicleMigration } from "../app/vehicles/migration/planVehicleMigration.js";
 import { createDefaultVehicleManifest, normalizeVehicleManifest } from "../app/vehicles/VehicleManifest.js";
 
@@ -196,4 +202,203 @@ test("a direct wheelbase edit is rejected once both standard axles exist", () =>
     assert.equal(session.draft.snapshot().kinematics.wheelbase, 1.5);
     assert.equal(session.execute(editKinematics({ patch: { maxSpeed: 9 } })).ok, true);
     assert.equal(session.draft.snapshot().kinematics.maxSpeed, 9);
+});
+
+test("publishing a draft acknowledges the captured generation and keeps the stage after a conflict", async () => {
+    const session = new VehicleDocumentSession({ manifest: standardVehicle(), revision: 4, definitionHash: "old" });
+    const stage = { stageId: "stage-1", members: [{ name: "car.glb", sha256: "ab", size: 3, mediaType: "model/gltf-binary" }] };
+    assert.equal(session.execute(setStagedResources(stage)).ok, true);
+    const client = {
+        async readVehicleStageMember() {
+            return { sha256: "ab", size: 3, mediaType: "model/gltf-binary" };
+        },
+        async saveVehicleManifest() {
+            session.execute(editKinematics({ patch: { maxSpeed: 9 } }));
+            return { revision: 5, definitionHash: "saved" };
+        },
+    };
+    const saved = await publishVehicleDraft(session, client, { operationId: "a".repeat(64) });
+    assert.equal(saved.ok, true);
+    assert.equal(saved.dirty, true);
+    assert.equal(session.baseline.revision, 5);
+    assert.equal(session.baseline.manifest.kinematics.maxSpeed, 15);
+    assert.equal(session.draft.snapshot().kinematics.maxSpeed, 9);
+
+    const conflicted = new VehicleDocumentSession({ manifest: standardVehicle(), revision: 4, definitionHash: "old" });
+    conflicted.execute(setStagedResources(stage));
+    await assert.rejects(() => publishVehicleDraft(conflicted, {
+        async readVehicleStageMember() {
+            return { sha256: "ff", size: 3, mediaType: "model/gltf-binary" };
+        },
+        async saveVehicleManifest() {
+            throw new Error("should not save");
+        },
+    }, { operationId: "b".repeat(64) }), /does not match the server digest/);
+    assert.equal(conflicted.dirty, false);
+    assert.equal(conflicted.stagedResources.stageId, "stage-1");
+    assert.equal(conflicted.saveCapture, null);
+});
+
+function withZone(manifest) {
+    manifest.lidarZone = {
+        params: { voxelSize: 0.2 },
+        vertices: [[0, 0, 0], [1, 0, 0], [0, 1, 0]],
+        triangles: [[0, 1, 2]],
+    };
+    return manifest;
+}
+
+function wheelMeasurement(manifest, parts = symmetricWheelParts()) {
+    const glbBytes = buildBoxGlb(parts);
+    return {
+        glbBytes,
+        measurement: measurePlacedVehicleModel({
+            glbBytes,
+            model: manifest.model,
+            boundingBox: manifest.boundingBox,
+        }),
+    };
+}
+
+test("assigning a measured pair is one undo item and requires acceptance", () => {
+    const manifest = withZone(standardVehicle());
+    const { measurement } = wheelMeasurement(manifest);
+    const session = new VehicleDocumentSession({ manifest });
+    const blocked = session.execute(assignModelWheels({
+        axle: "front",
+        leftNodeIndex: 0,
+        rightNodeIndex: 1,
+        measurement,
+        acceptAdjustments: false,
+    }));
+    assert.equal(blocked.ok, false);
+    assert.equal(blocked.review.withinTolerance, true);
+    assert.equal(session.history.length, 0);
+    assert.equal(session.draft.snapshot().lidarZone.vertices.length, 3);
+
+    const applied = session.execute(assignModelWheels({
+        axle: "front",
+        leftNodeIndex: 0,
+        rightNodeIndex: 1,
+        measurement,
+        acceptAdjustments: true,
+    }));
+    assert.equal(applied.ok, true);
+    assert.equal(session.history.length, 1);
+    const draft = session.draft.snapshot();
+    assert.equal(draft.wheels[0].visual.nodeIndex, 0);
+    assert.equal(draft.wheels[1].visual.nodeIndex, 1);
+    assert.equal(draft.lidarZone.vertices.length, 0);
+    assert.equal(session.undo().ok, true);
+    assert.equal(session.draft.snapshot().wheels[0].visual, undefined);
+    assert.equal(session.draft.snapshot().lidarZone.vertices.length, 3);
+});
+
+test("suppressing source wheels hides them and adds unclassified cylinders", () => {
+    const manifest = withZone(standardVehicle());
+    const parts = symmetricWheelParts();
+    parts[1] = { ...parts[1], center: { x: 0.875, y: 0.25, z: -0.5 } };
+    const { measurement } = wheelMeasurement(manifest, parts);
+    const session = new VehicleDocumentSession({ manifest });
+    const blocked = session.execute(assignModelWheels({
+        axle: "front",
+        leftNodeIndex: 0,
+        rightNodeIndex: 1,
+        measurement,
+        acceptAdjustments: true,
+    }));
+    assert.equal(blocked.ok, false);
+    assert.equal(blocked.issues.some((entry) => entry.code === "vehicle.axle.asymmetric"), true);
+
+    const replaced = session.execute(suppressSourceWheels({ nodeIndices: [0, 1], measurement }));
+    assert.equal(replaced.ok, true);
+    assert.equal(session.history.length, 1);
+    const draft = session.draft.snapshot();
+    assert.deepEqual(draft.model.hiddenNodeIndices, [0, 1]);
+    assert.equal(draft.wheels.some((wheel) => wheel.id === "generated-0" && wheel.axle === undefined && wheel.visual === undefined), true);
+    assert.equal(draft.wheels.some((wheel) => wheel.id === "generated-1" && wheel.side === undefined), true);
+    assert.equal(draft.lidarZone.vertices.length, 0);
+    assert.equal(session.undo().ok, true);
+    assert.deepEqual(session.draft.snapshot().model.hiddenNodeIndices, []);
+});
+
+test("suppressing an ancestor of a bound wheel does not change the draft", () => {
+    const manifest = standardVehicle();
+    manifest.wheels[1].visual = { kind: "model-node", nodeIndex: 1 };
+    const session = new VehicleDocumentSession({ manifest });
+    const measurement = {
+        nodes: [{ nodeIndex: 1, center: { x: 0.75, y: 0.25, z: -0.5 }, radius: 0.25, width: 0.25, size: { x: 0.5, y: 0.5, z: 0.25 }, radialDelta: 0 }],
+        nodeTable: { count: 2, parents: [-1, 0] },
+    };
+    const blocked = session.execute(suppressSourceWheels({ nodeIndices: [0], measurement }));
+    assert.equal(blocked.ok, false);
+    assert.equal(blocked.issues[0].code, "vehicle.wheel.ancestor-overlap");
+    assert.equal(session.history.length, 0);
+    assert.equal(session.draft.snapshot().wheels[1].visual.nodeIndex, 1);
+});
+
+test("placement that breaks a bound pair is rejected and a smaller shift requires acceptance", () => {
+    const manifest = withZone(standardVehicle());
+    const { glbBytes, measurement } = wheelMeasurement(manifest);
+    const session = new VehicleDocumentSession({ manifest });
+    assert.equal(session.execute(assignModelWheels({
+        axle: "front",
+        leftNodeIndex: 0,
+        rightNodeIndex: 1,
+        measurement,
+        acceptAdjustments: true,
+    })).ok, true);
+    const assigned = session.draft.snapshot();
+    const asymmetric = structuredClone(measurement);
+    asymmetric.nodes[1] = {
+        ...asymmetric.nodes[1],
+        center: { ...asymmetric.nodes[1].center, x: asymmetric.nodes[1].center.x + 0.05 },
+    };
+    const rejected = session.execute(applyPlacementChange({
+        model: { offset: { x: 0.05, y: 0, z: 0 } },
+        measurement: asymmetric,
+    }));
+    assert.equal(rejected.ok, false);
+    assert.equal(session.draft.snapshot().model.offset.x, assigned.model.offset.x);
+    assert.equal(session.draft.snapshot().wheels[0].visual.nodeIndex, 0);
+
+    const nudged = session.execute(applyPlacementChange({
+        model: { offset: { x: 0.0005, y: 0, z: 0 } },
+        glbBytes,
+    }));
+    assert.equal(nudged.ok, false);
+    assert.equal(nudged.review.needsAcceptance, true);
+    assert.ok(nudged.review.axles[0].movement > 0.0004 && nudged.review.axles[0].movement < 0.0006);
+    assert.equal(session.draft.snapshot().model.offset.x, assigned.model.offset.x);
+
+    const accepted = session.execute(applyPlacementChange({
+        model: { offset: { x: 0.0005, y: 0, z: 0 } },
+        glbBytes,
+        acceptAdjustments: true,
+    }));
+    assert.equal(accepted.ok, true);
+    assert.equal(session.draft.snapshot().model.offset.x, 0.0005);
+    assert.notEqual(session.draft.snapshot().wheels[0].position.x, assigned.wheels[0].position.x);
+    assert.equal(session.draft.snapshot().lidarZone.vertices.length, 0);
+});
+
+test("detach and reattach clear the baked zone and undo restores both", () => {
+    const manifest = withZone(standardVehicle());
+    manifest.wheels[0].visual = { kind: "model-node", nodeIndex: 4 };
+    const session = new VehicleDocumentSession({ manifest });
+    assert.equal(session.execute(detachWheel({ wheelId: "front-left" })).ok, true);
+    assert.deepEqual(session.draft.snapshot().model.hiddenNodeIndices, [4]);
+    assert.equal(session.draft.snapshot().wheels[0].visual, undefined);
+    assert.equal(session.draft.snapshot().lidarZone.vertices.length, 0);
+    assert.equal(session.undo().ok, true);
+    assert.equal(session.draft.snapshot().wheels[0].visual.nodeIndex, 4);
+    assert.equal(session.draft.snapshot().lidarZone.vertices.length, 3);
+    assert.equal(session.execute(detachWheel({ wheelId: "front-left" })).ok, true);
+    assert.equal(session.execute(reattachWheel({ wheelId: "front-left", nodeIndex: 4 })).ok, true);
+    assert.equal(session.draft.snapshot().wheels[0].visual.nodeIndex, 4);
+    assert.deepEqual(session.draft.snapshot().model.hiddenNodeIndices, []);
+    assert.equal(session.undo().ok, true);
+    assert.equal(session.draft.snapshot().wheels[0].visual, undefined);
+    assert.equal(session.redo().ok, true);
+    assert.equal(session.draft.snapshot().wheels[0].visual.nodeIndex, 4);
 });

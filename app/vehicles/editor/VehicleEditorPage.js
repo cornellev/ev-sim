@@ -19,7 +19,7 @@ import {
 } from "@tabler/icons-react";
 
 import {
-    createDefaultVehicleManifest,
+    createBlankVehicleManifest,
     deriveWheelbase,
     normalizeVehicleManifest,
     resolveVehicleModelUrl,
@@ -51,6 +51,7 @@ import {
 } from "../BuiltInVehicleManifests.js";
 import {
     createVehicleManifest,
+    createVehicleOperationId,
     deleteVehicleManifest,
     duplicateVehicleManifest,
     exportVehicleBundle,
@@ -61,7 +62,18 @@ import {
     uploadVehicleAsset,
     validateVehicleManifestOnServer,
 } from "../VehicleManifestClient.js";
+import { VehicleDocumentSession } from "../document/VehicleDocumentSession.js";
+import {
+    applyModelReplacement,
+    applyPlacementChange,
+    assignModelWheels,
+    detachWheel,
+    suppressSourceWheels,
+} from "../document/vehicleCommands.js";
+import { measurePlacedVehicleModel } from "../model/measurePlacedVehicle.js";
 import { DragNumber } from "./DragNumber.js";
+import { PlacementAcceptanceDialog, WheelAssignmentDialog } from "./WheelAssignmentDialog.js";
+import { canonicalVehicleGlb, rolesFromManifest } from "./wheelAssignmentState.js";
 import { VehicleStudio } from "./VehicleStudio.js";
 import {
     AdvancedFields,
@@ -128,6 +140,7 @@ function roundVec(vector) {
 export default function VehicleEditorPage({ onOpenWorkspace }) {
     const importRef = useRef(null);
     const modelFileRef = useRef(null);
+    const assignButtonRef = useRef(null);
     const viewportRef = useRef(null);
     const studioRef = useRef(null);
     const studioHandlers = useRef({});
@@ -154,6 +167,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     const [modelVisible, setModelVisible] = useState(true);
     const [voxelSize, setVoxelSize] = useState(0.2);
     const [fitTarget, setFitTarget] = useState({ length: 2.7, width: 1.25 });
+    const [placementRevision, setPlacementRevision] = useState(0);
     const [catalogOpen, setCatalogOpen] = useState(false);
     const [inspectorOpen, setInspectorOpen] = useState(false);
     const sensorSessionRef = useRef(null);
@@ -161,6 +175,8 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     const [sensorCatalog, setSensorCatalog] = useState({ revision: 0, sensors: [] });
     const [plantCatalog, setPlantCatalog] = useState([]);
     const [sensorRegistryTick, setSensorRegistryTick] = useState(0);
+    const [assignment, setAssignment] = useState(null);
+    const [placementPrompt, setPlacementPrompt] = useState(null);
     const authoringOptions = () => ({
         sensorRegistry: sensorSessionRef.current?.registry ?? sensorTypeRegistry,
     });
@@ -252,6 +268,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
         if (!hasDraft || !viewportRef.current || studioRef.current) return undefined;
         const studio = new VehicleStudio(viewportRef.current, {
             onTransform: (pick, transform) => studioHandlers.current.onTransform?.(pick, transform),
+            onPlacementCommit: (pick, transform) => studioHandlers.current.onPlacementCommit?.(pick, transform),
             onSelect: (pick) => studioHandlers.current.onSelect?.(pick),
             sensorRuntime: authoringRuntime,
         });
@@ -345,8 +362,8 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
         if (readOnly) return;
         setDraft((current) => {
             if (!current) return current;
-            recordHistory(current, path.join("."), {
-                coalesce: options.coalesce ?? ["number", "string"].includes(typeof value),
+            recordHistory(current, options.historyKey || path.join(".") || "document", {
+                coalesce: options.coalesce ?? (path.length > 0 && ["number", "string"].includes(typeof value)),
             });
             const next = path.length === 0 ? structuredClone(value) : structuredClone(current);
             if (path.length > 0) {
@@ -404,6 +421,58 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
         return () => document.removeEventListener("keydown", onHistoryShortcut);
     }, []);
 
+    const syncStudio = (manifest = draft) => {
+        if (!manifest) return;
+        const url = resolveVehicleModelUrl(selectedId, manifest.model?.asset, { cacheBust: assetVersion });
+        studioRef.current?.setManifest(manifest, url);
+    };
+
+    const runCommand = (command, manifest = draft) => (
+        new VehicleDocumentSession({ manifest }).execute(command)
+    );
+
+    const boundWheels = (manifest) => (manifest?.wheels ?? []).some((wheel) => wheel.visual?.kind === "model-node");
+
+    const commitPlacement = (patch, { coalesce = false, historyKey = "placement" } = {}) => {
+        if (!draft || readOnly) return;
+        const result = runCommand(applyPlacementChange({
+            ...patch,
+            glbBytes: boundWheels(draft) ? (studioRef.current?.getModelLease?.()?.glbBytes ?? null) : null,
+            acceptAdjustments: false,
+        }));
+        if (result.ok) {
+            const next = normalizeVehicleManifest(result.manifest, authoringOptions());
+            if (differenceCount(normalizeVehicleManifest(draft, authoringOptions()), next) === 0) {
+                syncStudio(draft);
+                return;
+            }
+            update([], next, { coalesce, historyKey });
+            return;
+        }
+        if (result.review?.withinTolerance && result.review?.needsAcceptance) {
+            setPlacementPrompt({ patch, review: result.review });
+            return;
+        }
+        setPlacementRevision((revision) => revision + 1);
+        setError(result.issues?.[0]?.message || "Placement was rejected.");
+        syncStudio(draft);
+    };
+
+    const placementFromTransform = (pick, transform) => {
+        if (pick?.kind === "body") return { boundingBox: { center: { ...transform.position } } };
+        const alignment = studioRef.current?.getModelAlignment?.() || { x: 0, y: 0, z: 0 };
+        return {
+            model: {
+                offset: {
+                    x: transform.position.x - alignment.x,
+                    y: transform.position.y - alignment.y,
+                    z: transform.position.z - alignment.z,
+                },
+                rotation: { ...transform.rotation, order: draft?.model?.rotation?.order || "XYZ" },
+            },
+        };
+    };
+
     studioHandlers.current.onTransform = (pick, transform) => {
         const position = roundVec(transform.position);
         const rotation = { ...roundVec(transform.rotation), order: "XYZ" };
@@ -412,25 +481,48 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
             if (index === undefined || index < 0) return;
             update(["sensors", index, "pose"], { position, rotation }, { coalesce: true });
         } else if (pick.kind === "wheel") {
-            const index = draft?.wheels.findIndex((entry) => entry.id === pick.id);
-            if (index === undefined || index < 0) return;
+            const wheel = draft?.wheels.find((entry) => entry.id === pick.id);
+            if (!wheel || wheel.visual?.kind === "model-node") return;
+            const index = draft.wheels.findIndex((entry) => entry.id === pick.id);
             update(["wheels", index, "position"], position, { coalesce: true });
         } else if (pick.kind === "body") {
-            update(["boundingBox", "center"], position, { coalesce: true });
+            commitPlacement(placementFromTransform(pick, transform), { coalesce: true, historyKey: "body-center" });
         } else if (pick.kind === "ego") {
             update(["egoCenter"], position, { coalesce: true });
         } else if (pick.kind === "model") {
-            const alignment = studioRef.current?.getModelAlignment?.() || { x: 0, y: 0, z: 0 };
-            update(["model"], {
-                ...draft.model,
-                offset: {
-                    x: position.x - alignment.x,
-                    y: position.y - alignment.y,
-                    z: position.z - alignment.z,
-                },
-                rotation,
-            }, { coalesce: true });
+            commitPlacement(placementFromTransform(pick, { ...transform, position: transform.position }), { coalesce: true, historyKey: "model-offset" });
         }
+    };
+
+    studioHandlers.current.onPlacementCommit = (pick, transform) => {
+        if (!draft || readOnly) {
+            syncStudio(draft);
+            return;
+        }
+        commitPlacement(placementFromTransform(pick, transform), { historyKey: `placement-${pick?.kind || "model"}` });
+    };
+
+    const acceptPlacement = () => {
+        const prompt = placementPrompt;
+        if (!prompt || !draft) return;
+        const result = runCommand(applyPlacementChange({
+            ...prompt.patch,
+            glbBytes: boundWheels(draft) ? (studioRef.current?.getModelLease?.()?.glbBytes ?? null) : null,
+            acceptAdjustments: true,
+        }));
+        setPlacementPrompt(null);
+        if (!result.ok) {
+            setError(result.issues?.[0]?.message || "Placement was rejected.");
+            syncStudio(draft);
+            return;
+        }
+        update([], result.manifest, { historyKey: "placement-accept" });
+    };
+
+    const rejectPlacement = () => {
+        setPlacementRevision((revision) => revision + 1);
+        setPlacementPrompt(null);
+        syncStudio(draft);
     };
 
     studioHandlers.current.onSelect = (pick) => {
@@ -481,7 +573,10 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
         let suffix = 2;
         while (existing.has(id)) id = `${vehicleIdFromName(baseName)}-${suffix++}`;
         await perform(async () => {
-            const created = await createVehicleManifest(createDefaultVehicleManifest({ id, name: baseName }));
+            const created = await createVehicleManifest(
+                createBlankVehicleManifest({ id, name: baseName }),
+                { operationId: createVehicleOperationId() },
+            );
             await loadCatalog(created.id);
         });
     };
@@ -564,7 +659,9 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
         const fileName = `model.${extension}`;
         await uploadVehicleAsset(selectedId, fileName, file);
         setAssetVersion((version) => version + 1);
-        update(["model", "asset"], fileName);
+        const result = runCommand(applyModelReplacement({ model: { asset: fileName, dependencies: [] } }));
+        if (!result.ok) throw new Error(result.issues?.[0]?.message || "Could not replace the model.");
+        update([], result.manifest, { historyKey: "model-asset" });
     });
 
     const fitModelToSize = () => {
@@ -577,7 +674,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
         const currentWidth = bounds.size.z / (draft.model.scale || 1);
         if (currentLength <= 0 || currentWidth <= 0) return;
         const scale = Math.min(fitTarget.length / currentLength, fitTarget.width / currentWidth);
-        update(["model", "scale"], round3(scale) || draft.model.scale);
+        commitPlacement({ model: { scale: round3(scale) || draft.model.scale } }, { historyKey: "model-scale" });
     };
 
     const generateZone = () => {
@@ -596,10 +693,81 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
             setError("Import a model before fitting the bounding box.");
             return;
         }
-        update(["boundingBox"], {
-            size: roundVec(bounds.size),
-            center: roundVec(bounds.center),
-        });
+        commitPlacement({
+            boundingBox: {
+                size: roundVec(bounds.size),
+                center: roundVec(bounds.center),
+            },
+        }, { historyKey: "body-fit" });
+    };
+
+    const replaceOrDetachModel = (asset) => {
+        const result = runCommand(applyModelReplacement({
+            model: { asset, dependencies: asset ? draft.model.dependencies : [] },
+        }));
+        if (!result.ok) {
+            setError(result.issues?.[0]?.message || "Could not update the model.");
+            return;
+        }
+        update([], result.manifest, { historyKey: "model-asset" });
+    };
+
+    const openAssignment = () => {
+        const lease = studioRef.current?.getModelLease?.();
+        if (!lease?.glbBytes) {
+            setError("The canonical model is still loading.");
+            return;
+        }
+        try {
+            const measurement = measurePlacedVehicleModel({
+                glbBytes: lease.glbBytes,
+                model: draft.model,
+                boundingBox: draft.boundingBox,
+                hiddenNodeIndices: draft.model.hiddenNodeIndices ?? [],
+            });
+            setAssignment({ measurement, catalog: measurement.catalog, token: Date.now() });
+            setError(null);
+        } catch (caught) {
+            setError(caught.message);
+        }
+    };
+
+    const acceptAssignment = (pairs) => {
+        const lease = studioRef.current?.getModelLease?.();
+        const result = runCommand(assignModelWheels({
+            pairs,
+            glbBytes: lease?.glbBytes ?? null,
+            acceptAdjustments: true,
+        }));
+        if (!result.ok) {
+            setError(result.issues?.[0]?.message || "Could not assign those wheels.");
+            return;
+        }
+        setAssignment((current) => (current ? { ...current, open: false } : null));
+        update([], result.manifest, { historyKey: "assign-wheels" });
+    };
+
+    const suppressAssignment = (nodeIndices) => {
+        const lease = studioRef.current?.getModelLease?.();
+        const result = runCommand(suppressSourceWheels({
+            nodeIndices,
+            glbBytes: lease?.glbBytes ?? null,
+        }));
+        if (!result.ok) {
+            setError(result.issues?.[0]?.message || "Could not hide those parts.");
+            return;
+        }
+        setAssignment((current) => (current ? { ...current, open: false } : null));
+        update([], result.manifest, { historyKey: "suppress-wheels" });
+    };
+
+    const detachBoundWheel = (wheelId) => {
+        const result = runCommand(detachWheel({ wheelId }));
+        if (!result.ok) {
+            setError(result.issues?.[0]?.message || "Could not detach that wheel.");
+            return;
+        }
+        update([], result.manifest, { historyKey: `detach-${wheelId}` });
     };
 
     // --- JSON tab --------------------------------------------------------------
@@ -751,10 +919,11 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                                             {item === "Model" && (
                                                 <ModelTab
                                                     draft={draft}
-                                                    update={update}
+                                                    commitPlacement={commitPlacement}
                                                     busy={busy}
                                                     modelFileRef={modelFileRef}
                                                     uploadModelFile={uploadModelFile}
+                                                    detachModel={() => replaceOrDetachModel("")}
                                                     selection={selection}
                                                     setSelection={setSelection}
                                                     modelVisible={modelVisible}
@@ -762,6 +931,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                                                     fitTarget={fitTarget}
                                                     setFitTarget={setFitTarget}
                                                     fitModelToSize={fitModelToSize}
+                                                    fieldReset={`${selectedId}:${placementRevision}`}
                                                 />
                                             )}
                                             {item === "LiDAR Zone" && (
@@ -787,8 +957,22 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                                                     bumpRegistry={bumpSensorRegistry}
                                                 />
                                             )}
-                                            {item === "Wheels" && <WheelsTab draft={draft} update={update} selection={selection} setSelection={setSelection} derivedWheelbase={derivedWheelbase} plantCatalog={plantCatalog} onError={setError} />}
-                                            {item === "Body" && <BodyTab draft={draft} update={update} selection={selection} setSelection={setSelection} fitBodyToModel={fitBodyToModel} />}
+                                            {item === "Wheels" && (
+                                                <WheelsTab
+                                                    draft={draft}
+                                                    update={update}
+                                                    selection={selection}
+                                                    setSelection={setSelection}
+                                                    derivedWheelbase={derivedWheelbase}
+                                                    plantCatalog={plantCatalog}
+                                                    onError={setError}
+                                                    assignButtonRef={assignButtonRef}
+                                                    assignmentReady={draft.version === 3 && canonicalVehicleGlb(draft.model.asset)}
+                                                    onAssign={openAssignment}
+                                                    onDetach={detachBoundWheel}
+                                                />
+                                            )}
+                                            {item === "Body" && <BodyTab draft={draft} update={update} commitPlacement={commitPlacement} selection={selection} setSelection={setSelection} fitBodyToModel={fitBodyToModel} fieldReset={`${selectedId}:${placementRevision}`} />}
                                             {item === "JSON" && (
                                                 <div className="space-y-2">
                                                     <textarea aria-label="Raw vehicle manifest JSON" spellCheck={false} value={raw} onChange={(event) => applyRaw(event.target.value)} className="sf-input min-h-[480px] resize-y font-mono text-[12px] leading-relaxed" />
@@ -804,11 +988,35 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                 </aside>
             </div>
         </main>
+        {assignment && (
+            <WheelAssignmentDialog
+                key={assignment.token}
+                open={assignment.open !== false}
+                catalog={assignment.catalog}
+                measurement={assignment.measurement}
+                initialRoles={rolesFromManifest(draft)}
+                onOpenChange={(open) => {
+                    if (!open) setAssignment((current) => (current ? { ...current, open: false } : null));
+                }}
+                onAccept={acceptAssignment}
+                onSuppress={suppressAssignment}
+                onCloseAutoFocus={(event) => {
+                    event.preventDefault();
+                    assignButtonRef.current?.focus();
+                }}
+            />
+        )}
+        <PlacementAcceptanceDialog
+            open={Boolean(placementPrompt)}
+            review={placementPrompt?.review}
+            onAccept={acceptPlacement}
+            onReject={rejectPlacement}
+        />
         </AuthoringModeProvider>
     );
 }
 
-function ModelTab({ draft, update, busy, modelFileRef, uploadModelFile, selection, setSelection, modelVisible, setModelVisible, fitTarget, setFitTarget, fitModelToSize }) {    
+function ModelTab({ draft, commitPlacement, busy, modelFileRef, uploadModelFile, detachModel, selection, setSelection, modelVisible, setModelVisible, fitTarget, setFitTarget, fitModelToSize, fieldReset = 0 }) {    
     return (
         <div className="space-y-4">
             <Section title="Source model">
@@ -816,7 +1024,7 @@ function ModelTab({ draft, update, busy, modelFileRef, uploadModelFile, selectio
                     <Action compact icon={<FaUpload />} label={draft.model.asset ? "Replace model" : "Import GLB / GLTF"} onClick={() => modelFileRef.current?.click()} disabled={busy} />
                     <input ref={modelFileRef} hidden type="file" accept=".glb,.gltf,model/gltf-binary,model/gltf+json" onChange={uploadModelFile} />
                     {draft.model.asset && (
-                        <button type="button" onClick={() => update(["model", "asset"], "")} className="text-[11px] text-[var(--slate-danger)]">Detach</button>
+                        <button type="button" onClick={detachModel} className="text-[11px] text-[var(--slate-danger)]">Detach</button>
                     )}
                 </div>
                 <p className="mt-2 font-mono text-[11px] text-[var(--slate-muted)]">{draft.model.asset || "No model; a placeholder body is shown."}</p>
@@ -835,10 +1043,10 @@ function ModelTab({ draft, update, busy, modelFileRef, uploadModelFile, selectio
                     />
                 </div>
                 <Field label="Scale">
-                    <input type="number" min="0.0001" step="0.0001" value={draft.model.scale} onChange={(event) => update(["model", "scale"], Number(event.target.value))} />
+                    <input type="number" min="0.0001" step="0.0001" value={draft.model.scale} onChange={(event) => commitPlacement({ model: { scale: Number(event.target.value) } }, { historyKey: "model-scale" })} />
                 </Field>
-                <VectorFields label="Rotation (rad)" value={(draft.model.rotation)} onChange={(axis, value) => update(["model", "rotation", axis], (value))} />
-                <VectorFields label="Offset (m)" value={draft.model.offset} onChange={(axis, value) => update(["model", "offset", axis], value)} scrub />
+                <VectorFields label="Rotation (rad)" value={(draft.model.rotation)} onChange={(axis, value) => commitPlacement({ model: { rotation: { [axis]: value } } }, { historyKey: `model-rotation-${axis}` })} resetToken={fieldReset} />
+                <VectorFields label="Offset (m)" value={draft.model.offset} onChange={(axis, value) => commitPlacement({ model: { offset: { [axis]: value } } }, { coalesce: true, historyKey: `model-offset-${axis}` })} scrub step={0.0001} resetToken={fieldReset} />
             </Section>
 
             <Section title="Fit to real size">
@@ -1042,7 +1250,7 @@ function VehicleSensorDefinitionField({ field, sensor, change }) {
     );
 }
 
-function WheelsTab({ draft, update, selection, setSelection, derivedWheelbase, plantCatalog = [], onError = () => {} }) {
+function WheelsTab({ draft, update, selection, setSelection, derivedWheelbase, plantCatalog = [], onError = () => {}, assignButtonRef, assignmentReady = false, onAssign, onDetach }) {
     const selectDynamics = (value) => {
         const next = structuredClone(draft);
         try {
@@ -1087,12 +1295,17 @@ function WheelsTab({ draft, update, selection, setSelection, derivedWheelbase, p
     };
     return (
         <div className="space-y-3">
-            <div className="flex gap-1.5">
+            <div className="flex flex-wrap gap-1.5">
                 <Action compact icon={<FaPlus />} label="Add wheel" onClick={() => add(false)} />
                 <Action compact icon={<FaPlus />} label="Add mirrored pair" onClick={() => add(true)} />
+                <Button ref={assignButtonRef} size="compact" disabled={!assignmentReady} onClick={onAssign}>Assign wheels</Button>
             </div>
+            {!assignmentReady && (
+                <p className="text-[11px] leading-relaxed text-[var(--slate-muted)]">Wheel assignment needs a version 3 vehicle and a canonical model closure. A legacy model.glb upload cannot be bound.</p>
+            )}
             {draft.wheels.map((wheel, index) => {
                 const selected = selection?.kind === "wheel" && selection.id === wheel.id;
+                const bound = wheel.visual?.kind === "model-node";
                 const change = (parts, value) => update(["wheels", index, ...parts], value);
                 return (
                     <div key={`wheel-${index}`} className={`rounded-[var(--radius)] border p-3 transition-[background-color,border-color] ${selected ? "border-[var(--slate-border)] bg-[var(--slate-surface-3)]" : "border-[var(--slate-border-60)] bg-[var(--slate-surface-1)]"}`}>
@@ -1111,18 +1324,21 @@ function WheelsTab({ draft, update, selection, setSelection, derivedWheelbase, p
                                     }}
                                 />
                             </Field>
-                            <Toggle label="Steerable" value={wheel.steerable} onChange={(value) => change(["steerable"], value)} />
-                            <Field label="Radius (m)"><input type="number" min="0.01" step="0.01" value={wheel.radius} onChange={(event) => change(["radius"], Number(event.target.value))} /></Field>
+                            <Toggle label="Steerable" value={wheel.steerable} onChange={(value) => { if (!bound) change(["steerable"], value); }} />
+                            <Field label="Radius (m)"><input type="number" min="0.01" step="0.01" value={wheel.radius} disabled={bound} onChange={(event) => change(["radius"], Number(event.target.value))} /></Field>
                         </div>
-                        <VectorFields label="Position (m)" value={wheel.position} onChange={(axis, value) => change(["position", axis], value)} scrub />
+                        {bound && <p className="mt-2 text-[11px] text-[var(--slate-muted)]">Bound to model node {wheel.visual.nodeIndex}. Detach it before editing this geometry.</p>}
+                        <VectorFields label="Position (m)" value={wheel.position} onChange={(axis, value) => { if (!bound) change(["position", axis], value); }} scrub />
                         <AdvancedFields label="Wheel geometry">
                             <div className="grid grid-cols-2 gap-2">
-                                <Field label="Width (m)"><input type="number" min="0.01" step="0.01" value={wheel.width} onChange={(event) => change(["width"], Number(event.target.value))} /></Field>
+                                <Field label="Width (m)"><input type="number" min="0.01" step="0.01" value={wheel.width} disabled={bound} onChange={(event) => change(["width"], Number(event.target.value))} /></Field>
                             </div>
                         </AdvancedFields>
                         <div className="mt-3 flex items-center justify-between">
-                            <button type="button" onClick={() => update(["wheels", index, "position", "z"], -wheel.position.z)} className="text-[11px] text-[var(--slate-fg-2)]">Mirror across X</button>
-                            <button type="button" onClick={() => update(["wheels"], draft.wheels.filter((_, candidate) => candidate !== index))} className="text-[11px] text-[var(--slate-danger)]">Remove</button>
+                            {bound
+                                ? <button type="button" onClick={() => onDetach(wheel.id)} className="text-[11px] text-[var(--slate-fg-2)]">Detach</button>
+                                : <button type="button" onClick={() => update(["wheels", index, "position", "z"], -wheel.position.z)} className="text-[11px] text-[var(--slate-fg-2)]">Mirror across X</button>}
+                            {!bound && <button type="button" onClick={() => update(["wheels"], draft.wheels.filter((_, candidate) => candidate !== index))} className="text-[11px] text-[var(--slate-danger)]">Remove</button>}
                         </div>
                     </div>
                 );
@@ -1162,7 +1378,7 @@ function WheelsTab({ draft, update, selection, setSelection, derivedWheelbase, p
     );
 }
 
-function BodyTab({ draft, update, selection, setSelection, fitBodyToModel }) {
+function BodyTab({ draft, update, commitPlacement, selection, setSelection, fitBodyToModel, fieldReset = 0 }) {
     const bodySelected = selection?.kind === "body";
     const egoSelected = selection?.kind === "ego";
     return (
@@ -1173,15 +1389,15 @@ function BodyTab({ draft, update, selection, setSelection, fitBodyToModel }) {
                     <Action compact icon={<FaArrowsAlt />} label={bodySelected ? "Gizmo active" : "Move center with gizmo"} onClick={() => setSelection(bodySelected ? null : { kind: "body", id: null })} />
                     <Action compact icon={<FaCube />} label="Fit to model" onClick={fitBodyToModel} disabled={!draft.model.asset} />
                 </div>
-                <VectorFields label="Size (m)" value={draft.boundingBox.size} onChange={(axis, value) => update(["boundingBox", "size", axis], value)} scrub min={0.01} />
-                <VectorFields label="Center (m)" value={draft.boundingBox.center} onChange={(axis, value) => update(["boundingBox", "center", axis], value)} scrub />
+                <VectorFields label="Size (m)" value={draft.boundingBox.size} onChange={(axis, value) => commitPlacement({ boundingBox: { size: { [axis]: value } } }, { coalesce: true, historyKey: `body-size-${axis}` })} scrub min={0.01} resetToken={fieldReset} />
+                <VectorFields label="Center (m)" value={draft.boundingBox.center} onChange={(axis, value) => commitPlacement({ boundingBox: { center: { [axis]: value } } }, { coalesce: true, historyKey: `body-center-${axis}` })} scrub resetToken={fieldReset} />
             </Section>
             <Section title="Ego center">
                 <p className="text-[11px] leading-relaxed text-[var(--slate-muted)]">The reference point cameras follow and tooling focuses on, marked by the green axes.</p>
                 <div className="mt-2">
                     <Action compact icon={<FaArrowsAlt />} label={egoSelected ? "Gizmo active" : "Move with gizmo"} onClick={() => setSelection(egoSelected ? null : { kind: "ego", id: null })} />
                 </div>
-                <VectorFields label="Position (m)" value={draft.egoCenter} onChange={(axis, value) => update(["egoCenter", axis], value)} scrub />
+                <VectorFields label="Position (m)" value={draft.egoCenter} onChange={(axis, value) => update(["egoCenter", axis], value)} scrub resetToken={fieldReset} />
             </Section>
         </div>
     );
@@ -1206,7 +1422,14 @@ function Stat({ label, value }) {
     return <div className="border-l border-[var(--slate-border)] px-3 py-2 first:border-l-0"><p className="text-[11px] text-[var(--slate-muted)]">{label}</p><p className="mt-0.5 font-mono text-sm font-semibold text-[var(--slate-fg)]">{value.toLocaleString()}</p></div>;
 }
 
-function VectorFields({ label, value, onChange, scrub = false, min, step = 0.01 }) {
+function stepPrecision(step) {
+    const text = String(step);
+    const index = text.indexOf(".");
+    const places = index < 0 ? 0 : text.length - index - 1;
+    return Math.max(3, places);
+}
+
+function VectorFields({ label, value, onChange, scrub = false, min, step = 0.01, resetToken = 0 }) {
     return (
         <div className="mt-3">
             <p className="mb-1.5 text-[13px] font-medium text-[var(--slate-fg-2)]">{label}</p>
@@ -1215,10 +1438,12 @@ function VectorFields({ label, value, onChange, scrub = false, min, step = 0.01 
                     <Field key={axis} label={axis.toUpperCase()}>
                         {scrub ? (
                             <DragNumber
+                                key={resetToken}
                                 value={value?.[axis] ?? 0}
                                 onChange={(next) => onChange(axis, next)}
                                 min={min}
                                 step={step}
+                                precision={stepPrecision(step)}
                                 aria-label={`${label} ${axis.toUpperCase()}`}
                             />
                         ) : (

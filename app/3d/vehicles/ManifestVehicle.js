@@ -5,7 +5,13 @@ import { getSensorType } from "../devices/SensorTypeRegistry.js";
 import { createVehicleSensorDevice, sensorRuntimeRegistry } from "../devices/SensorRuntimeRegistry.js";
 import { Triangle } from "../data/objects/Triangle";
 import { normalizeVehicleManifest, resolveVehicleModelUrl } from "../../vehicles/VehicleManifest.js";
+import { measurePlacedVehicleModel } from "../../vehicles/model/measurePlacedVehicle.js";
 import { publishedVehicleModelSource, VehicleModelLoader } from "./VehicleModelLoader.js";
+import {
+    applyMeasuredPlacement,
+    captureModelRest,
+    presentBoundWheels,
+} from "./presentBoundWheels.js";
 import { attachVehiclePlant, resetVehiclePlant, stepVehiclePlant } from "./VehiclePlantAdapter.js";
 import { resetEgoPresentation, updateEgoPresentation } from "./EgoPresentation.js";
 
@@ -99,6 +105,8 @@ export class ManifestVehicle extends PhysicalVehicle {
         this.sceneObject = new THREE.Group();
         this.sceneObject.position.copy(this.position);
         this.sceneObject.rotation.copy(this.rotation);
+        this._wheels = [];
+        this._wheelsPresented = false;
         scene.add(this.sceneObject);
         const sceneObject = this.sceneObject;
         const token = ++this._modelLoadToken;
@@ -126,6 +134,13 @@ export class ManifestVehicle extends PhysicalVehicle {
                 } else {
                     this._modelLease = lease;
                     sceneObject.add(lease.root);
+                    if (this.manifest.version === 3 && lease.glbBytes) {
+                        try {
+                            this._presentCanonicalModel(lease, sceneObject);
+                        } catch (error) {
+                            console.warn(`Could not present bound wheels for "${this.vehicleManifestId}":`, error);
+                        }
+                    }
                 }
             } catch (error) {
                 console.warn(`Could not load model for vehicle "${this.vehicleManifestId}":`, error);
@@ -137,6 +152,8 @@ export class ManifestVehicle extends PhysicalVehicle {
 
         if (token !== this._modelLoadToken) return;
 
+        if (!this._wheelsPresented) this._buildWheels();
+
         // Debug plate at the kinematic origin (vehicle-local 0,0,0).
         const originMarker = new THREE.Mesh(
             new THREE.BoxGeometry(0.35, 0.04, 0.35),
@@ -147,7 +164,6 @@ export class ManifestVehicle extends PhysicalVehicle {
         originMarker.name = "vehicle-origin-debug";
         this.sceneObject.add(originMarker);
 
-        this._buildWheels();
         this._registerLidarZone();
 
         // Vehicles spawned mid-session never go through DeviceDatabase.setup, so
@@ -158,6 +174,29 @@ export class ManifestVehicle extends PhysicalVehicle {
                 device._sceneReady = true;
             }
         }
+    }
+
+    _presentCanonicalModel(lease, parent) {
+        const measurement = measurePlacedVehicleModel({
+            glbBytes: lease.glbBytes,
+            model: this.manifest.model,
+            boundingBox: this.manifest.boundingBox,
+            hiddenNodeIndices: this.manifest.model?.hiddenNodeIndices ?? [],
+        });
+        applyMeasuredPlacement(lease.root, measurement.placement);
+        this._modelRest = captureModelRest(lease.root, lease.nodeMappings);
+        const presented = presentBoundWheels({
+            root: lease.root,
+            wheelsGroup: parent,
+            manifest: this.manifest,
+            nodeMappings: lease.nodeMappings,
+            THREE,
+        });
+        this._wheels = [...presented.pivots, ...presented.cylinders].map((entry) => ({
+            pivot: entry.pivot,
+            steerable: entry.steerable,
+        }));
+        this._wheelsPresented = true;
     }
 
     _buildPlaceholderBody() {

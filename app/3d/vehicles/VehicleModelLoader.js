@@ -154,7 +154,7 @@ export class VehicleModelLoader {
         }
         if (source.kind === "url" && !source.asset) {
             const parsed = await this._loadLegacyUrl(source.url, signal);
-            return this._finish(parsed, request);
+            return this._finish(parsed, request, null);
         }
         const asset = source.asset;
         const dependencies = source.dependencies ?? [];
@@ -175,7 +175,7 @@ export class VehicleModelLoader {
             });
         }
         const parsed = await this._decode(assetBytes, loadedDependencies, signal);
-        return this._finish(parsed, request);
+        return this._finish(parsed, request, assetBytes);
     }
 
     async _loadLegacyUrl(url, signal) {
@@ -247,7 +247,7 @@ export class VehicleModelLoader {
         }
     }
 
-    _finish(parsed, request) {
+    _finish(parsed, request, glbBytes = null) {
         const root = parsed?.scene ?? parsed?.root;
         if (!root?.traverse) throw new Error("GLTF decoder returned no scene root.");
         const associationSource = parsed.parser?.associations ?? parsed.associations;
@@ -258,6 +258,7 @@ export class VehicleModelLoader {
             stale: false,
             aborted: false,
             root,
+            glbBytes: glbBytes ? new Uint8Array(glbBytes) : null,
             nodeMappings: nodeMappingsFromAssociations(root, associations),
             gltfJson: parsed.parser?.json ?? parsed.json ?? null,
             alignment,

@@ -1,6 +1,6 @@
 # Vehicle manifests
 
-Custom vehicles are defined by saved `cev-sim.vehicle` documents. Version 2 is the default writer. Version 1 documents still load and migrate to version 2, including the permissive actuator defaults used by recorded replays. Version 3 is an explicit authoring migration and is never produced by a blank vehicle or by a built-in projection. Each manifest is a single human-editable JSON file stored at `server/data/vehicles/<id>.json`, and the vehicle's 3D model lives next to it under `server/data/vehicle-assets/<id>/`. The manifest id doubles as the vehicle `type` string used by run manifests, so a run's initial state can reference custom vehicles the same way it references `big-car`, `igvc-car`, or `scenario-car`.
+Custom vehicles are defined by saved `cev-sim.vehicle` documents. Version 2 is the default writer. Version 1 documents still load and migrate to version 2, including the permissive actuator defaults used by recorded replays. Version 3 is an explicit authoring migration. Built-in projections stay version 2. A blank created through publication is version 3. Each manifest is a single human-editable JSON file stored at `server/data/vehicles/<id>.json`, and the vehicle's 3D model lives next to it under `server/data/vehicle-assets/<id>/`. Staged uploads, publication journals, receipts, marketplace intake, and the pre-migration snapshot live outside those two directories. The manifest id doubles as the vehicle `type` string used by run manifests, so a run's initial state can reference custom vehicles the same way it references `big-car`, `igvc-car`, or `scenario-car`.
 
 ## Authoring workflow
 
@@ -58,25 +58,26 @@ Conventions: all lengths are meters and angles radians, in the vehicle-local fra
 
 ## Versions
 
-Version 1 and version 2 normalize to the version 2 shape above. That shape has no `model.dependencies`, `model.hiddenNodeIndices`, wheel `axle`, wheel `side`, or wheel `visual`. Built-in projections of `big-car`, `igvc-car`, and `scenario-car` are pinned to version 2, so opening, duplicating, or displaying them does not add axle roles or change their resolved hashes. New blank vehicles stay version 2 until transactional publication exists.
+Version 1 and version 2 normalize to the version 2 shape above. That shape has no `model.dependencies`, `model.hiddenNodeIndices`, wheel `axle`, wheel `side`, or wheel `visual`. Built-in projections of `big-car`, `igvc-car`, and `scenario-car` are pinned to version 2, so opening, duplicating, or displaying them does not add axle roles or change their resolved hashes. `createDefaultVehicleManifest()` stays version 2. A blank created through publication uses `createBlankVehicleManifest()`, which is version 3 with empty dependency and hidden-node lists and unclassified wheels. Its definition hash is `54025fcb83fb359f6e60cb8c86c7107f717274b4d36afddf36e7c7767b05a47e`.
 
 Version 3 adds:
 
-- `model.dependencies`: sorted unique sibling filenames for the canonical model closure. Empty when `model.asset` is null. A canonical closure names the model `<sha256>.glb` and each image `<sha256>.png`, `<sha256>.jpg`, or `<sha256>.ktx2`. Those image filenames are the URIs inside the GLB. Geometry buffers are packed into the GLB BIN chunk. The editor's legacy single-file upload remains until staged publication exists.
+- `model.dependencies`: sorted unique sibling filenames for the canonical model closure. Empty when `model.asset` is null. A canonical closure names the model `<sha256>.glb` and each image `<sha256>.png`, `<sha256>.jpg`, or `<sha256>.ktx2`. Those image filenames are the URIs inside the GLB. Geometry buffers are packed into the GLB BIN chunk. The editor's legacy single-file upload remains until the studio publishes through a stage.
 - `model.hiddenNodeIndices`: sorted unique source node indices whose subtrees are hidden. Empty on a model-free vehicle.
 - Optional wheel `axle` (`front` or `rear`) and `side` (`left` or `right`, with `+Z` left). Both are omitted on an unclassified wheel.
 - Optional wheel `visual: { kind: "model-node", nodeIndex }` when that wheel is bound to a source node. The display name comes from the model, not from a second stored name.
 
 Version 3 geometric scalars — model placement, body bounds, wheel position, radius, width, wheelbase, and maximum steering angle — are stored at six decimal places. Actuator speed, acceleration, jerk, steering rate, and delay keep the existing coercion. A standard axle is one left/right pair with shared X, Y, radius, width, and steerability, and mirrored Z. Front wheels steer and rear wheels are fixed. A complete front and rear layout, with no unclassified wheels, must store `kinematics.wheelbase` as the distance between the axle X positions. Normalization does not average a pair or overwrite that wheelbase; validation reports the mismatch instead. A partial layout or any unclassified wheel keeps the authored wheelbase.
 
-`planVehicleMigration()` proposes a version 3 draft, an asset plan, diagnostics, and the field changes. It does not write the vehicle. A layout whose derived wheelbase differs from the stored value, such as BigCar's 1.2446 m wheels at ±0.75 m (derived 1.5 m), stays blocked until that motion change is acknowledged. External model URLs stay blocked until a local package is selected. Saving a version 2 document over a stored version 3 document is rejected so a legacy writer cannot drop the version 3 fields. The pre-migration snapshot returned by the planner is persisted later, outside semantic asset storage.
+`planVehicleMigration()` proposes a version 3 draft, an asset plan, diagnostics, and the field changes. It does not write the vehicle. A layout whose derived wheelbase differs from the stored value, such as BigCar's 1.2446 m wheels at ±0.75 m (derived 1.5 m), stays blocked until that motion change is acknowledged. External model URLs stay blocked until a local package is selected. Saving a version 2 document over a stored version 3 document is rejected so a legacy writer cannot drop the version 3 fields. `POST /vehicles/:id/migrate` publishes an already validated candidate. The pre-migration snapshot is written once to `vehicle-migrations/<id>.pre-v3.json` only after that manifest write is durable. The snapshot is the manifest plus sha256 hex of the asset files and is not part of the vehicle hash. Superseded asset files remain in the vehicle asset directory, so a committed migration's resolved hash includes both the new closure and those older files.
 
 ## Runtime behavior
 
 `VehicleDatabase.configureFromManifest` spawns any non-built-in `type` as a `ManifestVehicle` by loading the matching vehicle manifest from storage. A `ManifestVehicle`:
 
 - loads and places the GLTF model (or renders a placeholder body when no asset is set),
-- renders wheels as cylinders, with steerable wheels visually tracking the steering angle,
+- renders a version 3 wheel bound to a model node on a pivot at the accepted wheel center, keeping the source mesh's placed pose; unbound wheels stay cylinders, and steerable pivots track the steering angle,
+- measures wheel assignment from the decoded canonical GLB before hiding or reparenting any node; publication repeats that measurement and rejects a binding that is outside pair tolerance or does not reproduce the measured proposal,
 - drives planar bicycle kinematics from `kinematics.wheelbase`, like `BigCar`, then drapes pose Y/pitch onto the paved road surface,
 - exposes `collisionDimensions` from `boundingBox.size` so the physics engine sweeps the correct AABB,
 - instantiates the manifest sensors as devices,
@@ -89,9 +90,14 @@ Under `/api/storage`:
 - `GET|POST /vehicles`
 - `GET|PUT|DELETE /vehicles/:id`
 - `POST /vehicles/:id/duplicate`
+- `POST /vehicles/:id/migrate`
 - `POST /vehicles/:id/validate`
 - `GET /vehicles/:id/export`
 - `POST /vehicles/import`
+- `POST /vehicle-stages`, `POST /vehicle-stages/:id/renew`, `DELETE /vehicle-stages/:id`
+- `GET|PUT /vehicle-stages/:id/members/:name` (raw bytes; the response reports the server digest)
 - `GET|PUT|DELETE /vehicle-assets/:id/:file` (raw binary model assets)
+
+`POST /vehicles` and `PUT /vehicles/:id` accept an optional `stageId` and a 64-hex `operationId`. Import, duplicate, and migrate accept `operationId` the same way. Those ids, stage leases, publication journals, and receipts are not part of the vehicle or run hash. A repeated `operationId` returns the first committed manifest. A failed publication removes only asset files that publication introduced.
 
 `PUT /vehicles/:id` accepts `{ manifest, expectedRevision }` with the same optimistic-revision conflict behavior as run manifests. Optional `pluginLocks` pin `{ pluginId, version, packageHash, runtimeHash, sensorTypes[], plants[]? }` and are omitted when empty. Empty `plants` is omitted. Optional `dynamics: { plant }` selects a plugin plant; omitted dynamics keep the built-in JavaScript bicycle. Export produces a `cev-sim.vehicle-bundle` version 1 document embedding the manifest, model assets as base64, and—when locks exist—sorted exact `pluginPackages`. Legacy bundles without `pluginPackages` keep their existing hash projection. Import verifies embedded packages into CAS without adding library membership, suffixing the id when it collides with an existing vehicle.

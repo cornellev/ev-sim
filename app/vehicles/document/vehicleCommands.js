@@ -1,6 +1,8 @@
 import { cloneJson } from "../../util/cloneJson.js";
 import { canonicalFiniteNumber } from "../../simulation/kernel/SimulationHashes.js";
-import { deriveCompleteWheelbase, proposeStandardPair } from "../axle/standardAxle.js";
+import { deriveCompleteWheelbase, proposeStandardPair, validateWheelBindings } from "../axle/standardAxle.js";
+import { reviewBoundWheels, reviewModelWheelPair } from "../axle/reviewModelWheels.js";
+import { measurePlacedVehicleModel } from "../model/measurePlacedVehicle.js";
 import {
     VEHICLE_MANIFEST_VERSION_V3,
     normalizeVehicleManifest,
@@ -84,6 +86,142 @@ export function applyAxlePatch(manifest, { axle, patch = {} } = {}) {
         return fail([issue("vehicle.axle.wheelbase-mismatch", "kinematics.wheelbase", "Standard axle positions do not produce a positive wheelbase.")]);
     }
     return { ok: true, manifest: normalized, issues: [] };
+}
+
+function clearBakedLidarZone(manifest) {
+    const params = manifest.lidarZone?.params ?? { voxelSize: 0.2 };
+    manifest.lidarZone = {
+        params: { ...params },
+        vertices: [],
+        triangles: [],
+    };
+}
+
+function measurementError(error) {
+    return issue(error?.code || "vehicle.wheel.bounds-unavailable", "model", error?.message || "Wheel measurement failed.");
+}
+
+function resolveMeasurement(manifest, { glbBytes = null, measurement = null } = {}) {
+    if (glbBytes) {
+        try {
+            return {
+                measurement: measurePlacedVehicleModel({
+                    glbBytes,
+                    model: manifest.model,
+                    boundingBox: manifest.boundingBox,
+                    hiddenNodeIndices: manifest.model?.hiddenNodeIndices ?? [],
+                }),
+            };
+        } catch (error) {
+            return { error };
+        }
+    }
+    if (measurement) return { measurement };
+    return { error: new Error("Wheel measurement requires the canonical model.") };
+}
+
+function mergePlacement(manifest, { model, boundingBox } = {}) {
+    if (model) {
+        manifest.model = {
+            ...manifest.model,
+            ...model,
+            rotation: model.rotation ? { ...manifest.model.rotation, ...model.rotation } : manifest.model.rotation,
+            offset: model.offset ? { ...manifest.model.offset, ...model.offset } : manifest.model.offset,
+        };
+    }
+    if (boundingBox) {
+        manifest.boundingBox = {
+            ...manifest.boundingBox,
+            ...boundingBox,
+            size: boundingBox.size ? { ...manifest.boundingBox.size, ...boundingBox.size } : manifest.boundingBox.size,
+            center: boundingBox.center ? { ...manifest.boundingBox.center, ...boundingBox.center } : manifest.boundingBox.center,
+        };
+    }
+}
+
+function placementUnchanged(before, after) {
+    const same = (left, right) => canonicalFiniteNumber(left) === canonicalFiniteNumber(right);
+    return same(before.model.scale, after.model.scale)
+        && same(before.model.rotation.x, after.model.rotation.x)
+        && same(before.model.rotation.y, after.model.rotation.y)
+        && same(before.model.rotation.z, after.model.rotation.z)
+        && before.model.rotation.order === after.model.rotation.order
+        && same(before.model.offset.x, after.model.offset.x)
+        && same(before.model.offset.y, after.model.offset.y)
+        && same(before.model.offset.z, after.model.offset.z)
+        && same(before.boundingBox.center.x, after.boundingBox.center.x)
+        && same(before.boundingBox.center.y, after.boundingBox.center.y)
+        && same(before.boundingBox.center.z, after.boundingBox.center.z)
+        && same(before.boundingBox.size.x, after.boundingBox.size.x)
+        && same(before.boundingBox.size.y, after.boundingBox.size.y)
+        && same(before.boundingBox.size.z, after.boundingBox.size.z);
+}
+
+function ensureAxleWheel(manifest, axle, side) {
+    const id = `${axle}-${side}`;
+    let wheel = manifest.wheels.find((entry) => entry.axle === axle && entry.side === side)
+        ?? manifest.wheels.find((entry) => entry.id === id);
+    if (!wheel) {
+        wheel = {
+            id,
+            position: { x: 0, y: 0, z: 0 },
+            radius: 0.25,
+            width: 0.25,
+            steerable: axle === "front",
+        };
+        manifest.wheels.push(wheel);
+    }
+    return wheel;
+}
+
+function writeProposedGeometry(wheel, proposed, side) {
+    const sign = side === "left" ? 1 : -1;
+    wheel.position = {
+        x: proposed.x,
+        y: proposed.y,
+        z: canonicalFiniteNumber(sign * proposed.z),
+    };
+    wheel.radius = proposed.radius;
+    wheel.width = proposed.width;
+    wheel.steerable = proposed.steerable === true;
+}
+
+function writeProposedWheel(wheel, proposed, axle, side, nodeIndex) {
+    writeProposedGeometry(wheel, proposed, side);
+    wheel.axle = axle;
+    wheel.side = side;
+    wheel.visual = { kind: "model-node", nodeIndex };
+}
+
+function applyAssignedPair(manifest, { axle, leftNodeIndex, rightNodeIndex, measurement }) {
+    const leftNode = measurement.nodes.find((node) => node.nodeIndex === leftNodeIndex);
+    const rightNode = measurement.nodes.find((node) => node.nodeIndex === rightNodeIndex);
+    const review = reviewModelWheelPair({ left: leftNode, right: rightNode, axle });
+    if (leftNodeIndex === rightNodeIndex) {
+        return {
+            ok: false,
+            review,
+            issues: [issue("vehicle.wheel.duplicate-binding", "wheels", "A wheel pair needs two different nodes.")],
+        };
+    }
+    if (!review.withinTolerance || !review.proposed) return { ok: false, review, issues: review.issues };
+    const left = ensureAxleWheel(manifest, axle, "left");
+    const right = ensureAxleWheel(manifest, axle, "right");
+    writeProposedWheel(left, review.proposed, axle, "left", leftNodeIndex);
+    writeProposedWheel(right, review.proposed, axle, "right", rightNodeIndex);
+    const hidden = new Set(manifest.model.hiddenNodeIndices ?? []);
+    hidden.delete(leftNodeIndex);
+    hidden.delete(rightNodeIndex);
+    manifest.model.hiddenNodeIndices = [...hidden];
+    const bindingIssues = validateWheelBindings(manifest, measurement.nodeTable);
+    if (bindingIssues.length > 0) return { ok: false, review, issues: bindingIssues };
+    return { ok: true, review, issues: [] };
+}
+
+export function previewVehiclePlacement(manifest, patch = {}) {
+    const next = cloneJson(manifest);
+    mergePlacement(next, patch);
+    return next;
 }
 
 function command(label, run) {
@@ -189,6 +327,7 @@ export function detachWheel({ wheelId }) {
         hidden.add(wheel.visual.nodeIndex);
         next.model.hiddenNodeIndices = [...hidden];
         delete wheel.visual;
+        clearBakedLidarZone(next);
         context.setManifest(next);
         return { ok: true };
     });
@@ -212,6 +351,7 @@ export function reattachWheel({ wheelId, nodeIndex }) {
         }
         wheel.visual = { kind: "model-node", nodeIndex };
         next.model.hiddenNodeIndices = (next.model.hiddenNodeIndices ?? []).filter((index) => index !== nodeIndex);
+        clearBakedLidarZone(next);
         context.setManifest(next);
         return { ok: true };
     });
@@ -287,6 +427,7 @@ export function applyModelReplacement(patch = {}) {
         clearBindings(next);
         if (patch.boundingBox) next.boundingBox = patch.boundingBox;
         if (patch.kinematics) next.kinematics = { ...next.kinematics, ...patch.kinematics };
+        clearBakedLidarZone(next);
         context.setManifest(next);
         return { ok: true };
     });
@@ -306,7 +447,172 @@ export function applyReviewedUrdfPatch(patch = {}) {
             if (patch.wheelbase !== undefined) next.kinematics.wheelbase = patch.wheelbase;
             if (patch.maxSteeringAngle !== undefined) next.kinematics.maxSteeringAngle = patch.maxSteeringAngle;
         }
+        if (patch.model || patch.boundingBox || patch.wheels) clearBakedLidarZone(next);
         context.setManifest(next);
         return { ok: true };
+    });
+}
+
+function reportIssues(context, issues = []) {
+    for (const entry of issues) context.issue(entry.code, entry.path, entry.message);
+}
+
+function assignedPairs({ pairs, axle, leftNodeIndex, rightNodeIndex }) {
+    if (Array.isArray(pairs) && pairs.length > 0) return pairs;
+    return [{ axle, leftNodeIndex, rightNodeIndex }];
+}
+
+export function assignModelWheels({
+    pairs = null,
+    axle,
+    leftNodeIndex,
+    rightNodeIndex,
+    acceptAdjustments = false,
+    measurement = null,
+    glbBytes = null,
+} = {}) {
+    return command("Assign wheels", (context) => {
+        if (context.manifest.version !== VEHICLE_MANIFEST_VERSION_V3) {
+            context.issue("vehicle.manifest.version", "version", "Wheel assignment requires a version 3 vehicle.");
+            return { ok: false };
+        }
+        const resolved = resolveMeasurement(context.manifest, { glbBytes, measurement });
+        if (resolved.error) {
+            const entry = measurementError(resolved.error);
+            context.issue(entry.code, entry.path, entry.message);
+            return { ok: false };
+        }
+        const next = cloneJson(context.manifest);
+        const reviews = [];
+        for (const pair of assignedPairs({ pairs, axle, leftNodeIndex, rightNodeIndex })) {
+            const applied = applyAssignedPair(next, { ...pair, measurement: resolved.measurement });
+            reviews.push(applied.review);
+            if (!applied.ok) {
+                if (!acceptAdjustments && applied.review?.withinTolerance) return { ok: false, review: applied.review };
+                reportIssues(context, applied.issues);
+                return { ok: false, review: applied.review };
+            }
+        }
+        if (!acceptAdjustments) return { ok: false, review: reviews[0] ?? null };
+        clearBakedLidarZone(next);
+        context.setManifest(withWheelbase(next));
+        return { ok: true, review: reviews.length === 1 ? reviews[0] : reviews };
+    });
+}
+
+export function suppressSourceWheels({ nodeIndices = [], measurement = null, glbBytes = null } = {}) {
+    return command("Replace source wheels", (context) => {
+        if (context.manifest.version !== VEHICLE_MANIFEST_VERSION_V3) {
+            context.issue("vehicle.manifest.version", "version", "Wheel suppression requires a version 3 vehicle.");
+            return { ok: false };
+        }
+        const resolved = resolveMeasurement(context.manifest, { glbBytes, measurement });
+        if (resolved.error) {
+            const entry = measurementError(resolved.error);
+            context.issue(entry.code, entry.path, entry.message);
+            return { ok: false };
+        }
+        const selected = [...new Set(nodeIndices)].filter((index) => Number.isInteger(index) && index >= 0);
+        if (selected.length === 0) {
+            context.issue("vehicle.model.node-index", "model.hiddenNodeIndices", "Choose at least one source node to replace.");
+            return { ok: false };
+        }
+        const next = cloneJson(context.manifest);
+        for (const wheel of next.wheels) {
+            if (wheel.visual?.kind === "model-node" && selected.includes(wheel.visual.nodeIndex)) delete wheel.visual;
+        }
+        const hidden = new Set(next.model.hiddenNodeIndices ?? []);
+        for (const index of selected) hidden.add(index);
+        next.model.hiddenNodeIndices = [...hidden];
+        const bindingIssues = validateWheelBindings(next, resolved.measurement.nodeTable);
+        if (bindingIssues.length > 0) {
+            reportIssues(context, bindingIssues);
+            return { ok: false };
+        }
+        for (const index of selected) {
+            const node = resolved.measurement.nodes.find((entry) => entry.nodeIndex === index);
+            if (!node?.center || !(node.radius > 0) || !(node.width > 0)) {
+                context.issue("vehicle.wheel.bounds-unavailable", "wheels", `Node ${index} has no measurable wheel geometry.`);
+                return { ok: false };
+            }
+            const id = `generated-${index}`;
+            let wheel = next.wheels.find((entry) => entry.id === id);
+            if (!wheel) {
+                wheel = { id, position: { x: 0, y: 0, z: 0 }, radius: 0.25, width: 0.25, steerable: false };
+                next.wheels.push(wheel);
+            }
+            delete wheel.axle;
+            delete wheel.side;
+            delete wheel.visual;
+            wheel.position = { x: node.center.x, y: node.center.y, z: node.center.z };
+            wheel.radius = node.radius;
+            wheel.width = node.width;
+            wheel.steerable = false;
+        }
+        clearBakedLidarZone(next);
+        context.setManifest(next);
+        return { ok: true };
+    });
+}
+
+function applyMeasuredWheelUpdates(manifest, review) {
+    for (const entry of review.axles) {
+        if (entry.storedMatches) continue;
+        if (entry.singleSide) {
+            const wheel = manifest.wheels.find((candidate) => candidate.axle === entry.axle && candidate.side === entry.singleSide);
+            const node = entry.review.measured[entry.singleSide];
+            wheel.position = {
+                x: canonicalFiniteNumber(node.center.x),
+                y: canonicalFiniteNumber(node.center.y),
+                z: canonicalFiniteNumber(node.center.z),
+            };
+            wheel.radius = canonicalFiniteNumber(node.radius);
+            wheel.width = canonicalFiniteNumber(node.width);
+            continue;
+        }
+        const left = manifest.wheels.find((candidate) => candidate.axle === entry.axle && candidate.side === "left");
+        const right = manifest.wheels.find((candidate) => candidate.axle === entry.axle && candidate.side === "right");
+        writeProposedGeometry(left, entry.review.proposed, "left");
+        writeProposedGeometry(right, entry.review.proposed, "right");
+    }
+}
+
+export function applyPlacementChange({
+    model,
+    boundingBox,
+    measurement = null,
+    glbBytes = null,
+    acceptAdjustments = false,
+} = {}) {
+    return command("Change placement", (context) => {
+        const next = cloneJson(context.manifest);
+        mergePlacement(next, { model, boundingBox });
+        const bound = (next.wheels ?? []).some((wheel) => wheel.visual?.kind === "model-node");
+        if (!bound) {
+            if (placementUnchanged(context.manifest, next)) return { ok: true };
+            clearBakedLidarZone(next);
+            context.setManifest(next);
+            return { ok: true };
+        }
+        const resolved = resolveMeasurement(next, { glbBytes, measurement });
+        if (resolved.error) {
+            const entry = measurementError(resolved.error);
+            context.issue(entry.code, entry.path, entry.message);
+            return { ok: false };
+        }
+        const review = reviewBoundWheels(next, resolved.measurement);
+        if (!review.withinTolerance) {
+            reportIssues(context, review.issues);
+            return { ok: false, review };
+        }
+        if (!review.unchanged && !acceptAdjustments) {
+            context.issue("vehicle.axle.asymmetric", "wheels", "Accept the proposed wheel adjustments before changing placement.");
+            return { ok: false, review };
+        }
+        if (review.unchanged && placementUnchanged(context.manifest, next)) return { ok: true, review };
+        if (!review.unchanged) applyMeasuredWheelUpdates(next, review);
+        clearBakedLidarZone(next);
+        context.setManifest(withWheelbase(next));
+        return { ok: true, review };
     });
 }

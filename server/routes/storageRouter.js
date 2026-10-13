@@ -238,6 +238,17 @@ export function createStorageRouter(service) {
         return vehicle;
     }));
     router.post("/vehicles/import", handle(async (req) => service.importVehicleBundle(req.body ?? {})));
+    router.post("/vehicles/:id/migrate", handle(async (req) => {
+        const vehicle = await service.publishVehicleMigration({
+            vehicleId: req.params.id,
+            manifest: req.body?.manifest,
+            expectedRevision: req.body?.expectedRevision,
+            operationId: req.body?.operationId,
+            stageId: req.body?.stageId ?? null,
+        });
+        storageEvents.publish({ domain: "vehicle", id: vehicle.id, action: "updated" });
+        return vehicle;
+    }));
     router.post("/vehicles/:id/duplicate", handle(async (req) => {
         const vehicle = await service.duplicateVehicleManifest(req.params.id, req.body ?? {});
         storageEvents.publish({ domain: "vehicle", id: vehicle.id, action: "created" });
@@ -265,6 +276,29 @@ export function createStorageRouter(service) {
 
     // --- Vehicle model assets (raw binary uploads, not JSON) ---
     const rawBody = express.raw({ limit: "100mb", type: () => true });
+    router.post("/vehicle-stages", handle(async () => service.vehicleStages.createStage()));
+    router.post("/vehicle-stages/:id/renew", handle(async (req) => service.vehicleStages.renewStage(req.params.id)));
+    router.delete("/vehicle-stages/:id", handle(async (req) => service.vehicleStages.abandonStage(req.params.id)));
+    router.put("/vehicle-stages/:id/members/:name", rawBody, handle(async (req) => {
+        if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+            throw new Error("A non-empty binary request body is required.");
+        }
+        return service.vehicleStages.putMember(req.params.id, req.params.name, req.body);
+    }));
+    router.get("/vehicle-stages/:id/members/:name", async (req, res) => {
+        try {
+            const member = await service.vehicleStages.readMember(req.params.id, req.params.name);
+            res.setHeader("Content-Type", member.mediaType || "application/octet-stream");
+            res.setHeader("Content-Length", String(member.size));
+            res.setHeader("X-Content-SHA256", member.sha256);
+            res.setHeader("Cache-Control", "no-store");
+            res.send(Buffer.from(member.bytes));
+        } catch (error) {
+            const status = Number(error.statusCode) || (error.code === "ENOENT" ? 404 : 400);
+            if (!res.headersSent) res.status(status).json({ error: error.message, code: error.code });
+        }
+    });
+
     router.put("/vehicle-assets/:id/:file", rawBody, handle(async (req) => {
         if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
             throw new Error("A non-empty binary request body is required.");

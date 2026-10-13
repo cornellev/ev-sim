@@ -209,10 +209,15 @@ sets pose Y and pitch from the paved surface. A manifest `dynamics.plant`
 asks a plugin WASM module to integrate that same planar state. The host
 still drapes Y and pitch, and the default bicycle stays in JavaScript.
 Version 3 vehicle manifests add authoring fields for model dependencies,
-hidden nodes, and standard axles. Built-in projections and new blank vehicles
-stay version 2. The plant still integrates the authored `kinematics.wheelbase`;
-a version 3 document changes resolved identity only because the existing hash
-covers those fields.
+hidden nodes, and standard axles. Built-in projections stay version 2.
+`createDefaultVehicleManifest()` stays version 2. Blanks created through
+vehicle publication are version 3. The plant still integrates the authored
+`kinematics.wheelbase`. A version 3 document changes resolved identity only
+because the existing hash covers those fields and, once publication commits,
+the asset directory. In-flight publication files are omitted from that hash
+until the manifest write is durable. A committed migration also keeps
+superseded asset files in the directory, so they remain part of the resolved
+hash. Stage ids, journals, receipts, and the pre-migration snapshot do not.
 BigCar, IGVCCar, ScenarioCar, and
 manifest-backed browser vehicles are
 presentation adapters over the same numeric state used by

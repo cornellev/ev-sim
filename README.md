@@ -28,9 +28,11 @@
 
 ### Prerequisites
 
-You need Node.js `>=22.22.2 <23`; development and CI use 22.22.2. Download it
-from [nodejs.org](https://nodejs.org/en/download/) or use the repository
-`.nvmrc`.
+You need Node.js `>=22.22.2 <23`; development and CI use 22.22.2. When nvm
+already has 22.22.2, the installer switches to it. When that version is
+missing, the installer asks to install it and make it the nvm default.
+You can also download it from [nodejs.org](https://nodejs.org/en/download/)
+or use the repository `.nvmrc`.
 
 ### Install
 

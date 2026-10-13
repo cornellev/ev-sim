@@ -69,18 +69,22 @@ export class VehicleDocumentSession {
             return { ok: false, issues: [{ code: error.code ?? "vehicle.session.command", path: "", message: error.message }], error };
         }
         if (issues.length > 0 || result?.ok === false) {
-            return { ok: false, issues: issues.length > 0 ? issues : (result?.issues ?? []) };
+            return {
+                ok: false,
+                issues: issues.length > 0 ? issues : (result?.issues ?? []),
+                review: result?.review,
+            };
         }
         if (stagedTouched) this.stagedResources = staged == null ? null : cloneJson(staged);
         if (result?.history === false || sameManifest(before, box.manifest)) {
-            return { ok: true, manifest: this.draft.snapshot(), issues: [] };
+            return { ok: true, manifest: this.draft.snapshot(), issues: [], review: result?.review };
         }
         this.draft.commit(box.manifest);
         this.history.push({ label: command.label ?? "Edit", before, after: this.draft.snapshot() });
         this.redoStack = [];
         this.trimHistory();
         this.selection.prune(this.draft.snapshot());
-        return { ok: true, manifest: this.draft.snapshot(), issues: [] };
+        return { ok: true, manifest: this.draft.snapshot(), issues: [], review: result?.review };
     }
 
     undo() {
