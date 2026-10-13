@@ -58,6 +58,7 @@ The app uses port 3000 when `PORT` is unset.
 Open `http://localhost:3000` in a browser.
 
 This command installs ev-sim into a chosen directory.
+The `--build` flag runs `npm run build` when that command finishes.
 The `--start` flag runs the app when that command finishes.
 
 ```bash

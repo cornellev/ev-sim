@@ -9,6 +9,7 @@
 #   EV_SIM_BRANCH / --branch B   Compatibility alias for --ref
 #   EV_SIM_REPO                  Override clone URL
 #   --no-install                 Clone only; skip npm ci
+#   --build                      Run npm run build after install
 #   --start                      Run npm run dev after install
 #   --marketplace                Write CEV_SIM_MARKETPLACE_ENABLED=1 to .env.local
 #   --no-marketplace             Write CEV_SIM_MARKETPLACE_ENABLED=0 to .env.local
@@ -20,6 +21,7 @@ REPO_URL="${EV_SIM_REPO:-https://github.com/cornellev/ev-sim.git}"
 REF="${EV_SIM_REF:-${EV_SIM_BRANCH:-main}}"
 INSTALL_DIR="${EV_SIM_DIR:-}"
 SKIP_NPM=0
+RUN_BUILD=0
 START_DEV=0
 # Empty means ask. 1 or 0 skips the prompt.
 MARKETPLACE_CHOICE=""
@@ -67,6 +69,7 @@ Options:
   --ref REF        Clone tag, branch, or commit REF (default: main)
   --branch NAME    Compatibility alias for --ref
   --no-install     Skip npm ci
+  --build          Run npm run build after install
   --start          Start the dev server after install
   --marketplace    Enable the marketplace in .env.local
   --no-marketplace Disable the marketplace in .env.local
@@ -97,6 +100,7 @@ while [[ $# -gt 0 ]]; do
     --ref)        REF="${2:-}"; shift 2 || fail "--ref requires a tag, branch, or commit" ;;
     --branch)     REF="${2:-}"; shift 2 || fail "--branch requires a name" ;;
     --no-install) SKIP_NPM=1; shift ;;
+    --build)      RUN_BUILD=1; shift ;;
     --start)      START_DEV=1; shift ;;
     --marketplace)
       if [[ "$MARKETPLACE_FLAG_SET" -eq 1 && "$MARKETPLACE_CHOICE" != "1" ]]; then
@@ -118,6 +122,10 @@ while [[ $# -gt 0 ]]; do
     *)            fail "Unknown option: $1 (try --help)" ;;
   esac
 done
+
+if [[ "$RUN_BUILD" -eq 1 && "$SKIP_NPM" -eq 1 ]]; then
+  fail "--build needs dependencies installed; omit --no-install"
+fi
 
 INSTALL_DIR="${INSTALL_DIR:-$PWD/ev-sim}"
 
@@ -528,6 +536,25 @@ fi
 
 configure_local_env
 
+if [[ "$RUN_BUILD" -eq 1 ]]; then
+  step "Building"
+  info "npm run build  (this may take a minute)"
+  LOG_FILE="$(mktemp -t ev-sim-build.XXXXXX)"
+  spin_start "npm run build…"
+  if (
+    cd "$INSTALL_DIR"
+    npm run build >"$LOG_FILE" 2>&1
+  ); then
+    spin_stop ok "Build finished"
+    rm -f "$LOG_FILE"
+  else
+    spin_stop quiet
+    printf '  %s✗%s  npm run build failed — last lines:\n' "$RED" "$RESET" >&2
+    tail -n 20 "$LOG_FILE" >&2 || true
+    fail "Full log: ${LOG_FILE}"
+  fi
+fi
+
 # ── done ────────────────────────────────────────────────────────────────────
 printf '\n'
 printf '  %s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n' "$GREEN" "$RESET"
@@ -549,6 +576,10 @@ printf '  %sStart the workbench:%s\n' "$WHITE" "$RESET"
 printf '\n'
 printf '    %scd %s%s\n' "$CYAN" "$INSTALL_DIR" "$RESET"
 printf '    %snpm run dev%s\n' "$CYAN" "$RESET"
+if [[ "$RUN_BUILD" -eq 1 ]]; then
+  printf '\n'
+  printf '  %snpm run build%s finished. %snpm start%s serves that build.\n' "$BOLD" "$RESET" "$BOLD" "$RESET"
+fi
 printf '\n'
 printf '  Open the URL Next prints (usually %slocalhost:3000%s).\n' "$BOLD" "$RESET"
 printf '  Press %sEscape%s in the app for the mode menu.\n' "$BOLD" "$RESET"

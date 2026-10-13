@@ -28,6 +28,9 @@ curl -fsSL https://raw.githubusercontent.com/cornellev/ev-sim/main/install.sh | 
 curl -fsSL https://raw.githubusercontent.com/cornellev/ev-sim/v0.2.0/install.sh \
   | bash -s -- --ref v0.2.0
 
+# clone + install + production build
+curl -fsSL https://raw.githubusercontent.com/cornellev/ev-sim/main/install.sh | bash -s -- --build
+
 # clone + install + start the dev server
 curl -fsSL https://raw.githubusercontent.com/cornellev/ev-sim/main/install.sh | bash -s -- --start
 ```
