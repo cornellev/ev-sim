@@ -28,6 +28,7 @@ export default function PluginSensorSettingsForm({
     diagnostics = [],
     onChange,
     disabled = false,
+    lockVehicleFields = false,
 }) {
     const root = parameterRoot(context);
     const parameters = sensor?.[root]?.parameters ?? {};
@@ -56,6 +57,7 @@ export default function PluginSensorSettingsForm({
         }
     };
 
+    const locked = disabled || lockVehicleFields;
     const diagnosticText = Array.isArray(diagnostics) ? diagnostics.filter(Boolean).join(" ") : diagnostics;
 
     return (
@@ -66,7 +68,7 @@ export default function PluginSensorSettingsForm({
                 <textarea
                     className={`${inputClass} mt-1 font-mono`}
                     aria-label="Scan layout JSON"
-                    disabled={disabled}
+                    disabled={locked}
                     rows={8}
                     value={layoutText}
                     onChange={(event) => setLayoutText(event.target.value)}
@@ -87,7 +89,7 @@ export default function PluginSensorSettingsForm({
                         <label key={setting.key} className="flex items-center gap-2 text-[11px] text-zinc-300">
                             <input
                                 type="checkbox"
-                                disabled={disabled}
+                                disabled={locked}
                                 checked={Boolean(value)}
                                 onChange={(event) => {
                                     setDraft((current) => ({ ...current, [setting.key]: event.target.checked }));
@@ -104,7 +106,7 @@ export default function PluginSensorSettingsForm({
                             {setting.key}
                             <select
                                 className={`${inputClass} mt-1`}
-                                disabled={disabled}
+                                disabled={locked}
                                 value={value}
                                 onChange={(event) => {
                                     setDraft((current) => ({ ...current, [setting.key]: event.target.value }));
@@ -124,7 +126,7 @@ export default function PluginSensorSettingsForm({
                         {setting.valueType === "json" ? (
                             <textarea
                                 className={`${inputClass} mt-1 font-mono`}
-                                disabled={disabled}
+                                disabled={locked}
                                 rows={4}
                                 value={displaySettingValue(setting, value)}
                                 onChange={(event) => setDraft((current) => ({ ...current, [setting.key]: event.target.value }))}
@@ -141,7 +143,7 @@ export default function PluginSensorSettingsForm({
                         ) : (
                             <input
                                 className={`${inputClass} mt-1`}
-                                disabled={disabled}
+                                disabled={locked}
                                 aria-label={setting.key}
                                 type={["float64", "int32"].includes(setting.valueType) ? "number" : "text"}
                                 min={setting.min}
@@ -166,7 +168,7 @@ export default function PluginSensorSettingsForm({
                 <label key={product.productId} className="flex items-center gap-2 text-[11px] text-zinc-300">
                     <input
                         type="checkbox"
-                        disabled={disabled}
+                        disabled={locked}
                         checked={products[product.productId] === true}
                         onChange={(event) => commit(`${root}.products.${product.productId}`, event.target.checked)}
                     />

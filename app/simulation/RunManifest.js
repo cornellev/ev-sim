@@ -311,10 +311,21 @@ function migrateSensorToV4(sensor, sourceVersion, registry = sensorTypeRegistry)
     return migrated;
 }
 
+function sensorInheritance(rig) {
+    return rig.inheritance?.mode === "vehicle" ? { mode: "vehicle" } : null;
+}
+
+function withInheritedFrom(sensor, source, inheritance) {
+    if (!inheritance) return sensor;
+    const inheritedFrom = text(source?.inheritedFrom);
+    return inheritedFrom ? { ...sensor, inheritedFrom } : sensor;
+}
+
 function normalizeSensorRig(source = {}, sourceVersion = RUN_MANIFEST_VERSION, registry = sensorTypeRegistry) {
     const rig = object(source);
+    const inheritance = sensorInheritance(rig);
     const sensors = (Array.isArray(rig.sensors) ? rig.sensors : [])
-        .map((entry) => migrateSensorToV4(entry, sourceVersion, registry));
+        .map((entry) => withInheritedFrom(migrateSensorToV4(entry, sourceVersion, registry), entry, inheritance));
     let syncGroups = Array.isArray(rig.syncGroups) ? rig.syncGroups.map(syncGroup) : [];
     if (sourceVersion < RUN_MANIFEST_V7 && sensors.length > 0 && syncGroups.length === 0) {
         syncGroups = defaultSyncGroups();
@@ -324,6 +335,7 @@ function normalizeSensorRig(source = {}, sourceVersion = RUN_MANIFEST_VERSION, r
         odomFrameId: text(rig.odomFrameId, "odom"),
         rootFrameId: text(rig.rootFrameId, "base_link"),
         vehicleId: text(rig.vehicleId, "ego"),
+        ...(inheritance ? { inheritance } : {}),
         syncGroups,
         sensors,
     };

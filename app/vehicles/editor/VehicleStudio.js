@@ -1,10 +1,9 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-
 import { TriangleOptimizer } from "../../optimization/TriangleOptimizer.js";
 import { applyModelPlacement } from "../../3d/vehicles/ModelPlacement.js";
+import { VehicleModelLoader, publishedVehicleModelSource } from "../../3d/vehicles/VehicleModelLoader.js";
 import { sensorRuntimeRegistry } from "../../3d/devices/SensorRuntimeRegistry.js";
 
 const COLORS = {
@@ -32,7 +31,7 @@ export class VehicleStudio {
      *   onSelect?: (selection: {kind: string, id: string|null} | null) => void,
      * }} callbacks
      */
-    constructor(container, { onTransform, onSelect, sensorRuntime = sensorRuntimeRegistry } = {}) {
+    constructor(container, { onTransform, onSelect, sensorRuntime = sensorRuntimeRegistry, modelLoader = null } = {}) {
         this.container = container;
         this.onTransform = onTransform;
         this.onSelect = onSelect;
@@ -48,6 +47,8 @@ export class VehicleStudio {
         this.renderer = new THREE.WebGLRenderer({ antialias: true });
         this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         container.appendChild(this.renderer.domElement);
+        this.modelLoader = modelLoader ?? new VehicleModelLoader({ THREE, renderer: this.renderer });
+        this._ownsModelLoader = modelLoader == null;
 
         const grid = new THREE.GridHelper(40, 40, COLORS.gridCenter, COLORS.grid);
         grid.material.transparent = true;
@@ -109,7 +110,9 @@ export class VehicleStudio {
 
         this._selection = null;
         this._zoneSignature = null;
-        this._modelUrl = null;
+        this._modelKey = "";
+        this._modelLease = null;
+        this._modelAbort = null;
         this._modelObject = null;
         this._modelAlignment = { x: 0, y: 0, z: 0 };
         this._pendingBoundingBox = null;
@@ -149,6 +152,10 @@ export class VehicleStudio {
 
     dispose() {
         this._disposed = true;
+        this._modelAbort?.abort();
+        this._modelLease?.dispose();
+        this._modelLease = null;
+        if (this._ownsModelLoader) this.modelLoader.dispose();
         cancelAnimationFrame(this._frame);
         this._resizeObserver.disconnect();
         this.renderer.domElement.removeEventListener("pointerdown", this._onPointerDown);
@@ -176,27 +183,51 @@ export class VehicleStudio {
      * @param {string|null} modelUrl resolved asset URL, or null when no model
      */
     setManifest(manifest, modelUrl) {
-        this._syncModel(manifest.model, modelUrl, manifest.boundingBox);
+        this._syncModel(manifest, modelUrl);
         this._syncWheels(manifest.wheels);
         this._syncSensors(manifest.sensors);
         this._syncBody(manifest);
         this._syncZone(manifest.lidarZone);
     }
 
-    _syncModel(model, modelUrl, boundingBox) {
+    _syncModel(manifest, modelUrl) {
+        const model = manifest.model;
+        const boundingBox = manifest.boundingBox;
+        const source = modelUrl ? publishedVehicleModelSource(manifest, modelUrl) : null;
+        const sourceKey = source?.asset
+            ? JSON.stringify([source.asset.url, ...(source.dependencies ?? []).map((entry) => entry.url)])
+            : (source?.url ?? "");
         this._pendingBoundingBox = boundingBox;
-        if (modelUrl !== this._modelUrl) {
-            this._modelUrl = modelUrl;
+        if (sourceKey !== this._modelKey) {
+            this._modelKey = sourceKey;
+            this._modelAbort?.abort();
+            this._modelLease?.dispose();
+            this._modelLease = null;
             this.modelRoot.clear();
             this._modelObject = null;
             this._placeholder = null;
-            if (modelUrl) {
+            if (source) {
                 const token = ++this._loadToken;
-                new GLTFLoader().loadAsync(modelUrl).then((gltf) => {
-                    if (this._disposed || token !== this._loadToken) return;
+                this._modelAbort = new AbortController();
+                this.modelLoader.load({
+                    slotId: "studio",
+                    source,
+                    model,
+                    boundingBox,
+                }, { signal: this._modelAbort.signal }).then((lease) => {
+                    if (this._disposed || token !== this._loadToken) {
+                        lease?.dispose?.();
+                        return;
+                    }
+                    if (!lease?.root || lease.stale || lease.aborted) {
+                        lease?.dispose?.();
+                        if (!lease?.stale && !lease?.aborted) this._syncPlaceholder(this._pendingBoundingBox);
+                        return;
+                    }
                     this.modelRoot.clear();
                     this._placeholder = null;
-                    this._modelObject = gltf.scene;
+                    this._modelLease = lease;
+                    this._modelObject = lease.root;
                     this._modelAlignment = applyModelPlacement(
                         this._modelObject,
                         this._pendingModel ?? model,
@@ -207,12 +238,12 @@ export class VehicleStudio {
                 }).catch((error) => {
                     console.warn("Vehicle editor could not load model:", error);
                     if (this._disposed || token !== this._loadToken) return;
-                    this._syncPlaceholder(boundingBox);
+                    this._syncPlaceholder(this._pendingBoundingBox);
                 });
             } else {
                 this._syncPlaceholder(boundingBox);
             }
-        } else if (!modelUrl) {
+        } else if (!source) {
             this._syncPlaceholder(boundingBox);
         }
         this._pendingModel = model;

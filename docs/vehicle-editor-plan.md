@@ -1,17 +1,21 @@
 # Vehicle editor plan
 
 This document records the vehicle-editor program decisions that are in force.
-VEH-01 is the first implemented package. Later packages add canonical GLB
-encoding, staging, rendering, the plan view, URDF, and editor chrome.
+VEH-01 and VEH-02 are implemented. Later packages add staging, bound-wheel
+rendering, the plan view, URDF, and editor chrome.
 
 ## Status
 
 - Implemented: **VEH-01** — version 3 contract, standard-axle checks, migration
   planning, and the vehicle document session.
-- Not in this package: GLB encoding (VEH-02), staging and publication
-  (VEH-03), bound-wheel rendering (VEH-04), the 2D plan (VEH-05), URDF parsing
-  (VEH-06), GitHub acquisition (VEH-07), and workspace chrome (VEH-08).
-- Blank vehicles and built-in projections stay version 2.
+- Implemented: **VEH-02** — canonical GLB ingestion and the shared vehicle
+  model loader.
+- Not in this package: staging and publication (VEH-03), bound-wheel rendering
+  (VEH-04), the 2D plan (VEH-05), URDF parsing (VEH-06), GitHub acquisition
+  (VEH-07), and workspace chrome (VEH-08).
+- Blank vehicles and built-in projections stay version 2. The vehicle editor
+  still uploads a single legacy file until publication can accept a staged
+  closure.
 
 ## Decision log
 
@@ -89,3 +93,36 @@ not supply.
 
 Version 3 identity changes only through the existing `computeResolvedRunHash`.
 The kinematic plant, protobuf contracts, and version 1/2 hashes are unchanged.
+
+### VEH-02 — canonical GLB ingestion
+
+`createVehicleModelImportPlan()` accepts `.glb`, `.gltf`, `.obj`, and `.stl`.
+It rejects PLY, remote URLs, missing files, ambiguous paths, and package
+escapes. A `.gltf` entry is encoded with `writeGlb()`; the output is a binary
+GLB, not the source JSON renamed. Geometry buffers are packed into one BIN
+chunk. Images are sibling files named `<sha256>.png`, `<sha256>.jpg`, or
+`<sha256>.ktx2`, and those names are the GLB image URIs. The model file is
+`<sha256>.glb`. Repeat imports of the same bytes are byte-identical.
+
+Authored glTF node names and OBJ `o`/`g` names are kept. Missing names become
+`part-0`, `part-1`, in node order. STL and unnamed OBJ nodes use that ordinal
+sequence, so the entry filename is not part of the model identity. Editor-asset
+import is unchanged: `.gltf` stays JSON, GLB BIN bytes stay as authored, and
+OBJ/STL/PLY fallback names still come from the filename.
+
+`encodeVehicleModelForMigration()` is the `encodeModel` hook. When it returns
+`files`, the migration operation copies them through. Those bytes are not
+hashed into the vehicle document or the pre-migration snapshot. Callers that
+omit `encodeModel` still get `vehicle.migration.encoder-unavailable`.
+
+`validateVehicleModelClosure()` checks the packed GLB with the same structural
+limits as visual preflight, then checks sibling filenames, digests, texture
+dimensions, and decoded size. Server preflight still requires `sha256:` URIs.
+
+`VehicleModelLoader` serves `VehicleStudio` and `ManifestVehicle`. A version 3
+content-addressed GLB is fetched with its declared sibling images and checked
+before decode. Every other saved asset, including `/shell/shell.gltf`, remains
+a single URL load. Draft bytes can be passed in memory; this package does not
+create a stage or publish assets. A newer load for the same slot disposes the
+older decode. Aborting the read returns no root. No vehicle, resolved,
+semantic, or episode hash changes in this package.

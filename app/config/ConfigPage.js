@@ -54,7 +54,8 @@ import {
     validateRunManifestOnServer,
 } from "../simulation/RunManifestClient.js";
 import { getRunSessionController } from "../simulation/RunSessionController.js";
-import { listVehicleManifests } from "../vehicles/VehicleManifestClient.js";
+import { getBuiltInVehicleManifest } from "../vehicles/BuiltInVehicleManifests.js";
+import { getVehicleManifest, listVehicleManifests } from "../vehicles/VehicleManifestClient.js";
 import { subscribeStorageEvents } from "../client/storageEvents.js";
 import { PLUGIN_CAPABILITIES } from "../plugin-api/capabilities.js";
 import { fetchSensorCatalog, getPluginManifest, listPluginLibrary } from "../plugin/PluginClient.js";
@@ -63,9 +64,17 @@ import PluginSensorAuthoringPanel from "../plugin/browser/PluginSensorAuthoringP
 import {
     pluginSensorCatalogEntryForType,
     sensorCatalogEntries,
+    stampInheritedPluginSelections,
     stampManifestPluginSelectionForPlant,
     stampManifestPluginSelectionForSensor,
 } from "../plugin/PluginSensorAuthoring.js";
+import {
+    applySensorInheritance,
+    detachSensorInheritance,
+    enableSensorInheritance,
+    isInheritedSensorFieldLocked,
+    resolveInheritedVehicleSelection,
+} from "../simulation/sensors/SensorInheritance.js";
 import SensorTypeAdder from "../ui/SensorTypeAdder.js";
 import { PLUGIN_SENSOR_RANGE_IMAGE_CAPABILITY } from "../plugin/PluginSensorContract.js";
 import {
@@ -845,6 +854,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                                                 session={sensorSessionRef.current}
                                                 onError={setError}
                                                 bumpRegistry={bumpSensorRegistry}
+                                                vehicleCatalog={vehicleCatalog}
                                             />
                                         )}
                                         {item === "Scripts" && (
@@ -1396,6 +1406,14 @@ function Controls({ draft, update }) {
     );
 }
 
+function storedSensorIndex(sensors, displayed) {
+    return sensors.findIndex((sensor) => (
+        displayed.inheritedFrom
+            ? sensor.inheritedFrom === displayed.inheritedFrom
+            : sensor.id === displayed.id && !sensor.inheritedFrom
+    ));
+}
+
 function Sensors({
     draft,
     update,
@@ -1403,9 +1421,122 @@ function Sensors({
     session = null,
     onError = () => {},
     bumpRegistry = () => {},
+    vehicleCatalog = [],
 }) {
     const registry = session?.registry ?? sensorTypeRegistry;
     const catalogEntries = sensorCatalogEntries(catalog, registry);
+    const selection = resolveInheritedVehicleSelection(draft);
+    const inheriting = draft.sensorRig?.inheritance?.mode === "vehicle";
+    const builtInManifest = useMemo(
+        () => (selection.vehicleId ? getBuiltInVehicleManifest(selection.vehicleId) : null),
+        [selection.vehicleId],
+    );
+    const [storedVehicle, setStoredVehicle] = useState({ id: null, manifest: null, error: null });
+    const [vehicleRequest, setVehicleRequest] = useState(0);
+    const vehicleManifest = builtInManifest
+        || (storedVehicle.id === selection.vehicleId ? storedVehicle.manifest : null);
+    const vehicleName = vehicleManifest?.name
+        || vehicleCatalog.find((entry) => entry.id === selection.vehicleId)?.name
+        || selection.vehicleId
+        || "No vehicle selected";
+
+    useEffect(() => {
+        if (!selection.vehicleId || builtInManifest) return undefined;
+        let cancelled = false;
+        getVehicleManifest(selection.vehicleId).then((document) => {
+            if (cancelled) return;
+            if (!document) throw new Error(`Vehicle "${selection.vehicleId}" does not exist.`);
+            setStoredVehicle({ id: selection.vehicleId, manifest: document, error: null });
+        }).catch((caught) => {
+            if (!cancelled) setStoredVehicle({ id: selection.vehicleId, manifest: null, error: caught.message });
+        });
+        return () => { cancelled = true; };
+    }, [builtInManifest, selection.vehicleId, vehicleRequest]);
+
+    useEffect(() => subscribeStorageEvents((event) => {
+        if (event.domain === "vehicle" && (!event.id || event.id === selection.vehicleId)) {
+            setVehicleRequest((value) => value + 1);
+        }
+    }), [selection.vehicleId]);
+
+    const applied = useMemo(() => {
+        if (!inheriting) return { manifest: draft, issues: [] };
+        if (!vehicleManifest) {
+            return {
+                manifest: draft,
+                issues: [{
+                    path: "sensorRig.inheritance",
+                    message: storedVehicle.error
+                        || (selection.vehicleId
+                            ? `Vehicle "${selection.vehicleId}" is not loaded.`
+                            : "Choose a vehicle before inheriting sensors."),
+                }],
+            };
+        }
+        return applySensorInheritance(draft, { vehicleManifest, registry });
+    }, [draft, inheriting, registry, selection.vehicleId, storedVehicle.error, vehicleManifest]);
+    const displaySensors = inheriting ? applied.manifest.sensorRig.sensors : draft.sensorRig.sensors;
+    const inheritedCount = displaySensors.filter((sensor) => sensor.inheritedFrom).length;
+
+    useEffect(() => {
+        if (!inheriting || !vehicleManifest) return;
+        const projected = applySensorInheritance(draft, { vehicleManifest, registry });
+        if (projected.issues.length > 0) return;
+        const stamped = stampInheritedPluginSelections(projected.manifest, catalog, registry);
+        const normalized = normalizeRunManifest({
+            ...draft,
+            plugins: stamped.manifest.plugins,
+        }, { sensorRegistry: registry });
+        if (JSON.stringify(normalized.plugins ?? null) === JSON.stringify(draft.plugins ?? null)) return;
+        update([], normalized);
+    }, [catalog, draft, inheriting, registry, update, vehicleManifest]);
+
+    const writeDisplayedSensor = (displayed, mutate) => {
+        const index = storedSensorIndex(draft.sensorRig.sensors, displayed);
+        if (index < 0) {
+            update(["sensorRig", "sensors"], [...draft.sensorRig.sensors, mutate(structuredClone(displayed))]);
+            return;
+        }
+        update(["sensorRig", "sensors", index], mutate(structuredClone(draft.sensorRig.sensors[index])));
+    };
+    const setInheritance = async (enabled) => {
+        try {
+            if (!enabled) {
+                update([], detachSensorInheritance(draft, { vehicleManifest, registry }).manifest);
+                return;
+            }
+            if (!vehicleManifest) {
+                onError(applied.issues[0]?.message || "Choose a vehicle before inheriting sensors.");
+                return;
+            }
+            const enabledResult = enableSensorInheritance(draft, vehicleManifest, { registry });
+            if (enabledResult.issues.length > 0) {
+                onError(enabledResult.issues.map((issue) => issue.message).join(" "));
+                return;
+            }
+            const stamped = stampInheritedPluginSelections(enabledResult.manifest, catalog, registry);
+            if (stamped.issues.length > 0) {
+                onError(stamped.issues.map((issue) => issue.message).join(" "));
+                return;
+            }
+            for (const sensor of stamped.manifest.sensorRig.sensors) {
+                if (!sensor.inheritedFrom) continue;
+                const entry = pluginSensorCatalogEntryForType(catalog, sensor.type);
+                if (!entry?.ownership || entry.ownership === "builtin") continue;
+                await session?.loadLock({
+                    pluginId: entry.ownership.pluginId,
+                    version: entry.ownership.version,
+                    packageHash: entry.ownership.packageHash,
+                    runtimeHash: entry.ownership.runtimeHash,
+                    sensorTypes: [entry.type],
+                });
+            }
+            bumpRegistry();
+            update([], stamped.manifest);
+        } catch (caught) {
+            onError(caught.message);
+        }
+    };
     const addEntry = async (entry) => {
         try {
             const next = structuredClone(draft);
@@ -1434,6 +1565,22 @@ function Sensors({
     };
     return (
         <div className="space-y-4">
+            <div className="rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] p-4">
+                <Toggle
+                    label="Inherit sensors from the selected vehicle"
+                    description={vehicleName}
+                    value={inheriting}
+                    onChange={(value) => { setInheritance(value); }}
+                />
+                {applied.issues.length > 0 && (
+                    <ul className="mt-3 space-y-1 text-[12px] text-[var(--slate-warning)]">
+                        {applied.issues.map((issue) => <li key={`${issue.path}:${issue.message}`}>{issue.message}</li>)}
+                    </ul>
+                )}
+                {inheriting && vehicleManifest && inheritedCount === 0 && applied.issues.length === 0 && (
+                    <p className="mt-3 text-[12px] text-[var(--slate-muted)]">This vehicle has no sensors. Sensors you add here stay fully editable.</p>
+                )}
+            </div>
             <AdvancedFields label="Rig frames">
                 <div className="grid gap-3 md:grid-cols-4">
                     <Field label="Map frame"><input value={draft.sensorRig.mapFrameId || "map"} onChange={(event) => update(["sensorRig", "mapFrameId"], event.target.value)} /></Field>
@@ -1443,10 +1590,20 @@ function Sensors({
                 </div>
             </AdvancedFields>
             <SensorTypeAdder entries={catalogEntries} onAdd={addEntry} />
-            {draft.sensorRig.sensors.map((sensor, index) => {
-                const sensorPath = ["sensorRig", "sensors", index];
-                const change = (parts, value) => update([...sensorPath, ...parts], value);
+            {displaySensors.map((sensor) => {
+                const index = storedSensorIndex(draft.sensorRig.sensors, sensor);
+                const inherited = Boolean(sensor.inheritedFrom);
+                const change = (parts, value) => writeDisplayedSensor(sensor, (entry) => {
+                    let cursor = entry;
+                    parts.slice(0, -1).forEach((part) => {
+                        if (!cursor[part] || typeof cursor[part] !== "object") cursor[part] = {};
+                        cursor = cursor[part];
+                    });
+                    cursor[parts.at(-1)] = value;
+                    return entry;
+                });
                 const definition = registry.get(sensor.type) || getSensorType(sensor.type);
+                const locked = (path) => isInheritedSensorFieldLocked(sensor, path, definition);
                 const catalogEntry = pluginSensorCatalogEntryForType(catalog, sensor.type);
                 const plugin = definition?.pluginSensor;
                 const unresolved = Boolean(plugin && session?.unresolvedLocks?.includes(plugin.ownership?.packageHash || catalogEntry?.ownership?.packageHash));
@@ -1467,21 +1624,28 @@ function Sensors({
                             bumpRegistry();
                             next.plugins = stampManifestPluginSelectionForSensor(next.plugins, entry);
                         }
+                        if (index < 0) return;
                         next.sensorRig.sensors[index] = changeRunSensorType(sensor, type, session?.registry ?? registry);
                         update([], next);
                     } catch (caught) {
                         onError(caught.message);
                     }
                 };
+                const oracleDraft = index >= 0 ? draft : {
+                    ...draft,
+                    sensorRig: { ...draft.sensorRig, sensors: [...draft.sensorRig.sensors, sensor] },
+                };
+                const oracleIndex = index >= 0 ? index : draft.sensorRig.sensors.length;
                 return (
-                    <div key={`sensor-${index}`} className="rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] p-4">
+                    <div key={sensor.inheritedFrom || sensor.id} data-sensor-id={sensor.id} className="rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] p-4">
+                        {inherited && <p className="mb-3 text-[12px] font-medium text-[var(--slate-muted)]">From vehicle</p>}
                         <div className="grid gap-3 md:grid-cols-4">
                             <Toggle label="Enabled" value={sensor.enabled} onChange={(value) => change(["enabled"], value)} />
                             <Field label="Stable ID">
-                                <input value={sensor.id} onChange={(event) => change(["id"], event.target.value)} />
+                                <input aria-label="Stable ID" value={sensor.id} disabled={inherited} onChange={(event) => change(["id"], event.target.value)} />
                             </Field>
                             <Field label="Type">
-                                <select value={sensor.type} onChange={(event) => changeType(event.target.value)}>
+                                <select aria-label="Type" value={sensor.type} disabled={inherited} onChange={(event) => changeType(event.target.value)}>
                                     {catalogEntries.map((entry) => (
                                         <option key={`${entry.type}:${entry.ownership?.packageHash || "builtin"}`} value={entry.type}>
                                             {entry.label || entry.type}
@@ -1491,18 +1655,18 @@ function Sensors({
                                 </select>
                             </Field>
                             <Field label="Parent vehicle">
-                                <input value={sensor.parentId} onChange={(event) => change(["parentId"], event.target.value)} />
+                                <input aria-label="Parent vehicle" value={sensor.parentId || ""} disabled={inherited} onChange={(event) => change(["parentId"], event.target.value)} />
                             </Field>
                             <Field label="Rate (Hz)">
-                                <input type="number" min="0.001" step="0.001" value={sensor.rateHz} onChange={(event) => change(["rateHz"], Number(event.target.value))} />
+                                <input aria-label="Rate (Hz)" type="number" min="0.001" step="0.001" value={sensor.rateHz} disabled={locked(["rateHz"])} onChange={(event) => change(["rateHz"], Number(event.target.value))} />
                             </Field>
                             {simpleFields.map((field) => (
-                                <SensorDefinitionField key={field.path.join(".")} field={field} sensor={sensor} change={change} />
+                                <SensorDefinitionField key={field.path.join(".")} field={field} sensor={sensor} change={change} locked={locked(field.path)} />
                             ))}
                         </div>
-                        <OracleProductToggles draft={draft} sensor={sensor} index={index} update={update} />
-                        <VectorFields label="REP-103 pose position (m)" value={sensor.pose.position} onChange={(axis, value) => change(["pose", "position", axis], value)} />
-                        <VectorFields label="REP-103 pose rotation (rad)" value={sensor.pose.rotation} onChange={(axis, value) => change(["pose", "rotation", axis], value)} />
+                        <OracleProductToggles draft={oracleDraft} sensor={sensor} index={oracleIndex} update={update} />
+                        <VectorFields label="REP-103 pose position (m)" value={sensor.pose.position} disabled={inherited} onChange={(axis, value) => change(["pose", "position", axis], value)} />
+                        <VectorFields label="REP-103 pose rotation (rad)" value={sensor.pose.rotation} disabled={inherited} onChange={(axis, value) => change(["pose", "rotation", axis], value)} />
                         <AdvancedFields label="Frames, timing, and noise">
                             <div className="grid gap-3 md:grid-cols-4">
                                 <Field label="Measurement frame">
@@ -1545,7 +1709,7 @@ function Sensors({
                                     <input type="number" min="0" max="1" step="0.001" value={sensor.noise.dropoutProbability} onChange={(event) => change(["noise", "dropoutProbability"], Number(event.target.value))} />
                                 </Field>
                                 {advancedFields.map((field) => (
-                                    <SensorDefinitionField key={field.path.join(".")} field={field} sensor={sensor} change={change} />
+                                    <SensorDefinitionField key={field.path.join(".")} field={field} sensor={sensor} change={change} locked={locked(field.path)} />
                                 ))}
                             </div>
                         </AdvancedFields>
@@ -1557,9 +1721,26 @@ function Sensors({
                                 diagnostic={session?.diagnosticFor(sensor.type)}
                                 Component={session?.sensorViewFor(sensor.type)}
                                 unresolved={unresolved}
+                                lockVehicleFields={inherited}
                                 topics={draft.topics}
                                 sensorRegistry={registry}
-                                onCommit={(next) => update(sensorPath, next)}
+                                onCommit={(next) => writeDisplayedSensor(sensor, () => (
+                                    inherited ? {
+                                        ...next,
+                                        id: sensor.id,
+                                        type: sensor.type,
+                                        parentId: sensor.parentId,
+                                        pose: sensor.pose,
+                                        rateHz: sensor.rateHz,
+                                        inheritedFrom: sensor.inheritedFrom,
+                                        calibration: {
+                                            ...next.calibration,
+                                            scanLayout: sensor.calibration?.scanLayout,
+                                            parameters: sensor.calibration?.parameters,
+                                            products: sensor.calibration?.products,
+                                        },
+                                    } : next
+                                ))}
                                 onOutputChange={(key, value) => change(["outputs", key], value)}
                             />
                         )}
@@ -1576,7 +1757,7 @@ function Sensors({
                                 This sensor type is not registered. Its data is preserved, but the run cannot launch until a supported type is selected.
                             </p>
                         )}
-                        <button type="button" onClick={() => update(["sensorRig", "sensors"], draft.sensorRig.sensors.filter((_, candidate) => candidate !== index))} className="mt-4 text-[11px] text-[var(--slate-danger)]">Remove sensor</button>
+                        {!inherited && <button type="button" onClick={() => update(["sensorRig", "sensors"], draft.sensorRig.sensors.filter((entry) => entry !== draft.sensorRig.sensors[index]))} className="mt-4 text-[11px] text-[var(--slate-danger)]">Remove sensor</button>}
                     </div>
                 );
             })}
@@ -1719,19 +1900,20 @@ function OracleProductToggles({ draft, sensor, index, update }) {
     );
 }
 
-function SensorDefinitionField({ field, sensor, change }) {
+function SensorDefinitionField({ field, sensor, change, locked = false }) {
     const { advanced } = useAuthoringMode();
     if (field.advanced && !advanced) return null;
     const value = getSensorFieldValue(sensor, field.path);
     return (
         <Field label={field.label}>
             <input
+                aria-label={field.label}
                 type={field.control === "number" ? "number" : "text"}
                 min={field.min}
                 max={field.max}
                 step={field.step}
                 value={value ?? ""}
-                disabled={field.readOnly}
+                disabled={field.readOnly || locked}
                 onChange={(event) => change(field.path, field.control === "number" ? Number(event.target.value) : event.target.value)}
             />
         </Field>
@@ -2338,8 +2520,8 @@ function Provenance({ draft, update }) {
     );
 }
 
-function VectorFields({ label, value, onChange }) {
-    return <div className="mt-4"><p className="mb-2 text-[13px] font-medium text-[var(--slate-fg-2)]">{label}</p><div className="grid gap-3 sm:grid-cols-3">{["x", "y", "z"].map((axis) => <Field key={axis} label={axis.toUpperCase()}><input type="number" step="0.001" value={value?.[axis] ?? 0} onChange={(event) => onChange(axis, Number(event.target.value))} /></Field>)}</div></div>;
+function VectorFields({ label, value, onChange, disabled = false }) {
+    return <div className="mt-4"><p className="mb-2 text-[13px] font-medium text-[var(--slate-fg-2)]">{label}</p><div className="grid gap-3 sm:grid-cols-3">{["x", "y", "z"].map((axis) => <Field key={axis} label={axis.toUpperCase()}><input aria-label={`${label} ${axis}`} type="number" step="0.001" value={value?.[axis] ?? 0} disabled={disabled} onChange={(event) => onChange(axis, Number(event.target.value))} /></Field>)}</div></div>;
 }
 
 function JsonField({ value, onChange, rows = 5, className = "", ...props }) {
@@ -2355,8 +2537,8 @@ function Field({ label, wide = false, children }) {
     return <SharedField label={label} className={wide ? "md:col-span-2" : ""}>{control}</SharedField>;
 }
 
-function Toggle({ label, value, onChange }) {
-    return <SharedSwitch label={label} checked={value} onCheckedChange={onChange} />;
+function Toggle({ label, description, value, onChange, disabled = false }) {
+    return <SharedSwitch label={label} description={description} checked={value} onCheckedChange={onChange} disabled={disabled} />;
 }
 
 function Action({ icon, label, onClick, disabled = false, primary = false, danger = false, compact = false, align = "center", className }) {

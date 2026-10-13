@@ -10,7 +10,7 @@ Editing areas:
 
 - **Model**: upload a `.glb`/`.gltf`, then place it in the vehicle frame with scale, rotation, and offset. "Fit to size" rescales the model so its footprint matches a target length and width in meters.
 - **LiDAR zone**: generates the reduced-polygon collision mesh that LiDAR and other GPU sensors raycast against. Generation runs the voxel-clustering simplifier (`TriangleOptimizer`) over the placed model and bakes the resulting vertex and triangle arrays into the manifest. Larger voxel sizes produce fewer triangles.
-- **Sensors**: 3D LiDAR, camera, and catalog plugin range-image templates with vehicle-local poses and per-type configuration. Plugin sensors are authoring templates and previews; they do not execute from the vehicle document.
+- **Sensors**: 3D LiDAR, camera, and catalog plugin range-image templates with vehicle-local poses and per-type configuration. Plugin sensors are authoring templates and previews; they do not execute from the vehicle document. A run configuration can opt in, from its Sensors tab, to inherit these mounts. Inherited pose and vehicle calibration stay locked to this document. Rate, noise, topics, and other run settings stay editable on the run.
 - **Wheels**: wheel positions, radius, width, and steerable flags. The bicycle-model wheelbase is derived from steerable vs. fixed wheel placement unless overridden.
 - **Body**: the bounding box (drives the physics AABB via `collisionDimensions`) and the ego center marker.
 
@@ -62,7 +62,7 @@ Version 1 and version 2 normalize to the version 2 shape above. That shape has n
 
 Version 3 adds:
 
-- `model.dependencies`: sorted unique sibling filenames for the canonical model closure. Empty when `model.asset` is null.
+- `model.dependencies`: sorted unique sibling filenames for the canonical model closure. Empty when `model.asset` is null. A canonical closure names the model `<sha256>.glb` and each image `<sha256>.png`, `<sha256>.jpg`, or `<sha256>.ktx2`. Those image filenames are the URIs inside the GLB. Geometry buffers are packed into the GLB BIN chunk. The editor's legacy single-file upload remains until staged publication exists.
 - `model.hiddenNodeIndices`: sorted unique source node indices whose subtrees are hidden. Empty on a model-free vehicle.
 - Optional wheel `axle` (`front` or `rear`) and `side` (`left` or `right`, with `+Z` left). Both are omitted on an unclassified wheel.
 - Optional wheel `visual: { kind: "model-node", nodeIndex }` when that wheel is bound to a source node. The display name comes from the model, not from a second stored name.

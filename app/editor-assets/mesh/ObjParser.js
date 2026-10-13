@@ -223,7 +223,8 @@ function loadLibraries(statements, entry, selected) {
     return { materials, images, materialNames };
 }
 
-export function parseObjPackage(files, entryPath) {
+export function parseObjPackage(files, entryPath, options = {}) {
+    const fallbackName = options?.fallbackName ?? null;
     const selected = new Map();
     for (const file of files ?? []) {
         const path = normalizedSelectedPath(file?.path);
@@ -241,9 +242,17 @@ export function parseObjPackage(files, entryPath) {
     const nodes = [];
     let current = null;
     let activeMaterial = null;
+    let unnamed = 0;
+    const unnamedName = () => {
+        const name = `${fallbackName}-${unnamed}`;
+        unnamed += 1;
+        return name;
+    };
 
     const startNode = (name) => {
-        current = { id: uniqueId(name, usedNodeIds, "object"), name: String(name ?? "").trim() || stem, runs: new Map() };
+        const trimmed = String(name ?? "").trim();
+        const resolved = trimmed || (fallbackName == null ? stem : unnamedName());
+        current = { id: uniqueId(resolved, usedNodeIds, "object"), name: resolved, runs: new Map() };
         nodes.push(current);
     };
 
@@ -260,13 +269,13 @@ export function parseObjPackage(files, entryPath) {
             const channels = parsed.args.split(/\s+/u);
             geometry.normals.push([0, 1, 2].map((index) => finite(channels[index], "OBJ normal")));
         } else if (keyword === "o" || keyword === "g") {
-            startNode(parsed.args || stem);
+            startNode(fallbackName == null ? (parsed.args || stem) : parsed.args);
         } else if (keyword === "usemtl") {
             const name = parsed.args.trim();
             if (!materialNames.has(name)) throw new Error(`MTL material "${name}" was not declared.`);
             activeMaterial = materialNames.get(name);
         } else if (keyword === "f") {
-            if (!current) startNode(stem);
+            if (!current) startNode(fallbackName == null ? stem : "");
             const counts = { positions: geometry.positions.length, uvs: geometry.uvs.length, normals: geometry.normals.length };
             const corners = parsed.args.split(/\s+/u).filter(Boolean).map((token) => parseCorner(token, counts));
             for (const triangle of triangulatePolygon(corners)) addTriangle(current, activeMaterial, triangle, geometry);

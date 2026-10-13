@@ -1,12 +1,11 @@
 import * as THREE from "three";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
 
 import { PhysicalVehicle } from "./Vehicle";
 import { getSensorType } from "../devices/SensorTypeRegistry.js";
 import { createVehicleSensorDevice, sensorRuntimeRegistry } from "../devices/SensorRuntimeRegistry.js";
 import { Triangle } from "../data/objects/Triangle";
 import { normalizeVehicleManifest, resolveVehicleModelUrl } from "../../vehicles/VehicleManifest.js";
-import { applyModelPlacement } from "./ModelPlacement.js";
+import { publishedVehicleModelSource, VehicleModelLoader } from "./VehicleModelLoader.js";
 import { attachVehiclePlant, resetVehiclePlant, stepVehiclePlant } from "./VehiclePlantAdapter.js";
 import { resetEgoPresentation, updateEgoPresentation } from "./EgoPresentation.js";
 
@@ -57,6 +56,10 @@ export class ManifestVehicle extends PhysicalVehicle {
             this.manifest.egoCenter.y,
             this.manifest.egoCenter.z,
         );
+        this.modelLoader = options.modelLoader ?? null;
+        this._ownsModelLoader = this.modelLoader == null;
+        this._modelLoadToken = 0;
+        this._modelLease = null;
 
         /** @type {{ pivot: THREE.Group, steerable: boolean }[]} */
         this._wheels = [];
@@ -97,21 +100,42 @@ export class ManifestVehicle extends PhysicalVehicle {
         this.sceneObject.position.copy(this.position);
         this.sceneObject.rotation.copy(this.rotation);
         scene.add(this.sceneObject);
+        const sceneObject = this.sceneObject;
+        const token = ++this._modelLoadToken;
 
         const modelUrl = resolveVehicleModelUrl(this.vehicleManifestId, this.manifest.model.asset);
         if (modelUrl) {
             try {
-                const loader = new GLTFLoader();
-                const gltf = await loader.loadAsync(modelUrl);
-                applyModelPlacement(gltf.scene, this.manifest.model, this.manifest.boundingBox);
-                this.sceneObject.add(gltf.scene);
+                if (!this.modelLoader) {
+                    this.modelLoader = new VehicleModelLoader({ THREE });
+                    this._ownsModelLoader = true;
+                }
+                const lease = await this.modelLoader.load({
+                    slotId: this.vehicleManifestId,
+                    source: publishedVehicleModelSource(this.manifest, modelUrl),
+                    model: this.manifest.model,
+                    boundingBox: this.manifest.boundingBox,
+                });
+                if (token !== this._modelLoadToken) {
+                    lease?.dispose?.();
+                    return;
+                }
+                if (!lease?.root || lease.stale || lease.aborted) {
+                    lease?.dispose?.();
+                    sceneObject.add(this._buildPlaceholderBody());
+                } else {
+                    this._modelLease = lease;
+                    sceneObject.add(lease.root);
+                }
             } catch (error) {
                 console.warn(`Could not load model for vehicle "${this.vehicleManifestId}":`, error);
-                this.sceneObject.add(this._buildPlaceholderBody());
+                if (token === this._modelLoadToken) sceneObject.add(this._buildPlaceholderBody());
             }
-        } else {
-            this.sceneObject.add(this._buildPlaceholderBody());
+        } else if (token === this._modelLoadToken) {
+            sceneObject.add(this._buildPlaceholderBody());
         }
+
+        if (token !== this._modelLoadToken) return;
 
         // Debug plate at the kinematic origin (vehicle-local 0,0,0).
         const originMarker = new THREE.Mesh(
@@ -257,6 +281,10 @@ export class ManifestVehicle extends PhysicalVehicle {
     }
 
     dispose() {
+        this._modelLoadToken += 1;
+        this._modelLease?.dispose();
+        this._modelLease = null;
+        if (this._ownsModelLoader) this.modelLoader?.dispose();
         const data = this.db?.getParent?.();
         if (this._zoneTriangles.length > 0) {
             const mine = new Set(this._zoneTriangles);

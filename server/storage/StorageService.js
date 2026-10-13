@@ -84,6 +84,11 @@ import {
 import { assertArtifactPluginRequirements } from "../../app/plugin/PluginRequirements.js";
 import { NodePluginModuleSource } from "../plugins/NodePluginModuleSource.js";
 import { createSensorDefinitionRegistry } from "../../app/simulation/sensors/SensorTypeRegistry.js";
+import {
+    applySensorInheritance,
+    clearSensorInheritanceMarkers,
+    resolveInheritedVehicleSelection,
+} from "../../app/simulation/sensors/SensorInheritance.js";
 import { planSensorAdmission } from "../../app/simulation/sensors/SensorAdmission.js";
 import { createPluginSensorsResource } from "../../app/plugin/PluginSensorIdentity.js";
 import {
@@ -2115,6 +2120,21 @@ export class StorageService {
                 ? existing
                 : this._resolveVehicleDependency(vehicle.id, vehicle.type);
         }));
+        let definitionManifest = manifest;
+        if (manifest.sensorRig?.inheritance?.mode === "vehicle") {
+            const { actorId, vehicleId } = resolveInheritedVehicleSelection(manifest);
+            const owning = resolvedVehicles.find((entry) => entry.actorId === actorId) ?? null;
+            const vehicleManifest = owning && owning.vehicleId === vehicleId ? owning.manifest : null;
+            const applied = applySensorInheritance(manifest, {
+                vehicleManifest,
+                registry: sensorRegistry,
+            });
+            if (applied.issues.length > 0) {
+                throw new Error(applied.issues.map((issue) => `${issue.path}: ${issue.message}`).join("\n"));
+            }
+            definitionManifest = manifest;
+            manifest = clearSensorInheritanceMarkers(applied.manifest);
+        }
         const vehicleIds = new Set(manifest.initialState.vehicles.map((entry) => entry.id));
         for (const sensor of manifest.sensorRig.sensors) {
             if (sensor.type === "camera" && sensor.poseReference === "map") continue;
@@ -2250,7 +2270,7 @@ export class StorageService {
             renderScene = createRenderSceneResource(world, resolvedVehicles, renderSelection);
         }
 
-        const definitionHash = semanticHash(manifest);
+        const definitionHash = semanticHash(definitionManifest);
         const calibration = buildCalibrationBundle(manifest);
         const resolved = resolvedRunJsonSnapshot({
             kind: RUN_MANIFEST_KIND,

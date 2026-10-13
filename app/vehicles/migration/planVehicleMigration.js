@@ -305,6 +305,7 @@ function encodeClosure(entry, table, encodeModel, hiddenNodeIndices) {
         asset: encoded.asset,
         dependencies: [...(encoded.dependencies ?? [])],
     };
+    if (Array.isArray(encoded.files)) outputs.files = encoded.files.map((file) => ({ ...file }));
     return {
         ok: true,
         operations: [{ op: "encode-canonical-glb", entry, inputs, outputs }],

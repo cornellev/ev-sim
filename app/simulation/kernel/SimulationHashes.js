@@ -173,6 +173,7 @@ function legacySimulationSemanticProjection(resolved = {}) {
     if (projection.manifest) {
         delete projection.manifest.logging;
         delete projection.manifest.sensorTransports;
+        omitSensorInheritance(projection.manifest.sensorRig);
         // Candidate-model declarations are evidence provenance only. Project v10
         // back to the prior semantic shape so otherwise-identical runs keep the
         // same simulationSemanticHash / episodeHash / trajectoryHash.
@@ -210,9 +211,23 @@ function omitIdentityMetadata(document) {
     for (const key of VOLATILE_KEYS) delete document[key];
 }
 
+function inheritedSensorRigForIdentity(rig) {
+    const projected = structuredClone(rig ?? null);
+    omitSensorInheritance(projected);
+    return projected;
+}
+
+function omitSensorInheritance(rig) {
+    if (!rig) return;
+    delete rig.inheritance;
+    for (const sensor of rig.sensors ?? []) delete sensor.inheritedFrom;
+}
+
 function projectSensorRig(rig, pluginSensorIds = new Set()) {
     const projected = structuredClone(rig ?? null);
-    for (const sensor of projected?.sensors ?? []) {
+    if (!projected) return projected;
+    omitSensorInheritance(projected);
+    for (const sensor of projected.sensors ?? []) {
         if (sensor.enabled === false) delete sensor.render;
         if (pluginSensorIds.has(sensor.id)) {
             delete sensor.maxQueueFrames;
@@ -416,7 +431,7 @@ export function defaultEpisodeIdentity(resolved, overrides = {}) {
             version: 1,
             configHash: simulationSha256(identityVersion === 2
                 ? projectSensorRig(resolved?.manifest?.sensorRig, resolvedPluginSensorIds(resolved))
-                : resolved?.manifest?.sensorRig ?? null),
+                : inheritedSensorRigForIdentity(resolved?.manifest?.sensorRig)),
         },
         rewardProfile: {
             id: "browser-scenario-outcomes",

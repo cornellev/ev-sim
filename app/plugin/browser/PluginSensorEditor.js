@@ -14,6 +14,15 @@ function freezeValue(value) {
     return Object.freeze(Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, freezeValue(entry)])));
 }
 
+function inheritedPluginPatchBlocked(path) {
+    const joined = Array.isArray(path) ? path.join(".") : String(path ?? "");
+    return joined.includes("scanLayout")
+        || joined.includes("parameters")
+        || joined.includes("products")
+        || joined === "rateHz"
+        || joined.endsWith(".rateHz");
+}
+
 export default function PluginSensorEditor({
     context,
     sensor,
@@ -22,11 +31,13 @@ export default function PluginSensorEditor({
     Component = null,
     onCommit,
     disabled = false,
+    lockVehicleFields = false,
     sensorRegistry = sensorTypeRegistry,
 }) {
     const descriptor = definition?.pluginSensor?.descriptor ?? null;
     const diagnostics = [diagnostic].filter(Boolean);
     const onChange = (patch) => {
+        if (lockVehicleFields && inheritedPluginPatchBlocked(patch?.path)) return;
         const next = commitPluginSensorAuthoringPatch(sensor, definition, patch, {
             context: context.kind,
             sensorRegistry,
@@ -49,6 +60,7 @@ export default function PluginSensorEditor({
         ...props,
         onChange,
         disabled,
+        lockVehicleFields,
     });
     if (!Component) return fallback;
     return createElement(

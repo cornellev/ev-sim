@@ -85,7 +85,9 @@ and browser execution reject UDP. See
 
 PLG-07 authors custom sensors from the revisioned catalog and exact CAS locks.
 Vehicle `pluginLocks` pin plugin provenance for templates and previews; only
-`manifest.sensorRig.sensors` execute. Vehicle-bundle v1 may embed sorted
+`manifest.sensorRig.sensors` execute. A run may opt in to inherit those mounts
+into `sensorRig`; the vehicle document still does not execute them.
+Vehicle-bundle v1 may embed sorted
 `pluginPackages` without changing the legacy hash projection. Simulation
 identity replaces locked vehicle `packageHash` with runtime identity and
 leaves unlocked vehicles unchanged.

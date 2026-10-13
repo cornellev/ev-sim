@@ -587,6 +587,35 @@ export function pluginSensorCatalogEntryForType(catalog, type) {
     return (catalog?.sensors ?? []).find((entry) => entry.type === type) || null;
 }
 
+export function stampInheritedPluginSelections(manifest, catalog, registry = sensorTypeRegistry) {
+    let next = manifest;
+    const issues = [];
+    for (const [index, sensor] of (manifest?.sensorRig?.sensors ?? []).entries()) {
+        if (!sensor?.inheritedFrom) continue;
+        const definition = registry.get(sensor.type);
+        const entry = pluginSensorCatalogEntryForType(catalog, sensor.type);
+        const pluginOwned = Boolean(definition?.pluginSensor) || (entry && entry.ownership !== "builtin");
+        if (!pluginOwned) continue;
+        if (!entry?.ownership || entry.ownership === "builtin") {
+            issues.push({
+                path: `sensorRig.sensors.${index}.type`,
+                message: `Inherited sensor "${sensor.id}" requires plugin type "${sensor.type}" in the sensor catalog.`,
+            });
+            continue;
+        }
+        try {
+            const plugins = stampManifestPluginSelectionForSensor(next.plugins, entry);
+            if (plugins !== next.plugins) next = { ...next, plugins };
+        } catch (error) {
+            issues.push({
+                path: "plugins",
+                message: error instanceof Error ? error.message : String(error),
+            });
+        }
+    }
+    return { manifest: next, issues };
+}
+
 export function sensorCatalogEntries(catalog, registry = sensorTypeRegistry) {
     if (catalog?.sensors?.length) return catalog.sensors;
     return registry.list().map((definition) => ({

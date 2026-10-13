@@ -232,14 +232,30 @@ export function createStorageRouter(service) {
 
     // --- Vehicle manifests ---
     router.get("/vehicles", handle(async () => service.listVehicleManifests()));
-    router.post("/vehicles", handle(async (req) => service.createVehicleManifest(req.body ?? {})));
+    router.post("/vehicles", handle(async (req) => {
+        const vehicle = await service.createVehicleManifest(req.body ?? {});
+        storageEvents.publish({ domain: "vehicle", id: vehicle.id, action: "created" });
+        return vehicle;
+    }));
     router.post("/vehicles/import", handle(async (req) => service.importVehicleBundle(req.body ?? {})));
-    router.post("/vehicles/:id/duplicate", handle(async (req) => service.duplicateVehicleManifest(req.params.id, req.body ?? {})));
+    router.post("/vehicles/:id/duplicate", handle(async (req) => {
+        const vehicle = await service.duplicateVehicleManifest(req.params.id, req.body ?? {});
+        storageEvents.publish({ domain: "vehicle", id: vehicle.id, action: "created" });
+        return vehicle;
+    }));
     router.post("/vehicles/:id/validate", handle(async (req) => service.validateVehicleManifest(req.params.id, req.body ?? null)));
     router.get("/vehicles/:id/export", handle(async (req) => service.exportVehicleBundle(req.params.id)));
     router.get("/vehicles/:id", handle(async (req) => service.getVehicleManifest(req.params.id)));
-    router.put("/vehicles/:id", handle(async (req) => service.putVehicleManifest(req.params.id, req.body ?? {})));
-    router.delete("/vehicles/:id", handle(async (req) => service.deleteVehicleManifest(req.params.id)));
+    router.put("/vehicles/:id", handle(async (req) => {
+        const vehicle = await service.putVehicleManifest(req.params.id, req.body ?? {});
+        storageEvents.publish({ domain: "vehicle", id: vehicle.id, action: "updated" });
+        return vehicle;
+    }));
+    router.delete("/vehicles/:id", handle(async (req) => {
+        const deleted = await service.deleteVehicleManifest(req.params.id);
+        if (deleted) storageEvents.publish({ domain: "vehicle", id: req.params.id, action: "deleted" });
+        return deleted;
+    }));
 
     // --- Visual layer descriptors and access sidecars ---
     router.post("/visual-layers", handle(async (req) => service.publishVisualLayer(req.body ?? {})));
