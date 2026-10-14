@@ -13,6 +13,7 @@ import * as roadCommands from "./roadCommands.js";
 import * as assetCommands from "./assetCommands.js";
 import * as importCommands from "./importCommands.js";
 import * as georegistrationCommands from "./georegistrationCommands.js";
+import * as scriptAttachmentCommands from "./scriptAttachmentCommands.js";
 
 export const commandFactories = Object.freeze({
     ...legacyCommands,
@@ -21,6 +22,7 @@ export const commandFactories = Object.freeze({
     ...assetCommands,
     ...importCommands,
     ...georegistrationCommands,
+    ...scriptAttachmentCommands,
 });
 
 /**

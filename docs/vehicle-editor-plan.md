@@ -1,8 +1,8 @@
 # Vehicle editor plan
 
 This document records the vehicle-editor program decisions that are in force.
-VEH-01 through VEH-05 are implemented. Later packages add URDF and editor
-chrome.
+VEH-01 through VEH-06 are implemented. Later packages add GitHub acquisition
+and editor chrome.
 
 ## Status
 
@@ -16,8 +16,10 @@ chrome.
   bound-wheel rendering, and the assignment dialog.
 - Implemented: **VEH-05** — the XZ plan, one-undo axle gestures, and ideal
   visual yaw for a version 3 standard front axle.
-- Not in this package: URDF parsing (VEH-06), GitHub acquisition (VEH-07),
-  and workspace chrome (VEH-08).
+- Implemented: **VEH-06** — local URDF import into a canonical vehicle GLB,
+  reviewed axle acceptance, and articulated URDF export.
+- Not in this package: GitHub acquisition (VEH-07) and workspace chrome
+  (VEH-08).
 - Built-in projections stay version 2. `createDefaultVehicleManifest()` stays
   version 2. New blanks created through publication are version 3. The current
   editor still uploads a single legacy file; that path does not require a
@@ -267,3 +269,24 @@ The wheels tab leads with the SVG plan. The simulator arc is solid and labelled 
 ### VEH-05f — visual yaw
 
 `visualWheelYaws` assigns the ideal inner and outer angles to the version 3 front pair when Ackermann is available and not singular. Every other steerable wheel, including version 2, uses the shared applied angle. Fixed wheels stay at zero. `ManifestVehicle` and the studio apply that yaw. `stepVehiclePlant` is unchanged. Two manifests with the same kinematics and different axle positions take the same plant step.
+
+### VEH-06a — URDF graph
+
+XML is parsed with `@xmldom/xmldom` 0.9.12. A DTD or entity declaration is rejected before the parser runs, and the parser's own error handler throws. The adapter never fetches a URL. A selected package is `{ entryPath, files, source, diagnostics }`. `package://` resolves through `package.xml` or a same-named top-level directory, and those two roots must agree. Paths that escape the selection are rejected. The robot must be one rooted acyclic tree no deeper than 32 links, and the XML text must be at most 4 MiB. Fixed joints stay. A joint whose axis is parallel to ROS ±Y, within `1 - abs(dot) <= 0.001`, is a wheel spin. A revolute joint about ROS ±Z is a steering carrier only when its subtree is fixed links plus exactly one wheel spin. Xacro, mimic, prismatic, floating, planar, and a second steered pair are rejected. Classification does not decode meshes.
+
+### VEH-06b — rest-pose bake
+
+The vehicle frame is +X forward, +Y up, and +Z left. Sensor REP-103 conversion maps left to −Z and is not used here. The ROS-to-vehicle matrix swaps Y and Z, so its determinant is −1: triangle winding flips, and a positive rotation about an axis changes sign. Positive ROS yaw about +Z is a negative rotation about vehicle +Y, matching a positive bicycle command as a right turn. Mesh vertices are baked at joint angle 0 through `encodeMeshDocumentGlb` and `packVehicleGltf` with generator `cev-sim.vehicle-urdf@1`, then checked with `validateVehicleModelClosure`. STL, OBJ with MTL, and glTF are accepted. COLLADA is not. A cylinder uses 24 segments. Collision bounds define the body box when they exist; otherwise the visual bounds do. The model offset is the visual center minus the body-box center, with scale 1 and rotation 0, so placement leaves the baked vertices in the vehicle frame. The mesh filename is not part of that GLB identity.
+
+### VEH-06c — reviewed import
+
+`planUrdfImport` returns the closure, measurement, wheel review, and steering limit. It does not write a manifest. `acceptUrdfImport` copies geometry only when `acceptAdjustments` is true. A pair outside tolerance produces no patch. `steering.status === "required"` stays blocked until the caller passes a finite positive `maxSteeringAngle`. Extra axles stay out of the patch unless `unclassified` is `"generated"`, which hides those nodes and adds unbound cylinders. A complete front and rear pair sets `patch.wheelbase`. The patch is applied with `applyReviewedUrdfPatch`. That command clears bindings and then restores `model.hiddenNodeIndices` from the patch, so generated-wheel suppression survives. Sensors, the vehicle name, and actuator speed stay. `manifestFromUrdfImport` starts from `createBlankVehicleManifest` and is only for a new document. No new manifest fields are added. Provenance stays off the vehicle hashes. Version 1 and version 2 normalization is unchanged.
+
+### VEH-06d — articulated export
+
+A model-free vehicle exports as one `.urdf`. A vehicle with meshes exports as a ZIP built with `fflate` 0.8.3 `zipSync`, paths sorted, `level: 0`, `os: 0`, and `mtime` of `new Date(1980, 0, 1, 0, 0, 0)` so the DOS timestamp does not depend on the time zone. The body mesh excludes bound-wheel subtrees and hidden-node subtrees. Bound wheels are baked into their link frames. Unbound wheels are URDF cylinders whose axis is visual Z, with roll of −π/2 on the left and +π/2 on the right. A steerable wheel gets a revolute carrier `axis="0 0 1"` limited to ±`maxSteeringAngle` and a continuous child spin, `0 1 0` on the left and `0 -1 0` on the right. Inertia is omitted. Revolute effort and velocity are 0 and are reported as placeholders. Sensors, a nonempty LiDAR zone, plugin locks, a dynamics plant, and the lack of inner/outer steering coupling are reported and are not written into the URDF.
+
+### VEH-06e — loader acceptance
+
+`urdf-loader` 0.13.1 is a devDependency and is not a second copy of this parser. The acceptance test installs the xmldom `DOMParser` as `globalThis.DOMParser`. Rest pose alone is not the gate. A nonzero steer and a nonzero spin must move a wheel vertex that is not on the joint axis, the body vertices stay, and the wheel link has one visual. Positive `setJointValue` on the carrier moves the forward vertex of the left wheel toward ROS +Y.
+

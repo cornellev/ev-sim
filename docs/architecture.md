@@ -212,15 +212,21 @@ Version 3 vehicle manifests add authoring fields for model dependencies,
 hidden nodes, and standard axles. Built-in projections stay version 2.
 `createDefaultVehicleManifest()` stays version 2. Blanks created through
 vehicle publication are version 3. The plant still integrates the authored
-`kinematics.wheelbase`. The vehicle plan and per-wheel visual yaw are
-presentation: a version 3 standard layout draws an ideal inner and outer
-angle on the front wheels, and every other steerable wheel keeps the shared
-plant angle. A version 3 document changes resolved identity only
-because the existing hash covers those fields and, once publication commits,
-the asset directory. In-flight publication files are omitted from that hash
-until the manifest write is durable. A committed migration also keeps
-superseded asset files in the directory, so they remain part of the resolved
-hash. Stage ids, journals, receipts, and the pre-migration snapshot do not.
+`kinematics.wheelbase`. Local URDF import bakes the rest pose into the same
+canonical GLB in the vehicle frame (+X forward, +Y up, +Z left). That basis
+is separate from the sensor REP-103 map, which sends left to −Z. Export
+writes articulated wheel joints and reports revolute effort and velocity as
+placeholders rather than dynamics. The import plan does not write a manifest,
+and neither path adds manifest fields or changes the plant. The vehicle plan
+and per-wheel visual yaw are presentation: a version 3 standard layout draws
+an ideal inner and outer angle on the front wheels, and every other steerable
+wheel keeps the shared plant angle. A version 3 document changes resolved
+identity only because the existing hash covers those fields and, once
+publication commits, the asset directory. In-flight publication files are
+omitted from that hash until the manifest write is durable. A committed
+migration also keeps superseded asset files in the directory, so they remain
+part of the resolved hash. Stage ids, journals, receipts, and the
+pre-migration snapshot do not.
 BigCar, IGVCCar, ScenarioCar, and
 manifest-backed browser vehicles are
 presentation adapters over the same numeric state used by

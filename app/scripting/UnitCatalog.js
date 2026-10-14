@@ -202,6 +202,8 @@ import {
     ScatterFeaturesUnit,
     SpawnPropUnit,
 } from "./units/world/WorldBlocks";
+import { DeriveFromAttachmentUnit } from "./units/world/DeriveFromAttachment";
+import { CreateGroupUnit, PlaceFeatureUnit } from "./units/world/AuthoringBlocks";
 import { MakeActorCommandUnit, SplitActorCommandUnit } from "./units/mission/ActorCommand";
 import {
     DistanceToRouteEndUnit,
@@ -466,6 +468,9 @@ const COMPONENT_BY_TYPE = new Map([
     ["GetNearestRoadBlock", GetNearestRoadUnit],
     ["SpawnPropBlock", SpawnPropUnit],
     ["ScatterFeaturesBlock", ScatterFeaturesUnit],
+    ["DeriveFromAttachmentBlock", DeriveFromAttachmentUnit],
+    ["PlaceFeatureBlock", PlaceFeatureUnit],
+    ["CreateGroupBlock", CreateGroupUnit],
     ["WaypointListBlock", WaypointListUnit],
     ["CurrentWaypointBlock", CurrentWaypointUnit],
     ["AdvanceWaypointBlock", AdvanceWaypointUnit],

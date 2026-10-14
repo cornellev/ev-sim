@@ -18,6 +18,7 @@ import { deltaBetweenFrames } from "../editor/objects/transformDelta.js";
 import { GROUP_TYPE_ID } from "../editor/objects/types/group.js";
 import { EditorPresentationRegistry, editorPresentationRegistry, readObjectFieldValues } from "../editor/presentation/EditorPresentationRegistry.js";
 import { SECTION_KINDS } from "../editor/presentation/builtinSections.js";
+import { ScriptAttachmentSection } from "./inspector/ScriptAttachmentSection.js";
 import {
     fieldKey,
     groupFields,
@@ -288,6 +289,12 @@ export function ObjectInspector({ data }) {
                 return (
                     <PropertySection key={section.id} id={section.id} title={section.title} defaultOpen={false}>
                         <SkyLocalPreview data={data} />
+                    </PropertySection>
+                );
+            case SECTION_KINDS.SCRIPTS:
+                return (
+                    <PropertySection key={section.id} id={section.id} title={section.title}>
+                        <ScriptAttachmentSection data={data} section={section} onResult={report} />
                     </PropertySection>
                 );
             case SECTION_KINDS.ASSET_REVISION:

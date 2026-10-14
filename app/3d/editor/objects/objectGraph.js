@@ -228,7 +228,42 @@ function validateComponents(record, definition, base) {
             issues.push(issue([...base, "components", key], OBJECT_ISSUE_CODES.COMPONENTS_INVALID, `${key} must be true or false.`, tag));
         }
     }
+    issues.push(...validateScripts(components.scripts, base, tag));
+    issues.push(...validateAuthoredBy(components.authoredBy, base, tag));
     return issues;
+}
+
+function validateScripts(scripts, base, tag) {
+    if (scripts === undefined) return [];
+    if (!Array.isArray(scripts)) {
+        return [issue([...base, "components", "scripts"], OBJECT_ISSUE_CODES.COMPONENTS_INVALID, "scripts must be a list.", tag)];
+    }
+    const issues = [];
+    scripts.forEach((entry, index) => {
+        const path = [...base, "components", "scripts", index];
+        if (!isPlainObject(entry) || typeof entry.id !== "string" || entry.id.trim() === ""
+            || typeof entry.scriptId !== "string" || entry.scriptId.trim() === "") {
+            issues.push(issue(path, OBJECT_ISSUE_CODES.COMPONENTS_INVALID, "Each script attachment needs an id and a scriptId.", tag));
+            return;
+        }
+        if (!isPlainObject(entry.parameters)) {
+            issues.push(issue([...path, "parameters"], OBJECT_ISSUE_CODES.COMPONENTS_INVALID, "Script parameters must be an object.", tag));
+        }
+        if (entry.seed !== undefined && (typeof entry.seed !== "number" || !Number.isFinite(entry.seed))) {
+            issues.push(issue([...path, "seed"], OBJECT_ISSUE_CODES.COMPONENTS_INVALID, "Script seed must be a finite number.", tag));
+        }
+    });
+    return issues;
+}
+
+function validateAuthoredBy(authoredBy, base, tag) {
+    if (authoredBy === undefined || authoredBy === null) return [];
+    if (!isPlainObject(authoredBy)
+        || typeof authoredBy.attachmentId !== "string" || authoredBy.attachmentId.trim() === ""
+        || typeof authoredBy.scriptId !== "string" || authoredBy.scriptId.trim() === "") {
+        return [issue([...base, "components", "authoredBy"], OBJECT_ISSUE_CODES.COMPONENTS_INVALID, "authoredBy must be null or an attachmentId and scriptId.", tag)];
+    }
+    return [];
 }
 
 function validateOptions(record, definition, legacy, base, context) {

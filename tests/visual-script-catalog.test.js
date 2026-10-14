@@ -154,12 +154,15 @@ test("control temporal and controller blocks are placeable and searchable", () =
 
 test("simulator adapters and texture ops are placeable and searchable", () => {
     const simulator = UNIT_CATALOG_META.filter((entry) => entry.category === "simulator" && entry.placeable);
-    assert.equal(simulator.length, 16);
+    assert.equal(simulator.length, 19);
     assert.ok(simulator.some((entry) => entry.type === "VehicleStateBlock"));
     assert.ok(simulator.some((entry) => entry.type === "SpawnPropBlock"));
     assert.ok(simulator.some((entry) => entry.type === "ScatterFeaturesBlock"));
     assert.ok(simulator.some((entry) => entry.type === "SampleRoadBlock"));
     assert.ok(simulator.some((entry) => entry.type === "GetNearestRoadBlock"));
+    assert.ok(simulator.some((entry) => entry.type === "DeriveFromAttachmentBlock"));
+    assert.equal(UNIT_CATALOG_META.find((entry) => entry.type === "PlaceFeatureBlock")?.authoring, true);
+    assert.equal(UNIT_CATALOG_META.find((entry) => entry.type === "CreateGroupBlock")?.authoring, true);
     assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "GetNearestRoadBlock").keywords.includes("nearest"));
     assert.equal(UNIT_CATALOG_META.find((entry) => entry.type === "TextureImportBlock")?.category, "objects");
     assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "TextureImportBlock").keywords.includes("texture"));

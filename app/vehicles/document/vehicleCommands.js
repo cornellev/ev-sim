@@ -439,6 +439,9 @@ export function applyReviewedUrdfPatch(patch = {}) {
         if (patch.model) {
             next.model = { ...next.model, ...patch.model };
             clearBindings(next);
+            if (Array.isArray(patch.model.hiddenNodeIndices)) {
+                next.model.hiddenNodeIndices = [...patch.model.hiddenNodeIndices];
+            }
         }
         if (patch.boundingBox) next.boundingBox = patch.boundingBox;
         if (patch.wheels) next.wheels = patch.wheels;

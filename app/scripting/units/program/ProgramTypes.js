@@ -21,6 +21,9 @@ import {
     VEC2_TYPE,
     VEC3_TYPE,
 } from "../../types/PortTypes.js";
+import { normalizeHostType } from "../world/attachmentHosts.js";
+
+export const SCENE_OBJECT_TYPE = "scene_object";
 
 export const SUPPORTED_TYPES = [
     "float64",
@@ -42,6 +45,7 @@ export const SUPPORTED_TYPES = [
     "waypoint",
     "lane_ref",
     "road_id",
+    "scene_object",
     "sim_event",
     "tex1d",
     "texture_id",
@@ -118,7 +122,7 @@ export function parseValueByType(value, type) {
         return normalizePose3d(value);
     }
 
-    if (normalizedType === ROAD_ID_TYPE || normalizedType === TEXTURE_ID_TYPE) {
+    if (normalizedType === ROAD_ID_TYPE || normalizedType === TEXTURE_ID_TYPE || normalizedType === SCENE_OBJECT_TYPE) {
         return normalizeOpaqueId(value);
     }
 
@@ -255,11 +259,14 @@ export function getInitialData(uuid, fallbackPrefix) {
 
 export function createProgramInputState(index = 0, overrides = {}) {
     const defaultLabel = index === 0 ? "input" : `input_${index + 1}`;
+    const type = normalizeType(overrides.type);
+    const sceneType = type === SCENE_OBJECT_TYPE ? normalizeHostType(overrides.sceneType) : null;
 
     return {
         label: sanitizeLabel(overrides.label, defaultLabel),
-        type: normalizeType(overrides.type),
+        type,
         defaultValue: overrides.defaultValue ?? "0",
+        ...(sceneType ? { sceneType } : {}),
     };
 }
 

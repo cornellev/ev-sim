@@ -134,6 +134,9 @@ import {
     ScatterFeaturesBlock,
     SpawnPropBlock,
 } from "./units/world/WorldBlocks.block.js";
+import { DeriveFromAttachmentBlock } from "./units/world/DeriveFromAttachment.block.js";
+import { CreateGroupBlock, PlaceFeatureBlock } from "./units/world/AuthoringBlocks.block.js";
+import { ATTACHMENT_HOST_TYPE_IDS } from "./units/world/attachmentHosts.js";
 import { MaskBlock } from "./units/math/tex/Mask.block.js";
 import { IfBlock } from "./units/statements/If.block.js";
 import { ConjugationBlock, EqualityBlock } from "./units/statements/Equality.block.js";
@@ -310,6 +313,16 @@ const PROGRAM_INPUT_SETTINGS = Object.freeze([
     Object.freeze({ target: "storedData", key: "label", valueType: "string", default: "input" }),
     Object.freeze({ target: "storedData", key: "type", valueType: "port_type", default: "float64" }),
     Object.freeze({ target: "storedData", key: "defaultValue", valueType: "string", default: "0" }),
+    Object.freeze({ target: "storedData", key: "sceneType", valueType: "string", default: "" }),
+]);
+const DERIVE_ATTACHMENT_SETTINGS = Object.freeze([
+    Object.freeze({
+        target: "state",
+        key: "hostType",
+        valueType: "enum",
+        default: "road",
+        options: ATTACHMENT_HOST_TYPE_IDS,
+    }),
 ]);
 const OUTPUT_NODE_SETTINGS = Object.freeze([
     Object.freeze({ target: "state", key: "outputs", valueType: "json", default: [] }),
@@ -371,6 +384,7 @@ function entry(type, name, category, blockClass, keywords, options = {}) {
         requiresSignals: options.requiresSignals === true,
         blockClass,
         notes: options.notes || null,
+        ...(options.authoring === true ? { authoring: true } : {}),
     };
 }
 
@@ -609,6 +623,18 @@ export const UNIT_CATALOG_META = [
     }),
     entry("ScatterFeaturesBlock", "Scatter Features", "simulator", ScatterFeaturesBlock, ["scatter", "barrel", "shoulder", "route"], {
         notes: "One-node shoulder+lane scatter. Requires exactly one of route or edgeId. Spawn is upsert-by-id onto the episode overlay.",
+    }),
+    entry("DeriveFromAttachmentBlock", "Derive From Attachment", "simulator", DeriveFromAttachmentBlock, ["attachment", "host", "road", "derive"], {
+        settings: DERIVE_ATTACHMENT_SETTINGS,
+        notes: "Reads fields from the object this script is attached to. One host type per script. Missing or mismatched attachment emits empty fields and found:false.",
+    }),
+    entry("PlaceFeatureBlock", "Place Feature", "simulator", PlaceFeatureBlock, ["place", "feature", "prop", "barrel", "permanent"], {
+        authoring: true,
+        notes: "Writes a permanent builtin prop through the editor script host. Throws if runtimeContext.author is missing. Does not use the episode overlay.",
+    }),
+    entry("CreateGroupBlock", "Create Group", "simulator", CreateGroupBlock, ["group", "subgroup", "create", "permanent"], {
+        authoring: true,
+        notes: "Creates an empty group through the editor script host and returns its id. Throws if runtimeContext.author is missing.",
     }),
     entry("WaypointListBlock", "Waypoint List", "mission", WaypointListBlock, ["waypoint", "route", "list"]),
     entry("CurrentWaypointBlock", "Current Waypoint", "mission", CurrentWaypointBlock, ["waypoint", "current", "mission"]),

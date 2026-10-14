@@ -18,6 +18,7 @@ const TYPES = {
     "waypoint": "oklch(82% 0.14 68)",
     "lane_ref": "oklch(74% 0.12 110)",
     "road_id": "oklch(70% 0.14 125)",
+    "scene_object": "oklch(68% 0.12 145)",
     "sim_event": "oklch(72% 0.16 10)",
     "array": "oklch(62.3% 0.214 259.815)",
     "custom": "oklch(71.4% 0.203 305.504)",

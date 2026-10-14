@@ -12,7 +12,7 @@ import {
 } from "@tabler/icons-react";
 import { cn } from "./ui/cn";
 import { objectCommands } from "../editor/commands/index.js";
-import { editorPresentationRegistry } from "../editor/presentation/EditorPresentationRegistry.js";
+import { editorPresentationRegistry, hierarchyRootMenuOptions } from "../editor/presentation/EditorPresentationRegistry.js";
 import {
     buildHierarchyTree,
     filterHierarchyTree,
@@ -227,6 +227,16 @@ export function SceneHierarchy({ data }) {
         const presentation = editorPresentationRegistry.forRecord(row.record);
         setMenu({ rowId: row.id, x: event.clientX, y: event.clientY, options: presentation.getMenuOptions(menuContext(row)) });
     };
+    const openRootMenu = (event) => {
+        if (event.target?.closest?.("[role=treeitem]")) return;
+        event.preventDefault();
+        setMenu({
+            rowId: null,
+            x: event.clientX,
+            y: event.clientY,
+            options: hierarchyRootMenuOptions({ commands: objectCommands, bus, selection }),
+        });
+    };
     const runMenuOption = (option) => {
         setMenu(null);
         const result = option.run?.();
@@ -337,6 +347,7 @@ export function SceneHierarchy({ data }) {
                 className="relative min-h-0 flex-1 overflow-auto pr-1 outline-none focus-visible:ring-2 focus-visible:ring-[var(--slate-ring)] hide-scrollbar"
                 onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
                 onKeyDown={onTreeKeyDown}
+                onContextMenu={openRootMenu}
                 onDragOver={(event) => { if (event.target === event.currentTarget || event.target?.dataset?.hierarchySpacer) event.preventDefault(); }}
                 onDrop={onDropToRoot}
             >

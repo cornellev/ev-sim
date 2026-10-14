@@ -16,6 +16,9 @@ import {
 import { environmentObjectTypeUnsupportedError } from "../storage/StorageErrors.js";
 import { storageEvents } from "./events.js";
 import { fail, maybeFailStrict, ok } from "./toolResult.js";
+import { applyObjectScript } from "../../app/3d/editor/scripts/applyObjectScript.js";
+import { runObjectScript } from "../../app/3d/editor/scripts/runObjectScript.js";
+import { scriptHostType } from "../../app/scripting/units/world/attachmentHosts.js";
 import { planRoadNetworkGeometry } from "../../app/roads/RoadNetworkGeometry.js";
 import { roadGeometryVersionOf, validateRoadDomain } from "../../app/roads/RoadGeometryRecord.js";
 import { ROAD_MARKINGS } from "../../app/roads/RoadLaneModel.js";
@@ -476,10 +479,11 @@ export function registerEnvironmentTools(server, storage) {
                 z: z.number(),
                 rotationY: z.number().optional(),
                 dir: z.number().optional(),
+                parentId: z.string().min(1).nullable().optional(),
                 strict: z.boolean().optional(),
             },
         },
-        async ({ environmentId, type, x, z, rotationY, dir, strict }) => {
+        async ({ environmentId, type, x, z, rotationY, dir, parentId, strict }) => {
             try {
                 if (!getPlacementAsset(type)) {
                     return fail(environmentObjectTypeUnsupportedError(type, PLACEMENT_CATALOG.map((a) => a.id)));
@@ -492,6 +496,7 @@ export function registerEnvironmentTools(server, storage) {
                     rotationY: rotationY ?? 0,
                     dir: dir ?? 0,
                     tags: [type],
+                    parentId: parentId ?? null,
                 });
                 if (!result.ok) return fail(result.error ?? "Could not add feature.", { issues: result.issues });
                 const feature = result.result.feature;
@@ -600,6 +605,111 @@ export function registerEnvironmentTools(server, storage) {
                     issueCount: issues.length,
                     issues,
                 });
+            } catch (error) {
+                return fail(error);
+            }
+        },
+    );
+
+    server.registerTool(
+        "environment_attach_script",
+        {
+            title: "Attach script to object",
+            description: "Attach a compiled visual script to an environment object. Host type comes from the script's Derive From Attachment blocks.",
+            inputSchema: {
+                environmentId: z.string().min(1),
+                objectId: z.string().min(1),
+                scriptId: z.string().min(1),
+                parameters: z.record(z.string(), z.unknown()).optional(),
+                seed: z.number().optional(),
+            },
+        },
+        async ({ environmentId, objectId, scriptId, parameters, seed }) => {
+            try {
+                const script = await storage.getScript(scriptId);
+                if (!script?.latestValidArtifact) return fail(`Script "${scriptId}" has no compiled artifact.`);
+                const host = scriptHostType(script.latestValidArtifact);
+                if (!host.ok) return fail(host.error);
+                const { manifest, document, service } = await loadDocument(storage, environmentId);
+                const result = service.run("attachScript", {
+                    objectId,
+                    scriptId,
+                    parameters: parameters ?? {},
+                    seed: seed ?? 1,
+                    hostType: host.typeId,
+                });
+                if (!result.ok) return fail(result.error ?? "Could not attach script.", { issues: result.issues });
+                await saveDocument(storage, environmentId, manifest, document);
+                return ok({ ok: true, ...result.result });
+            } catch (error) {
+                return fail(error);
+            }
+        },
+    );
+
+    server.registerTool(
+        "environment_set_script_parameters",
+        {
+            title: "Set attached script parameters",
+            description: "Replace the user-set parameters or seed on one object script attachment.",
+            inputSchema: {
+                environmentId: z.string().min(1),
+                objectId: z.string().min(1),
+                attachmentId: z.string().min(1),
+                parameters: z.record(z.string(), z.unknown()).optional(),
+                seed: z.number().optional(),
+            },
+        },
+        async ({ environmentId, objectId, attachmentId, parameters, seed }) => {
+            try {
+                const { manifest, document, service } = await loadDocument(storage, environmentId);
+                const result = service.run("setScriptParameters", { objectId, attachmentId, parameters, seed });
+                if (!result.ok) return fail(result.error ?? "Could not edit script parameters.", { issues: result.issues });
+                await saveDocument(storage, environmentId, manifest, document);
+                return ok({ ok: true, ...result.result });
+            } catch (error) {
+                return fail(error);
+            }
+        },
+    );
+
+    server.registerTool(
+        "environment_run_object_script",
+        {
+            title: "Run object script",
+            description: "Run one object script attachment. Replaces objects that attachment created, then writes the new permanent features and groups.",
+            inputSchema: {
+                environmentId: z.string().min(1),
+                objectId: z.string().min(1),
+                attachmentId: z.string().min(1),
+            },
+        },
+        async ({ environmentId, objectId, attachmentId }) => {
+            try {
+                const { manifest, document, service } = await loadDocument(storage, environmentId);
+                const record = document.getObject(objectId);
+                if (!record) return fail(`Object "${objectId}" does not exist.`);
+                const attachment = (record.components?.scripts ?? []).find((entry) => entry.id === attachmentId);
+                if (!attachment) return fail(`Attachment "${attachmentId}" was not found.`);
+                const script = await storage.getScript(attachment.scriptId);
+                if (!script?.latestValidArtifact) return fail(`Script "${attachment.scriptId}" has no compiled artifact.`);
+                const ran = runObjectScript({
+                    artifact: script.latestValidArtifact,
+                    record,
+                    document,
+                    parameters: attachment.parameters,
+                    seed: attachment.seed ?? 1,
+                });
+                if (!ran.ok) return fail(ran.error || "Script failed.");
+                const applied = applyObjectScript(service, {
+                    attachmentId,
+                    scriptId: attachment.scriptId,
+                    ops: ran.ops,
+                    label: `Run ${script.name || attachment.scriptId}`,
+                });
+                if (!applied.ok) return fail(applied.error ?? "Could not apply script.", { issues: applied.issues });
+                await saveDocument(storage, environmentId, manifest, document);
+                return ok({ ok: true, created: applied.result?.created ?? [] });
             } catch (error) {
                 return fail(error);
             }

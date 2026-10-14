@@ -108,6 +108,15 @@ function stableIndexOf(byId, parentId, record, movingIds) {
         .length;
 }
 
+/** Parent that a duplicate should keep so a later Run of a generator does not delete the copy. */
+function parentOutsideGenerated(byId, record) {
+    let parentId = parentIdOf(record);
+    while (parentId && byId.get(parentId)?.components?.authoredBy) {
+        parentId = parentIdOf(byId.get(parentId));
+    }
+    return parentId;
+}
+
 function commitCandidate(ctx, candidate) {
     const validation = validateObjectRecords(candidate, ctx.document.index(), ctx.registry, { sky: ctx.sky });
     if (!validation.ok) return { ok: false, issues: errorIssues(validation.issues) };
@@ -551,6 +560,7 @@ export function duplicateObjects({ objectIds = [], label = "Duplicate" } = {}) {
                 const record = byId.get(id);
                 const copyName = record.name ? `${record.name} copy` : undefined;
                 const components = structuredClone(record.components ?? {});
+                delete components.authoredBy;
                 let newId;
                 if (record.typeId === GROUP_TYPE_ID) {
                     newId = createId("group");
@@ -595,12 +605,19 @@ export function duplicateObjects({ objectIds = [], label = "Duplicate" } = {}) {
             };
             for (const id of roots) {
                 const record = byId.get(id);
-                const parentId = parentIdOf(record);
+                const originalParent = parentIdOf(record);
+                const parentId = parentOutsideGenerated(byId, record);
                 const newId = duplicate(id, parentId, record.order ?? 0);
                 rootIds.push(newId);
                 // Land right after the source among its siblings; renumbering makes the order dense.
-                const slot = stableIndexOf(indexObjectsById(document.objects), parentId, record, [newId]) + 1;
-                renumberSiblings(document.objects, parentId, { moved: [newId], index: slot });
+                // A copy of generated output is lifted out of that generated group so the next Run
+                // does not delete it with the group.
+                if (parentId === originalParent) {
+                    const slot = stableIndexOf(indexObjectsById(document.objects), parentId, record, [newId]) + 1;
+                    renumberSiblings(document.objects, parentId, { moved: [newId], index: slot });
+                } else {
+                    renumberSiblings(document.objects, parentId, { moved: [newId] });
+                }
             }
             roadDuplicate.apply();
             return commandSuccess({ createdIds, rootIds });

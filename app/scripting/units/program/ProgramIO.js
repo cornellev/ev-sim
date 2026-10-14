@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { requestUnitReconfiguration } from "../../ScriptManager";
 import Unit from "../Unit";
+import { ATTACHMENT_HOSTS } from "../world/attachmentHosts.js";
 import {
+    SCENE_OBJECT_TYPE,
     SUPPORTED_TYPES,
     normalizeOutputNodeState,
     normalizeProgramInputState,
@@ -66,7 +68,9 @@ export function ProgramInputUnit({ _uuid, initialData = null }) {
                         className="w-full rounded-sm border border-white/10 bg-[var(--slate-bg)] px-2.5 py-1.5 text-white outline-none transition-[border-color,box-shadow] duration-150 focus:border-white/30 focus:shadow-[0_0_0_3px_rgba(255,255,255,0.06)]"
                         onChange={(e) => {
                             const type = normalizeType(e.target.value);
-                            commitData({ ...data, type });
+                            const next = { ...data, type };
+                            if (type !== SCENE_OBJECT_TYPE) delete next.sceneType;
+                            commitData(next);
                         }}
                     >
                         {SUPPORTED_TYPES.map((type) => (
@@ -74,6 +78,29 @@ export function ProgramInputUnit({ _uuid, initialData = null }) {
                         ))}
                     </select>
                 </label>
+
+                {outputType === SCENE_OBJECT_TYPE && (
+                    <label className="flex flex-col gap-1.5">
+                        <span className="text-zinc-400">Scene type</span>
+                        <select
+                            aria-label="Scene type"
+                            value={data.sceneType || ""}
+                            className="w-full rounded-sm border border-white/10 bg-[var(--slate-bg)] px-2.5 py-1.5 text-white outline-none transition-[border-color,box-shadow] duration-150 focus:border-white/30 focus:shadow-[0_0_0_3px_rgba(255,255,255,0.06)]"
+                            onChange={(e) => {
+                                const sceneType = e.target.value;
+                                const next = { ...data, type: SCENE_OBJECT_TYPE };
+                                if (sceneType) next.sceneType = sceneType;
+                                else delete next.sceneType;
+                                commitData(next);
+                            }}
+                        >
+                            <option value="">Any object</option>
+                            {Object.entries(ATTACHMENT_HOSTS).map(([id, spec]) => (
+                                <option key={id} value={id}>{spec.label}</option>
+                            ))}
+                        </select>
+                    </label>
+                )}
 
                 <label className="flex flex-col gap-1.5">
                     <span className="text-zinc-400">Default value</span>

@@ -20,6 +20,7 @@ import {
     ScriptManager
 } from "./ScriptManager";
 import { registerBuiltInBlocks } from "./registerBuiltInBlocks";
+import { buildPropsAlongRoadDocument } from "../3d/editor/scripts/propsAlongRoadTemplate.js";
 import { TYPES } from "./Constants";
 import {
     IconChevronDown,
@@ -486,6 +487,7 @@ function EditorToolbar({
     onBack,
     onRename,
     onNew,
+    onPropsAlongRoad,
     onToggleScripts,
     onExecute,
     onDownloadEditable,
@@ -524,6 +526,7 @@ function EditorToolbar({
             <div className="mx-1 h-5 w-px bg-white/10" />
 
             <button type="button" onClick={onNew} className="toolbar-btn">New</button>
+            <button type="button" onClick={onPropsAlongRoad} className="toolbar-btn">Props along road</button>
             <button type="button" onClick={onToggleScripts} className="toolbar-btn">Scripts</button>
             <button type="button" onClick={onExecute} className="toolbar-btn">Execute</button>
 
@@ -2028,6 +2031,14 @@ export default function Scripting({ onOpenWorkspace }) {
         loadDocumentIntoEditor(created, { pushCurrent: true });
     };
 
+    const createPropsAlongRoad = async () => {
+        await saveCurrentScript();
+        const created = buildPropsAlongRoadDocument();
+        await putScriptDocument(created);
+        setScriptsWithRef((previous) => upsertScript(previous, created));
+        loadDocumentIntoEditor(created, { pushCurrent: true });
+    };
+
     const openScript = async (scriptId) => {
         await saveCurrentScript();
         const document = scriptsRef.current.find((item) => item.id === scriptId) || await getScriptDocument(scriptId);
@@ -2290,6 +2301,7 @@ export default function Scripting({ onOpenWorkspace }) {
                 onBack={goBack}
                 onRename={renameCurrent}
                 onNew={createNewScript}
+                onPropsAlongRoad={createPropsAlongRoad}
                 onToggleScripts={() => setLibraryOpen((value) => !value)}
                 onExecute={attemptExecute}
                 onDownloadEditable={() => downloadEditableScript()}

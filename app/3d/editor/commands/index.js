@@ -13,6 +13,7 @@ export * from "./liveOverlay.js";
 export * from "./objectMutations.js";
 export * from "./EnvironmentCommandService.js";
 export * as objectCommands from "./objectCommands.js";
+export * as scriptAttachmentCommands from "./scriptAttachmentCommands.js";
 export * as legacyCommands from "./legacyCommands.js";
 export * as roadCommands from "./roadCommands.js";
 export * from "./roadCommands.js";
