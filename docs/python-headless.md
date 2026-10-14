@@ -4,6 +4,9 @@ The `python/` package is a synchronous client for the cev-sim protocols 1.2 thro
 headless supervisor. JavaScript remains the authoritative simulator; Python
 owns Gymnasium/SB3 integration and NumPy tensors only.
 
+To start from a saved environment without writing a run manifest, follow
+[Getting started with the Python simulator](python-getting-started.md).
+
 ## Quickstart
 
 From a checkout that already has `npm install` and Node.js `>=22.22.2 <23`:
@@ -109,6 +112,55 @@ the same mapping, including automatic resets after a terminal step.
 `create_bundle(path)` runs `cev-sim create-bundle` and writes a validated
 bundle. `npm run fixtures:planning` refreshes
 `python/examples/bundles/straight.json` and `curve.json`.
+
+## Quick-start API
+
+`configure` and `launch` are the session helpers. `configure` writes a
+temporary free-drive bundle with `cev-sim create-bundle --finish none`, then
+`launch` starts one worker. The tutorial is
+[python-getting-started.md](python-getting-started.md).
+
+```python
+import cev_sim
+
+config = cev_sim.configure(environment="igvc", vehicle="big-car", goal=None)
+with cev_sim.launch(config) as sim:
+    observation, info = sim.reset(seed=1)
+    observation, reward, terminated, truncated, info = sim.step(sim.action_space.sample())
+```
+
+`configure` arguments:
+
+| Argument | Default | Meaning |
+| --- | --- | --- |
+| `environment` | required | Saved or built-in environment id. |
+| `vehicle` | manifest car, `big-car` for the built-in run | Saved or built-in vehicle id. |
+| `start` | bundle pose | `(x, z)`, `(x, z, yaw)`, or `(x, z, yaw, speed)`. A two-number start takes its yaw from the nearest route segment. |
+| `goal` | `None` | `(x, z)` or `(x, z, yaw)`. `None` is a free drive. |
+| `goal_tolerance_m` | `1.0` | Success radius when `goal` is set. |
+| `max_steps` | `0` | Policy-step limit. `0` does not truncate. |
+| `view` | `"planning"` | `"planning"` selects `planning-oracle@1`. `"measured"` selects `measured-state`. |
+| `logging` | `False` | `False` discards artifacts. A directory path keeps an evaluation log. |
+| `data_dir` | `CEV_SIM_DATA_DIR`, then checkout `server/data` | Saved environment and vehicle store. Omitted when only built-ins exist. |
+
+`launch(config, **env_kwargs)` returns a `CevSimEnv`. Extra keywords are the
+`CevSimEnv` arguments, such as `render_mode="human"`. The environment is a
+context manager. `sim.run_config` keeps the bundle directory alive until the
+environment is closed. `config.save(path)` copies the bundle. `config.world`
+is the `PlanningWorld`.
+
+Free drive still contains a verified ego route, because a headless episode
+requires one. `--finish none` replaces the finish-zone trigger with a trigger
+on the flag `cev-sim.free-drive.stop`, which nothing sets. The episode then
+ends on collision, off-road, `max_steps`, or when the caller stops.
+A goal is a protocol 1.5 reset override, not a finish zone, so changing it
+does not rebuild the bundle.
+
+`environments.list()` and `vehicles.list()` return `CatalogEntry` records
+(`id`, `name`, `built_in`) from `cev-sim catalog`.
+
+`CevSimEnv` and `gym.make("CevSim-v0")` still default to `measured-state`.
+`configure` is the call that defaults to the planning view.
 
 ## Gymnasium environment
 

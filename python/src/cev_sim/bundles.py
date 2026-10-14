@@ -16,10 +16,12 @@ def create_bundle(
     *,
     manifest: str | None = None,
     environment: str | None = None,
+    vehicle: str | None = None,
     data_dir: str | Path | None = None,
     road: str | None = None,
     start_node: str | None = None,
     finish_node: str | None = None,
+    finish: str | None = None,
     sensors: str = "state",
     max_steps: int | None = None,
     executable: str | Path | None = None,
@@ -31,6 +33,8 @@ def create_bundle(
     """
     if sensors not in {"state", "all"}:
         raise CevSimConfigurationError('sensors must be "state" or "all"')
+    if finish is not None and finish not in {"route", "none"}:
+        raise CevSimConfigurationError('finish must be "route" or "none"')
     if max_steps is not None and (type(max_steps) is not int or max_steps < 0):
         raise CevSimConfigurationError("max_steps must be a non-negative integer")
     destination = Path(output)
@@ -46,6 +50,8 @@ def create_bundle(
         command.extend(["--manifest", manifest])
     if environment is not None:
         command.extend(["--environment", environment])
+    if vehicle is not None:
+        command.extend(["--vehicle", vehicle])
     if data_dir is not None:
         command.extend(["--data-dir", str(data_dir)])
     if road is not None:
@@ -54,6 +60,8 @@ def create_bundle(
         command.extend(["--start-node", start_node])
     if finish_node is not None:
         command.extend(["--finish-node", finish_node])
+    if finish is not None:
+        command.extend(["--finish", finish])
     if max_steps is not None:
         command.extend(["--max-steps", str(max_steps)])
     result = subprocess.run(command, capture_output=True, text=True, check=False)

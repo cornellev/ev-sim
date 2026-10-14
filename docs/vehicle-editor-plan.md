@@ -342,6 +342,10 @@ The review dialog plans a local package or a GitHub inspect/fetch. Closing it ab
 
 Save, undo, and redo are shortcut bindings at priority 30, above the environment bindings, because the environment scene stays mounted. Dialogs restore focus to the control that opened them. The dialog close control does not open a tooltip, so Escape dismisses the dialog itself. Vehicle pane splitters control `vehicle-pane-*`, matching the pane element ids. A revision conflict or an expired stage is shown in the top bar and does not replace the draft. The catalog listbox moves with the arrow keys. Layout and display preferences, stage ids, journals, and GitHub provenance stay out of semantic hashes.
 
+### VEH-08g — studio axis gizmo
+
+The vehicle studio has a top-right axis gizmo. It is editor chrome and is not part of a manifest or hash. Clicking an axis eases the orbit camera onto that vehicle axis over 250 ms, keeping the current target and distance. The six targets are +X front, −X back, +Y top, −Y bottom, +Z left, and −Z right. Colors match the studio axis helper: X red, Y green, Z blue. Top and bottom sit one degree off the pole so +X points up the screen while the camera up vector stays +Y. Bottom alignment opens the orbit polar limit to π before the turn so the pose can hold. Another axis restores `Math.PI * 0.52` when that alignment finishes. Starting an orbit drag cancels an in-flight alignment and restores camera up to +Y.
+
 ### VEH-09 — integrated acceptance
 
 VEH-09 adds no hash and no authoring surface. `tests/fixtures/vehicle-editor/identity.v1.json` pins the existing `computeResolvedRunHash` chain:

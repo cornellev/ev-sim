@@ -2,12 +2,14 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { createDefaultRunManifest } from "../../app/simulation/RunManifest.js";
 import { getBuiltInVehicleManifest } from "../../app/vehicles/BuiltInVehicleManifests.js";
 import { createWorldResource } from "../../app/simulation/world/WorldDescription.js";
 import { StorageService } from "../storage/StorageService.js";
 
 const STATE_SENSOR_TYPES = new Set(["imu", "gnss", "wheel-odometry"]);
 const DROPPED_TOPIC_PREFIXES = ["front-camera", "front-lidar", "oracle-"];
+const FREE_DRIVE_FLAG = "cev-sim.free-drive.stop";
 
 export function yawFromDirection(dx, dz) {
     return Math.atan2(-dz, dx);
@@ -124,10 +126,27 @@ export function firstClearRouteIndex(polyline, size, obstacles) {
     });
 }
 
-function scenarioDraft({ environmentId, actorId, endpoints, bundleId }) {
-    const point = (node) => ({ x: node.x, y: 0, z: node.z });
-    const finish = point(endpoints.finish);
+function freeDriveTrigger(actorId) {
     return {
+        id: "free-drive",
+        name: "Free drive",
+        enabled: true,
+        once: true,
+        condition: {
+            kind: "flag",
+            flag: FREE_DRIVE_FLAG,
+            actorId,
+            operator: "eq",
+            expected: true,
+        },
+        actions: [{ kind: "finish" }],
+    };
+}
+
+function scenarioDraft({ environmentId, actorId, endpoints, bundleId, finish = "route" }) {
+    const point = (node) => ({ x: node.x, y: 0, z: node.z });
+    const finishPoint = point(endpoints.finish);
+    const draft = {
         kind: "cev-sim.scenario",
         version: 1,
         id: bundleId,
@@ -160,7 +179,7 @@ function scenarioDraft({ environmentId, actorId, endpoints, bundleId }) {
                 id: "finish",
                 order: 1,
                 kind: "finish",
-                position: finish,
+                position: finishPoint,
                 heading: 0,
                 ...(endpoints.edge ? {
                     anchor: { kind: "road", id: endpoints.edge.id, fraction: endpoints.finishFraction },
@@ -171,7 +190,7 @@ function scenarioDraft({ environmentId, actorId, endpoints, bundleId }) {
             id: "finish-zone",
             name: "Finish",
             parentId: null,
-            center: finish,
+            center: finishPoint,
             size: { x: 8, y: 4, z: 8 },
         }],
         triggers: [{
@@ -187,13 +206,47 @@ function scenarioDraft({ environmentId, actorId, endpoints, bundleId }) {
         sensorAliases: [],
         parameters: [],
     };
+    if (finish === "none") {
+        draft.zones = [];
+        draft.triggers = [freeDriveTrigger(actorId)];
+    }
+    return draft;
 }
 
-function stateSensorManifest(source, { environmentId, storedScenario, bundleId, sensors, maxSteps }) {
+function defaultStateSensors() {
+    const defaults = createDefaultRunManifest();
+    const sensors = defaults.sensorRig.sensors.filter((sensor) => STATE_SENSOR_TYPES.has(sensor.type));
+    const topicIds = new Set(sensors.flatMap((sensor) => Object.values(sensor.outputs || {}).filter(Boolean)));
+    return {
+        sensors,
+        topics: defaults.topics.filter((topic) => topicIds.has(topic.id)),
+    };
+}
+
+function stateSensorManifest(source, {
+    environmentId,
+    storedScenario,
+    bundleId,
+    sensors,
+    maxSteps,
+    vehicleType = null,
+}) {
     const manifest = structuredClone(source);
-    const kept = sensors === "all"
+    const ego = manifest.initialState?.vehicles?.find((entry) => entry.id === "ego")
+        ?? manifest.initialState?.vehicles?.[0];
+    if (vehicleType) {
+        if (!ego) throw new Error("The planning bundle manifest has no ego vehicle.");
+        ego.type = vehicleType;
+    }
+    let kept = sensors === "all"
         ? manifest.sensorRig.sensors
         : manifest.sensorRig.sensors.filter((sensor) => STATE_SENSOR_TYPES.has(sensor.type));
+    if (sensors !== "all" && kept.length === 0) {
+        const defaults = defaultStateSensors();
+        kept = defaults.sensors;
+        const present = new Set(manifest.topics.map((topic) => topic.id));
+        manifest.topics.push(...defaults.topics.filter((topic) => !present.has(topic.id)));
+    }
     manifest.id = bundleId;
     manifest.name = bundleId;
     manifest.description = "Planner test run with a verified ego route.";
@@ -233,6 +286,20 @@ function applyStartPose(manifest, point, yaw) {
     vehicle.steeringAngle = 0;
 }
 
+async function resolvePlanningVehicle(live, storage, vehicleId, copyStored) {
+    const builtIn = getBuiltInVehicleManifest(vehicleId);
+    if (builtIn) return builtIn;
+    const snapshot = await live.readVehicleSnapshot(vehicleId);
+    if (!snapshot?.manifest) throw new Error(`Vehicle "${vehicleId}" does not exist.`);
+    if (copyStored) {
+        await storage.createVehicleManifest(snapshot.manifest);
+        for (const file of snapshot.files || []) {
+            await storage.putVehicleAsset(vehicleId, file.name, file.bytes);
+        }
+    }
+    return snapshot.manifest;
+}
+
 async function verifyDraft(storage, scenario) {
     const verified = await storage.verifyScenarioRoute(scenario.id, {
         scenario,
@@ -254,10 +321,15 @@ export async function createPlanningBundle({
     sensors = "state",
     maxSteps = null,
     bundleId = "planning-route",
+    vehicleId = null,
+    finish = "route",
     storageFactory = null,
 } = {}) {
     if (!["state", "all"].includes(sensors)) {
         throw new Error('sensors must be "state" or "all".');
+    }
+    if (!["route", "none"].includes(finish)) {
+        throw new Error('finish must be "route" or "none".');
     }
     const ownedRoot = await fs.mkdtemp(path.join(os.tmpdir(), "cev-planning-bundle-"));
     const storage = storageFactory
@@ -276,9 +348,10 @@ export async function createPlanningBundle({
         const initial = source.initialState?.vehicles?.find((vehicle) => vehicle.id === "ego")
             ?? source.initialState?.vehicles?.[0];
         if (!initial) throw new Error("The planning bundle manifest has no ego vehicle.");
-        const vehicle = getBuiltInVehicleManifest(initial.type);
+        const selectedVehicleId = vehicleId || initial.type;
+        const vehicle = await resolvePlanningVehicle(live, storage, selectedVehicleId, Boolean(dataDir));
         const size = vehicle?.boundingBox?.size;
-        if (!size?.x || !size?.z) throw new Error(`Vehicle "${initial.type}" has no bounding box.`);
+        if (!size?.x || !size?.z) throw new Error(`Vehicle "${selectedVehicleId}" has no bounding box.`);
         const networkRoute = Boolean(startNodeId && finishNodeId && !roadId);
         const endpoints = selectRouteEndpoints(environment, {
             initialPosition: initial.pose?.position || { x: 0, z: 0 },
@@ -292,6 +365,7 @@ export async function createPlanningBundle({
             actorId: initial.id,
             endpoints,
             bundleId,
+            finish,
         });
         let verified = await verifyDraft(storage, scenario);
         const obstacles = createWorldResource(environment).description.obstacles ?? [];
@@ -310,6 +384,7 @@ export async function createPlanningBundle({
                     startFraction: distances[clearIndex] / verified.verification.totalLength,
                 },
                 bundleId,
+                finish,
             });
             scenario.routes[0].waypoints[0].heading = yawFromDirection(
                 next.x - polyline[clearIndex].x,
@@ -329,6 +404,7 @@ export async function createPlanningBundle({
             bundleId,
             sensors,
             maxSteps,
+            vehicleType: selectedVehicleId,
         });
         applyStartPose(manifest, start, yaw);
         const created = await storage.createRunManifest(manifest);

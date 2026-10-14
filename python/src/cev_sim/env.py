@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 import tempfile
 import weakref
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,21 @@ def _finalize_resources(
                 shutil.rmtree(temporary_output, ignore_errors=True)
 
 
+def merge_reset_options(
+    defaults: Mapping[str, Any] | None,
+    options: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Overlay a reset call on the session defaults. Call keys win."""
+    if options is not None and not isinstance(options, Mapping):
+        raise CevSimConfigurationError("reset options must be a mapping")
+    if defaults is None and options is None:
+        return None
+    merged = dict(defaults or {})
+    if options:
+        merged.update(options)
+    return merged or None
+
+
 def resolve_session_paths(
     *,
     output_dir: str | Path | None,
@@ -77,6 +93,7 @@ class CevSimEnv(gym.Env[dict[str, np.ndarray[Any, Any]], np.ndarray[Any, Any]]):
         episode: EpisodeConfig | None = None,
         resource_limits: ResourceLimits | None = None,
         artifact_policy: ArtifactPolicy | None = None,
+        default_reset_options: Mapping[str, Any] | None = None,
         rpc_timeout_s: float = 30.0,
         max_message_bytes: int = 64 * 1024 * 1024,
     ) -> None:
@@ -85,6 +102,10 @@ class CevSimEnv(gym.Env[dict[str, np.ndarray[Any, Any]], np.ndarray[Any, Any]]):
             raise CevSimConfigurationError("render_mode must be human, rgb_array, or omitted")
         self.render_mode = render_mode
         self.bundle = bundle
+        if default_reset_options is not None and not isinstance(default_reset_options, Mapping):
+            raise CevSimConfigurationError("default_reset_options must be a mapping")
+        normalize_reset_options(None if not default_reset_options else dict(default_reset_options))
+        self._default_reset_options = None if not default_reset_options else dict(default_reset_options)
         self._overlay_path: Any = None
         self._last_observation: dict[str, np.ndarray[Any, Any]] | None = None
         self._viewer: Any = None
@@ -138,7 +159,7 @@ class CevSimEnv(gym.Env[dict[str, np.ndarray[Any, Any]], np.ndarray[Any, Any]]):
     ) -> tuple[dict[str, np.ndarray[Any, Any]], dict[str, Any]]:
         if self._closed or self._batch is None:
             raise CevSimConfigurationError("Environment is closed")
-        overrides = normalize_reset_options(options)
+        overrides = normalize_reset_options(merge_reset_options(self._default_reset_options, options))
         if seed is not None and (type(seed) is not int or not 0 <= seed <= 0xFFFF_FFFF_FFFF_FFFF):
             raise CevSimConfigurationError("Gymnasium reset seed must be a uint64")
         super().reset(seed=seed)

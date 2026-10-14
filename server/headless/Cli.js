@@ -4,7 +4,9 @@ import process from "node:process";
 import readline from "node:readline";
 
 import { HeadlessEpisodeError } from "../../app/simulation/headless/HeadlessErrors.js";
+import { listBuiltInVehicleManifests } from "../../app/vehicles/BuiltInVehicleManifests.js";
 import { CEV_SIM_VERSION } from "../../app/version.js";
+import { StorageService } from "../storage/StorageService.js";
 import { loadBundleReference } from "./BundleSource.js";
 import { canonicalRunBundleStringify } from "./RunBundle.js";
 import { HEADLESS_PROTOCOL } from "./HeadlessProtocol.js";
@@ -36,6 +38,7 @@ const VALUE_OPTIONS = new Set([
     "bundle", "episode", "output", "actions", "tape", "artifact-profile", "sflog-sample-rate",
     "socket", "tcp", "preset", "config", "package", "sensor-transport-config",
     "manifest", "environment", "data-dir", "road", "start-node", "finish-node", "sensors", "max-steps",
+    "vehicle", "finish",
 ]);
 const FLAG_OPTIONS = new Set(["sflog-on-failure", "no-sflog-on-failure", "allow-remote-tcp"]);
 
@@ -44,7 +47,8 @@ function usage() {
         "cev-sim --version",
         "cev-sim validate (--bundle <file | use:manifestId> | --package <file>) [--episode <file>] [--config <supervisor.json>] [--sensor-transport-config <file>]",
         "cev-sim create-smoke-bundle --output <bundle.json>",
-        "cev-sim create-bundle --output <bundle.json> [--manifest <id>] [--environment <id>] [--data-dir <dir>] [--road <edge>] [--start-node <id>] [--finish-node <id>] [--sensors state|all] [--max-steps <n>]",
+        "cev-sim create-bundle --output <bundle.json> [--manifest <id>] [--environment <id>] [--vehicle <id>] [--data-dir <dir>] [--road <edge>] [--start-node <id>] [--finish-node <id>] [--finish route|none] [--sensors state|all] [--max-steps <n>]",
+        "cev-sim catalog [--data-dir <dir>]",
         "cev-sim inspect <bundle|package|output-directory|sflog>",
         "cev-sim run (--bundle <file | use:manifestId> | --package <file>) --output <directory> [--episode <file>] [--actions <jsonl-file>] [--config <supervisor.json>] [--sensor-transport-config <file>]",
         "cev-sim replay (--bundle <file | use:manifestId> | --package <file>) --tape <file> --output <directory> [--config <supervisor.json>] [--sensor-transport-config <file>]",
@@ -116,6 +120,33 @@ async function* jsonlActions(stream, label, signal = null) {
         signal?.removeEventListener("abort", onAbort);
         lines.close();
     }
+}
+
+async function planningCatalog(dataDir) {
+    const storage = new StorageService(dataDir);
+    const environments = (await storage.listEnvironments()).map((entry) => ({
+        id: entry.id,
+        name: entry.name,
+        builtIn: entry.builtIn === true,
+    }));
+    const vehicles = [
+        ...listBuiltInVehicleManifests().map((entry) => ({
+            id: entry.id,
+            name: entry.name,
+            builtIn: true,
+        })),
+        ...(await storage.listVehicleManifests()).map((entry) => ({
+            id: entry.id,
+            name: entry.name,
+            builtIn: false,
+        })),
+    ].sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
+    return {
+        kind: "cev-sim.headless.catalog",
+        version: 1,
+        environments,
+        vehicles,
+    };
 }
 
 function artifactPolicy(options) {
@@ -198,12 +229,24 @@ export async function main(argv = process.argv.slice(2), io = {}) {
             await running.close();
             return CLI_EXIT.OK;
         }
+        if (command === "catalog") {
+            if (positional.length > 0) {
+                throw new HeadlessRunnerError("USAGE", "catalog does not accept positional arguments.");
+            }
+            const unsupported = Object.keys(options).find((key) => key !== "data-dir");
+            if (unsupported) throw new HeadlessRunnerError("USAGE", `catalog does not accept --${unsupported}.`);
+            writeJson(stdout, await planningCatalog(options["data-dir"]));
+            return CLI_EXIT.OK;
+        }
         if (command === "create-bundle") {
             if (positional.length > 0 || !options.output) {
                 throw new HeadlessRunnerError("USAGE", "create-bundle requires --output <bundle.json>.");
             }
             if (options.sensors && !["state", "all"].includes(options.sensors)) {
                 throw new HeadlessRunnerError("USAGE", '--sensors must be "state" or "all".');
+            }
+            if (options.finish && !["route", "none"].includes(options.finish)) {
+                throw new HeadlessRunnerError("USAGE", '--finish must be "route" or "none".');
             }
             const maxSteps = options["max-steps"] == null ? null : Number(options["max-steps"]);
             if (maxSteps != null && (!Number.isInteger(maxSteps) || maxSteps < 0)) {
@@ -220,10 +263,12 @@ export async function main(argv = process.argv.slice(2), io = {}) {
                     finishNodeId: options["finish-node"],
                     sensors: options.sensors || "state",
                     maxSteps,
+                    vehicleId: options.vehicle,
+                    finish: options.finish || "route",
                     bundleId: path.basename(options.output, path.extname(options.output)) || "planning-route",
                 });
             } catch (error) {
-                throw new HeadlessRunnerError("INVALID_INPUT", error.message, null, { cause: error });
+                throw new HeadlessRunnerError("INVALID_REQUEST", error.message, null, { cause: error });
             }
             try {
                 await fs.writeFile(options.output, canonicalRunBundleStringify(bundle));

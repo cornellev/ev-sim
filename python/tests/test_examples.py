@@ -13,6 +13,7 @@ from cev_sim.errors import CevSimEnvironmentError
 
 ROOT = Path(__file__).resolve().parents[2]
 EXAMPLES = (
+    "00_free_drive.py",
     "01_pure_pursuit.py",
     "02_astar_track.py",
     "03_rrt_star.py",

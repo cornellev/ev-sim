@@ -6,15 +6,25 @@ This package is the Gymnasium and Stable-Baselines3 client for the protocol
 
 ## Quickstart
 
+The walkthrough is [Getting started](../docs/python-getting-started.md).
+
 ```bash
 python -m pip install -e './python[viz]'
-python python/examples/02_astar_track.py --steps 50
+python python/examples/00_free_drive.py --steps 50
 ```
 
-From a checkout, `CevSimEnv(bundle)` finds `bin/cev-sim.js`, checks that Node.js
-is `>=22.22.2 <23`, and stores artifacts in a temporary directory that
-`close()` removes. Planners that need ground-truth pose select
-`PLANNING_ORACLE_OBSERVATION_PROFILE`. The default observation stays
+```python
+import cev_sim
+
+config = cev_sim.configure(environment="igvc", vehicle="big-car", goal=None)
+with cev_sim.launch(config) as sim:
+    observation, info = sim.reset(seed=1)
+    observation, reward, terminated, truncated, info = sim.step(sim.action_space.sample())
+```
+
+From a checkout, `launch` finds `bin/cev-sim.js` and checks that Node.js is
+`>=22.22.2 <23`. `logging=False`, the default, discards artifacts.
+`configure` uses the planning view. `CevSimEnv(bundle)` still defaults to
 measured-state.
 
 The package and coordinated npm runtime are licensed under Apache-2.0.

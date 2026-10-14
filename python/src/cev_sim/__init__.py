@@ -43,6 +43,7 @@ from .errors import (
     CevSimSupervisorError,
     CevSimTransportError,
 )
+from .quickstart import CatalogEntry, RunConfig, configure, environments, launch, vehicles
 from .world import PlanningWorld, load_world
 
 __all__ = [
@@ -55,6 +56,7 @@ __all__ = [
     "CPU_LIDAR_VERSION",
     "CevSimCompatibilityError",
     "CevSimConfigurationError",
+    "CatalogEntry",
     "CevSimEnv",
     "CevSimEnvironmentError",
     "CevSimError",
@@ -67,14 +69,19 @@ __all__ = [
     "PLANNING_ORACLE_PROFILE_VERSION",
     "PLANNING_ORACLE_SCHEMA_HASH",
     "PlanningWorld",
+    "configure",
     "create_bundle",
+    "environments",
+    "launch",
     "load_world",
+    "vehicles",
     "DEFAULT_CPU_LIDAR_BACKEND",
     "EXPLICIT_CPU_LIDAR_BACKEND",
     "EXPLICIT_CPU_LIDAR_CONFIG_HASH",
     "EXPLICIT_CPU_LIDAR_VERSION",
     "DEFAULT_GPU_SENSOR_BACKEND",
     "EpisodeConfig",
+    "RunConfig",
     "GPU_SENSOR_CAPABILITY",
     "GPU_SENSOR_CONFIG_HASH",
     "GPU_SENSOR_KIND",

@@ -23,6 +23,7 @@ is out of scope and tracked as a later item.
 | PLN-04: `planning-oracle@1` | Complete | headless episode tests; characterization delta empty |
 | PLN-05: protocol 1.5 start/goal overrides | Complete | episode, supervisor, and Python integration tests |
 | PLN-06: rendering, examples, quickstart | Complete | example smoke runs |
+| PLN-07: Python `configure` / `launch` | Complete | `npm run test:cli`, `npm run test:python`, example `00` |
 
 ## Locked decisions
 
@@ -71,6 +72,18 @@ until the vehicle box is clear of them. `straight.json` is one IGVC edge.
 A dedicated obstacle-corridor environment template belongs to the
 environment-editor program and is not added here.
 
+### PLN-D06 — Free drive keeps a route and drops the finish line
+
+Headless episodes still require a verified ego route. `create-bundle
+--finish none` keeps that route and replaces the finish-zone trigger with a
+trigger on the flag `cev-sim.free-drive.stop`, which nothing sets. The episode
+ends on collision, off-road, the step limit, or when the caller
+stops. `configure` always requests `--finish none`. The default `create-bundle`
+finish remains `route`, so existing bundles stay the same.
+
+`configure` defaults to `planning-oracle@1`. `CevSimEnv` and
+`gym.make("CevSim-v0")` stay on `measured-state`.
+
 ## Milestones
 
 ### PLN-01
@@ -118,6 +131,14 @@ goal, and an optional planned path. It requires `planning-oracle`. Examples
 `01` through `04` cover pure pursuit, A* tracking, RRT*, and a kinematic
 bicycle MPC.
 
+### PLN-07
+
+`cev_sim.configure(environment, vehicle=...)` builds a temporary free-drive
+bundle from a saved or built-in environment and vehicle. `cev_sim.launch`
+starts one worker. `goal=None` does not add a finish line. A goal is a
+protocol 1.5 reset override. The tutorial is
+[`docs/python-getting-started.md`](python-getting-started.md).
+
 ## Verification
 
 ```text
@@ -131,6 +152,8 @@ npm run proto:python
 PLN-03 through PLN-05 also run `npm run test:headless`, `npm run test:supervisor`,
 `npm run test:cli`, and `npm run test:parity`. `npm run fixtures:headless` must
 show an empty characterization delta. PLN-06 runs each example with `--steps 50`.
+PLN-07 also runs `npm run test:cli` and `python python/examples/00_free_drive.py --steps 50`.
+`npm run fixtures:planning` must leave the example bundles unchanged.
 
 ## Progress and decision log
 
@@ -150,3 +173,15 @@ it compares the result of async `startup()` without awaiting it. Characterizatio
 regeneration was a zero delta. Headless parity passed. Python unit tests
 passed, and the planner examples plus a protocol 1.5 reset-options round trip
 passed against the local supervisor.
+
+### 2026-10-14 — PLN-07
+
+`configure` and `launch` start one worker from an environment id and a vehicle
+id. Free-drive bundles use `--finish none`: the verified route remains, and
+the finish zone is replaced by an unset `cev-sim.free-drive.stop` flag trigger.
+Start and goal stay protocol 1.5 reset overrides. `configure` defaults to
+`planning-oracle@1`. The measured-state default on `CevSimEnv` is unchanged.
+`cev-sim catalog` lists environments and vehicles. A source manifest with no
+IMU, GNSS, or wheel odometry receives that localization rig, so a saved
+`igvc-default` can still launch. The getting-started tutorial is
+`docs/python-getting-started.md`.
