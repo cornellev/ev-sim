@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "../../../ui";
 import { attachScript, clearAuthoredBy, detachScript, setScriptParameters } from "../../editor/commands/scriptAttachmentCommands.js";
 import { applyObjectScript } from "../../editor/scripts/applyObjectScript.js";
@@ -25,7 +25,11 @@ function hostLabel(hostType) {
 export function ScriptAttachmentSection({ data, section, onResult }) {
     const document = data?.environment?.()?.getDocument?.();
     const record = document?.getObject?.(section.record?.id) ?? section.record;
-    const attachments = Array.isArray(record?.components?.scripts) ? record.components.scripts : [];
+    const scriptList = record?.components?.scripts;
+    const attachments = useMemo(
+        () => (Array.isArray(scriptList) ? scriptList : []),
+        [scriptList],
+    );
     const [library, setLibrary] = useState([]);
     const [artifacts, setArtifacts] = useState({});
     const [scriptId, setScriptId] = useState("");
