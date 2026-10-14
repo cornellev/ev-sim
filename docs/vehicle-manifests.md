@@ -4,7 +4,7 @@ Custom vehicles are defined by saved `cev-sim.vehicle` documents. Version 2 is t
 
 ## Authoring workflow
 
-Open **Vehicle Editor** from the workspace switcher (3D group). The page supports catalog create, duplicate, delete, bundle import/export, a live 3D viewport with gizmo editing, structured field editing, and raw JSON editing with validation. Saves use optimistic revisions, matching run manifests.
+Open **Vehicle Editor** from the workspace switcher (3D group). The workspace is a hierarchy, the studio, and an inspector. Catalog create, open, rename, duplicate, delete, id change, and bundle or URDF import/export live in the vehicle dialog. Saves, renames, duplicates, deletes, and id changes send the acknowledged revision. A dirty open vehicle must be saved or discarded before its id can change. Changing an id does not rewrite run or scenario references. Model replacement is staged and previewed before save. A revision conflict or an expired stage stays in the top bar and leaves the draft in place.
 
 Editing areas:
 
@@ -62,7 +62,7 @@ Version 1 and version 2 normalize to the version 2 shape above. That shape has n
 
 Version 3 adds:
 
-- `model.dependencies`: sorted unique sibling filenames for the canonical model closure. Empty when `model.asset` is null. A canonical closure names the model `<sha256>.glb` and each image `<sha256>.png`, `<sha256>.jpg`, or `<sha256>.ktx2`. Those image filenames are the URIs inside the GLB. Geometry buffers are packed into the GLB BIN chunk. The editor's legacy single-file upload remains until the studio publishes through a stage.
+- `model.dependencies`: sorted unique sibling filenames for the canonical model closure. Empty when `model.asset` is null. A canonical closure names the model `<sha256>.glb` and each image `<sha256>.png`, `<sha256>.jpg`, or `<sha256>.ktx2`. Those image filenames are the URIs inside the GLB. Geometry buffers are packed into the GLB BIN chunk. The editor stages that closure and previews it before publication. `PUT /vehicle-assets/:id/:file` remains for older clients.
 - `model.hiddenNodeIndices`: sorted unique source node indices whose subtrees are hidden. Empty on a model-free vehicle.
 - Optional wheel `axle` (`front` or `rear`) and `side` (`left` or `right`, with `+Z` left). Both are omitted on an unclassified wheel.
 - Optional wheel `visual: { kind: "model-node", nodeIndex }` when that wheel is bound to a source node. The display name comes from the model, not from a second stored name.
@@ -94,8 +94,10 @@ Version 3 geometric scalars — model placement, body bounds, wheel position, ra
 Under `/api/storage`:
 
 - `GET|POST /vehicles`
-- `GET|PUT|DELETE /vehicles/:id`
-- `POST /vehicles/:id/duplicate`
+- `GET|PUT|DELETE /vehicles/:id` (`DELETE` accepts `expectedRevision`)
+- `POST /vehicles/:id/duplicate` (optional `expectedRevision`)
+- `POST /vehicles/:id/rename`
+- `POST /vehicles/:id/change-id`
 - `POST /vehicles/:id/migrate`
 - `POST /vehicles/:id/validate`
 - `GET /vehicles/:id/export`
@@ -106,4 +108,4 @@ Under `/api/storage`:
 
 `POST /vehicles` and `PUT /vehicles/:id` accept an optional `stageId` and a 64-hex `operationId`. Import, duplicate, and migrate accept `operationId` the same way. Those ids, stage leases, publication journals, and receipts are not part of the vehicle or run hash. A repeated `operationId` returns the first committed manifest. A failed publication removes only asset files that publication introduced.
 
-`PUT /vehicles/:id` accepts `{ manifest, expectedRevision }` with the same optimistic-revision conflict behavior as run manifests. Optional `pluginLocks` pin `{ pluginId, version, packageHash, runtimeHash, sensorTypes[], plants[]? }` and are omitted when empty. Empty `plants` is omitted. Optional `dynamics: { plant }` selects a plugin plant; omitted dynamics keep the built-in JavaScript bicycle. Export produces a `cev-sim.vehicle-bundle` version 1 document embedding the manifest, model assets as base64, and—when locks exist—sorted exact `pluginPackages`. Legacy bundles without `pluginPackages` keep their existing hash projection. Import verifies embedded packages into CAS without adding library membership, suffixing the id when it collides with an existing vehicle.
+`PUT /vehicles/:id` accepts `{ manifest, expectedRevision }` with the same optimistic-revision conflict behavior as run manifests. `POST /vehicles/:id/rename` changes only the name and bumps the revision. `POST /vehicles/:id/change-id` copies assets to a new id at revision 1, writes that manifest, then removes the source. The same operation id returns the destination. Recovery finishes or rolls the move back. Run and scenario references are not rewritten. Optional `pluginLocks` pin `{ pluginId, version, packageHash, runtimeHash, sensorTypes[], plants[]? }` and are omitted when empty. Empty `plants` is omitted. Optional `dynamics: { plant }` selects a plugin plant; omitted dynamics keep the built-in JavaScript bicycle. Export produces a `cev-sim.vehicle-bundle` version 1 document embedding the manifest, model assets as base64, and—when locks exist—sorted exact `pluginPackages`. Legacy bundles without `pluginPackages` keep their existing hash projection. Import verifies embedded packages into CAS without adding library membership, suffixing the id when it collides with an existing vehicle.

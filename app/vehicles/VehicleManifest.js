@@ -35,6 +35,11 @@ export const VEHICLE_SENSOR_TYPES = Object.freeze(listSensorTypes().map((definit
 /** Vehicle types implemented as hard-coded classes rather than manifests. */
 export const BUILT_IN_VEHICLE_TYPES = Object.freeze(["big-car", "igvc-car", "scenario-car"]);
 
+/** Storage ids are lowercase slugs. They are also filenames. */
+export function isValidVehicleId(value) {
+    return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(String(value ?? "").trim());
+}
+
 /** Default actuator limits for new v2 manifests (SI). */
 export const DEFAULT_ACTUATOR_LIMITS = Object.freeze({
     maxSpeed: 15,

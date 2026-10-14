@@ -43,6 +43,12 @@ export class GitHubUrdfSession {
         return this.#run("vehicle-urdf/github/fetch", { url, ...(entryPath ? { entryPath } : {}) });
     }
 
+    abort() {
+        this.generation += 1;
+        this.controller?.abort();
+        this.controller = null;
+    }
+
     async #run(path, body) {
         this.controller?.abort();
         const controller = new AbortController();

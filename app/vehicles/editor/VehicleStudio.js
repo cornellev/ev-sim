@@ -10,7 +10,7 @@ import {
     presentBoundWheels,
     restoreModelRest,
 } from "../../3d/vehicles/presentBoundWheels.js";
-import { VehicleModelLoader, publishedVehicleModelSource } from "../../3d/vehicles/VehicleModelLoader.js";
+import { VehicleModelLoader, publishedVehicleModelSource, stagedVehicleModelSource } from "../../3d/vehicles/VehicleModelLoader.js";
 import { sensorRuntimeRegistry } from "../../3d/devices/SensorRuntimeRegistry.js";
 import { measurePlacedVehicleModel } from "../model/measurePlacedVehicle.js";
 import { visualWheelYaws } from "../plan/turnGeometry.js";
@@ -41,11 +41,12 @@ export class VehicleStudio {
      *   onPlacementCommit?: (selection: {kind: string, id: string|null}, transform: {position: {x,y,z}, rotation: {x,y,z}}) => void,
      * }} callbacks
      */
-    constructor(container, { onTransform, onSelect, onPlacementCommit, sensorRuntime = sensorRuntimeRegistry, modelLoader = null } = {}) {
+    constructor(container, { onTransform, onSelect, onPlacementCommit, onModelLease, sensorRuntime = sensorRuntimeRegistry, modelLoader = null } = {}) {
         this.container = container;
         this.onTransform = onTransform;
         this.onSelect = onSelect;
         this.onPlacementCommit = onPlacementCommit;
+        this.onModelLease = onModelLease;
         this.sensorRuntime = sensorRuntime;
 
         this.scene = new THREE.Scene();
@@ -101,7 +102,7 @@ export class VehicleStudio {
             this._finishPlacementDrag();
             if (snapBoundWheel) {
                 queueMicrotask(() => {
-                    if (!this._disposed && this._manifest) this.setManifest(this._manifest, this._modelUrl);
+                    if (!this._disposed && this._manifest) this.setManifest(this._manifest, this._modelUrl, this._stagedResources);
                 });
             }
         });
@@ -217,11 +218,12 @@ export class VehicleStudio {
      * @param {object} manifest normalized `cev-sim.vehicle` document
      * @param {string|null} modelUrl resolved asset URL, or null when no model
      */
-    setManifest(manifest, modelUrl) {
+    setManifest(manifest, modelUrl, stagedResources = undefined) {
         this._manifest = manifest;
         this._modelUrl = modelUrl;
+        if (stagedResources !== undefined) this._stagedResources = stagedResources;
         if (this._presentationSuspended && !this._placementDrag) this._presentationSuspended = false;
-        this._syncModel(manifest, modelUrl);
+        this._syncModel(manifest, modelUrl, this._stagedResources ?? null);
         if (!this._canonical || this._presentationSuspended) this._syncWheels(manifest.wheels);
         this._syncSensors(manifest.sensors);
         this._syncBody(manifest);
@@ -249,10 +251,11 @@ export class VehicleStudio {
         return this._modelLease;
     }
 
-    _syncModel(manifest, modelUrl) {
+    _syncModel(manifest, modelUrl, stagedResources = null) {
         const model = manifest.model;
         const boundingBox = manifest.boundingBox;
-        const source = modelUrl ? publishedVehicleModelSource(manifest, modelUrl) : null;
+        const source = stagedVehicleModelSource(manifest, stagedResources)
+            ?? (modelUrl ? publishedVehicleModelSource(manifest, modelUrl) : null);
         const sourceKey = source?.asset
             ? JSON.stringify([source.asset.url, ...(source.dependencies ?? []).map((entry) => entry.url)])
             : (source?.url ?? "");
@@ -268,6 +271,7 @@ export class VehicleStudio {
             this.modelRoot.clear();
             this._modelObject = null;
             this._placeholder = null;
+            this.onModelLease?.(null);
             if (source) {
                 const token = ++this._loadToken;
                 this._modelAbort = new AbortController();
@@ -291,6 +295,7 @@ export class VehicleStudio {
                     this._modelLease = lease;
                     this._modelObject = lease.root;
                     this.modelRoot.add(this._modelObject);
+                    this.onModelLease?.(lease);
                     if (this._manifest?.version === 3 && lease.glbBytes) {
                         this._presentCanonical(this._manifest);
                     } else {
@@ -306,6 +311,7 @@ export class VehicleStudio {
                 }).catch((error) => {
                     console.warn("Vehicle editor could not load model:", error);
                     if (this._disposed || token !== this._loadToken) return;
+                    this.onModelLease?.(null);
                     this._syncPlaceholder(this._pendingBoundingBox);
                 });
             } else {
@@ -437,7 +443,7 @@ export class VehicleStudio {
         queueMicrotask(() => {
             if (this._disposed) return;
             if (this.onPlacementCommit) this.onPlacementCommit(selection, transform);
-            else if (this._manifest) this.setManifest(this._manifest, this._modelUrl);
+            else if (this._manifest) this.setManifest(this._manifest, this._modelUrl, this._stagedResources);
         });
     }
 

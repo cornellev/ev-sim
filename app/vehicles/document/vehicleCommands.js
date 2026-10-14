@@ -37,7 +37,7 @@ function withWheelbase(manifest) {
  * Apply one cumulative axle patch to a manifest snapshot.
  * Geometry edits are refused while either wheel is model-bound.
  */
-export function applyAxlePatch(manifest, { axle, patch = {} } = {}) {
+export function applyAxlePatch(manifest, { axle, patch = {}, normalizeOptions } = {}) {
     if (manifest?.version !== VEHICLE_MANIFEST_VERSION_V3) {
         return fail([issue("vehicle.manifest.version", "version", "Axle edits require a version 3 vehicle.")]);
     }
@@ -75,7 +75,7 @@ export function applyAxlePatch(manifest, { axle, patch = {} } = {}) {
     }
     pair.left.steerable = axle === "front";
     pair.right.steerable = axle === "front";
-    const normalized = normalizeVehicleManifest(withWheelbase(next));
+    const normalized = normalizeVehicleManifest(withWheelbase(next), normalizeOptions);
     const edited = axlePair(normalized.wheels, axle);
     const proposal = proposeStandardPair(edited.left, edited.right, { axle });
     if (!proposal.withinTolerance) return fail(proposal.issues);
@@ -390,9 +390,16 @@ export function editKinematics({ patch }) {
     });
 }
 
-export function replaceManifest(manifest) {
+export function editManifestFields(manifest, label = "Edit") {
+    return command(label, (context) => {
+        context.setManifest(manifest);
+        return { ok: true };
+    });
+}
+
+export function replaceManifest(manifest, options) {
     return command("Replace manifest", (context) => {
-        const validation = validateVehicleManifest(manifest);
+        const validation = validateVehicleManifest(manifest, options ?? context.normalizeOptions);
         if (!validation.ok) {
             for (const entry of validation.issues) {
                 context.issue(entry.code ?? "vehicle.manifest.invalid", entry.path ?? "", entry.message);
@@ -429,6 +436,16 @@ export function applyModelReplacement(patch = {}) {
         if (patch.kinematics) next.kinematics = { ...next.kinematics, ...patch.kinematics };
         clearBakedLidarZone(next);
         context.setManifest(next);
+        return { ok: true };
+    });
+}
+
+/** One undo item for a reviewed URDF patch and the stage that holds its closure. */
+export function applyReviewedUrdfImport({ patch = {}, stagedResources = undefined } = {}) {
+    return command("Apply URDF", (context) => {
+        const applied = applyReviewedUrdfPatch(patch).run(context);
+        if (!applied || applied.ok === false) return applied ?? { ok: false };
+        if (stagedResources !== undefined) context.setStagedResources(stagedResources);
         return { ok: true };
     });
 }

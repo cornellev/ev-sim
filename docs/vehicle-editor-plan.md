@@ -1,7 +1,7 @@
 # Vehicle editor plan
 
 This document records the vehicle-editor program decisions that are in force.
-VEH-01 through VEH-07 are implemented. Workspace chrome remains VEH-08.
+VEH-01 through VEH-08 are implemented.
 
 ## Status
 
@@ -20,11 +20,12 @@ VEH-01 through VEH-07 are implemented. Workspace chrome remains VEH-08.
 - Implemented: **VEH-07** — public GitHub URDF acquisition. Inspect and fetch
   pin a commit and return a package. They do not create a vehicle or publish
   assets.
-- Not in this package: workspace chrome (VEH-08).
+- Implemented: **VEH-08** — vehicle workspace chrome, the catalog dialog, and
+  create, apply, and export through the document session.
 - Built-in projections stay version 2. `createDefaultVehicleManifest()` stays
-  version 2. New blanks created through publication are version 3. The current
-  editor still uploads a single legacy file; that path does not require a
-  canonical closure.
+  version 2. New blanks created through publication are version 3. The editor
+  publishes model replacement through a stage. The legacy asset upload route
+  remains for older clients.
 
 ## Decision log
 
@@ -301,5 +302,29 @@ Candidates ending in `.urdf` rank as a named blob, then a file directly inside `
 
 The closure walk reuses `parseUrdfRobot`, `resolveUrdfResource`, `readUrdfPackage`, OBJ `mtllib` / `map_Kd` listing, and `listGltfDependencyPaths`. Limits are 256 files, 64 MiB per file, 100 MiB total, 4 MiB per XML document, depth 32, four concurrent requests, and two minutes. A limit failure returns no files. Trees are cached by commit SHA. Ref lists above 4 MiB require a full commit SHA. Rate-limit responses stop the operation and include the reset time.
 
-`POST /api/storage/vehicle-urdf/github/inspect` and `fetch` return the review (repository, commit, tree, selected path, SPDX license or `none` / `other`) and, for fetch, canonical base64 file bytes. Provenance stays on `source.kind === "github"` and is not written into a manifest, stage, or asset directory. `GitHubUrdfSession` aborts the previous request and ignores an older response. Workspace chrome that displays this review is VEH-08.
+`POST /api/storage/vehicle-urdf/github/inspect` and `fetch` return the review (repository, commit, tree, selected path, SPDX license or `none` / `other`) and, for fetch, canonical base64 file bytes. Provenance stays on `source.kind === "github"` and is not written into a manifest, stage, or asset directory. `GitHubUrdfSession` aborts the previous request and ignores an older response. The vehicle editor shows that review before create or apply.
+
+### VEH-08a — document controller
+
+`VehicleEditorController` is the editor's session. History entries store `stagedBefore` and `stagedAfter`. `executeCoalesced` keeps one entry for a 750 ms gesture and still advances the document generation. A custom sensor registry is passed through `resolveNormalizeOptions`, so a plugin sensor round-trips. Save uses `publishVehicleDraft` with an operation id. An edit during save stays dirty. A staged digest mismatch is `expired-stage` and keeps the draft and the stage. The name field reads its buffer until blur, so a trailing space is not trimmed mid-keystroke. Raw JSON is one coalesced `replaceManifest`. A read-only built-in refuses execute and save. Undo during an axle gesture cancels that gesture only.
+
+### VEH-08b — workspace chrome
+
+The vehicle workspace is a hierarchy pane, the studio, and an inspector. It has no assets row. Pane sizes live in `localStorage` under `cev-sim.ui.vehicleEditor.paneLayout` and are not part of a manifest or hash. The catalog is a dialog. `WorkspacePane` takes an `idPrefix` so the vehicle panes do not reuse environment ids in the DOM.
+
+### VEH-08c — catalog revisions
+
+Rename, duplicate, delete, and change-id send `expectedRevision`. A dirty open vehicle blocks rename, delete, and change-id until save or discard. Change-id is a publication mode with journal phases `prepared`, `assets-copied`, `destination-published`, and `source-removed`. The destination starts at revision 1. Asset bytes that differ are not overwritten. The manifest is written before the source is removed. Recovery rolls back files introduced before destination publication and finishes source removal after it. The same operation id returns the destination manifest. The confirm dialog says run and scenario references are not rewritten. Bundle export stays disabled while the open draft is dirty.
+
+### VEH-08d — staged model preview
+
+`stageVehicleClosure` uploads a canonical import plan and reads every member back. A digest mismatch abandons the stage and does not change the draft. One command sets `stagedResources` and applies the model replacement. The studio previews that stage through `stagedVehicleModelSource`. Discard and opening another vehicle abandon stages the draft introduced. The editor no longer calls `uploadVehicleAsset`.
+
+### VEH-08e — URDF create, apply, and export
+
+The review dialog plans a local package or a GitHub inspect/fetch. Closing it aborts the GitHub request. The review shows repository, commit, tree, path, and license. Create publishes `manifestFromUrdfImport` through a stage. Apply is one undoable `applyReviewedUrdfImport`. Export writes the current draft: published bytes plus staged members. A model-free vehicle is a `.urdf`. A vehicle with meshes is the deterministic ZIP. The omission report is shown after export.
+
+### VEH-08f — shortcuts and focus
+
+Save, undo, and redo are shortcut bindings at priority 30, above the environment bindings, because the environment scene stays mounted. Dialogs restore focus to the control that opened them. The dialog close control does not open a tooltip, so Escape dismisses the dialog itself. Vehicle pane splitters control `vehicle-pane-*`, matching the pane element ids. A revision conflict or an expired stage is shown in the top bar and does not replace the draft. The catalog listbox moves with the arrow keys. Layout and display preferences, stage ids, journals, and GitHub provenance stay out of semantic hashes.
 

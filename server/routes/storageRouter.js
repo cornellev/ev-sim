@@ -270,6 +270,17 @@ export function createStorageRouter(service, { githubUrdf = null } = {}) {
         storageEvents.publish({ domain: "vehicle", id: vehicle.id, action: "created" });
         return vehicle;
     }));
+    router.post("/vehicles/:id/rename", handle(async (req) => {
+        const vehicle = await service.renameVehicleManifest(req.params.id, req.body ?? {});
+        storageEvents.publish({ domain: "vehicle", id: vehicle.id, action: "updated" });
+        return vehicle;
+    }));
+    router.post("/vehicles/:id/change-id", handle(async (req) => {
+        const vehicle = await service.changeVehicleId(req.params.id, req.body ?? {});
+        storageEvents.publish({ domain: "vehicle", id: req.params.id, action: "deleted" });
+        storageEvents.publish({ domain: "vehicle", id: vehicle.id, action: "created" });
+        return vehicle;
+    }));
     router.post("/vehicles/:id/validate", handle(async (req) => service.validateVehicleManifest(req.params.id, req.body ?? null)));
     router.get("/vehicles/:id/export", handle(async (req) => service.exportVehicleBundle(req.params.id)));
     router.get("/vehicles/:id", handle(async (req) => service.getVehicleManifest(req.params.id)));
@@ -279,7 +290,11 @@ export function createStorageRouter(service, { githubUrdf = null } = {}) {
         return vehicle;
     }));
     router.delete("/vehicles/:id", handle(async (req) => {
-        const deleted = await service.deleteVehicleManifest(req.params.id);
+        const expected = req.query.expectedRevision;
+        const deleted = await service.deleteVehicleManifest(
+            req.params.id,
+            expected === undefined ? undefined : Number(expected),
+        );
         if (deleted) storageEvents.publish({ domain: "vehicle", id: req.params.id, action: "deleted" });
         return deleted;
     }));

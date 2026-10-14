@@ -402,3 +402,43 @@ test("detach and reattach clear the baked zone and undo restores both", () => {
     assert.equal(session.redo().ok, true);
     assert.equal(session.draft.snapshot().wheels[0].visual.nodeIndex, 4);
 });
+
+test("undo restores the staged resources captured with that edit", () => {
+    const session = new VehicleDocumentSession({ manifest: standardVehicle() });
+    const stage = { stageId: "stage-1", members: [{ name: "car.glb", sha256: "ab", size: 4 }] };
+    assert.equal(session.execute({
+        label: "Replace model",
+        run(context) {
+            context.setStagedResources(stage);
+            context.setManifest({ ...context.manifest, name: "Staged" });
+            return { ok: true };
+        },
+    }).ok, true);
+    assert.equal(session.stagedResources.stageId, "stage-1");
+    assert.equal(session.undo().ok, true);
+    assert.equal(session.stagedResources, null);
+    assert.equal(session.draft.snapshot().name, "Axle Car");
+    assert.equal(session.redo().ok, true);
+    assert.equal(session.stagedResources.stageId, "stage-1");
+    assert.equal(session.draft.snapshot().name, "Staged");
+});
+
+test("coalesced edits are one history entry and still move the save generation", () => {
+    const session = new VehicleDocumentSession({ manifest: standardVehicle() });
+    const rename = (name, now) => session.executeCoalesced({
+        label: "Name",
+        run(context) {
+            context.setManifest({ ...context.manifest, name });
+            return { ok: true };
+        },
+    }, { key: "name", now });
+    assert.equal(rename("One", 1000).ok, true);
+    assert.equal(rename("Two", 1200).ok, true);
+    assert.equal(session.history.length, 1);
+    assert.equal(session.draft.snapshot().name, "Two");
+    assert.equal(session.draft.generation, 2);
+    assert.equal(session.undo().ok, true);
+    assert.equal(session.draft.snapshot().name, "Axle Car");
+    assert.equal(rename("Later", 3000).ok, true);
+    assert.equal(session.history.length, 1);
+});

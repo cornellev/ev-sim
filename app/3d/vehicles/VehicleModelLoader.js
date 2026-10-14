@@ -98,6 +98,42 @@ export function publishedVehicleModelSource(manifest, modelUrl) {
     };
 }
 
+export function vehicleStageMemberUrl(stageId, name) {
+    return `/api/storage/vehicle-stages/${encodeURIComponent(stageId)}/members/${encodeURIComponent(name)}`;
+}
+
+/** Preview bytes that are staged and not yet published. Returns null when the stage does not cover the draft model. */
+export function stagedVehicleModelSource(manifest, staged) {
+    const assetName = typeof manifest?.model?.asset === "string" ? manifest.model.asset : "";
+    if (!staged?.stageId || !assetName) return null;
+    const members = new Map((staged.members ?? []).map((member) => [member.name, member]));
+    const asset = members.get(assetName);
+    if (!asset) return null;
+    const dependencies = [];
+    for (const name of manifest.model?.dependencies ?? []) {
+        const member = members.get(name);
+        if (!member) return null;
+        dependencies.push({
+            name,
+            url: vehicleStageMemberUrl(staged.stageId, name),
+            sha256: member.sha256,
+            size: member.size,
+            mediaType: member.mediaType,
+        });
+    }
+    return {
+        kind: "url",
+        asset: {
+            name: assetName,
+            url: vehicleStageMemberUrl(staged.stageId, assetName),
+            sha256: asset.sha256,
+            size: asset.size,
+            mediaType: asset.mediaType || "model/gltf-binary",
+        },
+        dependencies,
+    };
+}
+
 export class VehicleModelLoader {
     constructor({
         THREE = null,

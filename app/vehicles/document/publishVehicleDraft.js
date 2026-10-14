@@ -23,11 +23,14 @@ export async function publishVehicleDraft(session, client, { operationId } = {})
             session.baseline.revision,
             { stageId: stage?.stageId ?? null, operationId },
         );
-        return session.acknowledgeSave({
-            generation: capture.generation,
-            revision: stored.revision,
-            definitionHash: stored.definitionHash,
-        });
+        return {
+            ...session.acknowledgeSave({
+                generation: capture.generation,
+                revision: stored.revision,
+                definitionHash: stored.definitionHash,
+            }),
+            stored,
+        };
     } catch (error) {
         session.failSave();
         throw error;

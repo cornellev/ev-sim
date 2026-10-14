@@ -41,7 +41,7 @@ export function DialogSurface({
                             {headerActions}
                             {showClose && (
                                 <Dialog.Close asChild>
-                                    <IconButton label="Close" tooltip="Close">
+                                    <IconButton label="Close" tooltip={false}>
                                         <IconX size={16} stroke={1.75} />
                                     </IconButton>
                                 </Dialog.Close>

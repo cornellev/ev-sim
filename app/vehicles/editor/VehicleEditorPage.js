@@ -1,20 +1,11 @@
 'use client';
 
-import { cloneElement, isValidElement, useEffect, useMemo, useRef, useState } from "react";
+import { cloneElement, isValidElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     IconArrowsMove,
-    IconCheck,
-    IconCopy,
     IconCube,
-    IconDeviceFloppy,
-    IconDownload,
-    IconFileImport,
-    IconLayoutGrid,
-    IconLayoutSidebarLeftCollapse,
-    IconLayoutSidebarRightCollapse,
     IconPlus,
     IconRefresh,
-    IconTrash,
     IconUpload,
 } from "@tabler/icons-react";
 
@@ -22,9 +13,8 @@ import { deriveCompleteWheelbase } from "../axle/standardAxle.js";
 import {
     createBlankVehicleManifest,
     deriveWheelbase,
-    normalizeVehicleManifest,
+    isValidVehicleId,
     resolveVehicleModelUrl,
-    validateVehicleManifest,
 } from "../VehicleManifest.js";
 import {
     changeVehicleSensorType,
@@ -51,34 +41,43 @@ import {
     listBuiltInVehicleManifests,
 } from "../BuiltInVehicleManifests.js";
 import {
+    abandonVehicleStage,
+    changeVehicleId,
     createVehicleManifest,
     createVehicleOperationId,
+    createVehicleStage,
     deleteVehicleManifest,
     duplicateVehicleManifest,
     exportVehicleBundle,
     getVehicleManifest,
     importVehicleBundle,
     listVehicleManifests,
+    readVehicleStageMember,
+    renameVehicleManifest,
     saveVehicleManifest,
-    uploadVehicleAsset,
+    uploadVehicleStageMember,
     validateVehicleManifestOnServer,
 } from "../VehicleManifestClient.js";
-import { VehicleDocumentSession } from "../document/VehicleDocumentSession.js";
-import {
-    applyModelReplacement,
-    applyPlacementChange,
-    assignModelWheels,
-    detachWheel,
-    suppressSourceWheels,
-} from "../document/vehicleCommands.js";
+import { VehicleEditorController } from "./VehicleEditorController.js";
+import { editManifestFields, applyModelReplacement, applyPlacementChange, assignModelWheels, detachWheel, suppressSourceWheels } from "../document/vehicleCommands.js";
 import { measurePlacedVehicleModel } from "../model/measurePlacedVehicle.js";
-import { createAxleGesture } from "./axleGesture.js";
+import { stageVehicleClosure, stageVehiclePlan } from "./stageVehicleClosure.js";
+import { exportVehicleUrdf } from "../urdf/exportVehicleUrdf.js";
 import { AxleInspector, standardAxleCards } from "./AxleInspector.js";
 import { DragNumber } from "./DragNumber.js";
 import { VehiclePlanView } from "./VehiclePlanView.js";
 import { PlacementAcceptanceDialog, WheelAssignmentDialog } from "./WheelAssignmentDialog.js";
 import { canonicalVehicleGlb, rolesFromManifest } from "./wheelAssignmentState.js";
 import { VehicleStudio } from "./VehicleStudio.js";
+import { VehicleWorkspace } from "./workspace/VehicleWorkspace.js";
+import { VehicleTopBar } from "./workspace/VehicleTopBar.js";
+import { VehicleToolbar } from "./workspace/VehicleToolbar.js";
+import { VehicleHierarchy } from "./workspace/VehicleHierarchy.js";
+import { hierarchyNodesFromLease } from "./workspace/vehicleHierarchyModel.js";
+import { VehiclePickerDialog, copyIdFor } from "./workspace/VehiclePickerDialog.js";
+import { VehicleUrdfReviewDialog } from "./workspace/VehicleUrdfReviewDialog.js";
+import { normalizeVehiclePaneLayout } from "./workspace/vehiclePaneLayout.js";
+import { readVehicleEditorPreference, VEHICLE_EDITOR_PREFERENCE_KEYS, writeVehicleEditorPreference } from "../../ui/vehicleEditorPreferences.js";
 import {
     AdvancedFields,
     AdvancedSwitch,
@@ -86,8 +85,6 @@ import {
     AsyncState,
     Button,
     Field as SharedField,
-    IconButton,
-    SegmentedControl,
     StatusMessage,
     Switch as SharedSwitch,
     TabsContent,
@@ -95,13 +92,12 @@ import {
     TabsRoot,
     TabsTrigger,
     useAuthoringMode,
+    useShortcut,
     useWorkspaceGuard,
 } from "../../ui";
 import { degToRad, radToDeg } from "three/src/math/MathUtils.js";
 
 const TABS = ["Model", "LiDAR Zone", "Sensors", "Wheels", "Body", "JSON"];
-const HISTORY_LIMIT = 100;
-const EDIT_COALESCE_MS = 750;
 const FaArrowsAlt = (props) => <IconArrowsMove size={14} stroke={1.75} {...props} />;
 const FaCube = (props) => <IconCube size={14} stroke={1.75} {...props} />;
 const FaPlus = (props) => <IconPlus size={14} stroke={1.75} {...props} />;
@@ -116,8 +112,8 @@ function vehicleIdFromName(name) {
         .replace(/^-+|-+$/g, "") || `vehicle-${Date.now().toString(36)}`;
 }
 
-function downloadJson(name, value) {
-    const blob = new Blob([`${JSON.stringify(value, null, 2)}\n`], { type: "application/json" });
+function downloadBytes(name, bytes, mediaType) {
+    const blob = new Blob([bytes], { type: mediaType || "application/octet-stream" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
@@ -126,12 +122,17 @@ function downloadJson(name, value) {
     URL.revokeObjectURL(url);
 }
 
-function differenceCount(left, right) {
-    if (Object.is(left, right)) return 0;
-    if (!left || !right || typeof left !== "object" || typeof right !== "object") return 1;
-    const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
-    return [...keys].reduce((sum, key) => sum + differenceCount(left[key], right[key]), 0);
+function downloadJson(name, value) {
+    downloadBytes(name, `${JSON.stringify(value, null, 2)}\n`, "application/json");
 }
+
+const stageClient = {
+    createVehicleStage,
+    uploadVehicleStageMember,
+    readVehicleStageMember,
+    abandonVehicleStage,
+    saveVehicleManifest,
+};
 
 function round3(value) {
     return Math.round(value * 1000) / 1000;
@@ -145,28 +146,29 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     const importRef = useRef(null);
     const modelFileRef = useRef(null);
     const assignButtonRef = useRef(null);
+    const catalogButtonRef = useRef(null);
+    const urdfButtonRef = useRef(null);
     const viewportRef = useRef(null);
     const studioRef = useRef(null);
     const studioHandlers = useRef({});
     const loadRequest = useRef(0);
-    const undoStack = useRef([]);
-    const redoStack = useRef([]);
-    const lastEdit = useRef(null);
-    const axleGestureRef = useRef(null);
-    const axleActions = useRef({});
+    const sensorSessionRef = useRef(null);
+    if (!sensorSessionRef.current) sensorSessionRef.current = new BrowserSensorAuthoringSession();
+    const controllerRef = useRef(null);
+    if (!controllerRef.current) {
+        controllerRef.current = new VehicleEditorController({
+            client: stageClient,
+            resolveNormalizeOptions: () => ({ sensorRegistry: sensorSessionRef.current?.registry ?? sensorTypeRegistry }),
+        });
+    }
 
     const [catalog, setCatalog] = useState([]);
     const [loadState, setLoadState] = useState("loading");
     const [selectedId, setSelectedId] = useState(null);
-    const [saved, setSaved] = useState(null);
-    const [draft, setDraft] = useState(null);
-    const [raw, setRaw] = useState("");
-    const [rawError, setRawError] = useState(null);
+    const [snapshot, setSnapshot] = useState(() => controllerRef.current.snapshot);
     const [tab, setTab] = useState("Model");
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState(null);
-    const [validation, setValidation] = useState(null);
-    const [selection, setSelection] = useState(null);
     const [gizmoMode, setGizmoMode] = useState("translate");
     const [assetVersion, setAssetVersion] = useState(0);
     const [zoneVisible, setZoneVisible] = useState(true);
@@ -174,10 +176,12 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     const [voxelSize, setVoxelSize] = useState(0.2);
     const [fitTarget, setFitTarget] = useState({ length: 2.7, width: 1.25 });
     const [placementRevision, setPlacementRevision] = useState(0);
-    const [catalogOpen, setCatalogOpen] = useState(false);
-    const [inspectorOpen, setInspectorOpen] = useState(false);
-    const sensorSessionRef = useRef(null);
-    if (!sensorSessionRef.current) sensorSessionRef.current = new BrowserSensorAuthoringSession();
+    const [pickerOpen, setPickerOpen] = useState(false);
+    const [urdfMode, setUrdfMode] = useState(null);
+    const [urdfReport, setUrdfReport] = useState(null);
+    const [serverValidation, setServerValidation] = useState(null);
+    const [modelNodes, setModelNodes] = useState([]);
+    const [layout, setLayout] = useState(() => normalizeVehiclePaneLayout(readVehicleEditorPreference(VEHICLE_EDITOR_PREFERENCE_KEYS.PANE_LAYOUT)));
     const [sensorCatalog, setSensorCatalog] = useState({ revision: 0, sensors: [] });
     const [plantCatalog, setPlantCatalog] = useState([]);
     const [sensorRegistryTick, setSensorRegistryTick] = useState(0);
@@ -193,30 +197,28 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
         return createAuthoringSensorRuntimeRegistry({ definitions: authoringOptions().sensorRegistry });
     }, [sensorRegistryTick]);
 
-    const dirty = Boolean(saved && draft && differenceCount(
-        normalizeVehicleManifest(saved, authoringOptions()),
-        normalizeVehicleManifest(draft, authoringOptions()),
-    ) > 0);
-    const readOnly = isBuiltInVehicleManifest(selectedId);
+    const draft = snapshot.manifest;
+    const raw = snapshot.raw;
+    const rawError = snapshot.rawError;
+    const dirty = snapshot.dirty;
+    const readOnly = snapshot.readOnly;
+    const selection = snapshot.selection?.kind ? snapshot.selection : null;
+    const validation = snapshot.validation;
 
-    const resetHistory = () => {
-        undoStack.current = [];
-        redoStack.current = [];
-        lastEdit.current = null;
-    };
+    useEffect(() => controllerRef.current.subscribe(setSnapshot), []);
+    useEffect(() => {
+        writeVehicleEditorPreference(VEHICLE_EDITOR_PREFERENCE_KEYS.PANE_LAYOUT, layout);
+    }, [layout]);
+    const onLayoutChange = useCallback((producer) => {
+        setLayout((current) => (typeof producer === "function" ? producer(current) : producer));
+    }, []);
 
     const applyDocument = (id, document) => {
-        const normalized = normalizeVehicleManifest(document, authoringOptions());
-        resetHistory();
+        controllerRef.current.open(document, { readOnly: isBuiltInVehicleManifest(id) });
         setSelectedId(id);
-        setSaved(document);
-        setDraft(normalized);
-        setRaw(JSON.stringify(normalized, null, 2));
-        setRawError(null);
-        setValidation(null);
-        setSelection(null);
+        setError(null);
         setSteeringPreview(0);
-        axleGestureRef.current = null;
+        setModelNodes([]);
     };
 
     const loadCatalog = async (preferredId = null) => {
@@ -233,11 +235,8 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                 ? preferredId
                 : storedItems[0]?.id ?? builtInItems[0]?.id;
             if (!nextId) {
-                resetHistory();
+                controllerRef.current.close();
                 setSelectedId(null);
-                setSaved(null);
-                setDraft(null);
-                setRaw("");
                 setLoadState("empty");
                 return;
             }
@@ -279,6 +278,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
             onTransform: (pick, transform) => studioHandlers.current.onTransform?.(pick, transform),
             onPlacementCommit: (pick, transform) => studioHandlers.current.onPlacementCommit?.(pick, transform),
             onSelect: (pick) => studioHandlers.current.onSelect?.(pick),
+            onModelLease: (lease) => studioHandlers.current.onModelLease?.(lease),
             sensorRuntime: authoringRuntime,
         });
         studioRef.current = studio;
@@ -293,8 +293,8 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     useEffect(() => {
         if (!studioRef.current || !draft) return;
         const url = resolveVehicleModelUrl(selectedId, draft.model.asset, { cacheBust: assetVersion });
-        studioRef.current.setManifest(draft, url);
-    }, [draft, selectedId, assetVersion]);
+        studioRef.current.setManifest(draft, url, controllerRef.current.snapshot.stagedResources);
+    }, [draft, selectedId, assetVersion, snapshot.stagedResources]);
 
     useEffect(() => {
         studioRef.current?.setSteeringPreview(steeringPreview);
@@ -356,172 +356,63 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     useEffect(() => { studioRef.current?.setZoneVisible(zoneVisible); }, [zoneVisible]);
     useEffect(() => { studioRef.current?.setModelVisible(modelVisible); }, [modelVisible]);
 
-    const recordHistory = (current, key, { coalesce = false } = {}) => {
-        const now = performance.now();
-        const previous = lastEdit.current;
-        const joinsPrevious = coalesce
-            && previous?.key === key
-            && now - previous.at <= EDIT_COALESCE_MS;
-
-        if (!joinsPrevious) {
-            undoStack.current.push(structuredClone(current));
-            if (undoStack.current.length > HISTORY_LIMIT) undoStack.current.shift();
-        }
-        redoStack.current = [];
-        lastEdit.current = coalesce ? { key, at: now } : null;
-    };
-
     const update = (path, value, options = {}) => {
-        if (readOnly) return;
-        setDraft((current) => {
-            if (!current) return current;
-            recordHistory(current, options.historyKey || path.join(".") || "document", {
-                coalesce: options.coalesce ?? (path.length > 0 && ["number", "string"].includes(typeof value)),
-            });
-            const next = path.length === 0 ? structuredClone(value) : structuredClone(current);
-            if (path.length > 0) {
-                let cursor = next;
-                path.slice(0, -1).forEach((part) => { cursor = cursor[part]; });
-                cursor[path.at(-1)] = value;
-            }
-            const normalized = normalizeVehicleManifest(next, authoringOptions());
-            // Keep the active string field verbatim while the user is typing;
-            // normalization would trim a trailing space mid-keystroke.
-            if (path.length > 0 && typeof value === "string") {
-                let normalizedCursor = normalized;
-                path.slice(0, -1).forEach((part) => { normalizedCursor = normalizedCursor[part]; });
-                normalizedCursor[path.at(-1)] = value;
-            }
-            setRaw(JSON.stringify(normalized, null, 2));
-            setValidation(null);
-            return normalized;
+        const controller = controllerRef.current;
+        if (!path.length) {
+            controller.execute(editManifestFields(value, options.historyKey || "document"), options.coalesce ? { coalesceKey: options.historyKey || "document" } : {});
+            return;
+        }
+        controller.editField(path, value, {
+            coalesce: options.coalesce ?? ["number", "string"].includes(typeof value),
+            coalesceKey: options.historyKey || path.join("."),
         });
     };
 
-    const installDraft = (manifest) => {
-        const normalized = normalizeVehicleManifest(manifest, authoringOptions());
-        setDraft(normalized);
-        setRaw(JSON.stringify(normalized, null, 2));
-        setValidation(null);
+    const setSelection = (pick) => {
+        if (!pick?.kind) controllerRef.current.select(null);
+        else controllerRef.current.select(pick.kind, pick.id ?? null);
     };
 
-    const commitAxleGesture = () => {
-        const active = axleGestureRef.current;
-        if (!active) return null;
-        axleGestureRef.current = null;
-        const result = active.gesture.commit();
-        if (result.changed) recordHistory(active.gesture.capture(), `axle-${active.axle}`, { coalesce: false });
-        installDraft(result.manifest);
-        if (result.ok) setError(null);
-        return result.manifest;
-    };
-
-    const beginAxleGesture = (axle) => {
-        if (readOnly || !draft) return;
-        if (axleGestureRef.current?.axle === axle) return;
-        const base = axleGestureRef.current ? commitAxleGesture() : draft;
-        if (!base) return;
-        axleGestureRef.current = { axle, gesture: createAxleGesture(base, { axle }) };
-    };
-
-    const previewAxleGesture = (axle, patch) => {
-        if (!axleGestureRef.current || axleGestureRef.current.axle !== axle) beginAxleGesture(axle);
-        const active = axleGestureRef.current;
-        if (!active) return;
-        const result = active.gesture.preview(patch);
-        installDraft(result.manifest);
-        setError(result.ok ? null : (result.issues[0]?.message ?? "Axle edit was rejected."));
-    };
-
+    const beginAxleGesture = (axle) => controllerRef.current.beginAxle(axle);
+    const commitAxleGesture = () => controllerRef.current.commitAxle();
     const cancelAxleGesture = () => {
-        const active = axleGestureRef.current;
-        if (!active) return;
-        axleGestureRef.current = null;
-        installDraft(active.gesture.capture());
+        controllerRef.current.cancelAxle();
         setError(null);
     };
-
-    axleActions.current = {
-        begin: beginAxleGesture,
-        preview: previewAxleGesture,
-        commit: commitAxleGesture,
-        cancel: cancelAxleGesture,
+    const previewAxleGesture = (axle, patch) => {
+        const result = controllerRef.current.previewAxle(axle, patch);
+        setError(result?.ok === false ? (result.issues?.[0]?.message ?? "Axle edit was rejected.") : null);
     };
-
-    useEffect(() => {
-        const restore = (source, destination) => {
-            if (source.current.length === 0) return false;
-            const snapshot = source.current.pop();
-            setDraft((current) => {
-                if (!current) return current;
-                destination.current.push(structuredClone(current));
-                if (destination.current.length > HISTORY_LIMIT) destination.current.shift();
-                const normalized = normalizeVehicleManifest(snapshot, authoringOptions());
-                setRaw(JSON.stringify(normalized, null, 2));
-                setRawError(null);
-                setValidation(null);
-                return normalized;
-            });
-            lastEdit.current = null;
-            return true;
-        };
-
-        const onHistoryShortcut = (event) => {
-            if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
-            const key = event.key.toLowerCase();
-            const wantsUndo = key === "z" && !event.shiftKey;
-            const wantsRedo = (key === "z" && event.shiftKey) || (key === "y" && event.ctrlKey);
-            if (!wantsUndo && !wantsRedo) return;
-            if (axleGestureRef.current) {
-                axleActions.current.cancel?.();
-                event.preventDefault();
-                return;
-            }
-
-            const changed = wantsUndo
-                ? restore(undoStack, redoStack)
-                : restore(redoStack, undoStack);
-            if (!changed) return;
-            event.preventDefault();
-        };
-
-        document.addEventListener("keydown", onHistoryShortcut);
-        return () => document.removeEventListener("keydown", onHistoryShortcut);
-    }, []);
 
     const syncStudio = (manifest = draft) => {
         if (!manifest) return;
         const url = resolveVehicleModelUrl(selectedId, manifest.model?.asset, { cacheBust: assetVersion });
-        studioRef.current?.setManifest(manifest, url);
+        studioRef.current?.setManifest(manifest, url, controllerRef.current.snapshot.stagedResources);
     };
 
-    const runCommand = (command, manifest = draft) => (
-        new VehicleDocumentSession({ manifest }).execute(command)
+    const executeCommand = (command, { coalesceKey = null } = {}) => (
+        controllerRef.current.execute(command, coalesceKey ? { coalesceKey } : {})
     );
 
     const boundWheels = (manifest) => (manifest?.wheels ?? []).some((wheel) => wheel.visual?.kind === "model-node");
 
     const commitPlacement = (patch, { coalesce = false, historyKey = "placement" } = {}) => {
         if (!draft || readOnly) return;
-        const result = runCommand(applyPlacementChange({
+        const before = JSON.stringify(draft);
+        const result = executeCommand(applyPlacementChange({
             ...patch,
             glbBytes: boundWheels(draft) ? (studioRef.current?.getModelLease?.()?.glbBytes ?? null) : null,
             acceptAdjustments: false,
-        }));
+        }), { coalesceKey: coalesce ? historyKey : null });
         if (result.ok) {
-            const next = normalizeVehicleManifest(result.manifest, authoringOptions());
-            if (differenceCount(normalizeVehicleManifest(draft, authoringOptions()), next) === 0) {
-                syncStudio(draft);
-                return;
-            }
-            update([], next, { coalesce, historyKey });
+            if (JSON.stringify(result.manifest) === before) syncStudio(draft);
             return;
         }
         if (result.review?.withinTolerance && result.review?.needsAcceptance) {
             setPlacementPrompt({ patch, review: result.review });
             return;
         }
-        setPlacementRevision((revision) => revision + 1);
+        setPlacementRevision((value) => value + 1);
         setError(result.issues?.[0]?.message || "Placement was rejected.");
         syncStudio(draft);
     };
@@ -573,7 +464,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     const acceptPlacement = () => {
         const prompt = placementPrompt;
         if (!prompt || !draft) return;
-        const result = runCommand(applyPlacementChange({
+        const result = executeCommand(applyPlacementChange({
             ...prompt.patch,
             glbBytes: boundWheels(draft) ? (studioRef.current?.getModelLease?.()?.glbBytes ?? null) : null,
             acceptAdjustments: true,
@@ -582,15 +473,18 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
         if (!result.ok) {
             setError(result.issues?.[0]?.message || "Placement was rejected.");
             syncStudio(draft);
-            return;
         }
-        update([], result.manifest, { historyKey: "placement-accept" });
     };
 
     const rejectPlacement = () => {
         setPlacementRevision((revision) => revision + 1);
         setPlacementPrompt(null);
         syncStudio(draft);
+    };
+
+    studioHandlers.current.onModelLease = (lease) => {
+        const hidden = controllerRef.current.snapshot.manifest?.model?.hiddenNodeIndices ?? [];
+        setModelNodes(hierarchyNodesFromLease(lease).map((node) => ({ ...node, hidden: hidden.includes(node.index) })));
     };
 
     studioHandlers.current.onSelect = (pick) => {
@@ -624,17 +518,21 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
         }
     };
 
+    const confirmDiscard = () => !controllerRef.current.snapshot.dirty || window.confirm("Discard unsaved vehicle changes?");
+
     const select = async (id) => {
-        if (dirty && !window.confirm("Discard unsaved vehicle changes?")) return;
+        if (!confirmDiscard()) return;
         await perform(async () => {
             const document = getBuiltInVehicleManifest(id) ?? await getVehicleManifest(id);
             if (!document) throw new Error(`Vehicle "${id}" no longer exists.`);
             applyDocument(id, document);
             setLoadState("ready");
+            setPickerOpen(false);
         });
     };
 
     const createNew = async () => {
+        if (!confirmDiscard()) return;
         const baseName = "Untitled Vehicle";
         let id = vehicleIdFromName(baseName);
         const existing = new Set(catalog.map((entry) => entry.id));
@@ -646,90 +544,121 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                 { operationId: createVehicleOperationId() },
             );
             await loadCatalog(created.id);
+            setPickerOpen(false);
         });
     };
 
-    const save = async () => perform(async () => {
-        const local = validateVehicleManifest(draft, authoringOptions());
-        if (!local.ok) {
-            setValidation(local);
-            throw new Error("Fix validation errors before saving.");
-        }
-        const stored = await saveVehicleManifest(selectedId, local.manifest, saved.revision);
-        setSaved(stored);
-        setDraft(normalizeVehicleManifest(stored, authoringOptions()));
-        setRaw(JSON.stringify(normalizeVehicleManifest(stored, authoringOptions()), null, 2));
-        lastEdit.current = null;
+    const rememberStored = (stored) => {
+        if (!stored) return;
         setCatalog((items) => items.map((entry) => entry.id === stored.id
             ? { ...entry, name: stored.name, revision: stored.revision, definitionHash: stored.definitionHash, modelAsset: stored.model?.asset ?? null }
             : entry));
-        return stored;
+        setAssetVersion((version) => version + 1);
+    };
+
+    const save = async () => perform(async () => {
+        const result = await controllerRef.current.save();
+        rememberStored(result.stored);
+        return result.stored;
     });
 
     const validate = async () => perform(async () => {
-        const result = await validateVehicleManifestOnServer(selectedId, draft);
-        setValidation(result);
+        const result = await validateVehicleManifestOnServer(selectedId, controllerRef.current.snapshot.manifest);
+        setServerValidation(result);
         if (!result.ok) throw new Error("Vehicle validation found issues.");
         return result;
     });
 
-    const duplicate = () => perform(async () => {
-        const builtIn = getBuiltInVehicleManifest(selectedId);
-        const baseId = builtIn ? `${selectedId}-custom` : `${selectedId}-copy-${Date.now().toString(36)}`;
-        let id = baseId;
-        const existing = new Set(catalog.map((entry) => entry.id));
-        let suffix = 2;
-        while (existing.has(id)) id = `${baseId}-${suffix++}`;
-        const created = builtIn
-            ? await createVehicleManifest({ ...builtIn, id, name: `${builtIn.name} Copy` })
-            : await duplicateVehicleManifest(selectedId, { id, name: `${draft.name} Copy` });
+    const acknowledgedRevision = (entry) => (
+        entry.id === selectedId && Number.isFinite(controllerRef.current.snapshot.revision)
+            ? controllerRef.current.snapshot.revision
+            : entry.revision
+    );
+
+    const duplicateEntry = (entry) => perform(async () => {
+        if (entry.id === selectedId && !confirmDiscard()) return;
+        const existing = new Set(catalog.map((item) => item.id));
+        const id = copyIdFor(entry, existing);
+        const created = entry.builtIn
+            ? await createVehicleManifest({ ...getBuiltInVehicleManifest(entry.id), id, name: `${entry.name} Copy` }, { operationId: createVehicleOperationId() })
+            : await duplicateVehicleManifest(entry.id, { id, name: `${entry.name} Copy`, expectedRevision: acknowledgedRevision(entry) });
         await loadCatalog(created.id);
+        setPickerOpen(false);
     });
 
-    const remove = () => perform(async () => {
-        if (!window.confirm(`Delete “${draft.name}”?`)) return;
-        await deleteVehicleManifest(selectedId);
-        setSelectedId(null);
-        setSaved(null);
-        setDraft(null);
-        resetHistory();
-        await loadCatalog();
+    const renameEntry = (entry, name) => perform(async () => {
+        if (entry.id === selectedId && controllerRef.current.snapshot.dirty) throw new Error("Save or discard the open draft before renaming it.");
+        const stored = await renameVehicleManifest(entry.id, { name, expectedRevision: acknowledgedRevision(entry), operationId: createVehicleOperationId() });
+        if (selectedId === entry.id) applyDocument(entry.id, stored);
+        else setCatalog((items) => items.map((item) => item.id === stored.id ? { ...item, name: stored.name, revision: stored.revision, definitionHash: stored.definitionHash } : item));
     });
 
-    const exportBundle = () => perform(async () => {
-        if (dirty) await save();
-        const bundle = await exportVehicleBundle(selectedId);
-        downloadJson(`${selectedId}.vehicle-bundle.json`, bundle);
+    const deleteEntry = (entry) => perform(async () => {
+        if (entry.id === selectedId && controllerRef.current.snapshot.dirty) throw new Error("Save or discard the open draft before deleting it.");
+        await deleteVehicleManifest(entry.id, acknowledgedRevision(entry));
+        if (selectedId === entry.id) {
+            controllerRef.current.close();
+            setSelectedId(null);
+        }
+        await loadCatalog(selectedId === entry.id ? null : selectedId);
+    });
+
+    const changeEntryId = (entry, nextId) => perform(async () => {
+        if (!isValidVehicleId(nextId)) throw new Error("Vehicle id must use lowercase letters, numbers, and single hyphens.");
+        if (entry.id === selectedId && controllerRef.current.snapshot.dirty) throw new Error("Save or discard the open draft before changing its id.");
+        const stored = await changeVehicleId(entry.id, { id: nextId, expectedRevision: acknowledgedRevision(entry), operationId: createVehicleOperationId() });
+        await loadCatalog(stored.id);
+        setPickerOpen(false);
+    });
+
+    const exportBundle = (entry = null) => perform(async () => {
+        const id = entry?.id ?? selectedId;
+        if (id === selectedId && controllerRef.current.snapshot.dirty) throw new Error("Save the vehicle before exporting a bundle.");
+        const bundle = await exportVehicleBundle(id);
+        downloadJson(`${id}.vehicle-bundle.json`, bundle);
     });
 
     const importBundleFile = (event) => perform(async () => {
         const file = event.target.files?.[0];
         event.target.value = "";
         if (!file) return;
+        if (!confirmDiscard()) return;
         const created = await importVehicleBundle(JSON.parse(await file.text()));
         await loadCatalog(created.id);
+        setPickerOpen(false);
     });
 
     useWorkspaceGuard("vehicle-editor", {
         dirty,
         label: "Vehicle editor",
         save,
-        discard: () => saved && applyDocument(selectedId, saved),
+        discard: () => controllerRef.current.discard(),
     });
 
     // --- Model tab operations -------------------------------------------------
 
     const uploadModelFile = (event) => perform(async () => {
-        const file = event.target.files?.[0];
+        const selected = [...(event.target.files ?? [])];
         event.target.value = "";
-        if (!file || !selectedId) return;
-        const extension = file.name.toLowerCase().endsWith(".gltf") ? "gltf" : "glb";
-        const fileName = `model.${extension}`;
-        await uploadVehicleAsset(selectedId, fileName, file);
-        setAssetVersion((version) => version + 1);
-        const result = runCommand(applyModelReplacement({ model: { asset: fileName, dependencies: [] } }));
-        if (!result.ok) throw new Error(result.issues?.[0]?.message || "Could not replace the model.");
-        update([], result.manifest, { historyKey: "model-asset" });
+        if (selected.length === 0 || !selectedId || readOnly) return;
+        const files = await Promise.all(selected.map(async (file) => ({
+            path: file.webkitRelativePath || file.name,
+            bytes: new Uint8Array(await file.arrayBuffer()),
+        })));
+        const entry = files.find((file) => /\.(glb|gltf|obj|stl)$/i.test(file.path));
+        if (!entry) throw new Error("Choose a .glb, .gltf, .obj, or .stl model.");
+        const staged = await stageVehiclePlan(files, { entryPath: entry.path, client: stageClient });
+        const result = controllerRef.current.replaceStagedModel({
+            model: {
+                asset: staged.plan.asset.name,
+                dependencies: staged.plan.dependencies.map((file) => file.name),
+            },
+            stagedResources: staged.staged,
+        });
+        if (!result.ok) {
+            await abandonVehicleStage(staged.staged.stageId);
+            throw new Error(result.issues?.[0]?.message || "Could not replace the model.");
+        }
     });
 
     const fitModelToSize = () => {
@@ -770,14 +699,10 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     };
 
     const replaceOrDetachModel = (asset) => {
-        const result = runCommand(applyModelReplacement({
+        const result = executeCommand(applyModelReplacement({
             model: { asset, dependencies: asset ? draft.model.dependencies : [] },
         }));
-        if (!result.ok) {
-            setError(result.issues?.[0]?.message || "Could not update the model.");
-            return;
-        }
-        update([], result.manifest, { historyKey: "model-asset" });
+        if (!result.ok) setError(result.issues?.[0]?.message || "Could not update the model.");
     };
 
     const openAssignment = () => {
@@ -802,7 +727,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
 
     const acceptAssignment = (pairs) => {
         const lease = studioRef.current?.getModelLease?.();
-        const result = runCommand(assignModelWheels({
+        const result = executeCommand(assignModelWheels({
             pairs,
             glbBytes: lease?.glbBytes ?? null,
             acceptAdjustments: true,
@@ -812,12 +737,11 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
             return;
         }
         setAssignment((current) => (current ? { ...current, open: false } : null));
-        update([], result.manifest, { historyKey: "assign-wheels" });
     };
 
     const suppressAssignment = (nodeIndices) => {
         const lease = studioRef.current?.getModelLease?.();
-        const result = runCommand(suppressSourceWheels({
+        const result = executeCommand(suppressSourceWheels({
             nodeIndices,
             glbBytes: lease?.glbBytes ?? null,
         }));
@@ -826,107 +750,160 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
             return;
         }
         setAssignment((current) => (current ? { ...current, open: false } : null));
-        update([], result.manifest, { historyKey: "suppress-wheels" });
     };
 
     const detachBoundWheel = (wheelId) => {
-        const result = runCommand(detachWheel({ wheelId }));
-        if (!result.ok) {
-            setError(result.issues?.[0]?.message || "Could not detach that wheel.");
-            return;
-        }
-        update([], result.manifest, { historyKey: `detach-${wheelId}` });
+        const result = executeCommand(detachWheel({ wheelId }));
+        if (!result.ok) setError(result.issues?.[0]?.message || "Could not detach that wheel.");
     };
-
-    // --- JSON tab --------------------------------------------------------------
 
     const applyRaw = (value) => {
-        if (readOnly) return;
-        setRaw(value);
-        try {
-            const parsed = JSON.parse(value);
-            const local = validateVehicleManifest(parsed, authoringOptions());
-            if (!local.ok) {
-                setRawError(local.issues.map((issue) => `${issue.path || "manifest"}: ${issue.message}`).join("\n"));
-                return;
-            }
-            setRawError(null);
-            setDraft((current) => {
-                if (current) recordHistory(current, "raw-json", { coalesce: true });
-                return local.manifest;
-            });
-            setValidation(null);
-        } catch (caught) {
-            setRawError(caught.message);
-        }
+        controllerRef.current.applyRaw(value);
     };
 
+    const stageClosure = async (closure) => {
+        const staged = await stageVehicleClosure([closure.asset, ...closure.dependencies], stageClient);
+        return staged;
+    };
+
+    const createFromUrdf = ({ manifest, closure }) => perform(async () => {
+        if (!confirmDiscard()) return;
+        const staged = await stageClosure(closure);
+        try {
+            const created = await createVehicleManifest(manifest, { operationId: createVehicleOperationId(), stageId: staged.stageId });
+            await loadCatalog(created.id);
+            setUrdfMode(null);
+        } catch (error) {
+            await abandonVehicleStage(staged.stageId);
+            throw error;
+        }
+    });
+
+    const applyReviewedUrdf = ({ patch, closure }) => perform(async () => {
+        const staged = await stageClosure(closure);
+        const result = controllerRef.current.applyUrdf({ patch, stagedResources: staged });
+        if (!result.ok) {
+            await abandonVehicleStage(staged.stageId);
+            throw new Error(result.issues?.[0]?.message || "Could not apply the URDF.");
+        }
+        setUrdfMode(null);
+    });
+
+    const exportUrdf = () => perform(async () => {
+        const manifest = controllerRef.current.snapshot.manifest;
+        if (!manifest) return;
+        const assets = {};
+        const assetName = manifest.model?.asset;
+        if (assetName) {
+            const staged = controllerRef.current.snapshot.stagedResources;
+            const stagedMember = staged?.members?.find((member) => member.name === assetName);
+            if (stagedMember) {
+                assets[assetName] = (await readVehicleStageMember(staged.stageId, assetName)).bytes;
+            } else {
+                const response = await fetch(resolveVehicleModelUrl(selectedId, assetName, { cacheBust: assetVersion }));
+                if (!response.ok) throw new Error(`Could not read vehicle model "${assetName}".`);
+                assets[assetName] = new Uint8Array(await response.arrayBuffer());
+            }
+        }
+        const exported = exportVehicleUrdf(manifest, { assets });
+        downloadBytes(exported.filename, exported.bytes, exported.mediaType);
+        setUrdfReport(exported.report);
+    });
+
+    useShortcut({
+        id: "vehicle-editor-save",
+        keys: "Mod+s",
+        priority: 30,
+        allowInEditable: true,
+        enabled: Boolean(draft) && !readOnly,
+        handler: () => {
+            save();
+            return true;
+        },
+    });
+    useShortcut({
+        id: "vehicle-editor-undo",
+        keys: "Mod+z",
+        priority: 30,
+        allowInEditable: true,
+        enabled: Boolean(draft) && !readOnly,
+        handler: () => {
+            controllerRef.current.undo();
+            return true;
+        },
+    });
+    useShortcut({
+        id: "vehicle-editor-redo",
+        keys: ["Shift+Mod+z", "Ctrl+y"],
+        priority: 30,
+        allowInEditable: true,
+        enabled: Boolean(draft) && !readOnly,
+        handler: () => {
+            controllerRef.current.redo();
+            return true;
+        },
+    });
+
     const derivedWheelbase = draft ? deriveWheelbase(draft.wheels) : null;
+    const shownValidation = serverValidation ?? validation;
+    const nameValue = controllerRef.current.fieldValue(["name"]) ?? draft?.name ?? "";
 
     return (
         <AuthoringModeProvider>
         <main className="fixed inset-0 z-[1] overflow-hidden bg-[var(--slate-bg)] text-[var(--slate-fg)]">
-            <header className="flex h-10 items-center justify-between border-b border-[var(--slate-border)] bg-[var(--slate-surface-1)] px-3">
-                <button type="button" className="flex min-w-0 items-center gap-2 text-left" onClick={onOpenWorkspace} aria-label="Open workspace switcher">
-                    <span className="text-[11px] font-medium text-[var(--slate-muted)]">cev-sim</span>
-                    <span aria-hidden="true" className="h-3 w-px bg-[var(--slate-border)]" />
-                    <IconLayoutGrid size={15} stroke={1.75} aria-hidden="true" />
-                    <span className="truncate text-[13px] font-semibold">Vehicle Editor</span>
-                </button>
-                <div className="flex flex-wrap items-center gap-2">
-                    <AdvancedSwitch />
-                    {readOnly && <span className="text-[11px] font-medium text-[var(--slate-muted)]">Built-in · read only</span>}
-                    {dirty && <span className="text-[11px] font-medium text-[var(--slate-warning)]">Unsaved</span>}
-                    <span className="hidden max-[899px]:inline-flex"><IconButton label="Open vehicle catalog" onClick={() => setCatalogOpen((open) => !open)}><IconLayoutSidebarLeftCollapse size={15} stroke={1.75} /></IconButton></span>
-                    <span className="hidden max-[1199px]:inline-flex"><IconButton label="Open vehicle inspector" onClick={() => setInspectorOpen((open) => !open)}><IconLayoutSidebarRightCollapse size={15} stroke={1.75} /></IconButton></span>
-                    <Action icon={<IconCheck size={14} stroke={1.75} />} label="Validate" onClick={validate} disabled={!draft || busy || readOnly} />
-                    <Action primary icon={<IconDeviceFloppy size={14} stroke={1.75} />} label="Save" onClick={save} disabled={!draft || !dirty || busy || readOnly} />
-                </div>
-            </header>
-
-            <div className="grid h-[calc(100dvh-2.5rem)] grid-cols-[260px_minmax(0,1fr)_360px] max-[1199px]:grid-cols-[240px_minmax(0,1fr)] max-[899px]:grid-cols-[minmax(0,1fr)]">
-                <aside className={`flex min-h-0 flex-col border-r border-[var(--slate-border)] bg-[var(--slate-surface-1)] max-[899px]:fixed max-[899px]:bottom-3 max-[899px]:left-3 max-[899px]:top-[52px] max-[899px]:z-[var(--layer-drawer)] max-[899px]:w-[min(320px,calc(100vw-24px))] max-[899px]:border max-[899px]:shadow-[var(--slate-shadow-overlay)] ${catalogOpen ? "max-[899px]:flex" : "max-[899px]:hidden"}`}>
-                    <div className="flex items-center gap-2 border-b border-[var(--slate-border)] p-3">
-                        <Action icon={<FaPlus />} label="New" onClick={createNew} disabled={busy} compact />
-                        <Action icon={<IconFileImport size={14} stroke={1.75} />} label="Import" onClick={() => importRef.current?.click()} disabled={busy} compact />
-                        <input ref={importRef} hidden type="file" accept=".json,application/json" onChange={importBundleFile} />
-                    </div>
-                    <div className="mod-scrollbar min-h-0 flex-1 overflow-y-auto p-2">
-                        {catalog.map((entry, index) => (
-                            <div key={entry.id}>
-                                {(index === 0 || catalog[index - 1]?.builtIn !== entry.builtIn) && (
-                                    <p className="px-2 pb-1 pt-2 text-[11px] font-medium text-[var(--slate-muted)]">
-                                        {entry.builtIn ? "Built-in vehicles" : "Custom vehicles"}
-                                    </p>
-                                )}
-                                <button type="button" onClick={() => select(entry.id).finally(() => setCatalogOpen(false))} aria-current={entry.id === selectedId ? "page" : undefined} className={`mb-1 w-full rounded-[var(--radius)] border px-3 py-2.5 text-left transition-[background-color,border-color,color] duration-150 ${entry.id === selectedId ? "border-[var(--slate-border)] bg-[var(--slate-surface-3)]" : "border-transparent text-[var(--slate-fg-2)] hover:bg-[var(--slate-surface-2)]"}`}>
-                                    <span className="flex items-center justify-between gap-2">
-                                        <span className="block min-w-0 truncate text-xs font-semibold">{entry.name}</span>
-                                        {entry.builtIn && <span className="shrink-0 text-[11px] text-[var(--slate-muted)]">Built-in</span>}
-                                    </span>
-                                    <span className="mt-1 block truncate font-mono text-[11px] text-[var(--slate-muted)]">
-                                        {entry.builtIn ? `${entry.id} · read only` : `${entry.id} · r${entry.revision}${entry.modelAsset ? "" : " · no model"}`}
-                                    </span>
-                                </button>
-                            </div>
-                        ))}
-                        {loadState === "empty" && (
-                            <p className="px-2 py-6 text-center text-[11px] leading-relaxed text-zinc-600">No vehicles yet. Create one to start authoring.</p>
-                        )}
-                    </div>
-                    {draft && (
-                        <div className="space-y-2 border-t border-[var(--slate-border)] p-3">
-                            <div className="flex gap-1.5">
-                                <Action compact icon={<IconCopy size={14} stroke={1.75} />} label="Duplicate" onClick={duplicate} disabled={busy} />
-                                {!readOnly && <Action compact icon={<IconDownload size={14} stroke={1.75} />} label="Export" onClick={exportBundle} disabled={busy} />}
-                                {!readOnly && <IconButton label="Delete vehicle" onClick={remove} disabled={busy} className="text-[var(--slate-danger)]"><IconTrash size={14} stroke={1.75} /></IconButton>}
-                            </div>
-                            <p className="truncate font-mono text-[11px] text-[var(--slate-muted)]">{readOnly ? "Duplicate to create an editable copy" : saved?.definitionHash || "Unsaved"}</p>
-                        </div>
-                    )}
-                </aside>
-
-                <section className="relative min-w-0 overflow-hidden bg-[var(--slate-bg)]">
+            <input ref={importRef} hidden type="file" accept=".json,application/json" onChange={importBundleFile} />
+            <VehicleWorkspace
+                layout={layout}
+                onLayoutChange={onLayoutChange}
+                topBar={(
+                    <VehicleTopBar
+                        name={draft?.name}
+                        readOnly={readOnly}
+                        dirty={dirty}
+                        saveState={snapshot.saveState}
+                        saveMessage={snapshot.saveMessage || error}
+                        catalogRef={catalogButtonRef}
+                        onOpenWorkspace={onOpenWorkspace}
+                        onOpenCatalog={() => setPickerOpen(true)}
+                        onValidate={validate}
+                        onSave={save}
+                        validateDisabled={!draft || busy || readOnly}
+                        saveDisabled={!draft || busy || readOnly || (!dirty && !snapshot.stagedResources)}
+                        extra={<AdvancedSwitch />}
+                    />
+                )}
+                toolbar={(
+                    <VehicleToolbar
+                        gizmoMode={gizmoMode}
+                        onGizmoMode={setGizmoMode}
+                        canUndo={snapshot.canUndo}
+                        canRedo={snapshot.canRedo}
+                        onUndo={() => controllerRef.current.undo()}
+                        onRedo={() => controllerRef.current.redo()}
+                        readOnly={readOnly}
+                        modelVisible={modelVisible}
+                        zoneVisible={zoneVisible}
+                        onModelVisible={setModelVisible}
+                        onZoneVisible={setZoneVisible}
+                    >
+                        <Button ref={urdfButtonRef} onClick={() => setUrdfMode("create")} disabled={busy}>URDF</Button>
+                        <Button onClick={() => setUrdfMode("apply")} disabled={busy || !draft || readOnly}>Apply URDF</Button>
+                    </VehicleToolbar>
+                )}
+                hierarchy={(
+                    <VehicleHierarchy
+                        manifest={draft}
+                        nodes={modelNodes}
+                        selection={selection}
+                        onSelect={(row, nextTab) => {
+                            if (row.kind === "wheel" || row.kind === "sensor") setSelection({ kind: row.kind, id: row.id });
+                            else setSelection({ kind: row.kind === "model-node" ? "model" : row.kind, id: null });
+                            setTab(nextTab);
+                        }}
+                    />
+                )}
+                center={(
+                <section className="absolute inset-0 min-w-0 overflow-hidden bg-[var(--slate-bg)]">
                     {loadState === "loading" && <CenterState title="Loading vehicles…" detail="Reading the server-backed vehicle catalog." />}
                     {loadState === "error" && (
                         <CenterState error title="Could not load vehicles" detail={error || "The vehicle catalog is unavailable."} action={<Action icon={<IconRefresh size={14} stroke={1.75} />} label="Retry" onClick={() => loadCatalog(selectedId)} />} />
@@ -937,14 +914,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                     {draft && (
                         <>
                             <div ref={viewportRef} className="absolute inset-0" />
-                            <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between p-3">
-                                {readOnly ? (
-                                    <div className="rounded-[var(--radius)] border border-[var(--slate-border)] bg-[var(--slate-floating)] px-2.5 py-1.5 text-[11px] font-medium text-[var(--slate-fg-2)]">Read-only preview</div>
-                                ) : (
-                                    <div className="pointer-events-auto rounded-[var(--radius)] border border-[var(--slate-border)] bg-[var(--slate-floating)] p-1">
-                                        <SegmentedControl value={gizmoMode} onValueChange={setGizmoMode} label="Gizmo mode" items={[{ value: "translate", label: "Move" }, { value: "rotate", label: "Rotate" }]} />
-                                    </div>
-                                )}
+                            <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-end p-3">
                                 {selection && (
                                     <div className="pointer-events-auto flex items-center gap-2 rounded-[var(--radius)] border border-[var(--slate-border)] bg-[var(--slate-floating)] px-2.5 py-1.5">
                                         <span className="text-[14px] font-medium text-[var(--slate-fg-2)]">{selection.kind}{selection.id ? ` · ${selection.id}` : ""}</span>
@@ -958,12 +928,13 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                         </>
                     )}
                 </section>
-
-                <aside className={`flex min-h-0 flex-col border-l border-[var(--slate-border)] bg-[var(--slate-surface-1)] max-[1199px]:fixed max-[1199px]:bottom-3 max-[1199px]:right-3 max-[1199px]:top-[52px] max-[1199px]:z-[var(--layer-drawer)] max-[1199px]:w-[min(380px,calc(100vw-24px))] max-[1199px]:border max-[1199px]:shadow-[var(--slate-shadow-overlay)] ${inspectorOpen ? "max-[1199px]:flex" : "max-[1199px]:hidden"}`}>
+                )}
+                inspector={(
+                <div className="flex min-h-0 flex-1 flex-col">
                     {draft && (
                         <TabsRoot value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
                             <div className="border-b border-[var(--slate-border)] p-3">
-                                <input className="sf-input mb-2" aria-label="Vehicle name" value={draft.name} disabled={readOnly} onChange={(event) => update(["name"], event.target.value)} />
+                                <input className="sf-input mb-2" aria-label="Vehicle name" value={nameValue} disabled={readOnly} onChange={(event) => update(["name"], event.target.value)} onBlur={() => controllerRef.current.commitField(["name"])} />
                                 <p className="truncate font-mono text-[11px] text-[var(--slate-muted)]">{draft.id}</p>
                             </div>
                             {readOnly && (
@@ -975,10 +946,15 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                                 {TABS.map((item) => <TabsTrigger key={item} value={item} className="whitespace-nowrap">{item}</TabsTrigger>)}
                             </TabsList>
 
-                            {(error || rawError || validation?.issues?.length > 0) && (
-                                <StatusMessage className="m-3" tone="danger" title="Vehicle needs attention"><pre className="whitespace-pre-wrap font-sans">{error || rawError || validation.issues.map((issue) => `${issue.path || "manifest"}: ${issue.message}`).join("\n")}</pre></StatusMessage>
+                            {(error || rawError || shownValidation?.issues?.length > 0) && (
+                                <StatusMessage className="m-3" tone="danger" title="Vehicle needs attention"><pre className="whitespace-pre-wrap font-sans">{error || rawError || shownValidation.issues.map((issue) => `${issue.path || "manifest"}: ${issue.message}`).join("\n")}</pre></StatusMessage>
                             )}
-                            {validation?.ok && <StatusMessage className="m-3" tone="success" title="Vehicle manifest is valid." />}
+                            {shownValidation?.ok && <StatusMessage className="m-3" tone="success" title="Vehicle manifest is valid." />}
+                            {urdfReport && (
+                                <StatusMessage className="m-3" title="URDF export">
+                                    <pre className="whitespace-pre-wrap font-sans">{(urdfReport.omissions ?? []).map((entry) => entry.message || entry.code).join("\n") || "No omissions."}</pre>
+                                </StatusMessage>
+                            )}
 
                             <div className="mod-scrollbar min-h-0 flex-1 overflow-y-auto" tabIndex={0} aria-label="Vehicle editor fields">
                                 <fieldset disabled={readOnly}>
@@ -1060,8 +1036,9 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                             </div>
                         </TabsRoot>
                     )}
-                </aside>
-            </div>
+                </div>
+                )}
+            />
         </main>
         {assignment && (
             <WheelAssignmentDialog
@@ -1087,6 +1064,35 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
             onAccept={acceptPlacement}
             onReject={rejectPlacement}
         />
+        <VehiclePickerDialog
+            open={pickerOpen}
+            onOpenChange={setPickerOpen}
+            vehicles={catalog}
+            selectedId={selectedId}
+            dirty={dirty}
+            busy={busy}
+            returnFocusRef={catalogButtonRef}
+            onOpenVehicle={(id) => select(id)}
+            onCreateBlank={createNew}
+            onImportBundle={() => importRef.current?.click()}
+            onDuplicate={duplicateEntry}
+            onRename={renameEntry}
+            onDelete={deleteEntry}
+            onChangeId={changeEntryId}
+            onExportBundle={exportBundle}
+            onExportUrdf={() => exportUrdf()}
+        />
+        <VehicleUrdfReviewDialog
+            open={urdfMode != null}
+            mode={urdfMode === "apply" ? "apply" : "create"}
+            onOpenChange={(open) => { if (!open) setUrdfMode(null); }}
+            busy={busy}
+            defaultId={vehicleIdFromName(draft?.name || "urdf-vehicle")}
+            defaultName={draft?.name || "URDF vehicle"}
+            onCreate={createFromUrdf}
+            onApply={applyReviewedUrdf}
+            returnFocusRef={urdfButtonRef}
+        />
         </AuthoringModeProvider>
     );
 }
@@ -1097,7 +1103,7 @@ function ModelTab({ draft, commitPlacement, busy, modelFileRef, uploadModelFile,
             <Section title="Source model">
                 <div className="flex items-center gap-2">
                     <Action compact icon={<FaUpload />} label={draft.model.asset ? "Replace model" : "Import GLB / GLTF"} onClick={() => modelFileRef.current?.click()} disabled={busy} />
-                    <input ref={modelFileRef} hidden type="file" accept=".glb,.gltf,model/gltf-binary,model/gltf+json" onChange={uploadModelFile} />
+                    <input ref={modelFileRef} hidden type="file" accept=".glb,.gltf,.obj,.stl,.mtl,.png,.jpg,.jpeg,.ktx2,model/gltf-binary,model/gltf+json" multiple onChange={uploadModelFile} />
                     {draft.model.asset && (
                         <button type="button" onClick={detachModel} className="text-[11px] text-[var(--slate-danger)]">Detach</button>
                     )}

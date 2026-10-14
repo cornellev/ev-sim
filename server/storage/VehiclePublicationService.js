@@ -79,7 +79,7 @@ export class VehiclePublicationService {
         const referenced = new Set(journals.map((journal) => journal.stageId).filter(Boolean));
         await this.service.vehicleStages.recover(referenced);
         for (const journal of journals) {
-            if (vehicleId != null && journal.vehicleId !== vehicleId) continue;
+            if (vehicleId != null && journal.vehicleId !== vehicleId && journal.sourceVehicleId !== vehicleId) continue;
             await this._recoverJournal(journal);
         }
     }
@@ -469,7 +469,154 @@ export class VehiclePublicationService {
         await store.write(snapshot);
     }
 
+    /**
+     * Move a vehicle to a new id. Asset bytes are copied before the destination
+     * manifest, and the source is removed only after that manifest is durable.
+     * Run and scenario references are not rewritten.
+     */
+    async changeIdLocked({ sourceVehicleId, destinationVehicleId, expectedRevision, operationId }) {
+        const operation = operationIdOf(operationId);
+        const receipt = await this._readReceipt(operation);
+        const source = await this.service.getVehicleManifest(sourceVehicleId);
+        if (!source) {
+            if (receipt?.manifest?.id === destinationVehicleId) return receipt.manifest;
+            if (receipt) {
+                throw publicationError(
+                    VEHICLE_PUBLICATION_ERROR_CODES.CONFLICT,
+                    `Vehicle publication "${operation}" was already used for a different request.`,
+                );
+            }
+            throw new Error(`Vehicle "${sourceVehicleId}" does not exist.`);
+        }
+        const sourceRevision = Number(source.revision || 0);
+        if (Number(expectedRevision) !== sourceRevision) {
+            throw new Error(`Vehicle manifest revision conflict: expected ${expectedRevision}, current revision is ${sourceRevision}.`);
+        }
+        if (sourceVehicleId === destinationVehicleId) return source;
+        const destination = await this.service.getVehicleManifest(destinationVehicleId);
+        if (destination) throw new Error(`Vehicle "${destinationVehicleId}" already exists.`);
+        const { registry } = await this.service._sensorRegistryForVehicle(source);
+        const normalized = normalizeVehicleManifest({ ...source, id: destinationVehicleId }, { sensorRegistry: registry });
+        const now = this.now().toISOString();
+        const stored = {
+            ...normalized,
+            revision: 1,
+            definitionHash: computeResolvedRunHash(normalized),
+            createdAt: source.createdAt ?? now,
+            updatedAt: now,
+        };
+        const requestHash = sha256(Buffer.from(canonicalStringify({
+            mode: "change-id",
+            sourceVehicleId,
+            destinationVehicleId,
+            expectedRevision: sourceRevision,
+            sourceDefinitionHash: source.definitionHash,
+        })));
+        if (receipt) {
+            if (receipt.requestHash !== requestHash) {
+                throw publicationError(
+                    VEHICLE_PUBLICATION_ERROR_CODES.CONFLICT,
+                    `Vehicle publication "${operation}" was already used for a different request.`,
+                );
+            }
+            return receipt.manifest;
+        }
+        const existing = await this._readJournal(operation);
+        if (existing) {
+            if (existing.requestHash !== requestHash) {
+                throw publicationError(
+                    VEHICLE_PUBLICATION_ERROR_CODES.CONFLICT,
+                    `Vehicle publication "${operation}" was already used for a different request.`,
+                );
+            }
+            await this._recoverIdChange(existing);
+            const resumed = await this._readReceipt(operation);
+            if (resumed) return resumed.manifest;
+        }
+
+        const snapshot = await this.service._readVehicleSnapshotUnlocked(sourceVehicleId);
+        const introduced = [];
+        for (const file of snapshot.files) {
+            const current = await this.service._readVehicleAssetIfPresent(destinationVehicleId, file.name);
+            if (current) {
+                if (sha256(current) !== file.sha256) {
+                    throw publicationError(
+                        VEHICLE_PUBLICATION_ERROR_CODES.IMMUTABLE,
+                        `Vehicle asset "${file.name}" is an immutable content-addressed member.`,
+                    );
+                }
+                continue;
+            }
+            introduced.push({
+                name: file.name,
+                sha256: file.sha256,
+                size: file.bytes.length,
+                source: { type: "vehicle", vehicleId: sourceVehicleId, name: file.name },
+            });
+        }
+        let journal = {
+            kind: JOURNAL_KIND,
+            version: 1,
+            operationId: operation,
+            requestHash,
+            mode: "change-id",
+            phase: "prepared",
+            vehicleId: destinationVehicleId,
+            sourceVehicleId,
+            destinationVehicleId,
+            expectedRevision: sourceRevision,
+            introduced,
+            resultRevision: stored.revision,
+            resultDefinitionHash: stored.definitionHash,
+            candidateManifest: stored,
+        };
+        await this._writeJournal(journal);
+        await injectFault(this.faults, "after-id-prepared");
+        for (const entry of introduced) {
+            const bytes = await this.service._readVehicleAssetUnlocked(sourceVehicleId, entry.name);
+            await this.service._putVehicleAssetUnlocked(destinationVehicleId, entry.name, bytes);
+        }
+        journal = { ...journal, phase: "assets-copied" };
+        await this._writeJournal(journal);
+        await injectFault(this.faults, "after-id-assets");
+        const written = await this.service._commitPreparedVehicleManifest(destinationVehicleId, stored, {
+            expectedRevision: 0,
+            create: true,
+        });
+        journal = { ...journal, phase: "destination-published", candidateManifest: written };
+        await this._writeJournal(journal);
+        await injectFault(this.faults, "after-id-manifest");
+        await this.service._deleteVehicleRecordUnlocked(sourceVehicleId);
+        journal = { ...journal, phase: "source-removed" };
+        await this._writeJournal(journal);
+        await injectFault(this.faults, "after-id-source");
+        const finished = await this._writeReceipt(journal, written);
+        await this._deleteJournal(operation);
+        return finished.manifest;
+    }
+
+    async _recoverIdChange(journal) {
+        const destination = await this.service.getVehicleManifest(journal.destinationVehicleId);
+        const ready = Boolean(destination)
+            && destination.id === journal.destinationVehicleId
+            && destination.revision === journal.resultRevision
+            && destination.definitionHash === journal.resultDefinitionHash;
+        if (!ready) {
+            await this._rollback({ ...journal, vehicleId: journal.destinationVehicleId });
+            await this._deleteJournal(journal.operationId);
+            return;
+        }
+        await this._ensureIntroduced({ ...journal, vehicleId: journal.destinationVehicleId });
+        await this.service._deleteVehicleRecordUnlocked(journal.sourceVehicleId);
+        await this._writeReceipt(journal, destination);
+        await this._deleteJournal(journal.operationId);
+    }
+
     async _recoverJournal(journal) {
+        if (journal.mode === "change-id") {
+            await this._recoverIdChange(journal);
+            return;
+        }
         const stored = await this.service.getVehicleManifest(journal.vehicleId);
         const matches = Boolean(stored)
             && stored.revision === journal.resultRevision

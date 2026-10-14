@@ -95,8 +95,17 @@ export function duplicateVehicleManifest(id, input) {
     return storagePost(`${collection}/${encodeURIComponent(id)}/duplicate`, input);
 }
 
-export function deleteVehicleManifest(id) {
-    return storageDelete(`${collection}/${encodeURIComponent(id)}`);
+export function renameVehicleManifest(id, { name, expectedRevision, operationId } = {}) {
+    return storagePost(`${collection}/${encodeURIComponent(id)}/rename`, { name, expectedRevision, operationId });
+}
+
+export function changeVehicleId(id, { id: nextId, expectedRevision, operationId } = {}) {
+    return storagePost(`${collection}/${encodeURIComponent(id)}/change-id`, { id: nextId, expectedRevision, operationId });
+}
+
+export function deleteVehicleManifest(id, expectedRevision) {
+    const query = expectedRevision === undefined ? "" : `?expectedRevision=${encodeURIComponent(expectedRevision)}`;
+    return storageDelete(`${collection}/${encodeURIComponent(id)}${query}`);
 }
 
 export function validateVehicleManifestOnServer(id, manifest) {

@@ -137,9 +137,11 @@ import {
     sortBackendSelections,
 } from "../../app/physics/PhysicsBackend.js";
 import {
+    BUILT_IN_VEHICLE_TYPES,
     VEHICLE_BUNDLE_KIND,
     VEHICLE_BUNDLE_VERSION,
     assertNoVehicleManifestDowngrade,
+    isValidVehicleId,
     normalizeVehicleManifest,
     validateVehicleManifest,
 } from "../../app/vehicles/VehicleManifest.js";
@@ -2917,6 +2919,9 @@ export class StorageService {
             if (destinationKey !== sourceKey) await this.vehiclePublications.recover(destinationKey);
             const source = await this._readVehicleSnapshotUnlocked(sourceKey);
             if (!source.manifest) throw new Error(`Vehicle "${sourceId}" does not exist.`);
+            if (input.expectedRevision !== undefined && Number(input.expectedRevision) !== Number(source.manifest.revision || 0)) {
+                throw new Error(`Vehicle manifest revision conflict: expected ${input.expectedRevision}, current revision is ${source.manifest.revision}.`);
+            }
             const { registry } = await this._sensorRegistryForVehicle(source.manifest);
             const duplicate = normalizeVehicleManifest({
                 ...source.manifest,
@@ -2945,17 +2950,73 @@ export class StorageService {
         });
     }
 
-    async deleteVehicleManifest(vehicleId) {
+    async deleteVehicleManifest(vehicleId, expectedRevision) {
         const id = safeSegment(vehicleId);
         return this._withVehicleWrite(id, async () => {
             await this.vehiclePublications.recover(id);
-            const filePath = this._vehiclePath(id);
-            this._stores.get(filePath)?.invalidate();
-            this._stores.delete(filePath);
-            await fs.rm(filePath, { force: true });
-            await fs.rm(this._vehicleAssetDir(id), { recursive: true, force: true });
+            const current = await this.getVehicleManifest(id);
+            if (!current) {
+                if (expectedRevision === undefined || Number(expectedRevision) === 0) return true;
+                throw new Error(`Vehicle manifest revision conflict: expected ${expectedRevision}, current revision is 0.`);
+            }
+            if (expectedRevision !== undefined && Number(expectedRevision) !== Number(current.revision || 0)) {
+                throw new Error(`Vehicle manifest revision conflict: expected ${expectedRevision}, current revision is ${current.revision}.`);
+            }
+            await this._deleteVehicleRecordUnlocked(id);
             return true;
         });
+    }
+
+    async renameVehicleManifest(vehicleId, { name, expectedRevision, operationId } = {}) {
+        const id = safeSegment(vehicleId);
+        const nextName = String(name ?? "").trim();
+        if (!nextName) throw new Error("Vehicle name is required.");
+        return this._withVehicleWrite(id, async () => {
+            await this.vehiclePublications.recover(id);
+            const current = await this.getVehicleManifest(id);
+            if (!current) throw new Error(`Vehicle "${id}" does not exist.`);
+            const { registry } = await this._sensorRegistryForVehicle(current);
+            const manifest = normalizeVehicleManifest({ ...current, name: nextName }, { sensorRegistry: registry });
+            return this.vehiclePublications.publishLocked({
+                mode: "save",
+                vehicleId: id,
+                manifest,
+                expectedRevision,
+                create: false,
+                operationId,
+                stageId: null,
+            });
+        });
+    }
+
+    async changeVehicleId(vehicleId, { id: nextId, expectedRevision, operationId } = {}) {
+        const sourceId = safeSegment(vehicleId);
+        const destinationId = String(nextId ?? "").trim();
+        if (!isValidVehicleId(destinationId)) {
+            throw new Error("Vehicle id must use lowercase letters, numbers, and single hyphens.");
+        }
+        safeSegment(destinationId);
+        if (BUILT_IN_VEHICLE_TYPES.includes(sourceId) || BUILT_IN_VEHICLE_TYPES.includes(destinationId)) {
+            throw new Error(`Built-in vehicle "${BUILT_IN_VEHICLE_TYPES.includes(sourceId) ? sourceId : destinationId}" cannot change its id.`);
+        }
+        return this._withVehicleWrites([sourceId, destinationId], async () => {
+            await this.vehiclePublications.recover(sourceId);
+            if (destinationId !== sourceId) await this.vehiclePublications.recover(destinationId);
+            return this.vehiclePublications.changeIdLocked({
+                sourceVehicleId: sourceId,
+                destinationVehicleId: destinationId,
+                expectedRevision,
+                operationId,
+            });
+        });
+    }
+
+    async _deleteVehicleRecordUnlocked(vehicleId) {
+        const filePath = this._vehiclePath(vehicleId);
+        this._stores.get(filePath)?.invalidate();
+        this._stores.delete(filePath);
+        await fs.rm(filePath, { force: true });
+        await fs.rm(this._vehicleAssetDir(vehicleId), { recursive: true, force: true });
     }
 
     async validateVehicleManifest(vehicleId, input = null) {

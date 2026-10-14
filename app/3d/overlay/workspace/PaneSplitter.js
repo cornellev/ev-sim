@@ -9,7 +9,7 @@ import { PANE_LIMITS, PANE_STEP } from "../../editor/workspace/paneLayout.js";
  * Arrow keys step ±8 px (Shift ±32), Home/End go to the minimum/maximum,
  * Enter or Space toggles the pane, double-click resets it.
  */
-export function PaneSplitter({ paneId, label, aria, onResize, onStep, onToggle, onReset, disabled = false, controls, className }) {
+export function PaneSplitter({ paneId, label, aria, onResize, onStep, onToggle, onReset, disabled = false, controls, className, idPrefix = "environment-pane" }) {
     const limits = PANE_LIMITS[paneId];
     const horizontal = limits.axis === "y";
     const dragRef = useRef(null);
@@ -67,7 +67,7 @@ export function PaneSplitter({ paneId, label, aria, onResize, onStep, onToggle, 
             aria-valuenow={aria.valuenow}
             aria-valuemin={aria.valuemin}
             aria-valuemax={aria.valuemax}
-            aria-controls={`environment-pane-${paneId}`}
+            aria-controls={`${idPrefix}-${paneId}`}
             aria-disabled={disabled || undefined}
             data-pane-splitter={paneId}
             onPointerDown={onPointerDown}

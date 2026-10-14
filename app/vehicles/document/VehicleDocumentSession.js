@@ -6,6 +6,7 @@ import { VehicleSelection } from "./VehicleSelection.js";
 import { applyAxlePatch, replaceManifest } from "./vehicleCommands.js";
 
 const VOLATILE = new Set(["revision", "definitionHash", "createdAt", "updatedAt"]);
+const COALESCE_MS = 750;
 
 function stripVolatile(manifest) {
     const copy = cloneJson(manifest);
@@ -17,15 +18,28 @@ function sameManifest(left, right) {
     return canonicalStringify(stripVolatile(left)) === canonicalStringify(stripVolatile(right));
 }
 
+function cloneStage(ref) {
+    return ref == null ? null : cloneJson(ref);
+}
+
+function sameStage(left, right) {
+    return canonicalStringify(left ?? null) === canonicalStringify(right ?? null);
+}
+
 /**
  * Draft session for one vehicle. History, gestures, and staged-resource
  * references stay here; they are not written into the manifest.
  */
 export class VehicleDocumentSession {
-    constructor({ manifest, revision = null, definitionHash = null, historyLimit = 100 } = {}) {
-        const normalized = normalizeVehicleManifest(manifest);
-        this.baseline = { manifest: cloneJson(normalized), revision, definitionHash };
-        this.draft = new VehicleDocument(normalized);
+    constructor({
+        manifest,
+        revision = null,
+        definitionHash = null,
+        historyLimit = 100,
+        normalizeOptions,
+        resolveNormalizeOptions = null,
+    } = {}) {
+        this.resolveNormalizeOptions = resolveNormalizeOptions ?? (() => normalizeOptions);
         this.selection = new VehicleSelection();
         this.history = [];
         this.redoStack = [];
@@ -33,29 +47,39 @@ export class VehicleDocumentSession {
         this.stagedResources = null;
         this.saveCapture = null;
         this.historyLimit = Math.max(1, historyLimit);
+        const normalized = normalizeVehicleManifest(manifest, this.normalizeOptions);
+        this.baseline = { manifest: cloneJson(normalized), revision, definitionHash };
+        this.draft = new VehicleDocument(normalized, this.normalizeOptions);
+    }
+
+    get normalizeOptions() {
+        return this.resolveNormalizeOptions() ?? undefined;
     }
 
     get dirty() {
         return !sameManifest(this.draft.snapshot(), this.baseline.manifest);
     }
 
-    execute(command) {
+    execute(command, options = {}) {
         if (this.gesture) {
             return { ok: false, issues: [{ code: "vehicle.session.gesture-active", path: "", message: "Finish the active gesture before running another command." }] };
         }
         if (!command || typeof command.run !== "function") {
             return { ok: false, issues: [{ code: "vehicle.session.command", path: "", message: "Commands must provide run(context)." }] };
         }
+        const normalizeOptions = this.normalizeOptions;
         const before = this.draft.snapshot();
+        const stagedBefore = cloneStage(this.stagedResources);
         const box = { manifest: cloneJson(before) };
         let staged = this.stagedResources;
         let stagedTouched = false;
         const issues = [];
         const context = {
             get manifest() { return box.manifest; },
-            setManifest(next) { box.manifest = normalizeVehicleManifest(next); },
+            setManifest(next) { box.manifest = normalizeVehicleManifest(next, normalizeOptions); },
             issue(code, path, message) { issues.push({ code, path, message }); },
             selection: this.selection.snapshot(),
+            normalizeOptions,
             get stagedResources() { return staged; },
             setStagedResources(ref) {
                 staged = ref;
@@ -75,16 +99,48 @@ export class VehicleDocumentSession {
                 review: result?.review,
             };
         }
-        if (stagedTouched) this.stagedResources = staged == null ? null : cloneJson(staged);
+        if (stagedTouched) this.stagedResources = cloneStage(staged);
         if (result?.history === false || sameManifest(before, box.manifest)) {
             return { ok: true, manifest: this.draft.snapshot(), issues: [], review: result?.review };
         }
         this.draft.commit(box.manifest);
-        this.history.push({ label: command.label ?? "Edit", before, after: this.draft.snapshot() });
-        this.redoStack = [];
-        this.trimHistory();
-        this.selection.prune(this.draft.snapshot());
-        return { ok: true, manifest: this.draft.snapshot(), issues: [], review: result?.review };
+        const now = options.now ?? Date.now();
+        const after = this.draft.snapshot();
+        const stagedAfter = cloneStage(this.stagedResources);
+        const last = this.history.at(-1);
+        const withinMs = options.withinMs ?? COALESCE_MS;
+        const coalesce = Boolean(options.coalesceKey)
+            && last?.coalesceKey === options.coalesceKey
+            && Number.isFinite(last.at)
+            && now - last.at <= withinMs;
+        if (coalesce) {
+            if (sameManifest(last.before, after) && sameStage(last.stagedBefore, stagedAfter)) {
+                this.history.pop();
+            } else {
+                last.after = after;
+                last.stagedAfter = stagedAfter;
+                last.at = now;
+                last.label = command.label ?? last.label;
+            }
+        } else {
+            this.history.push({
+                label: command.label ?? "Edit",
+                coalesceKey: options.coalesceKey ?? null,
+                at: now,
+                before,
+                after,
+                stagedBefore,
+                stagedAfter,
+            });
+            this.redoStack = [];
+            this.trimHistory();
+        }
+        this.selection.prune(after);
+        return { ok: true, manifest: after, issues: [], review: result?.review };
+    }
+
+    executeCoalesced(command, { key, withinMs = COALESCE_MS, now = Date.now() } = {}) {
+        return this.execute(command, { coalesceKey: key, withinMs, now });
     }
 
     undo() {
@@ -93,6 +149,7 @@ export class VehicleDocumentSession {
         if (!entry) return { ok: false, issues: [{ code: "vehicle.session.history", path: "", message: "Nothing to undo." }] };
         this.redoStack.push(entry);
         this.draft.restore(entry.before);
+        this.#restoreStage(entry, "stagedBefore");
         this.selection.prune(this.draft.snapshot());
         return { ok: true, manifest: this.draft.snapshot() };
     }
@@ -104,6 +161,7 @@ export class VehicleDocumentSession {
         this.history.push(entry);
         this.trimHistory();
         this.draft.restore(entry.after);
+        this.#restoreStage(entry, "stagedAfter");
         this.selection.prune(this.draft.snapshot());
         return { ok: true, manifest: this.draft.snapshot() };
     }
@@ -118,9 +176,10 @@ export class VehicleDocumentSession {
             label,
             axle,
             capture: this.draft.snapshot(),
+            stagedBefore: cloneStage(this.stagedResources),
             dirty: false,
         };
-        return { ok: true, gesture: { ...this.gesture, capture: undefined } };
+        return { ok: true, gesture: { id: this.gesture.id, kind, label, axle } };
     }
 
     previewGesture(patch = {}) {
@@ -130,7 +189,11 @@ export class VehicleDocumentSession {
         if (this.gesture.kind !== "axle") {
             return { ok: false, issues: [{ code: "vehicle.session.gesture-unsupported", path: "", message: `Gesture "${this.gesture.kind}" cannot be previewed.` }] };
         }
-        const applied = applyAxlePatch(this.gesture.capture, { axle: this.gesture.axle, patch });
+        const applied = applyAxlePatch(this.gesture.capture, {
+            axle: this.gesture.axle,
+            patch,
+            normalizeOptions: this.normalizeOptions,
+        });
         if (!applied.ok) {
             this.draft.preview(this.gesture.capture);
             this.gesture.dirty = false;
@@ -145,11 +208,18 @@ export class VehicleDocumentSession {
         if (!this.gesture) {
             return { ok: false, issues: [{ code: "vehicle.session.gesture-inactive", path: "", message: "No gesture is active." }] };
         }
-        const { capture, label } = this.gesture;
+        const { capture, label, stagedBefore } = this.gesture;
         const after = this.draft.snapshot();
         this.gesture = null;
         if (sameManifest(capture, after)) return { ok: true, empty: true, manifest: after };
-        this.history.push({ label, before: capture, after });
+        this.history.push({
+            label,
+            before: capture,
+            after,
+            stagedBefore,
+            stagedAfter: cloneStage(this.stagedResources),
+            at: Date.now(),
+        });
         this.redoStack = [];
         this.trimHistory();
         this.draft.generation += 1;
@@ -195,13 +265,13 @@ export class VehicleDocumentSession {
         if (this.dirty || this.gesture || this.saveCapture) {
             return { ok: false, code: "vehicle.session.dirty" };
         }
-        const normalized = normalizeVehicleManifest(stored);
+        const normalized = normalizeVehicleManifest(stored, this.normalizeOptions);
         this.baseline = {
             manifest: cloneJson(normalized),
             revision: stored?.revision ?? null,
             definitionHash: stored?.definitionHash ?? null,
         };
-        this.draft = new VehicleDocument(normalized);
+        this.draft = new VehicleDocument(normalized, this.normalizeOptions);
         this.history = [];
         this.redoStack = [];
         this.selection.prune(normalized);
@@ -226,10 +296,15 @@ export class VehicleDocumentSession {
         } catch (error) {
             return { ok: false, issues: [{ code: "vehicle.manifest.json", path: "", message: error.message }] };
         }
-        return this.execute(replaceManifest(parsed));
+        return this.execute(replaceManifest(parsed, this.normalizeOptions));
     }
 
     trimHistory() {
         while (this.history.length > this.historyLimit) this.history.shift();
+    }
+
+    #restoreStage(entry, key) {
+        if (!entry || !Object.hasOwn(entry, key)) return;
+        this.stagedResources = cloneStage(entry[key]);
     }
 }
