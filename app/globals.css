@@ -1224,6 +1224,44 @@ html[data-perspective-view="idle"] #canvas-container canvas {
   gap: var(--space-4);
 }
 
+.sf-switch-row:has(.sf-switch-copy) {
+  min-height: 36px;
+  border: 1px solid var(--slate-border-70);
+  border-radius: var(--radius);
+  background: var(--slate-surface-2);
+  padding: 7px 10px;
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-out-ui), border-color var(--duration-fast) var(--ease-out-ui);
+}
+
+.sf-switch-row:has(.sf-switch-copy):hover:not(:has(.sf-switch:disabled)) {
+  border-color: var(--slate-border);
+}
+
+.sf-switch-row:has(.sf-switch-copy):focus-within {
+  border-color: var(--slate-ring);
+  outline: 2px solid var(--slate-ring);
+  outline-offset: 1px;
+}
+
+.sf-switch-row:has(.sf-switch-copy) .sf-switch:focus-visible {
+  outline: none;
+}
+
+.sf-switch-row:has(.sf-switch-copy):not(.sf-switch-row--status) .sf-switch:not([data-state="checked"]) {
+  background: var(--slate-bg);
+}
+
+.sf-switch-row:has(.sf-switch-copy):has(.sf-switch:disabled),
+.sf-switch-row:has(.sf-switch-copy):has(.sf-switch:disabled) .sf-switch-copy,
+.sf-switch-row:has(.sf-switch-copy):has(.sf-switch:disabled) .sf-switch {
+  cursor: not-allowed;
+}
+
+.sf-switch-row:has(.sf-switch-copy):has(.sf-switch:disabled) {
+  opacity: 0.5;
+}
+
 .sf-switch-copy {
   display: grid;
   flex: 1;
@@ -1739,6 +1777,10 @@ html[data-perspective-view="idle"] #canvas-container canvas {
   font-size: 11px;
   font-weight: 500;
   line-height: 1.35;
+}
+
+.sf-workspace-menu__setting {
+  padding: 4px 10px 8px;
 }
 
 .sf-workspace-menu__items {
@@ -2300,10 +2342,13 @@ body [class~="uppercase"] {
   .sf-button,
   .sf-icon-button,
   .sf-input,
+  .sf-switch-row,
   .sf-switch,
   .sf-switch__thumb,
   .sf-segmented__item,
   .sf-tabs__trigger,
+  .sf-disclosure__chevron,
+  .sf-accordion__chevron,
   .sf-environment-picker__tile,
   .sf-environment-switcher__chevron {
     transition-duration: 0ms;
@@ -2334,15 +2379,209 @@ body [class~="uppercase"] {
 
 .hide-scrollbar::-webkit-scrollbar { display: none; }
 
+.vehicle-plan {
+  color: var(--slate-fg-2);
+  font-family: inherit;
+}
+
+.vehicle-plan text {
+  font-size: 11px;
+  fill: currentColor;
+}
+
+.vehicle-plan__frame,
+.vehicle-plan__origin,
+.vehicle-plan__dimension {
+  stroke: currentColor;
+  stroke-opacity: 0.4;
+  fill: none;
+}
+
+.vehicle-plan__dimension text,
+.vehicle-plan__origin text,
+.vehicle-plan__frame text {
+  stroke: none;
+  fill: currentColor;
+  font-size: 10px;
+}
+
+.vehicle-plan__simulator {
+  color: #8eb4e8;
+  stroke: #8eb4e8;
+}
+
+.vehicle-plan__ackermann {
+  color: #d2b48c;
+  stroke: #d2b48c;
+}
+
+.vehicle-plan__radius {
+  fill: none;
+  stroke-dasharray: 1.5 3;
+}
+
+.vehicle-plan__wheel {
+  fill: currentColor;
+  fill-opacity: 0.18;
+  stroke: currentColor;
+  stroke-opacity: 0.7;
+}
+
+.vehicle-plan__wheel--steer {
+  stroke: #8eb4e8;
+}
+
+.vehicle-plan__wheel--locked {
+  stroke-dasharray: 3 2;
+  opacity: 0.75;
+}
+
 .vehicle-plan__handle {
-  cursor: grab;
+  fill: var(--slate-fg);
+}
+
+.vehicle-plan__handle--axle {
+  cursor: ns-resize;
+}
+
+.vehicle-plan__handle--track {
+  cursor: ew-resize;
+}
+
+.vehicle-plan__handle--locked {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 .vehicle-plan__handle:focus-visible {
   outline: 2px solid var(--slate-fg);
 }
 
+.vehicle-plan__badge {
+  font-size: 10px;
+  fill: var(--slate-fg);
+}
+
+.vehicle-plan__legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.vehicle-plan__legend::before {
+  content: "";
+  width: 14px;
+  height: 0;
+  border-top: 2px solid currentColor;
+}
+
+.vehicle-plan__legend--simulator {
+  color: #8eb4e8;
+}
+
+.vehicle-plan__legend--ackermann {
+  color: #d2b48c;
+}
+
+.vehicle-plan__legend--ackermann::before {
+  border-top-style: dashed;
+}
+
+.vehicle-plan__footprint {
+  fill: #8eb4e8;
+  fill-opacity: 0.28;
+  stroke: #8eb4e8;
+  stroke-opacity: 0.7;
+  stroke-width: 1;
+}
+
+.vehicle-plan__path {
+  fill: #6eae9a;
+  fill-opacity: 0.22;
+  stroke: #6eae9a;
+  stroke-opacity: 0.75;
+  stroke-width: 1;
+}
+
+.vehicle-plan__legend--footprint {
+  color: #8eb4e8;
+}
+
+.vehicle-plan__legend--path {
+  color: #6eae9a;
+}
+
+.vehicle-plan__legend--footprint::before,
+.vehicle-plan__legend--path::before {
+  width: 10px;
+  height: 8px;
+  border: 1px solid currentColor;
+  background: color-mix(in srgb, currentColor 35%, transparent);
+}
+
 .vehicle-plan__label {
   font-size: 11px;
   fill: currentColor;
+}
+
+.sf-disclosure,
+.sf-accordion {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sf-disclosure__trigger,
+.sf-accordion__trigger {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--slate-border-60);
+  border-radius: var(--radius);
+  background: var(--slate-surface-1);
+  padding: 8px 10px;
+  color: var(--slate-fg-2);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sf-disclosure__trigger:hover,
+.sf-accordion__trigger:hover {
+  background: var(--slate-surface-2);
+}
+
+.sf-disclosure__detail,
+.sf-accordion__detail {
+  margin-left: auto;
+  color: var(--slate-muted);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.sf-disclosure__chevron,
+.sf-accordion__chevron {
+  flex: none;
+  transition: transform 150ms ease;
+}
+
+.sf-disclosure__trigger[data-state="open"] .sf-disclosure__chevron,
+.sf-accordion__trigger[data-state="open"] .sf-accordion__chevron {
+  transform: rotate(180deg);
+}
+
+.sf-disclosure__content,
+.sf-accordion__content {
+  padding: 0 2px 4px;
+}
+
+.sf-accordion__item {
+  border: 0;
+}
+
+.sf-accordion__header {
+  margin: 0;
 }

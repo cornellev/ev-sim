@@ -21,6 +21,7 @@ const COLORS = {
     gridCenter: 0x3f3f46,
     wheel: 0x18181b,
     wheelSteerable: 0x0c4a6e,
+    wheelLink: 0x38bdf8,
     boundingBox: 0x38bdf8,
     egoCenter: 0x34d399,
     zone: 0x34d399,
@@ -39,13 +40,19 @@ export class VehicleStudio {
      *   onTransform?: (selection: {kind: string, id: string|null}, transform: {position: {x,y,z}, rotation: {x,y,z}}) => void,
      *   onSelect?: (selection: {kind: string, id: string|null} | null) => void,
      *   onPlacementCommit?: (selection: {kind: string, id: string|null}, transform: {position: {x,y,z}, rotation: {x,y,z}}) => void,
+     *   onWheelDragStart?: (selection: {kind: "wheel", id: string}) => void,
+     *   onWheelDragEnd?: (selection: {kind: "wheel", id: string}) => void,
+     *   onWheelDragCancel?: () => void,
      * }} callbacks
      */
-    constructor(container, { onTransform, onSelect, onPlacementCommit, onModelLease, sensorRuntime = sensorRuntimeRegistry, modelLoader = null } = {}) {
+    constructor(container, { onTransform, onSelect, onPlacementCommit, onWheelDragStart, onWheelDragEnd, onWheelDragCancel, onModelLease, sensorRuntime = sensorRuntimeRegistry, modelLoader = null } = {}) {
         this.container = container;
         this.onTransform = onTransform;
         this.onSelect = onSelect;
         this.onPlacementCommit = onPlacementCommit;
+        this.onWheelDragStart = onWheelDragStart;
+        this.onWheelDragEnd = onWheelDragEnd;
+        this.onWheelDragCancel = onWheelDragCancel;
         this.onModelLease = onModelLease;
         this.sensorRuntime = sensorRuntime;
 
@@ -92,6 +99,7 @@ export class VehicleStudio {
         this.gizmo.addEventListener("mouseDown", () => {
             this.orbit.enabled = false;
             this._beginPlacementDrag();
+            this._beginWheelDrag();
         });
         this.gizmo.addEventListener("mouseUp", () => {
             this.orbit.enabled = true;
@@ -100,6 +108,7 @@ export class VehicleStudio {
                 : null;
             const snapBoundWheel = selectedWheel?.visual?.kind === "model-node" && !this._placementDrag;
             this._finishPlacementDrag();
+            this._finishWheelDrag();
             if (snapBoundWheel) {
                 queueMicrotask(() => {
                     if (!this._disposed && this._manifest) this.setManifest(this._manifest, this._modelUrl, this._stagedResources);
@@ -153,6 +162,9 @@ export class VehicleStudio {
         this._modelRest = null;
         this._presentationSuspended = false;
         this._placementDrag = null;
+        this._wheelDrag = null;
+        this._cancelWheelDrag = false;
+        this._linkedWheelId = null;
         this._loadToken = 0;
         this._disposed = false;
 
@@ -225,6 +237,7 @@ export class VehicleStudio {
         if (this._presentationSuspended && !this._placementDrag) this._presentationSuspended = false;
         this._syncModel(manifest, modelUrl, this._stagedResources ?? null);
         if (!this._canonical || this._presentationSuspended) this._syncWheels(manifest.wheels);
+        this._applyWheelLinkTint();
         this._syncSensors(manifest.sensors);
         this._syncBody(manifest);
         this._syncZone(manifest.lidarZone);
@@ -306,6 +319,7 @@ export class VehicleStudio {
                             this._pendingBoundingBox,
                         );
                         if (this._manifest) this._syncWheels(this._manifest.wheels);
+                        this._applyWheelLinkTint();
                     }
                     if (this._selection) this.setSelection(this._selection);
                 }).catch((error) => {
@@ -374,6 +388,7 @@ export class VehicleStudio {
         this._canonical = true;
         this._presentationSuspended = false;
         this._applySteeringPreview();
+        this._applyWheelLinkTint();
     }
 
     _suspendPresentation() {
@@ -400,6 +415,51 @@ export class VehicleStudio {
         return (this._manifest?.wheels ?? []).some((wheel) => wheel.visual?.kind === "model-node");
     }
 
+    _beginWheelDrag() {
+        if (this.gizmo.mode !== "translate" || this._selection?.kind !== "wheel") return;
+        const wheel = this._manifest?.wheels?.find((entry) => entry.id === this._selection.id);
+        if (!wheel || wheel.visual?.kind === "model-node") return;
+        this._wheelDrag = { kind: "wheel", id: wheel.id };
+        this.onWheelDragStart?.(this._wheelDrag);
+    }
+
+    _finishWheelDrag() {
+        const drag = this._wheelDrag;
+        this._wheelDrag = null;
+        if (!drag) return;
+        if (this._cancelWheelDrag) this.onWheelDragCancel?.();
+        else this.onWheelDragEnd?.(drag);
+    }
+
+    /** End a wheel-gizmo drag without committing it. */
+    cancelDrag() {
+        this._cancelWheelDrag = true;
+        if (this.gizmo.dragging && this.gizmo.object) {
+            this.gizmo.reset();
+            this.gizmo.pointerUp(null);
+        }
+        if (this._wheelDrag) this._finishWheelDrag();
+        this._cancelWheelDrag = false;
+        this.orbit.enabled = true;
+    }
+
+    setLinkedWheel(id) {
+        this._linkedWheelId = id || null;
+        this._applyWheelLinkTint();
+    }
+
+    _applyWheelLinkTint() {
+        const linkedId = this._linkedWheelId;
+        for (const child of this.wheelsGroup?.children ?? []) {
+            const mesh = child.isMesh ? child : child.children?.find((entry) => entry.isMesh);
+            const material = mesh?.material;
+            if (!material?.emissive) continue;
+            const linked = child.userData.pick?.id === linkedId;
+            material.emissive.setHex(linked ? COLORS.wheelLink : 0x000000);
+            material.emissiveIntensity = linked ? 0.55 : 0;
+        }
+    }
+
     _beginPlacementDrag() {
         const kind = this._selection?.kind;
         if (!this._canonical || !this._hasBoundWheels() || (kind !== "model" && kind !== "body")) return;
@@ -416,6 +476,7 @@ export class VehicleStudio {
     }
 
     _onGizmoChange() {
+        if (this._cancelWheelDrag) return;
         const drag = this._placementDrag;
         if (drag?.kind === "body" && this._modelObject && drag.modelPosition) {
             this._modelObject.position.set(

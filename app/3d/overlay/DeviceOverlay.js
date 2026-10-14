@@ -302,7 +302,6 @@ export function DeviceOverlay({
                         label="Enabled"
                         checked={enabled}
                         tone="status"
-                        className="rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-900/85 px-2 py-1.5"
                         aria-label={`${device.name} enabled`}
                         onCheckedChange={(next) => {
                             setEnabledState({ device, enabled: next });

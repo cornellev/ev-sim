@@ -359,7 +359,7 @@ export function ObjectInspector({ data }) {
                 </p>
             )}
             {showAdvancedSwitch && (
-                <div className="border-b border-[var(--slate-border-60)] px-2 py-1 [&_.sf-switch-row]:min-h-0 [&_.sf-switch-copy__label]:text-[12px]">
+                <div className="border-b border-[var(--slate-border-60)] px-2 py-1 [&_.sf-switch-copy__label]:text-[12px]">
                     <AdvancedSwitch />
                 </div>
             )}

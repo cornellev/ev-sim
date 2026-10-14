@@ -68,12 +68,13 @@ export function useAuthoringMode() {
     return useContext(AuthoringModeContext);
 }
 
-export function AdvancedSwitch({ className = "" }) {
+export function AdvancedSwitch({ className = "", description = "" }) {
     const { advanced, setAdvanced } = useAuthoringMode();
     return (
         <Switch
             className={className}
             label="Advanced"
+            description={description || undefined}
             checked={advanced}
             onCheckedChange={setAdvanced}
         />

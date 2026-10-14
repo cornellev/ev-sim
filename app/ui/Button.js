@@ -13,11 +13,12 @@ export const Button = forwardRef(function Button({
     size = "default",
     loading = false,
     disabled,
+    tooltip,
     type = "button",
     ...props
 }, ref) {
     const Component = asChild ? Slot.Root : "button";
-    return (
+    const button = (
         <Component
             ref={ref}
             className={cx("sf-button", `sf-button--${variant}`, `sf-button--${size}`, className)}
@@ -34,6 +35,21 @@ export const Button = forwardRef(function Button({
                 </>
             )}
         </Component>
+    );
+    if (!tooltip) return button;
+    const trigger = disabled
+        ? <span className="inline-flex" title={tooltip}>{button}</span>
+        : button;
+    return (
+        <Tooltip.Root>
+            <Tooltip.Trigger asChild>{trigger}</Tooltip.Trigger>
+            <Tooltip.Portal>
+                <Tooltip.Content className="sf-tooltip" sideOffset={7}>
+                    {tooltip}
+                    <Tooltip.Arrow className="sf-tooltip__arrow" />
+                </Tooltip.Content>
+            </Tooltip.Portal>
+        </Tooltip.Root>
     );
 });
 

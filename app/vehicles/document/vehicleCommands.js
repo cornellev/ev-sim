@@ -273,38 +273,148 @@ export function editWheel({ wheelId, patch }) {
     });
 }
 
+function pairByRole(wheels, axle) {
+    const left = wheels.find((wheel) => wheel.axle === axle && wheel.side === "left")
+        ?? wheels.find((wheel) => wheel.id === `${axle}-left`);
+    const right = wheels.find((wheel) => wheel.axle === axle && wheel.side === "right")
+        ?? wheels.find((wheel) => wheel.id === `${axle}-right`);
+    return { left, right };
+}
+
+function adoptPair(manifest, axle) {
+    const wheels = manifest.wheels ?? [];
+    const { left, right } = pairByRole(wheels, axle);
+    const proposal = proposeStandardPair(left, right, { axle });
+    if (!proposal.withinTolerance || !proposal.proposed) {
+        return { ok: false, issues: proposal.issues };
+    }
+    const next = cloneJson(manifest);
+    next.version = VEHICLE_MANIFEST_VERSION_V3;
+    for (const wheel of next.wheels) {
+        if (wheel.id !== left.id && wheel.id !== right.id) continue;
+        const side = wheel.id === left.id ? "left" : "right";
+        const sign = side === "left" ? 1 : -1;
+        wheel.position = {
+            x: proposal.proposed.x,
+            y: proposal.proposed.y,
+            z: canonicalFiniteNumber(sign * proposal.proposed.z),
+        };
+        wheel.radius = proposal.proposed.radius;
+        wheel.width = proposal.proposed.width;
+        wheel.steerable = proposal.proposed.steerable === true;
+        wheel.axle = axle;
+        wheel.side = side;
+    }
+    return { ok: true, manifest: withWheelbase(next), issues: [] };
+}
+
 export function adoptStandardPair({ axle, acceptAdjustments = false }) {
     return command(`Adopt ${axle} axle`, (context) => {
         if (!acceptAdjustments) {
             context.issue("vehicle.axle.asymmetric", "wheels", "Accept the proposed axle adjustments before applying them.");
             return { ok: false };
         }
-        const wheels = context.manifest.wheels ?? [];
-        const left = wheels.find((wheel) => wheel.axle === axle && wheel.side === "left")
-            ?? wheels.find((wheel) => wheel.id === `${axle}-left`);
-        const right = wheels.find((wheel) => wheel.axle === axle && wheel.side === "right")
-            ?? wheels.find((wheel) => wheel.id === `${axle}-right`);
-        const proposal = proposeStandardPair(left, right, { axle });
-        if (!proposal.withinTolerance || !proposal.proposed) {
-            for (const entry of proposal.issues) context.issue(entry.code, entry.path, entry.message);
+        const applied = adoptPair(context.manifest, axle);
+        if (!applied.ok) {
+            for (const entry of applied.issues) context.issue(entry.code, entry.path, entry.message);
             return { ok: false };
         }
+        context.setManifest(applied.manifest);
+        return { ok: true };
+    });
+}
+
+/** Adopt every named front/rear pair in one undo step. */
+export function adoptStandardAxles({ axles = ["front", "rear"] } = {}) {
+    return command("Group standard axles", (context) => {
+        let current = context.manifest;
+        let changed = false;
+        for (const axle of axles) {
+            const wheels = current.wheels ?? [];
+            const left = wheels.find((wheel) => wheel.id === `${axle}-left`);
+            const right = wheels.find((wheel) => wheel.id === `${axle}-right`);
+            if (!left || !right) continue;
+            if (left.axle === axle && right.axle === axle && left.side === "left" && right.side === "right") continue;
+            const applied = adoptPair(current, axle);
+            if (!applied.ok) {
+                for (const entry of applied.issues) context.issue(entry.code, entry.path, entry.message);
+                return { ok: false };
+            }
+            current = applied.manifest;
+            changed = true;
+        }
+        if (!changed) return { ok: true, history: false };
+        context.setManifest(current);
+        return { ok: true };
+    });
+}
+
+export function classifyWheel({ wheelId, axle = null, side = null }) {
+    return command("Classify wheel", (context) => {
         const next = cloneJson(context.manifest);
+        const wheel = next.wheels.find((entry) => entry.id === wheelId);
+        if (!wheel) {
+            context.issue("vehicle.wheel.missing", "wheels", `Wheel "${wheelId}" does not exist.`);
+            return { ok: false };
+        }
+        if (wheel.visual?.kind === "model-node") {
+            context.issue("vehicle.axle.geometry-locked", "wheels", "Detach the model-bound wheel before changing its axle.");
+            return { ok: false };
+        }
+        if (!axle && !side) {
+            const previous = wheel.axle;
+            delete wheel.axle;
+            delete wheel.side;
+            if (previous) {
+                const remaining = next.wheels.filter((entry) => entry.axle === previous);
+                const complete = remaining.length === 2
+                    && remaining.some((entry) => entry.side === "left")
+                    && remaining.some((entry) => entry.side === "right");
+                if (!complete) {
+                    for (const entry of remaining) {
+                        delete entry.axle;
+                        delete entry.side;
+                    }
+                }
+            }
+            context.setManifest(withWheelbase(next));
+            return { ok: true };
+        }
+        if ((axle !== "front" && axle !== "rear") || (side !== "left" && side !== "right")) {
+            context.issue("vehicle.axle.incomplete-pair", "wheels", "Choose a front or rear side.");
+            return { ok: false };
+        }
+        const occupied = next.wheels.find((entry) => entry.id !== wheel.id && entry.axle === axle && entry.side === side);
+        if (occupied) {
+            context.issue("vehicle.axle.incomplete-pair", "wheels", `${axle} ${side} is already assigned to ${occupied.id}.`);
+            return { ok: false };
+        }
+        wheel.axle = axle;
+        wheel.side = side;
+        wheel.steerable = axle === "front";
+        wheel.position = {
+            ...wheel.position,
+            z: canonicalFiniteNumber((side === "left" ? 1 : -1) * Math.abs(wheel.position.z)),
+        };
         next.version = VEHICLE_MANIFEST_VERSION_V3;
-        for (const wheel of next.wheels) {
-            if (wheel.id !== left.id && wheel.id !== right.id) continue;
-            const side = wheel.id === left.id ? "left" : "right";
-            const sign = side === "left" ? 1 : -1;
-            wheel.position = {
-                x: proposal.proposed.x,
-                y: proposal.proposed.y,
-                z: canonicalFiniteNumber(sign * proposal.proposed.z),
-            };
-            wheel.radius = proposal.proposed.radius;
-            wheel.width = proposal.proposed.width;
-            wheel.steerable = proposal.proposed.steerable === true;
-            wheel.axle = axle;
-            wheel.side = side;
+        const pair = axlePair(next.wheels, axle);
+        if (pair.left && pair.right && pair.members.length === 2) {
+            const proposal = proposeStandardPair(pair.left, pair.right, { axle });
+            if (!proposal.withinTolerance || !proposal.proposed) {
+                for (const entry of proposal.issues) context.issue(entry.code, entry.path, entry.message);
+                return { ok: false };
+            }
+            for (const member of [pair.left, pair.right]) {
+                const sign = member.side === "left" ? 1 : -1;
+                member.position = {
+                    x: proposal.proposed.x,
+                    y: proposal.proposed.y,
+                    z: canonicalFiniteNumber(sign * proposal.proposed.z),
+                };
+                member.radius = proposal.proposed.radius;
+                member.width = proposal.proposed.width;
+                member.steerable = proposal.proposed.steerable === true;
+            }
         }
         context.setManifest(withWheelbase(next));
         return { ok: true };

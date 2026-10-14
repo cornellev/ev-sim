@@ -1,7 +1,7 @@
 # Vehicle editor plan
 
 This document records the vehicle-editor program decisions that are in force.
-VEH-01 through VEH-08 are implemented.
+VEH-01 through VEH-09 are implemented.
 
 ## Status
 
@@ -13,8 +13,9 @@ VEH-01 through VEH-08 are implemented.
   guarded migration.
 - Implemented: **VEH-04** — placed-node measurement, wheel binding commands,
   bound-wheel rendering, and the assignment dialog.
-- Implemented: **VEH-05** — the XZ plan, one-undo axle gestures, and ideal
-  visual yaw for a version 3 standard front axle.
+- Implemented: **VEH-05** — the XZ plan, one-undo axle gestures, ideal
+  visual yaw for a version 3 standard front axle, the full-lock footprint,
+  and the tightest-turn wheel paths.
 - Implemented: **VEH-06** — local URDF import into a canonical vehicle GLB,
   reviewed axle acceptance, and articulated URDF export.
 - Implemented: **VEH-07** — public GitHub URDF acquisition. Inspect and fetch
@@ -22,6 +23,11 @@ VEH-01 through VEH-08 are implemented.
   assets.
 - Implemented: **VEH-08** — vehicle workspace chrome, the catalog dialog, and
   create, apply, and export through the document session.
+- Implemented: **VEH-09** — identity ledger, publication and marketplace
+  acceptance, headless trajectory pins, and the characterization digest.
+  `tests/ui/vehicle-acceptance.spec.js` covers the workspace keyboard, dirty
+  id guard, save conflict, dialog focus, and axe cases. Playwright was not
+  run for this close.
 - Built-in projections stay version 2. `createDefaultVehicleManifest()` stays
   version 2. New blanks created through publication are version 3. The editor
   publishes model replacement through a stage. The legacy asset upload route
@@ -172,8 +178,10 @@ Marketplace `publish-vehicle-asset` writes `vehicle-publication-intake/`,
 which resolution does not hash. `publish-vehicle` promotes that intake and
 writes the manifest in the same transaction.
 
-`createBlankVehicleManifest()` is the version 3 blank. Its definition hash is
-`54025fcb83fb359f6e60cb8c86c7107f717274b4d36afddf36e7c7767b05a47e`. The editor's
+`createBlankVehicleManifest()` is the version 3 blank. Its named wheels are a
+standard front and rear axle, so a new vehicle can use the plan handles
+without a JSON edit. Its definition hash is
+`03716fbb799f0e92e5c7295f6f710f4dc2888e0fdc39a7d4d1921b29ffdc1d56`. The editor's
 New action publishes that blank. `createDefaultVehicleManifest()` and the
 pinned version 2 hash are unchanged. A committed migration writes
 `vehicle-migrations/<id>.pre-v3.json` once, after the manifest is durable.
@@ -252,21 +260,27 @@ bindings and hidden indexes in that undo entry.
 
 Ideal Ackermann is a separate illustration. It uses the authored rear axle, `L_g = front.x − rear.x`, and the center `(rear.x, −R_a)`. It is available only for a version 3 front and rear pair with `L_g > 0`. The wheel yaw is `atan2(L_g × sign(lateral), abs(lateral))`, which stays in `(−π/2, π/2)` so a negative command mirrors the positive one instead of wrapping toward π. When `|R_a|` is at or inside the half-track, the inner ray is omitted and the visual yaw falls back to the shared angle. Neither construction is a swept path, and neither changes `KinematicVehiclePlant`.
 
+The full-lock footprint and the tightest-turn wheel path are further illustrations. They do not change either construction. The footprint is the plan rectangle of each steerable wheel, sampled from `visualWheelYaws` across `±steeringLimit`. A yaw gap larger than 0.5 rad between adjacent samples is a discontinuity and is not filled. The wheel path holds that rectangle at the visual yaw for `±steeringLimit` and sweeps it about the simulator center. Fixed wheels are omitted.
+
 ### VEH-05b — plan projection
 
-`projectVehiclePlan` freezes the body, standard axles, unclassified wheels, stored and derived wheelbase, both constructions, and named diagnostics: straight, steering-clamped, extreme-angle, ackermann-singular, ackermann-unavailable, and geometry-locked. `layoutVehiclePlan` maps +X up and +Z left. The fit includes the body, the wheels, and the origin. It does not include the turn center, so a large radius does not zoom the vehicle out. Arc endpoints are clipped into the padded view while the record keeps the true meter radius.
+`projectVehiclePlan` freezes the body, standard axles, unclassified wheels, stored and derived wheelbase, per-wheel yaw, both constructions, the full-lock footprints, both lock centers, and named diagnostics: straight, steering-clamped, extreme-angle, ackermann-singular, ackermann-unavailable, geometry-locked, and origin-offset. Origin-offset is reported only while the vehicle is turning and the rear axle is not on the origin. `layoutVehiclePlan` maps +X up and +Z left, and one meter is the same length on both axes. The default fit includes the body, the wheels, the origin, and the full-lock footprint. It does not include the turn center or the tightest-turn paths, so a large radius does not zoom the vehicle out. The Turn fit includes the preview center and both full-lock centers, capped at three times the vehicle span. Arc samples are split into contiguous in-view segments, so a gap is not drawn as a chord. Wheel paths are clipped to the padded view with the same rule. Each turning construction adds a center marker, clamped to the padded view with an arrow when it falls outside, and a dotted radius line. The displayed radius is the absolute value plus left or right. Positive wheel yaw is clockwise on the plan.
 
 ### VEH-05c — axle gestures
 
 The editor undo stack stays the page history. `createAxleGesture` previews `applyAxlePatch` from the captured manifest and does not push a second history. A preview writes the draft without `recordHistory`. Commit pushes the capture once. Cancel and Escape restore the capture. Undo during an open gesture cancels it and does not also undo the previous entry. Steering preview is view state and does not enter undo.
 
+### Wheel link
+
+A wheel link is editor-session state on `VehicleDocumentSession`. It is cleared when the vehicle is opened or discarded, pruned when either wheel disappears, and omitted from the manifest, undo entries, and hashes. Together copies a translation onto the partner. Mirror copies that translation with lateral motion flipped across the center plane (+Z left). The first move does not snap the partner onto a mirrored pose. A complete standard left/right pair always uses mirror when either wheel is translated in the 3D view, including the derived wheelbase. Together is refused for that pair. A model-bound wheel cannot be linked or driven, and a standard-axle wheel cannot be linked to a third wheel. Translate drags, position scrubs, and typed position edits share one wheel gesture and one undo step. A rejected preview restores the gesture capture. Plan axle and track handles are unchanged.
+
 ### VEH-05d — axle inspector
 
-A version 3 vehicle with a standard pair edits that axle as one card. Model-bound geometry stays read-only until detach. A complete version 3 wheelbase is a read-only field. Version 2 keeps the per-wheel list as the primary editor. Unclassified wheels on a version 3 vehicle that already has standard axles sit in Advanced. Built-in documents stay inside the disabled fieldset, and the plan handles receive `readOnly` because an SVG slider is not a form control.
+A version 3 vehicle with a standard pair edits that axle as one collapsed row. The row edits full track width, which the plan also shows, and maps it to half-track. Model-bound geometry stays disabled until detach. A complete version 3 wheelbase is a read-only field. Version 2 and any unclassified wheels stay in the same collapsible list, including when Advanced is off. `adoptStandardAxles` groups the named front and rear pairs in one undo step. `classifyWheel` sets one wheel's axle and side, and clears a partner that would be left alone. Built-in documents stay inside the disabled fieldset, and the plan handles receive `readOnly` because an SVG slider is not a form control.
 
 ### VEH-05e — plan view
 
-The wheels tab leads with the SVG plan. The simulator arc is solid and labelled “Simulator turn”. The Ackermann arc is dashed and labelled as an illustration referenced to the rear axle, not the predicted path. Axle and track handles are sliders. Arrow keys and pointer drags share one axle gesture. The steering range only changes the preview.
+The wheels tab leads with the SVG plan. The view box matches the pane, so the drawing is not stretched. The simulator arc is solid. The Ackermann arc is dashed and labelled as an illustration referenced to the rear axle, not the predicted path. Under those strokes, each steerable wheel draws a full-lock footprint and the ground path of the tightest turn in both directions. The footprint is the steerable blue. The path is a muted teal band about the simulator center, not the Ackermann center. A legend under the plot carries the absolute radius, the turn direction, the footprint, and the full-lock path. Axle and track handles are sliders, drawn clear of the wheel, and show a value while focused or dragged. Arrow keys and pointer drags share one axle gesture. The steering range is in degrees and only changes the preview. Reset sets that preview to zero and does not enter undo. Wheels and axles sit in a collapsed group; selecting a wheel expands its row.
 
 ### VEH-05f — visual yaw
 
@@ -327,4 +341,23 @@ The review dialog plans a local package or a GitHub inspect/fetch. Closing it ab
 ### VEH-08f — shortcuts and focus
 
 Save, undo, and redo are shortcut bindings at priority 30, above the environment bindings, because the environment scene stays mounted. Dialogs restore focus to the control that opened them. The dialog close control does not open a tooltip, so Escape dismisses the dialog itself. Vehicle pane splitters control `vehicle-pane-*`, matching the pane element ids. A revision conflict or an expired stage is shown in the top bar and does not replace the draft. The catalog listbox moves with the arrow keys. Layout and display preferences, stage ids, journals, and GitHub provenance stay out of semantic hashes.
+
+### VEH-09 — integrated acceptance
+
+VEH-09 adds no hash and no authoring surface. `tests/fixtures/vehicle-editor/identity.v1.json` pins the existing `computeResolvedRunHash` chain:
+
+- `big-car` `4c39469acfa250f98dfee99560ea646619aa65230415b39c6c31b46368f161af`
+- `igvc-car` `da17fa26f3a1243264747cfd718098a6f253d076af83c6d47d1f15d84e9da300`
+- `scenario-car` `ce16fe842506c8a9949d21b8d4a84444d7b57148cd923a44305a55cb06992eb7`
+- version 2 blank `d8c818fa23f12642a97d28e239410bbea42c8a043054796c2a28b3211911779d`
+- version 3 blank `03716fbb799f0e92e5c7295f6f710f4dc2888e0fdc39a7d4d1921b29ffdc1d56`
+- portable-truck bundle `9c093454c448845a3ade39417d175c3a89c0b11d217d368d197d57d60c0c50cd`
+
+`tests/fixtures/headless/characterization.v1.json` stays at SHA-256 `60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`. Protobuf v1, `KinematicVehiclePlant`, and the action tape are unchanged.
+
+Version 3 fields, a canonical asset closure, wheel suppression, and an acknowledged wheelbase change move `definitionHash`, the vehicle dependency hash, `bundleHash`, `resolvedHash`, `simulationSemanticHash`, and `episodeHash` through those existing algorithms. Stage ids, operation ids, journals, receipts, `vehicle-migrations/<id>.pre-v3.json`, GitHub source, pane layout, and the wheel link stay outside the hashed object. In-flight publication names stay hidden. Superseded asset files remain in the directory after migration. Marketplace intake is promoted by `publishLocked({ mode: "marketplace", useIntake: true })` and is not hashed. Repeating the same marketplace content returns `reused: true`. Plugin lock projection drops `packageHash` and keeps `runtimeHash`.
+
+A retried vehicle-bundle import with the same `operationId` returns the receipt manifest after recovery, before a conflicting id would be suffixed. That keeps the original publication when the preferred id already exists.
+
+`npm run lint` completed with zero errors and the three existing warnings. The focused identity, publication, marketplace, and headless acceptance tests passed. `npm test` passed 2147 tests with 7 skipped after the startup log check awaited `startup()`. `npm run test:headless` passed 117/117, `npm run test:lidar` passed 12/12, `npm run test:parity` passed, and `npm run test:marketplace` passed 156/156. `npm run fixtures:headless` left `characterization.v1.json` unchanged. Playwright was not run for this close.
 

@@ -506,6 +506,14 @@ compared with the committed characterization.
 
 ## Decision log
 
+### 2026-10-13 — VEH-09 leaves the headless contract unchanged
+
+Vehicle-editor acceptance does not change protobuf v1, `KinematicVehiclePlant`,
+`tests/fixtures/headless/action-tape.v1.json`, or
+`tests/fixtures/headless/characterization.v1.json`. The characterization
+SHA-256 remains
+`60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`.
+
 ### 2026-09-28 — Admit explicit frozen binding sources for editable templates
 
 MKT-11 adds optional `scripts.bindingSource: "embedded"` within the existing

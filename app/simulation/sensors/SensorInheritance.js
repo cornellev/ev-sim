@@ -33,12 +33,7 @@ export function applySensorInheritance(manifest, {
     if (!vehicleManifest) {
         return {
             manifest,
-            issues: [{
-                path: "sensorRig.inheritance",
-                message: vehicleId
-                    ? `Sensor inheritance requires vehicle "${vehicleId}".`
-                    : `Sensor inheritance requires a vehicle for actor "${actorId}".`,
-            }],
+            issues: [missingVehicleIssue(actorId, vehicleId)],
         };
     }
     const vehicleSensors = (Array.isArray(vehicleManifest.sensors) ? vehicleManifest.sensors : [])
@@ -65,16 +60,7 @@ export function applySensorInheritance(manifest, {
             message: `Inherited sensor "${sensor.inheritedFrom}" is no longer on the selected vehicle.`,
         };
     });
-    const seen = new Set();
-    sensors.forEach((sensor, index) => {
-        if (seen.has(sensor.id)) {
-            issues.push({
-                path: `sensorRig.sensors.${index}.id`,
-                message: `Duplicate id "${sensor.id}".`,
-            });
-        }
-        seen.add(sensor.id);
-    });
+    issues.push(...duplicateSensorIssues(sensors));
     return {
         manifest: {
             ...manifest,
@@ -97,6 +83,43 @@ export function enableSensorInheritance(manifest, vehicleManifest, options = {})
         },
     };
     return applySensorInheritance(linked, { ...options, vehicleManifest });
+}
+
+export function resetSensorsToParentVehicle(manifest, vehicleManifest, {
+    registry = sensorTypeRegistry,
+} = {}) {
+    if (manifest?.sensorRig?.inheritance?.mode !== "vehicle") {
+        return {
+            manifest,
+            issues: [{
+                path: "sensorRig.inheritance",
+                message: "Turn on vehicle sensor inheritance before resetting.",
+            }],
+        };
+    }
+    const { actorId, vehicleId } = resolveInheritedVehicleSelection(manifest);
+    if (!vehicleManifest) {
+        return {
+            manifest,
+            issues: [missingVehicleIssue(actorId, vehicleId)],
+        };
+    }
+    const vehicleSensors = (Array.isArray(vehicleManifest.sensors) ? vehicleManifest.sensors : [])
+        .map((sensor, index) => normalizeVehicleSensor(sensor, index, registry));
+    const sensors = vehicleSensors.map((vehicleSensor) => (
+        projectInheritedSensor(vehicleSensor, null, actorId, registry)
+    ));
+    return {
+        manifest: {
+            ...manifest,
+            sensorRig: {
+                ...manifest.sensorRig,
+                inheritance: { mode: "vehicle" },
+                sensors,
+            },
+        },
+        issues: duplicateSensorIssues(sensors),
+    };
 }
 
 export function detachSensorInheritance(manifest, options = {}) {
@@ -128,6 +151,30 @@ export function isInheritedSensorFieldLocked(sensor, path, definition) {
     return inheritedFieldPaths(sensor, definition).some((locked) => (
         joined === locked || joined.startsWith(`${locked}.`)
     ));
+}
+
+function missingVehicleIssue(actorId, vehicleId) {
+    return {
+        path: "sensorRig.inheritance",
+        message: vehicleId
+            ? `Sensor inheritance requires vehicle "${vehicleId}".`
+            : `Sensor inheritance requires a vehicle for actor "${actorId}".`,
+    };
+}
+
+function duplicateSensorIssues(sensors) {
+    const issues = [];
+    const seen = new Set();
+    sensors.forEach((sensor, index) => {
+        if (seen.has(sensor.id)) {
+            issues.push({
+                path: `sensorRig.sensors.${index}.id`,
+                message: `Duplicate id "${sensor.id}".`,
+            });
+        }
+        seen.add(sensor.id);
+    });
+    return issues;
 }
 
 function matchingSensorIndex(sensors, vehicleSensorId, used) {

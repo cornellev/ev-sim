@@ -59,11 +59,12 @@ import {
     validateVehicleManifestOnServer,
 } from "../VehicleManifestClient.js";
 import { VehicleEditorController } from "./VehicleEditorController.js";
-import { editManifestFields, applyModelReplacement, applyPlacementChange, assignModelWheels, detachWheel, suppressSourceWheels } from "../document/vehicleCommands.js";
+import { editManifestFields, applyModelReplacement, applyPlacementChange, adoptStandardAxles, assignModelWheels, classifyWheel, detachWheel, suppressSourceWheels } from "../document/vehicleCommands.js";
+import { highlightedLinkIds, isBoundWheel, linkedPartnerId, resolveMotionLink, standardPartner } from "../document/wheelLink.js";
 import { measurePlacedVehicleModel } from "../model/measurePlacedVehicle.js";
 import { stageVehicleClosure, stageVehiclePlan } from "./stageVehicleClosure.js";
 import { exportVehicleUrdf } from "../urdf/exportVehicleUrdf.js";
-import { AxleInspector, standardAxleCards } from "./AxleInspector.js";
+import { AxleFields, axleSummary, standardAxleCards } from "./AxleInspector.js";
 import { DragNumber } from "./DragNumber.js";
 import { VehiclePlanView } from "./VehiclePlanView.js";
 import { PlacementAcceptanceDialog, WheelAssignmentDialog } from "./WheelAssignmentDialog.js";
@@ -79,12 +80,15 @@ import { VehicleUrdfReviewDialog } from "./workspace/VehicleUrdfReviewDialog.js"
 import { normalizeVehiclePaneLayout } from "./workspace/vehiclePaneLayout.js";
 import { readVehicleEditorPreference, VEHICLE_EDITOR_PREFERENCE_KEYS, writeVehicleEditorPreference } from "../../ui/vehicleEditorPreferences.js";
 import {
+    AccordionItem,
+    AccordionRoot,
     AdvancedFields,
-    AdvancedSwitch,
     AuthoringModeProvider,
     AsyncState,
     Button,
+    Disclosure,
     Field as SharedField,
+    SegmentedControl,
     StatusMessage,
     Switch as SharedSwitch,
     TabsContent,
@@ -97,7 +101,14 @@ import {
 } from "../../ui";
 import { degToRad, radToDeg } from "three/src/math/MathUtils.js";
 
-const TABS = ["Model", "LiDAR Zone", "Sensors", "Wheels", "Body", "JSON"];
+const TABS = ["Model", "Body", "Wheels", "Sensors", "LiDAR Zone", "JSON"];
+const WHEEL_ROLES = [
+    { value: "", label: "Unclassified" },
+    { value: "front:left", label: "Front left" },
+    { value: "front:right", label: "Front right" },
+    { value: "rear:left", label: "Rear left" },
+    { value: "rear:right", label: "Rear right" },
+];
 const FaArrowsAlt = (props) => <IconArrowsMove size={14} stroke={1.75} {...props} />;
 const FaCube = (props) => <IconCube size={14} stroke={1.75} {...props} />;
 const FaPlus = (props) => <IconPlus size={14} stroke={1.75} {...props} />;
@@ -180,12 +191,14 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     const [urdfMode, setUrdfMode] = useState(null);
     const [urdfReport, setUrdfReport] = useState(null);
     const [serverValidation, setServerValidation] = useState(null);
+    const [validatedStamp, setValidatedStamp] = useState(null);
     const [modelNodes, setModelNodes] = useState([]);
     const [layout, setLayout] = useState(() => normalizeVehiclePaneLayout(readVehicleEditorPreference(VEHICLE_EDITOR_PREFERENCE_KEYS.PANE_LAYOUT)));
     const [sensorCatalog, setSensorCatalog] = useState({ revision: 0, sensors: [] });
     const [plantCatalog, setPlantCatalog] = useState([]);
     const [sensorRegistryTick, setSensorRegistryTick] = useState(0);
     const [assignment, setAssignment] = useState(null);
+    const [dismissedNotices, setDismissedNotices] = useState({});
     const [placementPrompt, setPlacementPrompt] = useState(null);
     const [steeringPreview, setSteeringPreview] = useState(0);
     const authoringOptions = () => ({
@@ -198,6 +211,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     }, [sensorRegistryTick]);
 
     const draft = snapshot.manifest;
+    const draftStamp = useMemo(() => (draft ? JSON.stringify(draft) : ""), [draft]);
     const raw = snapshot.raw;
     const rawError = snapshot.rawError;
     const dirty = snapshot.dirty;
@@ -279,6 +293,9 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
             onPlacementCommit: (pick, transform) => studioHandlers.current.onPlacementCommit?.(pick, transform),
             onSelect: (pick) => studioHandlers.current.onSelect?.(pick),
             onModelLease: (lease) => studioHandlers.current.onModelLease?.(lease),
+            onWheelDragStart: (pick) => studioHandlers.current.onWheelDragStart?.(pick),
+            onWheelDragEnd: (pick) => studioHandlers.current.onWheelDragEnd?.(pick),
+            onWheelDragCancel: () => studioHandlers.current.onWheelDragCancel?.(),
             sensorRuntime: authoringRuntime,
         });
         studioRef.current = studio;
@@ -353,6 +370,21 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     }, [draft?.pluginLocks, sensorCatalog.revision]);
     useEffect(() => { studioRef.current?.setSelection(readOnly ? null : selection); }, [selection, readOnly]);
     useEffect(() => { studioRef.current?.setGizmoMode(gizmoMode); }, [gizmoMode]);
+    useEffect(() => {
+        const partnerId = selection?.kind === "wheel" && draft
+            ? linkedPartnerId(draft.wheels, selection.id, snapshot.wheelLink)
+            : null;
+        studioRef.current?.setLinkedWheel(partnerId);
+    }, [draft, selection, snapshot.wheelLink]);
+    useEffect(() => {
+        const onKey = (event) => {
+            if (event.key !== "Escape") return;
+            if (!studioHandlers.current.cancelWheelGesture?.()) return;
+            event.preventDefault();
+        };
+        window.addEventListener("keydown", onKey, true);
+        return () => window.removeEventListener("keydown", onKey, true);
+    }, []);
     useEffect(() => { studioRef.current?.setZoneVisible(zoneVisible); }, [zoneVisible]);
     useEffect(() => { studioRef.current?.setModelVisible(modelVisible); }, [modelVisible]);
 
@@ -440,9 +472,17 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
             if (index === undefined || index < 0) return;
             update(["sensors", index, "pose"], { position, rotation }, { coalesce: true });
         } else if (pick.kind === "wheel") {
-            const wheel = draft?.wheels.find((entry) => entry.id === pick.id);
+            const live = controllerRef.current.snapshot;
+            const wheel = live.manifest?.wheels.find((entry) => entry.id === pick.id);
             if (!wheel || wheel.visual?.kind === "model-node") return;
-            const index = draft.wheels.findIndex((entry) => entry.id === pick.id);
+            const translating = studioRef.current?.gizmo?.mode !== "rotate";
+            if (translating && resolveMotionLink(live.manifest.wheels, pick.id, live.wheelLink)) {
+                const result = controllerRef.current.previewWheel(pick.id, position);
+                setError(result?.ok === false ? (result.issues?.[0]?.message ?? "Wheel move was rejected.") : null);
+                if (result?.ok === false) syncStudio(controllerRef.current.snapshot.manifest);
+                return;
+            }
+            const index = live.manifest.wheels.findIndex((entry) => entry.id === pick.id);
             update(["wheels", index, "position"], position, { coalesce: true });
         } else if (pick.kind === "body") {
             commitPlacement(placementFromTransform(pick, transform), { coalesce: true, historyKey: "body-center" });
@@ -459,6 +499,55 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
             return;
         }
         commitPlacement(placementFromTransform(pick, transform), { historyKey: `placement-${pick?.kind || "model"}` });
+    };
+
+    const previewWheelMotion = (drivenId, position) => {
+        const result = controllerRef.current.previewWheel(drivenId, position);
+        setError(result?.ok === false ? (result.issues?.[0]?.message ?? "Wheel move was rejected.") : null);
+        if (result?.ok === false) syncStudio(controllerRef.current.snapshot.manifest);
+        return result;
+    };
+    const beginWheelMotion = (drivenId) => {
+        const result = controllerRef.current.beginWheel(drivenId);
+        if (result?.ok === false) setError(result.issues?.[0]?.message ?? "Could not move those wheels.");
+        return result;
+    };
+    const commitWheelMotion = () => {
+        if (controllerRef.current.snapshot.gesture?.kind !== "wheel-link") return { ok: true, empty: true };
+        return controllerRef.current.commitWheel();
+    };
+    const cancelWheelMotion = () => {
+        const result = controllerRef.current.cancelWheel();
+        setError(null);
+        syncStudio(controllerRef.current.snapshot.manifest);
+        return result;
+    };
+    const setWheelLink = (link) => {
+        const result = controllerRef.current.setWheelLink(link);
+        setError(result?.ok === false ? (result.issues?.[0]?.message ?? "Could not link those wheels.") : null);
+        return result;
+    };
+
+    studioHandlers.current.onWheelDragStart = (pick) => {
+        if (readOnly || studioRef.current?.gizmo?.mode === "rotate") return;
+        const live = controllerRef.current.snapshot;
+        if (!resolveMotionLink(live.manifest?.wheels, pick.id, live.wheelLink)) return;
+        beginWheelMotion(pick.id);
+    };
+    studioHandlers.current.onWheelDragEnd = () => {
+        commitWheelMotion();
+    };
+    studioHandlers.current.onWheelDragCancel = () => {
+        cancelWheelMotion();
+    };
+    studioHandlers.current.cancelWheelGesture = () => {
+        if (controllerRef.current.snapshot.gesture?.kind !== "wheel-link") return false;
+        if (studioRef.current?.gizmo?.dragging || studioRef.current?._wheelDrag) {
+            studioRef.current.cancelDrag();
+            return true;
+        }
+        cancelWheelMotion();
+        return true;
     };
 
     const acceptPlacement = () => {
@@ -565,6 +654,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     const validate = async () => perform(async () => {
         const result = await validateVehicleManifestOnServer(selectedId, controllerRef.current.snapshot.manifest);
         setServerValidation(result);
+        setValidatedStamp(JSON.stringify(controllerRef.current.snapshot.manifest ?? ""));
         if (!result.ok) throw new Error("Vehicle validation found issues.");
         return result;
     });
@@ -757,6 +847,17 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
         if (!result.ok) setError(result.issues?.[0]?.message || "Could not detach that wheel.");
     };
 
+    const groupAxles = () => {
+        const result = executeCommand(adoptStandardAxles());
+        if (!result.ok) setError(result.issues?.[0]?.message || "Could not group those axles.");
+    };
+
+    const classifyWheelRole = (wheelId, role) => {
+        const [axle, side] = role ? role.split(":") : [null, null];
+        const result = executeCommand(classifyWheel({ wheelId, axle, side }));
+        if (!result.ok) setError(result.issues?.[0]?.message || "Could not classify that wheel.");
+    };
+
     const applyRaw = (value) => {
         controllerRef.current.applyRaw(value);
     };
@@ -845,7 +946,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     });
 
     const derivedWheelbase = draft ? deriveWheelbase(draft.wheels) : null;
-    const shownValidation = serverValidation ?? validation;
+    const shownValidation = (validatedStamp === draftStamp ? serverValidation : null) ?? validation;
     const nameValue = controllerRef.current.fieldValue(["name"]) ?? draft?.name ?? "";
 
     return (
@@ -869,7 +970,6 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                         onSave={save}
                         validateDisabled={!draft || busy || readOnly}
                         saveDisabled={!draft || busy || readOnly || (!dirty && !snapshot.stagedResources)}
-                        extra={<AdvancedSwitch />}
                     />
                 )}
                 toolbar={(
@@ -885,18 +985,22 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                         zoneVisible={zoneVisible}
                         onModelVisible={setModelVisible}
                         onZoneVisible={setZoneVisible}
-                    >
-                        <Button ref={urdfButtonRef} onClick={() => setUrdfMode("create")} disabled={busy}>URDF</Button>
-                        <Button onClick={() => setUrdfMode("apply")} disabled={busy || !draft || readOnly}>Apply URDF</Button>
-                    </VehicleToolbar>
+                        urdfButtonRef={urdfButtonRef}
+                        onCreateUrdf={() => setUrdfMode("create")}
+                        onApplyUrdf={() => setUrdfMode("apply")}
+                        createUrdfDisabled={busy}
+                        applyUrdfDisabled={busy || !draft || readOnly}
+                    />
                 )}
                 hierarchy={(
                     <VehicleHierarchy
                         manifest={draft}
                         nodes={modelNodes}
                         selection={selection}
+                        linkedIds={draft ? highlightedLinkIds(draft.wheels, selection, snapshot.wheelLink) : []}
                         onSelect={(row, nextTab) => {
                             if (row.kind === "wheel" || row.kind === "sensor") setSelection({ kind: row.kind, id: row.id });
+                            else if (row.kind === "axle") setSelection({ kind: "axle", id: row.id.replace(/^axle-/, "") });
                             else setSelection({ kind: row.kind === "model-node" ? "model" : row.kind, id: null });
                             setTab(nextTab);
                         }}
@@ -917,14 +1021,14 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                             <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-end p-3">
                                 {selection && (
                                     <div className="pointer-events-auto flex items-center gap-2 rounded-[var(--radius)] border border-[var(--slate-border)] bg-[var(--slate-floating)] px-2.5 py-1.5">
-                                        <span className="text-[14px] font-medium text-[var(--slate-fg-2)]">{selection.kind}{selection.id ? ` · ${selection.id}` : ""}</span>
+                                        <span className="text-[14px] font-medium text-[var(--slate-fg-2)]">{selectionLabel(selection)}</span>
                                         <button type="button" onClick={() => setSelection(null)} className="text-[12px] text-[var(--slate-muted)] hover:text-[var(--slate-fg)]">Deselect</button>
                                     </div>
                                 )}
                             </div>
-                            {/* <p className="pointer-events-none absolute bottom-3 left-3 rounded-[var(--radius)] border border-[var(--slate-border)] bg-[var(--slate-floating)] px-2 py-1 text-[11px] text-[var(--slate-muted)]">
-                                {readOnly ? "Orbit to inspect · duplicate to edit" : "Click a marker to select · drag gizmo to place"}
-                            </p> */}
+                            <p className="pointer-events-none absolute bottom-3 left-3 rounded-[var(--radius)] border border-[var(--slate-border)] bg-[var(--slate-floating)] px-2 py-1 text-[11px] text-[var(--slate-muted)]">
+                                {readOnly ? "Orbit to inspect. Duplicate this vehicle to edit it." : "Click a marker to select it. Drag the gizmo to place it."}
+                            </p>
                         </>
                     )}
                 </section>
@@ -942,19 +1046,19 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                                     This built-in vehicle is defined in code. Inspect its projected values here, or duplicate it to make an editable manifest.
                                 </div>
                             )}
-                            <TabsList aria-label="Vehicle editor sections" className="overflow-x-auto border-b border-[var(--slate-border)] p-1.5 hide-scrollbar">
+                            <TabsList aria-label="Vehicle editor sections" className="w-full flex-wrap border-b border-[var(--slate-border)] p-1.5">
                                 {TABS.map((item) => <TabsTrigger key={item} value={item} className="whitespace-nowrap">{item}</TabsTrigger>)}
                             </TabsList>
 
-                            {(error || rawError || shownValidation?.issues?.length > 0) && (
-                                <StatusMessage className="m-3" tone="danger" title="Vehicle needs attention"><pre className="whitespace-pre-wrap font-sans">{error || rawError || shownValidation.issues.map((issue) => `${issue.path || "manifest"}: ${issue.message}`).join("\n")}</pre></StatusMessage>
-                            )}
-                            {shownValidation?.ok && <StatusMessage className="m-3" tone="success" title="Vehicle manifest is valid." />}
-                            {urdfReport && (
-                                <StatusMessage className="m-3" title="URDF export">
-                                    <pre className="whitespace-pre-wrap font-sans">{(urdfReport.omissions ?? []).map((entry) => entry.message || entry.code).join("\n") || "No omissions."}</pre>
-                                </StatusMessage>
-                            )}
+                            <EditorNotices
+                                error={error}
+                                rawError={rawError}
+                                validation={shownValidation}
+                                urdfReport={urdfReport}
+                                dismissed={dismissedNotices}
+                                onDismiss={(key, token) => setDismissedNotices((current) => ({ ...current, [key]: token }))}
+                                onDismissUrdf={() => setUrdfReport(null)}
+                            />
 
                             <div className="mod-scrollbar min-h-0 flex-1 overflow-y-auto" tabIndex={0} aria-label="Vehicle editor fields">
                                 <fieldset disabled={readOnly}>
@@ -1021,6 +1125,14 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                                                     onPreviewGesture={previewAxleGesture}
                                                     onCommitGesture={commitAxleGesture}
                                                     onCancelGesture={cancelAxleGesture}
+                                                    onGroupAxles={groupAxles}
+                                                    onClassify={classifyWheelRole}
+                                                    wheelLink={snapshot.wheelLink}
+                                                    onSetWheelLink={setWheelLink}
+                                                    onBeginWheel={beginWheelMotion}
+                                                    onPreviewWheel={previewWheelMotion}
+                                                    onCommitWheel={commitWheelMotion}
+                                                    onCancelWheel={cancelWheelMotion}
                                                 />
                                             )}
                                             {item === "Body" && <BodyTab draft={draft} update={update} commitPlacement={commitPlacement} selection={selection} setSelection={setSelection} fitBodyToModel={fitBodyToModel} fieldReset={`${selectedId}:${placementRevision}`} />}
@@ -1124,9 +1236,9 @@ function ModelTab({ draft, commitPlacement, busy, modelFileRef, uploadModelFile,
                     />
                 </div>
                 <Field label="Scale">
-                    <input type="number" min="0.0001" step="0.0001" value={draft.model.scale} onChange={(event) => commitPlacement({ model: { scale: Number(event.target.value) } }, { historyKey: "model-scale" })} />
+                    <DragNumber min={0.0001} step={0.0001} precision={4} commitOnBlur value={draft.model.scale} onChange={(next) => commitPlacement({ model: { scale: next } }, { coalesce: true, historyKey: "model-scale" })} aria-label="Scale" />
                 </Field>
-                <VectorFields label="Rotation (rad)" value={(draft.model.rotation)} onChange={(axis, value) => commitPlacement({ model: { rotation: { [axis]: value } } }, { historyKey: `model-rotation-${axis}` })} resetToken={fieldReset} />
+                <VectorFields label="Rotation (deg)" degrees commitOnBlur value={draft.model.rotation} onChange={(axis, value) => commitPlacement({ model: { rotation: { [axis]: value } } }, { coalesce: true, historyKey: `model-rotation-${axis}` })} resetToken={fieldReset} />
                 <VectorFields label="Offset (m)" value={draft.model.offset} onChange={(axis, value) => commitPlacement({ model: { offset: { [axis]: value } } }, { coalesce: true, historyKey: `model-offset-${axis}` })} scrub step={0.0001} resetToken={fieldReset} />
             </Section>
 
@@ -1189,6 +1301,11 @@ function SensorsTab({
     onError = () => {},
     bumpRegistry = () => {},
 }) {
+    const [openSensorIds, setOpenSensorIds] = useState([]);
+    const selectedSensorId = selection?.kind === "sensor" ? selection.id : null;
+    const shownSensorIds = selectedSensorId && !openSensorIds.includes(selectedSensorId)
+        ? [...openSensorIds, selectedSensorId]
+        : openSensorIds;
     const registry = session?.registry ?? sensorTypeRegistry;
     const catalogEntries = sensorCatalogEntries(catalog, registry);
     const addEntry = async (entry) => {
@@ -1250,11 +1367,19 @@ function SensorsTab({
                     }
                 };
                 return (
-                    <div key={`sensor-${index}`} className={`rounded-[var(--radius)] border p-3 transition-[background-color,border-color] ${selected ? "border-[var(--slate-border)] bg-[var(--slate-surface-3)]" : "border-[var(--slate-border-60)] bg-[var(--slate-surface-1)]"}`}>
-                        <button type="button" onClick={() => setSelection(selected ? null : { kind: "sensor", id: sensor.id })} className="mb-2 flex w-full items-center justify-between text-left">
-                            <span className="text-[11px] font-semibold">{sensor.id}</span>
-                            <span className="text-[11px] font-medium text-[var(--slate-muted)]">{definition?.label || sensor.type}</span>
-                        </button>
+                    <Disclosure
+                        key={sensor.id}
+                        className={selected ? "rounded-[var(--radius)] bg-[var(--slate-surface-3)]" : undefined}
+                        label={sensor.id}
+                        detail={definition?.label || sensor.type}
+                        open={shownSensorIds.includes(sensor.id)}
+                        onOpenChange={(open) => {
+                            setOpenSensorIds((current) => (
+                                open ? [...current.filter((id) => id !== sensor.id), sensor.id] : current.filter((id) => id !== sensor.id)
+                            ));
+                            if (open) setSelection({ kind: "sensor", id: sensor.id });
+                        }}
+                    >
                         <div className="grid grid-cols-2 gap-2">
                             <Field label="Stable ID">
                                 <input
@@ -1284,7 +1409,7 @@ function SensorsTab({
                             ))}
                         </div>
                         <AdvancedFields label="Sensor orientation and calibration">
-                            <VectorFields label="Rotation (rad)" value={sensor.pose.rotation} onChange={(axis, value) => change(["pose", "rotation", axis], value)} />
+                            <VectorFields label="Rotation (deg)" degrees value={sensor.pose.rotation} onChange={(axis, value) => change(["pose", "rotation", axis], value)} />
                             <div className="mt-3 grid grid-cols-2 gap-2">
                                 {definition?.vehicle.fields.filter((field) => field.advanced).map((field) => (
                                     <VehicleSensorDefinitionField key={field.path.join(".")} field={field} sensor={sensor} change={change} />
@@ -1305,7 +1430,7 @@ function SensorsTab({
                         )}
                         {!definition && <p className="mt-3 text-[11px] text-[var(--slate-warning)]">This sensor type is not registered. Its data is preserved, but this vehicle cannot run until a supported type is selected.</p>}
                         <button type="button" onClick={() => update(["sensors"], draft.sensors.filter((_, candidate) => candidate !== index))} className="mt-3 text-[11px] text-[var(--slate-danger)]">Remove sensor</button>
-                    </div>
+                    </Disclosure>
                 );
             })}
         </div>
@@ -1350,7 +1475,50 @@ function WheelsTab({
     onPreviewGesture,
     onCommitGesture,
     onCancelGesture,
+    onGroupAxles,
+    onClassify,
+    wheelLink = null,
+    onSetWheelLink,
+    onBeginWheel,
+    onPreviewWheel,
+    onCommitWheel,
+    onCancelWheel,
 }) {
+    const [wheelsOpen, setWheelsOpen] = useState(() => readVehicleEditorPreference(VEHICLE_EDITOR_PREFERENCE_KEYS.WHEELS_PANEL, null)?.open === true);
+    const [openRows, setOpenRows] = useState(() => {
+        const stored = readVehicleEditorPreference(VEHICLE_EDITOR_PREFERENCE_KEYS.WHEELS_PANEL, null);
+        return Array.isArray(stored?.rows) ? stored.rows : [];
+    });
+    useEffect(() => {
+        writeVehicleEditorPreference(VEHICLE_EDITOR_PREFERENCE_KEYS.WHEELS_PANEL, { open: wheelsOpen, rows: openRows });
+    }, [wheelsOpen, openRows]);
+    const pairComplete = (axle) => {
+        const members = draft.wheels.filter((wheel) => wheel.axle === axle);
+        return members.length === 2
+            && members.some((wheel) => wheel.side === "left")
+            && members.some((wheel) => wheel.side === "right");
+    };
+    let selectedRowId = null;
+    if (selection?.kind === "axle" && pairComplete(selection.id)) selectedRowId = `axle-${selection.id}`;
+    if (selection?.kind === "wheel" && selection.id) {
+        const wheel = draft.wheels.find((entry) => entry.id === selection.id);
+        if (wheel) selectedRowId = pairComplete(wheel.axle) ? `axle-${wheel.axle}` : `wheel-${wheel.id}`;
+    }
+    const shownWheelsOpen = wheelsOpen || Boolean(selectedRowId);
+    const shownRows = selectedRowId && !openRows.includes(selectedRowId) ? [...openRows, selectedRowId] : openRows;
+    useEffect(() => {
+        if (!selectedRowId) return undefined;
+        let cancelled = false;
+        const handle = requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                if (!cancelled) document.querySelector(`[data-wheel-row="${selectedRowId}"]`)?.scrollIntoView({ block: "nearest" });
+            });
+        });
+        return () => {
+            cancelled = true;
+            cancelAnimationFrame(handle);
+        };
+    }, [selectedRowId]);
     const selectDynamics = (value) => {
         const next = structuredClone(draft);
         try {
@@ -1383,7 +1551,13 @@ function WheelsTab({
             : "")
         : "";
     const add = (mirrored) => {
-        const base = { position: { x: 0.75, y: 0.25, z: 0.55 }, radius: 0.25, width: 0.15, steerable: false };
+        const count = draft.wheels.length;
+        const base = {
+            position: { x: round3(0.75 - count * 0.2), y: 0.25, z: round3(0.55 + (count % 4) * 0.08) },
+            radius: 0.25,
+            width: 0.15,
+            steerable: false,
+        };
         const added = mirrored
             ? [
                 { ...base, id: nextId(draft.wheels, "wheel"), position: { ...base.position } },
@@ -1392,6 +1566,7 @@ function WheelsTab({
             : [{ ...base, id: nextId(draft.wheels, "wheel") }];
         update(["wheels"], [...draft.wheels, ...added]);
         setSelection({ kind: "wheel", id: added[0].id });
+        if (mirrored) onSetWheelLink?.({ ids: [added[0].id, added[1].id], mode: "mirror" });
     };
     const axles = draft.version === 3 ? standardAxleCards(draft.wheels) : [];
     const showAxles = axles.length > 0;
@@ -1400,18 +1575,17 @@ function WheelsTab({
         .map((wheel, index) => ({ wheel, index }))
         .filter(({ wheel }) => !showAxles || !axleWheelIds.has(wheel.id));
     const completeWheelbase = draft.version === 3 ? deriveCompleteWheelbase(draft.wheels) : null;
-    const wheelCards = listedWheels.map(({ wheel, index }) => (
-        <WheelCard
-            key={wheel.id}
-            draft={draft}
-            wheel={wheel}
-            index={index}
-            selected={selection?.kind === "wheel" && selection.id === wheel.id}
-            update={update}
-            setSelection={setSelection}
-            onDetach={onDetach}
-        />
-    ));
+    const groupable = ["front", "rear"].filter((axle) => {
+        const left = draft.wheels.find((wheel) => wheel.id === `${axle}-left` && !wheel.axle);
+        const right = draft.wheels.find((wheel) => wheel.id === `${axle}-right` && !wheel.axle);
+        return Boolean(left && right);
+    });
+    const wheelSummary = (wheel) => {
+        const tags = [wheel.steerable ? "steers" : "fixed"];
+        if (!wheel.axle) tags.unshift("unclassified");
+        if (wheel.visual?.kind === "model-node") tags.push("bound");
+        return `r ${Number(wheel.radius).toFixed(2)} · ${tags.join(" · ")}`;
+    };
     return (
         <div className="space-y-3" data-vehicle-wheels>
             <VehiclePlanView
@@ -1424,52 +1598,99 @@ function WheelsTab({
                 onCommitGesture={onCommitGesture}
                 onCancelGesture={onCancelGesture}
             />
+            {groupable.length > 0 && !readOnly && (
+                <p className="text-[11px] leading-relaxed text-[var(--slate-muted)]">
+                    Wheels are not grouped into axles.{" "}
+                    <button type="button" className="text-[var(--slate-fg-2)]" onClick={onGroupAxles}>Group as standard axles</button>
+                </p>
+            )}
             <div className="flex flex-wrap gap-1.5">
                 <Action compact icon={<FaPlus />} label="Add wheel" onClick={() => add(false)} />
                 <Action compact icon={<FaPlus />} label="Add mirrored pair" onClick={() => add(true)} />
-                <Button ref={assignButtonRef} size="compact" disabled={!assignmentReady} onClick={onAssign}>Assign wheels</Button>
+                <Button
+                    ref={assignButtonRef}
+                    size="compact"
+                    disabled={!assignmentReady}
+                    tooltip={assignmentReady ? undefined : "Needs a version 3 vehicle and a canonical model."}
+                    onClick={onAssign}
+                >
+                    Assign wheels
+                </Button>
             </div>
-            {!assignmentReady && (
-                <p className="text-[11px] leading-relaxed text-[var(--slate-muted)]">Wheel assignment needs a version 3 vehicle and a canonical model closure. A legacy model.glb upload cannot be bound.</p>
-            )}
-            {showAxles && (
-                <AxleInspector
-                    axles={axles}
-                    onBeginGesture={onBeginGesture}
-                    onPreviewGesture={onPreviewGesture}
-                    onCommitGesture={onCommitGesture}
-                    onCancelGesture={onCancelGesture}
-                    onDetach={onDetach}
+            {selection?.kind === "wheel" && (
+                <WheelLinkControls
+                    draft={draft}
+                    wheelId={selection.id}
+                    wheelLink={wheelLink}
+                    onSetWheelLink={onSetWheelLink}
                 />
             )}
-            {showAxles ? (
-                listedWheels.length > 0 && (
-                    <AdvancedFields label="Unclassified wheels">
-                        {wheelCards}
-                    </AdvancedFields>
-                )
-            ) : wheelCards}
-            <Section title="Actuator limits">
+            <Disclosure
+                label="Wheels and axles"
+                detail={`${draft.wheels.length} ${draft.wheels.length === 1 ? "wheel" : "wheels"}${axles.length ? ` · ${axles.length} ${axles.length === 1 ? "axle" : "axles"}` : ""}`}
+                open={shownWheelsOpen}
+                onOpenChange={setWheelsOpen}
+            >
+                <AccordionRoot value={shownRows} onValueChange={setOpenRows}>
+                    {axles.map((axle) => {
+                        const summary = axleSummary(axle);
+                        return (
+                            <AccordionItem key={axle.id} value={`axle-${axle.id}`} label={summary.title} detail={summary.detail}>
+                                <AxleFields
+                                    axle={axle}
+                                    onBeginGesture={onBeginGesture}
+                                    onPreviewGesture={onPreviewGesture}
+                                    onCommitGesture={onCommitGesture}
+                                    onCancelGesture={onCancelGesture}
+                                    onDetach={onDetach}
+                                />
+                            </AccordionItem>
+                        );
+                    })}
+                    {listedWheels.map(({ wheel, index }) => (
+                        <AccordionItem key={wheel.id} value={`wheel-${wheel.id}`} label={wheel.id} detail={wheelSummary(wheel)}>
+                            <WheelCard
+                                draft={draft}
+                                wheel={wheel}
+                                index={index}
+                                wheelLink={wheelLink}
+                                selected={selection?.kind === "wheel" && selection.id === wheel.id}
+                                update={update}
+                                setSelection={setSelection}
+                                onDetach={onDetach}
+                                onClassify={onClassify}
+                                onBeginWheel={onBeginWheel}
+                                onPreviewWheel={onPreviewWheel}
+                                onCommitWheel={onCommitWheel}
+                                onCancelWheel={onCancelWheel}
+                            />
+                        </AccordionItem>
+                    ))}
+                </AccordionRoot>
+            </Disclosure>
+            <Section title="Dynamics">
+                <Field label="Plant">
+                    <select aria-label="Dynamics" value={dynamicsValue} onChange={(event) => selectDynamics(event.target.value)}>
+                        <option value="">Built-in bicycle</option>
+                        {plantCatalog.map((plant) => (
+                            <option key={`${plant.packageHash}:${plant.id}`} value={`${plant.packageHash}:${plant.id}`}>{plant.id}</option>
+                        ))}
+                    </select>
+                </Field>
+                {draft.dynamics?.plant ? <p className="mt-2 text-[11px] text-[var(--slate-muted)]">Plugin dynamics run only in a resolved run.</p> : null}
+            </Section>
+            <Section title="Drive and steering">
                 <div className="grid grid-cols-2 gap-2">
-                    <Field label="Dynamics">
-                        <select aria-label="Dynamics" value={dynamicsValue} onChange={(event) => selectDynamics(event.target.value)}>
-                            <option value="">Built-in bicycle</option>
-                            {plantCatalog.map((plant) => (
-                                <option key={`${plant.packageHash}:${plant.id}`} value={`${plant.packageHash}:${plant.id}`}>{plant.id}</option>
-                            ))}
-                        </select>
-                    </Field>
-                    {draft.dynamics?.plant ? <p className="text-[11px] text-[var(--slate-muted)]">Plugin dynamics run only in a resolved run.</p> : null}
                     {completeWheelbase != null ? (
                         <Field label="Wheelbase (m)">
                             <input readOnly aria-label="Wheelbase (m)" value={draft.kinematics.wheelbase} />
                         </Field>
                     ) : (
-                        <Field label="Wheelbase (m)"><input type="number" min="0.01" step="0.01" value={draft.kinematics.wheelbase} onChange={(event) => update(["kinematics", "wheelbase"], Number(event.target.value))} /></Field>
+                        <LimitNumber label="Wheelbase (m)" min={0.01} step={0.01} value={draft.kinematics.wheelbase} onChange={(next) => update(["kinematics", "wheelbase"], next)} />
                     )}
-                    <Field label="Max steering (rad)"><input type="number" min="0.01" step="0.01" value={draft.kinematics.maxSteeringAngle} onChange={(event) => update(["kinematics", "maxSteeringAngle"], Number(event.target.value))} /></Field>
-                    <Field label="Max speed (m/s)"><input type="number" min="0.01" step="0.1" value={draft.kinematics.maxSpeed ?? 15} onChange={(event) => update(["kinematics", "maxSpeed"], Number(event.target.value))} /></Field>
-                    <Field label="Max steer rate (rad/s)"><input type="number" min="0.01" step="0.1" value={draft.kinematics.maxSteeringRate ?? 1.2} onChange={(event) => update(["kinematics", "maxSteeringRate"], Number(event.target.value))} /></Field>
+                    <LimitNumber label="Max steering (deg)" min={0.5} step={0.5} precision={2} value={radToDeg(draft.kinematics.maxSteeringAngle)} onChange={(degrees) => update(["kinematics", "maxSteeringAngle"], degToRad(degrees))} />
+                    <LimitNumber label="Max speed (m/s)" min={0.01} step={0.1} value={draft.kinematics.maxSpeed ?? 15} onChange={(next) => update(["kinematics", "maxSpeed"], next)} />
+                    <LimitNumber label="Max steer rate (rad/s)" min={0.01} step={0.1} value={draft.kinematics.maxSteeringRate ?? 1.2} onChange={(next) => update(["kinematics", "maxSteeringRate"], next)} />
                 </div>
                 {completeWheelbase != null && (
                     <p className="mt-2 text-[11px] text-[var(--slate-muted)]">Derived from the standard axles.</p>
@@ -1483,25 +1704,87 @@ function WheelsTab({
             </Section>
             <AdvancedFields label="Acceleration, jerk, and delay">
                 <div className="grid grid-cols-2 gap-2">
-                    <Field label="Max accel (m/s²)"><input type="number" min="0.01" step="0.1" value={draft.kinematics.maxAcceleration ?? 3} onChange={(event) => update(["kinematics", "maxAcceleration"], Number(event.target.value))} /></Field>
-                    <Field label="Max decel (m/s²)"><input type="number" min="0.01" step="0.1" value={draft.kinematics.maxDeceleration ?? 5} onChange={(event) => update(["kinematics", "maxDeceleration"], Number(event.target.value))} /></Field>
-                    <Field label="Max jerk (m/s³)"><input type="number" min="0.01" step="0.1" value={draft.kinematics.maxJerk ?? 10} onChange={(event) => update(["kinematics", "maxJerk"], Number(event.target.value))} /></Field>
-                    <Field label="Response delay (ns)"><input type="number" min="0" step="1000000" value={draft.kinematics.responseDelayNs ?? 0} onChange={(event) => update(["kinematics", "responseDelayNs"], Number(event.target.value))} /></Field>
+                    <LimitNumber label="Max accel (m/s²)" min={0.01} step={0.1} value={draft.kinematics.maxAcceleration ?? 3} onChange={(next) => update(["kinematics", "maxAcceleration"], next)} />
+                    <LimitNumber label="Max decel (m/s²)" min={0.01} step={0.1} value={draft.kinematics.maxDeceleration ?? 5} onChange={(next) => update(["kinematics", "maxDeceleration"], next)} />
+                    <LimitNumber label="Max jerk (m/s³)" min={0.01} step={0.1} value={draft.kinematics.maxJerk ?? 10} onChange={(next) => update(["kinematics", "maxJerk"], next)} />
+                    <LimitNumber label="Response delay (ns)" min={0} step={1000000} precision={0} value={draft.kinematics.responseDelayNs ?? 0} onChange={(next) => update(["kinematics", "responseDelayNs"], next)} />
                 </div>
             </AdvancedFields>
         </div>
     );
 }
 
-function WheelCard({ draft, wheel, index, selected, update, setSelection, onDetach }) {
-    const bound = wheel.visual?.kind === "model-node";
-    const change = (parts, value) => update(["wheels", index, ...parts], value);
+function WheelLinkControls({ draft, wheelId, wheelLink, onSetWheelLink }) {
+    const wheel = draft.wheels.find((entry) => entry.id === wheelId);
+    if (!wheel) return null;
+    const partner = standardPartner(draft.wheels, wheel.id);
+    if (partner) {
+        const locked = isBoundWheel(wheel) || isBoundWheel(partner);
+        return (
+            <p data-wheel-link className="text-[11px] leading-relaxed text-[var(--slate-muted)]">
+                {`Mirrored with ${partner.id}.`}
+                {locked ? " Detach the model-bound wheels before moving them." : ""}
+            </p>
+        );
+    }
+    if (isBoundWheel(wheel) || wheel.axle || wheel.side) return null;
+    const candidates = draft.wheels.filter((entry) => entry.id !== wheel.id && !isBoundWheel(entry) && !entry.axle && !entry.side);
+    const active = wheelLink?.ids?.includes(wheel.id) ? wheelLink : null;
+    const partnerId = active?.ids.find((id) => id !== wheel.id) ?? "";
+    const choose = (nextId) => {
+        if (!nextId) {
+            onSetWheelLink?.(null);
+            return;
+        }
+        onSetWheelLink?.({ ids: [wheel.id, nextId], mode: active?.mode ?? "mirror" });
+    };
     return (
-        <div className={`rounded-[var(--radius)] border p-3 transition-[background-color,border-color] ${selected ? "border-[var(--slate-border)] bg-[var(--slate-surface-3)]" : "border-[var(--slate-border-60)] bg-[var(--slate-surface-1)]"}`}>
-            <button type="button" onClick={() => setSelection(selected ? null : { kind: "wheel", id: wheel.id })} className="mb-2 flex w-full items-center justify-between text-left">
-                <span className="text-[11px] font-semibold">{wheel.id}</span>
-                {wheel.steerable && <span className="text-[11px] font-medium text-[var(--slate-muted)]">Steerable</span>}
-            </button>
+        <div data-wheel-link className="space-y-2">
+            <Field label="Link with">
+                <select aria-label="Link with" value={partnerId} onChange={(event) => choose(event.target.value)}>
+                    <option value="">Choose a wheel</option>
+                    {candidates.map((entry) => <option key={entry.id} value={entry.id}>{entry.id}</option>)}
+                </select>
+            </Field>
+            {active && (
+                <>
+                    <SegmentedControl
+                        label="Wheel link motion"
+                        value={active.mode}
+                        onValueChange={(mode) => onSetWheelLink?.({ ids: [...active.ids], mode })}
+                        items={[
+                            { value: "together", label: "Together" },
+                            { value: "mirror", label: "Mirror" },
+                        ]}
+                    />
+                    <button type="button" onClick={() => onSetWheelLink?.(null)} className="text-[11px] text-[var(--slate-fg-2)]">Unlink</button>
+                </>
+            )}
+        </div>
+    );
+}
+
+function WheelCard({
+    draft,
+    wheel,
+    index,
+    wheelLink = null,
+    selected,
+    update,
+    setSelection,
+    onDetach,
+    onClassify,
+    onBeginWheel,
+    onPreviewWheel,
+    onCommitWheel,
+    onCancelWheel,
+}) {
+    const bound = wheel.visual?.kind === "model-node";
+    const linked = Boolean(resolveMotionLink(draft.wheels, wheel.id, wheelLink));
+    const change = (parts, value) => update(["wheels", index, ...parts], value);
+    const role = wheel.axle && wheel.side ? `${wheel.axle}:${wheel.side}` : "";
+    return (
+        <div className={selected ? "rounded-[var(--radius)] bg-[var(--slate-surface-3)] p-1" : "p-1"}>
             <div className="grid grid-cols-2 gap-2">
                 <Field label="Stable ID">
                     <input
@@ -1513,20 +1796,40 @@ function WheelCard({ draft, wheel, index, selected, update, setSelection, onDeta
                         }}
                     />
                 </Field>
-                <Toggle label="Steerable" value={wheel.steerable} onChange={(value) => { if (!bound) change(["steerable"], value); }} />
-                <Field label="Radius (m)"><input type="number" min="0.01" step="0.01" value={wheel.radius} disabled={bound} onChange={(event) => change(["radius"], Number(event.target.value))} /></Field>
+                <Field label="Axle role">
+                    <select aria-label={`${wheel.id} axle role`} value={role} disabled={bound} onChange={(event) => onClassify?.(wheel.id, event.target.value)}>
+                        {WHEEL_ROLES.map((entry) => <option key={entry.value || "none"} value={entry.value}>{entry.label}</option>)}
+                    </select>
+                </Field>
+                <Toggle label="Steerable" value={wheel.steerable} disabled={bound} onChange={(value) => change(["steerable"], value)} />
+                <Field label="Radius (m)">
+                    <DragNumber aria-label={`${wheel.id} radius (m)`} min={0.01} step={0.01} value={wheel.radius} disabled={bound} onChange={(next) => change(["radius"], next)} />
+                </Field>
+                <Field label="Width (m)">
+                    <DragNumber aria-label={`${wheel.id} width (m)`} min={0.01} step={0.01} value={wheel.width} disabled={bound} onChange={(next) => change(["width"], next)} />
+                </Field>
             </div>
             {bound && <p className="mt-2 text-[11px] text-[var(--slate-muted)]">Bound to model node {wheel.visual.nodeIndex}. Detach it before editing this geometry.</p>}
-            <VectorFields label="Position (m)" value={wheel.position} onChange={(axis, value) => { if (!bound) change(["position", axis], value); }} scrub />
-            <AdvancedFields label="Wheel geometry">
-                <div className="grid grid-cols-2 gap-2">
-                    <Field label="Width (m)"><input type="number" min="0.01" step="0.01" value={wheel.width} disabled={bound} onChange={(event) => change(["width"], Number(event.target.value))} /></Field>
-                </div>
-            </AdvancedFields>
+            {role && <p className="mt-2 text-[11px] text-[var(--slate-muted)]">Assign the other side to complete this axle.</p>}
+            <VectorFields
+                label="Position (m)"
+                value={wheel.position}
+                disabled={bound}
+                onChange={(axis, value) => {
+                    if (!linked) {
+                        change(["position", axis], value);
+                        return;
+                    }
+                    onPreviewWheel?.(wheel.id, { ...wheel.position, [axis]: value });
+                }}
+                onGestureStart={linked ? () => onBeginWheel?.(wheel.id) : undefined}
+                onGestureEnd={linked ? () => onCommitWheel?.() : undefined}
+                onGestureCancel={linked ? () => onCancelWheel?.() : undefined}
+            />
             <div className="mt-3 flex items-center justify-between">
                 {bound
                     ? <button type="button" onClick={() => onDetach(wheel.id)} className="text-[11px] text-[var(--slate-fg-2)]">Detach</button>
-                    : <button type="button" onClick={() => update(["wheels", index, "position", "z"], -wheel.position.z)} className="text-[11px] text-[var(--slate-fg-2)]">Mirror across X</button>}
+                    : <button type="button" onClick={() => update(["wheels", index, "position", "z"], -wheel.position.z)} className="text-[11px] text-[var(--slate-fg-2)]">Mirror to other side</button>}
                 {!bound && <button type="button" onClick={() => update(["wheels"], draft.wheels.filter((_, candidate) => candidate !== index))} className="text-[11px] text-[var(--slate-danger)]">Remove</button>}
             </div>
         </div>
@@ -1584,26 +1887,46 @@ function stepPrecision(step) {
     return Math.max(3, places);
 }
 
-function VectorFields({ label, value, onChange, scrub = false, min, step = 0.01, resetToken = 0 }) {
+function VectorFields({
+    label,
+    value,
+    onChange,
+    min,
+    step = 0.01,
+    resetToken = 0,
+    degrees = false,
+    commitOnBlur = false,
+    disabled = false,
+    onGestureStart,
+    onGestureEnd,
+    onGestureCancel,
+}) {
+    const shown = (axis) => {
+        const raw = value?.[axis] ?? 0;
+        return degrees ? radToDeg(raw) : raw;
+    };
+    const emit = (axis, next) => onChange(axis, degrees ? degToRad(next) : next);
+    const displayStep = degrees ? 0.1 : step;
     return (
         <div className="mt-3">
             <p className="mb-1.5 text-[13px] font-medium text-[var(--slate-fg-2)]">{label}</p>
             <div className="grid grid-cols-3 gap-2">
                 {["x", "y", "z"].map((axis) => (
                     <Field key={axis} label={axis.toUpperCase()}>
-                        {scrub ? (
-                            <DragNumber
-                                key={resetToken}
-                                value={value?.[axis] ?? 0}
-                                onChange={(next) => onChange(axis, next)}
-                                min={min}
-                                step={step}
-                                precision={stepPrecision(step)}
-                                aria-label={`${label} ${axis.toUpperCase()}`}
-                            />
-                        ) : (
-                            <input type="number" step={step} min={min} value={value?.[axis] ?? 0} onChange={(event) => onChange(axis, Number(event.target.value))} />
-                        )}
+                        <DragNumber
+                            key={resetToken}
+                            value={shown(axis)}
+                            onChange={(next) => emit(axis, next)}
+                            onGestureStart={onGestureStart}
+                            onGestureEnd={onGestureEnd}
+                            onGestureCancel={onGestureCancel}
+                            min={min}
+                            step={displayStep}
+                            precision={degrees ? 2 : stepPrecision(step)}
+                            commitOnBlur={commitOnBlur}
+                            disabled={disabled}
+                            aria-label={`${label} ${axis.toUpperCase()}`}
+                        />
                     </Field>
                 ))}
             </div>
@@ -1618,8 +1941,64 @@ function Field({ label, children }) {
     return <SharedField label={label}>{control}</SharedField>;
 }
 
-function Toggle({ label, value, onChange }) {
-    return <SharedSwitch label={label} checked={value} onCheckedChange={onChange} />;
+function Toggle({ label, value, onChange, disabled = false }) {
+    return <SharedSwitch label={label} checked={value} disabled={disabled} onCheckedChange={onChange} />;
+}
+
+function LimitNumber({ label, value, min, step, precision = 3, onChange }) {
+    return (
+        <Field label={label}>
+            <DragNumber aria-label={label} commitOnBlur min={min} step={step} precision={precision} value={value} onChange={onChange} />
+        </Field>
+    );
+}
+
+function selectionLabel(selection) {
+    if (!selection?.kind) return "";
+    if (selection.kind === "wheel") return `Wheel ${selection.id}`;
+    if (selection.kind === "sensor") return `Sensor ${selection.id}`;
+    if (selection.kind === "axle") {
+        if (selection.id === "rear") return "Rear axle";
+        if (selection.id === "front") return "Front axle";
+        return "Wheels";
+    }
+    if (selection.kind === "body") return "Body";
+    if (selection.kind === "ego") return "Ego center";
+    if (selection.kind === "model") return "Model";
+    return selection.kind;
+}
+
+function EditorNotices({ error, rawError, validation, urdfReport, dismissed, onDismiss, onDismissUrdf }) {
+    const issueText = validation?.issues?.length
+        ? validation.issues.map((issue) => `${issue.path || "manifest"}: ${issue.message}`).join("\n")
+        : "";
+    const errorText = error || rawError || (!validation?.ok ? issueText : "");
+    return (
+        <>
+            {errorText && dismissed.error !== errorText && (
+                <div className="m-3 flex items-start gap-2">
+                    <StatusMessage className="min-w-0 flex-1" tone="danger" title="Vehicle needs attention">
+                        <pre className="whitespace-pre-wrap font-sans">{errorText}</pre>
+                    </StatusMessage>
+                    <button type="button" className="text-[11px] text-[var(--slate-muted)]" onClick={() => onDismiss("error", errorText)}>Dismiss</button>
+                </div>
+            )}
+            {validation?.ok && dismissed.validation !== validation && (
+                <div className="m-3 flex items-start gap-2">
+                    <StatusMessage className="min-w-0 flex-1" tone="success" title="Vehicle manifest is valid." />
+                    <button type="button" className="text-[11px] text-[var(--slate-muted)]" onClick={() => onDismiss("validation", validation)}>Dismiss</button>
+                </div>
+            )}
+            {urdfReport && (
+                <div className="m-3 flex items-start gap-2">
+                    <StatusMessage className="min-w-0 flex-1" title="URDF export">
+                        <pre className="whitespace-pre-wrap font-sans">{(urdfReport.omissions ?? []).map((entry) => entry.message || entry.code).join("\n") || "No omissions."}</pre>
+                    </StatusMessage>
+                    <button type="button" className="text-[11px] text-[var(--slate-muted)]" onClick={onDismissUrdf}>Dismiss</button>
+                </div>
+            )}
+        </>
+    );
 }
 
 function Action({ icon, label, onClick, disabled = false, primary = false, compact = false }) {

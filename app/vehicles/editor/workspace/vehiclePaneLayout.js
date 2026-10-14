@@ -9,7 +9,7 @@ export { CENTER_MIN, PANE_LIMITS, PANE_STEP };
 
 export const VEHICLE_PANE_LAYOUT_VERSION = 1;
 export const VEHICLE_PANE_IDS = Object.freeze(["hierarchy", "inspector"]);
-export const VEHICLE_WORKSPACE_CHROME = Object.freeze({ topBar: 40, toolbar: 36, splitter: 6, rail: 28 });
+export const VEHICLE_WORKSPACE_CHROME = Object.freeze({ topBar: 40, toolbar: 44, splitter: 6, rail: 28 });
 
 function finite(value, fallback) {
     const number = Number(value);

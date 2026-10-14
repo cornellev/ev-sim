@@ -9,6 +9,7 @@ import {
     editManifestFields,
     replaceManifest,
 } from "../document/vehicleCommands.js";
+import { resolveMotionLink } from "../document/wheelLink.js";
 
 const STAGE_CODES = new Set(["VEHICLE_STAGE_CONFLICT", "VEHICLE_STAGE_EXPIRED", "VEHICLE_STAGE_NOT_FOUND"]);
 
@@ -94,6 +95,7 @@ export class VehicleEditorController {
             gesture: this.session?.gesture
                 ? { kind: this.session.gesture.kind, axle: this.session.gesture.axle, label: this.session.gesture.label }
                 : null,
+            wheelLink: this.session?.wheelLinkSnapshot() ?? null,
         };
     }
 
@@ -227,6 +229,59 @@ export class VehicleEditorController {
         this.#emit();
     }
 
+    setWheelLink(link) {
+        if (!this.session) return { ok: false, issues: [{ code: "vehicle.editor.closed", path: "", message: "No vehicle is open." }] };
+        if (this.readOnly) return readOnlyResult();
+        const result = this.session.setWheelLink(link);
+        this.#emit();
+        return result;
+    }
+
+    beginWheel(drivenId) {
+        if (!this.session) return { ok: false, issues: [{ code: "vehicle.editor.closed", path: "", message: "No vehicle is open." }] };
+        if (this.readOnly) return readOnlyResult();
+        if (this.session.gesture?.kind === "wheel-link" && this.session.gesture.drivenId === drivenId) return { ok: true };
+        if (this.session.gesture) this.commitAxle();
+        const link = resolveMotionLink(this.session.draft.snapshot().wheels, drivenId, this.session.wheelLink);
+        if (!link) {
+            return { ok: false, issues: [{ code: "vehicle.wheel.link", path: "wheels", message: "That wheel has no linked partner." }] };
+        }
+        const result = this.session.beginGesture({ kind: "wheel-link", label: "Move wheels", drivenId, link });
+        this.#emit();
+        return result;
+    }
+
+    previewWheel(drivenId, position) {
+        if (!this.session?.gesture || this.session.gesture.kind !== "wheel-link" || this.session.gesture.drivenId !== drivenId) {
+            const begun = this.beginWheel(drivenId);
+            if (!begun.ok) return begun;
+        }
+        const result = this.session.previewGesture({ drivenId, position });
+        this.#emit();
+        return result;
+    }
+
+    commitWheel() {
+        if (!this.session?.gesture) return { ok: true, empty: true, manifest: this.snapshot.manifest };
+        if (this.session.gesture.kind !== "wheel-link") {
+            return { ok: false, issues: [{ code: "vehicle.session.gesture-unsupported", path: "", message: "The active gesture is not a wheel link." }] };
+        }
+        const result = this.session.commitGesture();
+        this.rawOverride = null;
+        this.#emit();
+        return result;
+    }
+
+    cancelWheel() {
+        if (!this.session?.gesture) return { ok: true, empty: true };
+        if (this.session.gesture.kind !== "wheel-link") {
+            return { ok: false, issues: [{ code: "vehicle.session.gesture-unsupported", path: "", message: "The active gesture is not a wheel link." }] };
+        }
+        const result = this.session.cancelGesture();
+        this.#emit();
+        return result;
+    }
+
     beginAxle(axle) {
         if (!this.session || this.readOnly) return readOnlyResult();
         if (this.session.gesture?.axle === axle) return { ok: true };
@@ -263,6 +318,7 @@ export class VehicleEditorController {
 
     undo() {
         if (!this.session) return { ok: false };
+        if (this.session.gesture?.kind === "wheel-link") return this.cancelWheel();
         if (this.session.gesture) return this.cancelAxle();
         const result = this.session.undo();
         this.rawOverride = null;
@@ -273,6 +329,7 @@ export class VehicleEditorController {
 
     redo() {
         if (!this.session) return { ok: false };
+        if (this.session.gesture?.kind === "wheel-link") return this.cancelWheel();
         if (this.session.gesture) return this.cancelAxle();
         const result = this.session.redo();
         this.rawOverride = null;

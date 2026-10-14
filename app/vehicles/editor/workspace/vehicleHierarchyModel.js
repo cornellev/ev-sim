@@ -54,7 +54,14 @@ export function buildVehicleHierarchy(manifest, { nodes = [] } = {}) {
         }
     }
     for (const sensor of manifest.sensors ?? []) {
-        rows.push({ id: sensor.id, kind: "sensor", label: sensor.name || sensor.id, depth: 0, disabled: false });
+        rows.push({
+            id: sensor.id,
+            kind: "sensor",
+            label: sensor.name || sensor.id,
+            sensorType: sensor.type || "",
+            depth: 0,
+            disabled: false,
+        });
     }
     rows.push({ id: "lidar", kind: "lidar", label: "LiDAR zone", depth: 0, disabled: false });
     return rows;

@@ -64,6 +64,16 @@ those vehicle dependency hashes. Vehicles without locks keep their prior
 projections. Full `definitionHash` / `resolvedHash` still include exact
 package and UI bytes.
 
+`_resolveVehicleDependency` puts the normalized manifest and the visible
+asset-directory files into `dependencyHashes.vehicles` and
+`dependencyHashes.vehicleAssets`. Names hidden by an in-flight publication
+journal stay out until the manifest write is durable. A committed migration
+leaves superseded files in that directory, so they remain in the resolved
+hash. Stage ids, journals, receipts, `vehicle-migrations/<id>.pre-v3.json`,
+and GitHub source stay outside it. The semantic projection of a plugin lock
+drops `packageHash` and keeps `pluginId`, `version`, `runtimeHash`,
+`sensorTypes`, and `plants`.
+
 VIS-12a activates manifest v11 and the plugin-free
 `resolved.identityProfile = { id: "world-bound", version: 2 }`, semantic and
 episode identity v2, protocol 1.3 identity negotiation, and protocol 1.4
@@ -322,7 +332,7 @@ Manifest version 11 stores sensor extrinsics in REP-103 (`+X` forward, `+Y` left
 
 `sensorRig` also declares canonical `map`, `odom`, and `base_link` frame ids, the owning vehicle id, and optional synchronization groups keyed by declared topic ids. Default manifests include `perception-primary` (camera + LiDAR measured and optional oracle products) and `localization-primary` (IMU, GNSS, wheel odometry). Sensors in the same group captured on the same simulation step share a synchronization key in telemetry metadata.
 
-`sensorRig.inheritance: { mode: "vehicle" }` opts the run into the owning vehicle's sensor mounts. The owning actor is `sensorRig.vehicleId` (default `ego`). Its catalog id is `scenario.egoVehicleId` when a scenario is selected and that actor is ego; otherwise it is `initialState.vehicles[].type`. Inherited entries keep `inheritedFrom` set to the vehicle sensor id. Resolve copies id, type, parent actor, REP-103 pose (converted from the vehicle's Three.js mount), and the vehicle calibration fields (camera size and FOV, LiDAR scan geometry, IMU gravity, GNSS datum latitude and longitude, wheel radius and track, plugin scan layout, parameters, products, and plugin rate). Enabled, built-in rate, phase, latency, noise, topics, frames, sync, queues, oracle products, camera render and intrinsics, and plugin transports stay on the run. Run-authored sensors without `inheritedFrom` stay fully editable. Resolve fails if an inherited mount was removed from the vehicle. `definitionHash` is the pre-overlay manifest. Calibration, admission, and `simulationSemanticHash` use the overlaid rig with `inheritance` and `inheritedFrom` removed, so a later vehicle mount edit changes execution identity without rewriting the run file. Turning inheritance off stores that overlay as ordinary sensors.
+`sensorRig.inheritance: { mode: "vehicle" }` opts the run into the owning vehicle's sensor mounts. The owning actor is `sensorRig.vehicleId` (default `ego`). Its catalog id is `scenario.egoVehicleId` when a scenario is selected and that actor is ego; otherwise it is `initialState.vehicles[].type`. Inherited entries keep `inheritedFrom` set to the vehicle sensor id. Resolve copies id, type, parent actor, REP-103 pose (converted from the vehicle's Three.js mount), and the vehicle calibration fields (camera size and FOV, LiDAR scan geometry, IMU gravity, GNSS datum latitude and longitude, wheel radius and track, plugin scan layout, parameters, products, and plugin rate). Enabled, built-in rate, phase, latency, noise, topics, frames, sync, queues, oracle products, camera render and intrinsics, and plugin transports stay on the run. Run-authored sensors without `inheritedFrom` stay fully editable. Resolve fails if an inherited mount was removed from the vehicle. `definitionHash` is the pre-overlay manifest. Calibration, admission, and `simulationSemanticHash` use the overlaid rig with `inheritance` and `inheritedFrom` removed, so a later vehicle mount edit changes execution identity without rewriting the run file. Turning inheritance off stores that overlay as ordinary sensors. Reset to parent vehicle deletes sensors that are not on that vehicle and rebuilds the remaining sensors from its mounts, discarding run-only overrides.
 
 Resolution builds a deterministic `cev-sim.calibration-bundle` artifact (sorted frames, static transforms, intrinsics/distortion, product selection, scan geometry, label-catalog version, schedules/deadlines, and output topic ids). Its SHA-256 hash is included in `resolvedHash`, portable run bundles, and SFLog attachments as `calibration.json`. The full provenance source remains `run-manifest.json`.
 

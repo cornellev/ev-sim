@@ -27,6 +27,7 @@ import {
     detachSensorInheritance,
     enableSensorInheritance,
     isInheritedSensorFieldLocked,
+    resetSensorsToParentVehicle,
     resolveInheritedVehicleSelection,
 } from "../app/simulation/sensors/SensorInheritance.js";
 import { createSensorDefinitionRegistry } from "../app/simulation/sensors/SensorTypeRegistry.js";
@@ -128,6 +129,50 @@ test("Big Car mounts project to REP-103 and preserve run overrides", () => {
     const detachedLidar = detached.manifest.sensorRig.sensors.find((sensor) => sensor.id === "roof-lidar");
     assert.equal(detachedLidar.rateHz, 7);
     assert.equal(detachedLidar.pose.position.z, 1.2);
+});
+
+test("reset to parent vehicle drops extras and run overrides", () => {
+    const vehicle = getBuiltInVehicleManifest("big-car");
+    const enabled = enableSensorInheritance(createDefaultRunManifest(), vehicle);
+    const edited = structuredClone(enabled.manifest);
+    const lidar = edited.sensorRig.sensors.find((sensor) => sensor.id === "roof-lidar");
+    lidar.rateHz = 7;
+    lidar.noise.model = "gaussian";
+    lidar.noise.standardDeviation = 0.2;
+    lidar.outputs.pointCloudTopicId = "custom-cloud";
+
+    const reset = resetSensorsToParentVehicle(edited, vehicle);
+    assert.deepEqual(reset.issues, []);
+    assert.equal(reset.manifest.sensorRig.inheritance.mode, "vehicle");
+    assert.equal(reset.manifest.sensorRig.vehicleId, edited.sensorRig.vehicleId);
+    assert.deepEqual(reset.manifest.sensorRig.syncGroups, edited.sensorRig.syncGroups);
+    assert.deepEqual(
+        reset.manifest.sensorRig.sensors.map((sensor) => sensor.id),
+        vehicle.sensors.map((sensor) => sensor.id),
+    );
+    const next = reset.manifest.sensorRig.sensors.find((sensor) => sensor.id === "roof-lidar");
+    assert.equal(next.inheritedFrom, "roof-lidar");
+    assert.equal(next.rateHz, 10);
+    assert.equal(next.noise.model, "none");
+    assert.equal(next.noise.standardDeviation, 0);
+    assert.equal(next.outputs.pointCloudTopicId, undefined);
+    assert.deepEqual(next.pose.position, { x: 0.35, y: 0, z: 0.8 });
+    assert.equal(next.calibration.range, 20);
+    const camera = reset.manifest.sensorRig.sensors.find((sensor) => sensor.id === "front-stereo-camera");
+    assert.equal(camera.calibration.width, 320);
+    assert.equal(camera.calibration.verticalFovDeg, 75);
+    assert.equal(camera.inheritedFrom, "front-stereo-camera");
+
+    const missing = resetSensorsToParentVehicle(edited, null);
+    assert.equal(missing.manifest, edited);
+    assert.match(missing.issues[0].message, /big-car/);
+    assert.equal(edited.sensorRig.sensors.find((sensor) => sensor.id === "roof-lidar").rateHz, 7);
+    assert.ok(edited.sensorRig.sensors.some((sensor) => sensor.id === "front-camera"));
+
+    const off = resetSensorsToParentVehicle(createDefaultRunManifest(), vehicle);
+    assert.equal(off.manifest.sensorRig.inheritance, undefined);
+    assert.match(off.issues[0].message, /inheritance/);
+    assert.ok(off.manifest.sensorRig.sensors.some((sensor) => sensor.id === "front-camera"));
 });
 
 test("a removed vehicle mount is reported and an empty vehicle adds nothing", () => {

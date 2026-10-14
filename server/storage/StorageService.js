@@ -3079,6 +3079,10 @@ export class StorageService {
             return await this._withVehicleWrites([preferredId, alternateId], async () => {
                 await this.vehiclePublications.recover(preferredId);
                 if (alternateId !== preferredId) await this.vehiclePublications.recover(alternateId);
+                if (bundle.operationId) {
+                    const receipt = await this.vehiclePublications._readReceipt(bundle.operationId);
+                    if (receipt?.manifest) return receipt.manifest;
+                }
                 const vehicleId = await this.getVehicleManifest(preferredId) ? alternateId : preferredId;
                 const manifest = { ...incoming, id: vehicleId };
                 return this.vehiclePublications.publishLocked({

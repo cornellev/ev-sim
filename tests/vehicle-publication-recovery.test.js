@@ -16,7 +16,7 @@ import {
 } from "../app/vehicles/VehicleManifest.js";
 import { StorageService } from "../server/storage/StorageService.js";
 
-const BLANK_V3_HASH = "54025fcb83fb359f6e60cb8c86c7107f717274b4d36afddf36e7c7767b05a47e";
+const BLANK_V3_HASH = "03716fbb799f0e92e5c7295f6f710f4dc2888e0fdc39a7d4d1921b29ffdc1d56";
 
 function operationId() {
     return randomBytes(32).toString("hex");

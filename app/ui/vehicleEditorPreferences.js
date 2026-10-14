@@ -7,6 +7,7 @@ export const VEHICLE_EDITOR_PREFERENCE_KEYS = Object.freeze({
     PANE_LAYOUT: "cev-sim.ui.vehicleEditor.paneLayout",
     DISPLAY: "cev-sim.ui.vehicleEditor.display",
     HIERARCHY_EXPANDED: "cev-sim.ui.vehicleEditor.hierarchyExpanded",
+    WHEELS_PANEL: "cev-sim.ui.vehicleEditor.wheelsPanel",
 });
 
 export function readVehicleEditorPreference(key, fallback = null, storage = null) {

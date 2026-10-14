@@ -73,6 +73,7 @@ import {
     detachSensorInheritance,
     enableSensorInheritance,
     isInheritedSensorFieldLocked,
+    resetSensorsToParentVehicle,
     resolveInheritedVehicleSelection,
 } from "../simulation/sensors/SensorInheritance.js";
 import SensorTypeAdder from "../ui/SensorTypeAdder.js";
@@ -90,7 +91,6 @@ import {
 } from "./ConfigCatalogLoader.js";
 import {
     AdvancedFields,
-    AdvancedSwitch,
     AdvancedValidationBanner,
     AuthoringModeProvider,
     AsyncState,
@@ -727,7 +727,6 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                     <span className="truncate text-[13px]/[13px] font-semibold">Run Configuration</span>
                 </button>
                 <div className="flex flex-wrap items-center gap-2">
-                    <AdvancedSwitch />
                     <select
                         aria-label="Select run manifest"
                         className="sf-input hidden max-w-48 max-[1023px]:block"
@@ -1427,6 +1426,8 @@ function Sensors({
     const catalogEntries = sensorCatalogEntries(catalog, registry);
     const selection = resolveInheritedVehicleSelection(draft);
     const inheriting = draft.sensorRig?.inheritance?.mode === "vehicle";
+    const [resetOpen, setResetOpen] = useState(false);
+    const [resetting, setResetting] = useState(false);
     const builtInManifest = useMemo(
         () => (selection.vehicleId ? getBuiltInVehicleManifest(selection.vehicleId) : null),
         [selection.vehicleId],
@@ -1537,6 +1538,49 @@ function Sensors({
             onError(caught.message);
         }
     };
+    const confirmResetToParentVehicle = async () => {
+        if (resetting) return;
+        setResetting(true);
+        try {
+            if (!vehicleManifest) {
+                onError(applied.issues[0]?.message || "Choose a vehicle before inheriting sensors.");
+                setResetOpen(false);
+                return;
+            }
+            const resetResult = resetSensorsToParentVehicle(draft, vehicleManifest, { registry });
+            if (resetResult.issues.length > 0) {
+                onError(resetResult.issues.map((issue) => issue.message).join(" "));
+                setResetOpen(false);
+                return;
+            }
+            const stamped = stampInheritedPluginSelections(resetResult.manifest, catalog, registry);
+            if (stamped.issues.length > 0) {
+                onError(stamped.issues.map((issue) => issue.message).join(" "));
+                setResetOpen(false);
+                return;
+            }
+            for (const sensor of stamped.manifest.sensorRig.sensors) {
+                if (!sensor.inheritedFrom) continue;
+                const entry = pluginSensorCatalogEntryForType(catalog, sensor.type);
+                if (!entry?.ownership || entry.ownership === "builtin") continue;
+                await session?.loadLock({
+                    pluginId: entry.ownership.pluginId,
+                    version: entry.ownership.version,
+                    packageHash: entry.ownership.packageHash,
+                    runtimeHash: entry.ownership.runtimeHash,
+                    sensorTypes: [entry.type],
+                });
+            }
+            bumpRegistry();
+            update([], stamped.manifest);
+            setResetOpen(false);
+        } catch (caught) {
+            onError(caught.message);
+            setResetOpen(false);
+        } finally {
+            setResetting(false);
+        }
+    };
     const addEntry = async (entry) => {
         try {
             const next = structuredClone(draft);
@@ -1580,7 +1624,35 @@ function Sensors({
                 {inheriting && vehicleManifest && inheritedCount === 0 && applied.issues.length === 0 && (
                     <p className="mt-3 text-[12px] text-[var(--slate-muted)]">This vehicle has no sensors. Sensors you add here stay fully editable.</p>
                 )}
+                {inheriting && (
+                    <div className="mt-3">
+                        <Button size="compact" disabled={!vehicleManifest || resetting} onClick={() => setResetOpen(true)}>
+                            Reset to parent vehicle
+                        </Button>
+                    </div>
+                )}
             </div>
+            <AlertDialog.Root open={resetOpen} onOpenChange={(open) => { if (!open && !resetting) setResetOpen(false); }}>
+                <AlertDialog.Portal>
+                    <AlertDialog.Overlay className="sf-dialog-overlay" onClick={() => { if (!resetting) setResetOpen(false); }} />
+                    <AlertDialog.Content className="sf-dialog sf-guard-dialog">
+                        <header className="sf-dialog__header">
+                            <div>
+                                <AlertDialog.Title className="sf-dialog__title">
+                                    Reset sensors to the parent vehicle?
+                                </AlertDialog.Title>
+                                <AlertDialog.Description className="sf-dialog__description">
+                                    This deletes every sensor that is not on {vehicleName} and resets the sensors that are on it to the configuration stored on that vehicle. Rate, noise, topics, timing, and other run-only changes on those sensors are discarded.
+                                </AlertDialog.Description>
+                            </div>
+                        </header>
+                        <div className="sf-dialog__footer">
+                            <AlertDialog.Cancel asChild><Button disabled={resetting}>Cancel</Button></AlertDialog.Cancel>
+                            <Button variant="danger" loading={resetting} onClick={() => { confirmResetToParentVehicle().catch(() => {}); }}>Reset sensors</Button>
+                        </div>
+                    </AlertDialog.Content>
+                </AlertDialog.Portal>
+            </AlertDialog.Root>
             <AdvancedFields label="Rig frames">
                 <div className="grid gap-3 md:grid-cols-4">
                     <Field label="Map frame"><input value={draft.sensorRig.mapFrameId || "map"} onChange={(event) => update(["sensorRig", "mapFrameId"], event.target.value)} /></Field>

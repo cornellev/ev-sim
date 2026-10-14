@@ -20,6 +20,9 @@ export {
     writeLastOpenWorkspaceId,
 } from "./lastOpenWorkspaceStorage.js";
 export {
+    AccordionItem,
+    AccordionRoot,
+    Disclosure,
     Field,
     NativeSelect,
     SegmentedControl,

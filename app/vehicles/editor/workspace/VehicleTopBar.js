@@ -25,7 +25,6 @@ export function VehicleTopBar({
     onSave,
     validateDisabled,
     saveDisabled,
-    extra = null,
 }) {
     const key = saveState === "idle" && dirty ? "dirty" : (saveState || "idle");
     const status = STATUS[key] ?? STATUS.idle;
@@ -56,7 +55,6 @@ export function VehicleTopBar({
                     <Icon size={13} stroke={1.75} aria-hidden="true" className={key === "saving" ? "animate-pulse" : undefined} />
                     <span className="max-w-64 truncate">{conflict && saveMessage ? saveMessage : status.label}</span>
                 </span>
-                {extra}
                 <Button onClick={onValidate} disabled={validateDisabled}>Validate</Button>
                 <Button onClick={onSave} disabled={saveDisabled}>Save</Button>
             </div>

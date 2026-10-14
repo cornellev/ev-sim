@@ -70,7 +70,7 @@ export function VehicleWorkspace({
             style={{ gridTemplateColumns: template.columns, gridTemplateRows: template.rows }}
         >
             <div className="min-w-0" style={{ gridColumn: "1 / -1" }}>{topBar}</div>
-            <div className="min-w-0 border-b border-[var(--slate-border)]" style={{ gridColumn: "1 / -1" }}>{toolbar}</div>
+            <div className="min-w-0" style={{ gridColumn: "1 / -1" }}>{toolbar}</div>
             <WorkspacePane
                 paneId="hierarchy"
                 idPrefix="vehicle-pane"

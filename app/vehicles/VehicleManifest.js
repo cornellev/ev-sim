@@ -290,16 +290,31 @@ export function createDefaultVehicleManifest(overrides = {}) {
     );
 }
 
+function withStandardAxleRoles(wheels) {
+    return wheels.map((wheel) => {
+        const match = /^(front|rear)-(left|right)$/.exec(wheel.id);
+        if (!match || wheel.axle || wheel.side) return wheel;
+        return {
+            ...wheel,
+            axle: match[1],
+            side: match[2],
+            steerable: match[1] === "front",
+        };
+    });
+}
+
 /**
  * Version 3 blank used by transactional publication.
  * `createDefaultVehicleManifest()` stays version 2 so its pinned hash does not move.
- * Wheels stay unclassified; dependencies and hidden nodes start empty.
+ * The blank's named wheels are a standard front and rear axle. Dependencies and
+ * hidden nodes start empty.
  */
 export function createBlankVehicleManifest(overrides = {}) {
     const base = createDefaultVehicleManifest(overrides);
     return normalizeVehicleManifest({
         ...base,
         version: VEHICLE_MANIFEST_VERSION_V3,
+        wheels: withStandardAxleRoles(base.wheels),
         model: {
             asset: null,
             dependencies: [],

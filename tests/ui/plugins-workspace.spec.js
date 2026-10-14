@@ -45,7 +45,11 @@ test("plugins pane lists a local package and its details", async ({ page }) => {
 
     await dialog.getByRole("button", { name: "Plugins", exact: true }).click();
     await expect(dialog).toBeVisible();
-    await expect(dialog.getByRole("button", { name: "Settings", exact: true })).toBeDisabled();
+    const settings = dialog.getByRole("button", { name: "Settings", exact: true });
+    await expect(settings).toBeEnabled();
+    await settings.click();
+    await expect(dialog.getByRole("switch", { name: "Advanced" })).toBeVisible();
+    await dialog.getByRole("button", { name: "Plugins", exact: true }).click();
 
     const row = dialog.getByRole("button", { name: "acme.controls 1.0.0" });
     await expect(row).toBeVisible();

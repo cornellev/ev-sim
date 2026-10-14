@@ -47,7 +47,6 @@ import {
 } from "../BaselineComparison.js";
 import {
     AdvancedFields,
-    AdvancedSwitch,
     AuthoringModeProvider,
     AsyncState,
     Button,
@@ -567,7 +566,7 @@ export default function ExperimentWorkspace({
         finally { setBusy(false); }
     };
 
-    const actions = draft ? <><AdvancedSwitch /><span className={styles.caseCount}>{plan.cases.length} cases</span>{feedback && <span className={styles.headerFeedback}>{feedback}</span>}{dirty && <span className={styles.dirty}>Unsaved</span>}<Button size="compact" onClick={duplicate} disabled={dirty || busy}><IconCopy size={14} /> Duplicate</Button><Button size="compact" onClick={validate} loading={busy}><IconShieldCheck size={14} /> Validate</Button><Button size="compact" variant="primary" disabled={!dirty} loading={busy} onClick={() => save().catch(() => {})}><IconDeviceFloppy size={14} /> Save</Button></> : null;
+    const actions = draft ? <><span className={styles.caseCount}>{plan.cases.length} cases</span>{feedback && <span className={styles.headerFeedback}>{feedback}</span>}{dirty && <span className={styles.dirty}>Unsaved</span>}<Button size="compact" onClick={duplicate} disabled={dirty || busy}><IconCopy size={14} /> Duplicate</Button><Button size="compact" onClick={validate} loading={busy}><IconShieldCheck size={14} /> Validate</Button><Button size="compact" variant="primary" disabled={!dirty} loading={busy} onClick={() => save().catch(() => {})}><IconDeviceFloppy size={14} /> Save</Button></> : null;
 
     return (
         <AuthoringModeProvider>

@@ -39,6 +39,7 @@ export function DragNumber({
     min,
     max,
     precision = 3,
+    commitOnBlur = false,
     disabled = false,
     className = "",
     "aria-label": ariaLabel,
@@ -151,7 +152,7 @@ export function DragNumber({
                 const raw = event.target.value;
                 textRef.current = raw;
                 setText(raw);
-                commitText(raw);
+                if (!commitOnBlur) commitText(raw);
             }}
             onBlur={() => {
                 const raw = textRef.current;

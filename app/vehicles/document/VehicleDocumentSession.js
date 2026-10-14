@@ -4,6 +4,7 @@ import { normalizeVehicleManifest } from "../VehicleManifest.js";
 import { VehicleDocument } from "./VehicleDocument.js";
 import { VehicleSelection } from "./VehicleSelection.js";
 import { applyAxlePatch, replaceManifest } from "./vehicleCommands.js";
+import { applyLinkedWheelMotion, validateWheelLink } from "./wheelLink.js";
 
 const VOLATILE = new Set(["revision", "definitionHash", "createdAt", "updatedAt"]);
 const COALESCE_MS = 750;
@@ -27,8 +28,8 @@ function sameStage(left, right) {
 }
 
 /**
- * Draft session for one vehicle. History, gestures, and staged-resource
- * references stay here; they are not written into the manifest.
+ * Draft session for one vehicle. History, gestures, the wheel link, and
+ * staged-resource references stay here; they are not written into the manifest.
  */
 export class VehicleDocumentSession {
     constructor({
@@ -41,6 +42,7 @@ export class VehicleDocumentSession {
     } = {}) {
         this.resolveNormalizeOptions = resolveNormalizeOptions ?? (() => normalizeOptions);
         this.selection = new VehicleSelection();
+        this.wheelLink = null;
         this.history = [];
         this.redoStack = [];
         this.gesture = null;
@@ -136,6 +138,7 @@ export class VehicleDocumentSession {
             this.trimHistory();
         }
         this.selection.prune(after);
+        this.pruneWheelLink();
         return { ok: true, manifest: after, issues: [], review: result?.review };
     }
 
@@ -151,6 +154,7 @@ export class VehicleDocumentSession {
         this.draft.restore(entry.before);
         this.#restoreStage(entry, "stagedBefore");
         this.selection.prune(this.draft.snapshot());
+        this.pruneWheelLink();
         return { ok: true, manifest: this.draft.snapshot() };
     }
 
@@ -163,10 +167,33 @@ export class VehicleDocumentSession {
         this.draft.restore(entry.after);
         this.#restoreStage(entry, "stagedAfter");
         this.selection.prune(this.draft.snapshot());
+        this.pruneWheelLink();
         return { ok: true, manifest: this.draft.snapshot() };
     }
 
-    beginGesture({ kind, label = "Gesture", axle = null } = {}) {
+    /** @returns {{ ids: string[], mode: "together" | "mirror" } | null} */
+    wheelLinkSnapshot() {
+        if (!this.wheelLink) return null;
+        return { ids: [...this.wheelLink.ids], mode: this.wheelLink.mode };
+    }
+
+    setWheelLink(link) {
+        if (this.gesture) {
+            return { ok: false, link: this.wheelLinkSnapshot(), issues: [{ code: "vehicle.session.gesture-active", path: "", message: "Finish the active gesture before changing the wheel link." }] };
+        }
+        const result = validateWheelLink(this.draft.snapshot().wheels, link);
+        if (!result.ok) return result;
+        this.wheelLink = result.link;
+        return { ok: true, link: this.wheelLinkSnapshot(), issues: [] };
+    }
+
+    pruneWheelLink() {
+        if (!this.wheelLink) return;
+        const result = validateWheelLink(this.draft.snapshot().wheels, this.wheelLink);
+        this.wheelLink = result.ok ? result.link : null;
+    }
+
+    beginGesture({ kind, label = "Gesture", axle = null, drivenId = null, link = null } = {}) {
         if (this.gesture) {
             return { ok: false, issues: [{ code: "vehicle.session.gesture-active", path: "", message: "A gesture is already active." }] };
         }
@@ -175,6 +202,8 @@ export class VehicleDocumentSession {
             kind,
             label,
             axle,
+            drivenId,
+            link: link ? { ids: [...link.ids], mode: link.mode } : null,
             capture: this.draft.snapshot(),
             stagedBefore: cloneStage(this.stagedResources),
             dirty: false,
@@ -186,14 +215,23 @@ export class VehicleDocumentSession {
         if (!this.gesture) {
             return { ok: false, issues: [{ code: "vehicle.session.gesture-inactive", path: "", message: "No gesture is active." }] };
         }
-        if (this.gesture.kind !== "axle") {
+        let applied = null;
+        if (this.gesture.kind === "axle") {
+            applied = applyAxlePatch(this.gesture.capture, {
+                axle: this.gesture.axle,
+                patch,
+                normalizeOptions: this.normalizeOptions,
+            });
+        } else if (this.gesture.kind === "wheel-link") {
+            applied = applyLinkedWheelMotion(this.gesture.capture, {
+                drivenId: patch.drivenId ?? this.gesture.drivenId,
+                position: patch.position,
+                link: this.gesture.link,
+                normalizeOptions: this.normalizeOptions,
+            });
+        } else {
             return { ok: false, issues: [{ code: "vehicle.session.gesture-unsupported", path: "", message: `Gesture "${this.gesture.kind}" cannot be previewed.` }] };
         }
-        const applied = applyAxlePatch(this.gesture.capture, {
-            axle: this.gesture.axle,
-            patch,
-            normalizeOptions: this.normalizeOptions,
-        });
         if (!applied.ok) {
             this.draft.preview(this.gesture.capture);
             this.gesture.dirty = false;
@@ -224,6 +262,7 @@ export class VehicleDocumentSession {
         this.trimHistory();
         this.draft.generation += 1;
         this.selection.prune(after);
+        this.pruneWheelLink();
         return { ok: true, manifest: after };
     }
 
@@ -234,6 +273,7 @@ export class VehicleDocumentSession {
         const capture = this.gesture.capture;
         this.gesture = null;
         this.draft.preview(capture);
+        this.pruneWheelLink();
         return { ok: true, manifest: this.draft.snapshot() };
     }
 
@@ -275,6 +315,7 @@ export class VehicleDocumentSession {
         this.history = [];
         this.redoStack = [];
         this.selection.prune(normalized);
+        this.pruneWheelLink();
         return { ok: true, dirty: this.dirty };
     }
 
@@ -283,6 +324,7 @@ export class VehicleDocumentSession {
         this.history = [];
         this.redoStack = [];
         this.gesture = null;
+        this.wheelLink = null;
         this.selection.clear();
         this.stagedResources = null;
         this.saveCapture = null;

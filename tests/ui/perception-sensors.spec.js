@@ -81,3 +81,38 @@ test("run configuration inherits vehicle mounts and keeps run settings editable"
     await expect(lidar.getByRole("spinbutton", { name: "REP-103 pose position (m) x" })).toBeEnabled();
     await expect(lidar.getByRole("spinbutton", { name: "Range (m)" })).toBeEnabled();
 });
+
+test("reset to parent vehicle deletes extra sensors after confirmation", async ({ page }) => {
+    test.setTimeout(90_000);
+    await page.goto("/");
+    await openWorkspace(page, "Run configuration");
+
+    const tabs = page.getByRole("tablist", { name: "Run manifest sections" });
+    await tabs.getByRole("tab", { name: "Sensors" }).click();
+    const panel = page.getByRole("tabpanel", { name: "Sensors" });
+    await expect(panel.getByRole("button", { name: "Reset to parent vehicle" })).toHaveCount(0);
+    await panel.getByRole("switch", { name: /Inherit sensors from the selected vehicle/ }).click();
+
+    const lidar = panel.locator("[data-sensor-id='roof-lidar']");
+    await expect(panel.getByRole("button", { name: "Reset to parent vehicle" })).toBeEnabled();
+    await lidar.getByRole("spinbutton", { name: "Rate (Hz)" }).fill("7");
+    await expect(panel.locator("[data-sensor-id='front-camera']")).toBeVisible();
+
+    await panel.getByRole("button", { name: "Reset to parent vehicle" }).click();
+    const dialog = page.getByRole("alertdialog", { name: "Reset sensors to the parent vehicle?" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText("Big Car");
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(lidar.getByRole("spinbutton", { name: "Rate (Hz)" })).toHaveValue("7");
+    await expect(panel.locator("[data-sensor-id='front-camera']")).toBeVisible();
+
+    await panel.getByRole("button", { name: "Reset to parent vehicle" }).click();
+    await dialog.getByRole("button", { name: "Reset sensors" }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(panel.locator("[data-sensor-id='front-camera']")).toHaveCount(0);
+    await expect(panel.locator("[data-sensor-id='front-lidar']")).toHaveCount(0);
+    await expect(lidar.getByRole("spinbutton", { name: "Rate (Hz)" })).toHaveValue("10");
+    await expect(lidar.getByText("From vehicle")).toBeVisible();
+    await expect(panel.locator("[data-sensor-id='front-stereo-camera']")).toBeVisible();
+});
