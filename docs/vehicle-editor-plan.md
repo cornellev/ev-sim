@@ -1,8 +1,7 @@
 # Vehicle editor plan
 
 This document records the vehicle-editor program decisions that are in force.
-VEH-01 through VEH-06 are implemented. Later packages add GitHub acquisition
-and editor chrome.
+VEH-01 through VEH-07 are implemented. Workspace chrome remains VEH-08.
 
 ## Status
 
@@ -18,8 +17,10 @@ and editor chrome.
   visual yaw for a version 3 standard front axle.
 - Implemented: **VEH-06** — local URDF import into a canonical vehicle GLB,
   reviewed axle acceptance, and articulated URDF export.
-- Not in this package: GitHub acquisition (VEH-07) and workspace chrome
-  (VEH-08).
+- Implemented: **VEH-07** — public GitHub URDF acquisition. Inspect and fetch
+  pin a commit and return a package. They do not create a vehicle or publish
+  assets.
+- Not in this package: workspace chrome (VEH-08).
 - Built-in projections stay version 2. `createDefaultVehicleManifest()` stays
   version 2. New blanks created through publication are version 3. The current
   editor still uploads a single legacy file; that path does not require a
@@ -289,4 +290,16 @@ A model-free vehicle exports as one `.urdf`. A vehicle with meshes exports as a 
 ### VEH-06e — loader acceptance
 
 `urdf-loader` 0.13.1 is a devDependency and is not a second copy of this parser. The acceptance test installs the xmldom `DOMParser` as `globalThis.DOMParser`. Rest pose alone is not the gate. A nonzero steer and a nonzero spin must move a wheel vertex that is not on the joint axis, the body vertices stay, and the wheel link has one visual. Positive `setJointValue` on the carrier moves the forward vertex of the left wheel toward ROS +Y.
+
+### VEH-07 — public GitHub acquisition
+
+`parseGitHubVehicleUrl` accepts public HTTPS repository, tree, blob, and raw GitHub URLs. Userinfo, query strings, hashes, and token fields are rejected, and no `Authorization` header is sent. `splitGitHubRef` uses the longest branch or tag. A 40-character commit prefix skips the ref list. The commit SHA and the tree SHA are stored separately; the tree SHA always comes from the commit object.
+
+Candidates ending in `.urdf` rank as a named blob, then a file directly inside `urdf/`, then `robots/`, then a file in the requested directory, then any other URDF. `.xacro` is not a candidate. A tie at the best rank requires `entryPath`. Fetch without that path downloads no mesh.
+
+`GitHubUrdfClient` talks only to `https://api.github.com`, with `redirect: "manual"`. A 3xx other than 304 is `vehicle.github.redirect`. A private flag, or 401/403/404 on the repository, is `vehicle.github.private` and does not say whether the repository exists. Symlinks (`120000`), submodules (`160000`), and Git LFS pointers are rejected before they enter the package. Blob bytes use `application/vnd.github.raw`. Declared sizes above 64 MiB are not downloaded. A body whose length differs from the tree is `vehicle.github.size-mismatch`.
+
+The closure walk reuses `parseUrdfRobot`, `resolveUrdfResource`, `readUrdfPackage`, OBJ `mtllib` / `map_Kd` listing, and `listGltfDependencyPaths`. Limits are 256 files, 64 MiB per file, 100 MiB total, 4 MiB per XML document, depth 32, four concurrent requests, and two minutes. A limit failure returns no files. Trees are cached by commit SHA. Ref lists above 4 MiB require a full commit SHA. Rate-limit responses stop the operation and include the reset time.
+
+`POST /api/storage/vehicle-urdf/github/inspect` and `fetch` return the review (repository, commit, tree, selected path, SPDX license or `none` / `other`) and, for fetch, canonical base64 file bytes. Provenance stays on `source.kind === "github"` and is not written into a manifest, stage, or asset directory. `GitHubUrdfSession` aborts the previous request and ignores an older response. Workspace chrome that displays this review is VEH-08.
 

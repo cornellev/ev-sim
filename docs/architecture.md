@@ -217,7 +217,7 @@ canonical GLB in the vehicle frame (+X forward, +Y up, +Z left). That basis
 is separate from the sensor REP-103 map, which sends left to −Z. Export
 writes articulated wheel joints and reports revolute effort and velocity as
 placeholders rather than dynamics. The import plan does not write a manifest,
-and neither path adds manifest fields or changes the plant. The vehicle plan
+and neither path adds manifest fields or changes the plant. A public GitHub URL can be inspected and fetched into that same local package shape; the commit and license stay on the package source and are not written into the vehicle. The vehicle plan
 and per-wheel visual yaw are presentation: a version 3 standard layout draws
 an ideal inner and outer angle on the front wheels, and every other steerable
 wheel keeps the shared plant angle. A version 3 document changes resolved

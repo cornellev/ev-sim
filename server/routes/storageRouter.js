@@ -2,6 +2,7 @@ import express from "express";
 import { storageEvents } from "../mcp/events.js";
 import { exportEnvironmentPackage } from "../marketplace/EnvironmentPackage.js";
 import { exportRunTemplatePackage } from "../marketplace/RunTemplatePackage.js";
+import { GitHubUrdfService, encodeGitHubResult } from "../vehicles/GitHubUrdfService.js";
 import { jsonHandler } from "./jsonHandler.js";
 
 /**
@@ -12,9 +13,11 @@ import { jsonHandler } from "./jsonHandler.js";
  * behavior (caching, atomic writes, on-disk layout) lives in StorageService.
  *
  * @param {import("../storage/StorageService.js").StorageService} service
+ * @param {{ githubUrdf?: GitHubUrdfService }} [options]
  */
-export function createStorageRouter(service) {
+export function createStorageRouter(service, { githubUrdf = null } = {}) {
     const router = express.Router();
+    const github = githubUrdf ?? new GitHubUrdfService();
 
     // --- Environments ---
     router.get("/environments", handle(async () => service.listEnvironments()));
@@ -229,6 +232,19 @@ export function createStorageRouter(service) {
     router.get("/run-manifests/:id", handle(async (req) => service.getRunManifest(req.params.id)));
     router.put("/run-manifests/:id", handle(async (req) => service.putRunManifest(req.params.id, req.body ?? {})));
     router.delete("/run-manifests/:id", handle(async (req) => service.deleteRunManifest(req.params.id)));
+
+    // --- Public GitHub URDF acquisition. These routes do not write vehicles. ---
+    router.post("/vehicle-urdf/github/inspect", handle(async (req) => encodeGitHubResult(await github.inspect({
+        url: req.body?.url,
+        body: req.body,
+        signal: req.signal,
+    }))));
+    router.post("/vehicle-urdf/github/fetch", handle(async (req) => encodeGitHubResult(await github.fetch({
+        url: req.body?.url,
+        entryPath: req.body?.entryPath,
+        body: req.body,
+        signal: req.signal,
+    }))));
 
     // --- Vehicle manifests ---
     router.get("/vehicles", handle(async () => service.listVehicleManifests()));

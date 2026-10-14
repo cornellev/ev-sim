@@ -75,6 +75,8 @@ Version 3 geometric scalars — model placement, body bounds, wheel position, ra
 
 `planUrdfImport()` reads a local URDF package and does not write a vehicle. `acceptUrdfImport()` copies the baked model, body box, and wheel geometry only when `acceptAdjustments` is true. The rest pose is stored as a canonical GLB in the vehicle frame. Collision bounds define the body box when the URDF has them. A complete front and rear pair sets `kinematics.wheelbase`. Steering joints that do not already share one positive symmetric limit stay blocked until the caller supplies `maxSteeringAngle`. Accepted geometry uses the existing version 3 model, wheel, and kinematics fields; URDF provenance is not stored and does not enter the vehicle hash. Export writes an articulated URDF. Bound wheels become their own links, unbound wheels become cylinders, and revolute `effort` and `velocity` are `0` placeholders. Inertia, sensors, the LiDAR zone, plugin locks, and `dynamics.plant` are omitted from that file and listed in the export report.
 
+`POST /api/storage/vehicle-urdf/github/inspect` and `fetch` resolve a public GitHub repository, tree, blob, or raw URL to one commit and return the same package shape. Fetch file bytes are canonical base64. Those routes do not create a vehicle or publish assets. The returned `source` records the repository, commit SHA, tree SHA, and license for review. That provenance is not part of the vehicle hash.
+
 ## Runtime behavior
 
 `VehicleDatabase.configureFromManifest` spawns any non-built-in `type` as a `ManifestVehicle` by loading the matching vehicle manifest from storage. A `ManifestVehicle`:

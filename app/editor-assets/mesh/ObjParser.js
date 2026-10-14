@@ -89,6 +89,30 @@ function texturePath(args) {
     return tokens.slice(index).join(" ");
 }
 
+/** MTL library paths named by an OBJ file. Uses the same statement rules as the parser. */
+export function listObjLibraryPaths(text, entryPath) {
+    const paths = [];
+    for (const line of linesOf(text)) {
+        const parsed = statement(line);
+        if (!parsed || parsed.keyword.toLowerCase() !== "mtllib") continue;
+        for (const name of parsed.args.split(/\s+/u).filter(Boolean)) {
+            paths.push(resolveDependency(entryPath, name));
+        }
+    }
+    return paths;
+}
+
+/** Texture paths named by `map_Kd` in an MTL file. */
+export function listMtlTexturePaths(text, mtlPath) {
+    const paths = [];
+    for (const line of linesOf(text)) {
+        const parsed = statement(line);
+        if (!parsed || parsed.keyword.toLowerCase() !== "map_kd") continue;
+        paths.push(resolveDependency(mtlPath, texturePath(parsed.args)));
+    }
+    return paths;
+}
+
 function selectedFile(selected, path) {
     const bytes = selected.get(path);
     if (!bytes) throw new Error(`GLTF dependency "${path}" was not selected.`);

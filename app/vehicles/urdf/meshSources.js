@@ -4,8 +4,8 @@ import { parseObjPackage } from "../../editor-assets/mesh/ObjParser.js";
 import { parseStl } from "../../editor-assets/mesh/StlParser.js";
 import { GLB_BIN_CHUNK, readGlb } from "../../simulation/visual/GlbContainer.js";
 import { vehicleNodeCatalog } from "../model/measurePlacedVehicle.js";
+import { listGltfDependencyPaths, resolveVehicleUri } from "../model/vehiclePackagePaths.js";
 import { transformNormal, transformPositions } from "./rosCevBasis.js";
-import { resolveUrdfResource } from "./urdfPackage.js";
 import { urdfIssue } from "./issue.js";
 
 const COMPONENT_BYTES = Object.freeze({
@@ -141,9 +141,10 @@ function gltfBuffers(json, bin, pkg, entry) {
             buffers[index] = decodeDataUri(uri);
             continue;
         }
-        const resolved = resolveUrdfResource(pkg, entry, uri);
-        if (resolved.error) throw new Error(resolved.error.message);
-        buffers[index] = pkg.fileMap.get(resolved.path);
+        const dependencyPath = resolveVehicleUri(entry, uri);
+        const bytes = pkg.fileMap.get(dependencyPath);
+        if (!bytes) throw new Error(`GLTF dependency "${dependencyPath}" was not selected.`);
+        buffers[index] = bytes;
     }
     return buffers;
 }
@@ -204,6 +205,12 @@ export function readGlbNodeParts(bytes) {
     return readGltfDocument(parsed.json, buffers);
 }
 
+function requireGltfDependencies(pkg, json, resourcePath) {
+    for (const dependency of listGltfDependencyPaths(json, resourcePath)) {
+        if (!pkg.fileMap.has(dependency)) throw new Error(`GLTF dependency "${dependency}" was not selected.`);
+    }
+}
+
 function loadGltf(pkg, resourcePath, bytes) {
     if (extensionOf(resourcePath) === "glb") {
         const parsed = readGlb(bytes, {
@@ -215,10 +222,12 @@ function loadGltf(pkg, resourcePath, bytes) {
             copyChunks: true,
             ErrorType: Error,
         });
+        requireGltfDependencies(pkg, parsed.json, resourcePath);
         const bin = parsed.chunks.find((chunk) => chunk.type === GLB_BIN_CHUNK)?.bytes ?? null;
         return readGltfDocument(parsed.json, gltfBuffers(parsed.json, bin, pkg, resourcePath));
     }
     const json = JSON.parse(new TextDecoder().decode(bytes));
+    requireGltfDependencies(pkg, json, resourcePath);
     return readGltfDocument(json, gltfBuffers(json, null, pkg, resourcePath));
 }
 

@@ -1,4 +1,4 @@
-/** Local URDF package set. GitHub acquisition fills `source` later. */
+/** URDF package set. A GitHub source is kept when `source.kind` is `github`. */
 
 import { parseUrdfXml, urdfXmlIssues } from "./parseUrdfXml.js";
 import { urdfIssue } from "./issue.js";
@@ -155,7 +155,10 @@ export function resolveUrdfResource(pkg, fromPath, uri) {
         const relative = body.slice(slash + 1);
         const roots = candidateRoots(pkg, name);
         if (roots.length === 0) {
-            return { error: urdfIssue("vehicle.urdf.missing-mesh", raw, `Package "${name}" is not in the selected set.`) };
+            return {
+                packageName: name,
+                error: urdfIssue("vehicle.urdf.missing-mesh", raw, `Package "${name}" is not in the selected set.`),
+            };
         }
         if (roots.length > 1) {
             return { error: urdfIssue("vehicle.urdf.ambiguous-path", raw, `Package "${name}" matches more than one directory.`) };
@@ -167,7 +170,11 @@ export function resolveUrdfResource(pkg, fromPath, uri) {
             return { error: urdfIssue("vehicle.urdf.package-escape", raw, error.message) };
         }
         if (!pkg.fileMap.has(resolved)) {
-            return { error: urdfIssue("vehicle.urdf.missing-mesh", resolved, `Mesh "${resolved}" was not selected.`) };
+            return {
+                path: resolved,
+                missing: true,
+                error: urdfIssue("vehicle.urdf.missing-mesh", resolved, `Mesh "${resolved}" was not selected.`),
+            };
         }
         return { path: resolved };
     }
@@ -179,7 +186,11 @@ export function resolveUrdfResource(pkg, fromPath, uri) {
         return { error: urdfIssue("vehicle.urdf.package-escape", raw, error.message) };
     }
     if (!pkg.fileMap.has(resolved)) {
-        return { error: urdfIssue("vehicle.urdf.missing-mesh", resolved, `Mesh "${resolved}" was not selected.`) };
+        return {
+            path: resolved,
+            missing: true,
+            error: urdfIssue("vehicle.urdf.missing-mesh", resolved, `Mesh "${resolved}" was not selected.`),
+        };
     }
     return { path: resolved };
 }

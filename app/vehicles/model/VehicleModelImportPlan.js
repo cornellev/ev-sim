@@ -8,7 +8,7 @@ import { GLB_BIN_CHUNK, readGlb } from "../../simulation/visual/GlbContainer.js"
 import { sha256ExactBytes } from "../../simulation/visual/VisualLayer.js";
 import { packVehicleGltf } from "./packVehicleGltf.js";
 import { validateVehicleModelClosure } from "./validateVehicleModel.js";
-import { normalizeVehicleEntry, resolveVehicleUri } from "./vehiclePackagePaths.js";
+import { listGltfDependencyPaths, normalizeVehicleEntry, resolveVehicleUri } from "./vehiclePackagePaths.js";
 
 const VEHICLE_GENERATOR = "cev-sim.vehicle-glb@1";
 const DATA_URI_PATTERN = /^data:([^;,]+);base64,([A-Za-z0-9+/]*={0,2})$/;
@@ -128,6 +128,9 @@ function closureFromPacked(entry, packed) {
 
 function packGltfBytes(bytes, mediaType, selected, entry) {
     const parsed = readModel(bytes, mediaType);
+    for (const dependencyPath of listGltfDependencyPaths(parsed.json, entry)) {
+        if (!selected.has(dependencyPath)) throw new Error(`GLTF dependency "${dependencyPath}" was not selected.`);
+    }
     return packVehicleGltf({
         json: parsed.json,
         buffers: bufferPayloads(parsed.json, parsed.bin, selected, entry),

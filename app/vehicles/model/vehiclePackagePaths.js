@@ -62,3 +62,29 @@ export function resolveVehicleUri(entry, uri) {
     }
     return resolveDependency(entry, raw);
 }
+
+function externalGltfPath(entry, uri) {
+    if (typeof uri !== "string" || uri === "" || uri.startsWith("data:")) return null;
+    return resolveVehicleUri(entry, uri);
+}
+
+/**
+ * External buffer and image paths for one glTF document.
+ * `data:` URIs and buffer-view images stay inside the document.
+ */
+export function listGltfDependencyPaths(json, entry) {
+    const paths = [];
+    const seen = new Set();
+    const add = (uri) => {
+        const path = externalGltfPath(entry, uri);
+        if (!path || seen.has(path)) return;
+        seen.add(path);
+        paths.push(path);
+    };
+    for (const buffer of json?.buffers ?? []) add(buffer?.uri);
+    for (const image of json?.images ?? []) {
+        if (Number.isInteger(image?.bufferView)) continue;
+        add(image?.uri);
+    }
+    return paths;
+}
