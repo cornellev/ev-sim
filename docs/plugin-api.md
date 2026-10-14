@@ -194,7 +194,7 @@ node --experimental-default-type=module scripts/create-cev-plugin.mjs \
 
 The committed bicycle fixture is `tests/fixtures/plugins/test.plant-fixture/`. `npm run fixtures:plant` rewrites it from the deterministic encoder so CI does not need Rust. `CEV_PLANT_CARGO=1` opts into a real `cargo` verify when the `wasm32-unknown-unknown` target is installed.
 
-A vehicle selects the plant with optional `dynamics: { plant }`. Omitted dynamics keep the JavaScript bicycle. The matching `pluginLocks[]` entry may include `plants`. Empty `plants` is omitted, so sensor-only locks keep their previous hash projection. A plant-only lock does not require `sensors.sample.range-image`. A lock that lists plants requires the run to grant `plant.step`. Config shows one action that adds or replaces that plugin's run artifact and grant. Grants are not added silently.
+A vehicle selects the plant with optional `dynamics: { plant }`. Omitted dynamics keep the JavaScript bicycle. The matching `pluginLocks[]` entry may include `plants`. Empty `plants` is omitted, so sensor-only locks keep their previous hash projection. A plant-only lock does not require `sensors.sample.range-image`. A lock that lists plants requires the run to grant `plant.step`. Config shows one action that adds or replaces that plugin's run artifact and grant. Grants are not added silently. `cev-sim create-bundle` and `cev_sim.configure` copy a stored vehicle's plugin locks into the planning bundle, including `plant.step`, when those packages are installed in the data directory. A vehicle with no plugin locks stays on the plugin-free bundle.
 
 ## Install and operate
 

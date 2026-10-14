@@ -2,6 +2,10 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import {
+    normalizeVehiclePluginLocks,
+    stampManifestPluginSelectionForVehicleLock,
+} from "../../app/plugin/PluginSensorAuthoring.js";
 import { createDefaultRunManifest } from "../../app/simulation/RunManifest.js";
 import { getBuiltInVehicleManifest } from "../../app/vehicles/BuiltInVehicleManifests.js";
 import { createWorldResource } from "../../app/simulation/world/WorldDescription.js";
@@ -286,11 +290,46 @@ function applyStartPose(manifest, point, yaw) {
     vehicle.steeringAngle = 0;
 }
 
+function assertPlanningPlantLock(manifest) {
+    const plantId = typeof manifest?.dynamics?.plant === "string" ? manifest.dynamics.plant : "";
+    if (!plantId) return;
+    const locks = Array.isArray(manifest.pluginLocks) ? manifest.pluginLocks : [];
+    if (!locks.some((lock) => Array.isArray(lock?.plants) && lock.plants.includes(plantId))) {
+        throw new Error(`Plant "${plantId}" has no matching plugin lock.`);
+    }
+}
+
+async function copyPlanningPluginPackages(live, storage, manifest) {
+    const locks = normalizeVehiclePluginLocks(manifest?.pluginLocks) ?? [];
+    for (const lock of locks) {
+        let resource;
+        try {
+            resource = await live.plugins.getPackage(lock.packageHash);
+        } catch (error) {
+            throw new Error(`Plugin "${lock.pluginId}" must be installed in the data directory.`, { cause: error });
+        }
+        if (live !== storage) await storage.plugins.putPackage(resource);
+    }
+}
+
+function applyVehiclePluginSelection(manifest, vehicle) {
+    const locks = normalizeVehiclePluginLocks(vehicle?.pluginLocks) ?? [];
+    if (locks.length === 0) return manifest;
+    let selection = manifest.plugins ?? null;
+    for (const lock of locks) {
+        selection = stampManifestPluginSelectionForVehicleLock(selection, lock);
+    }
+    if (selection) manifest.plugins = structuredClone(selection);
+    return manifest;
+}
+
 async function resolvePlanningVehicle(live, storage, vehicleId, copyStored) {
     const builtIn = getBuiltInVehicleManifest(vehicleId);
     if (builtIn) return builtIn;
     const snapshot = await live.readVehicleSnapshot(vehicleId);
     if (!snapshot?.manifest) throw new Error(`Vehicle "${vehicleId}" does not exist.`);
+    assertPlanningPlantLock(snapshot.manifest);
+    await copyPlanningPluginPackages(live, storage, snapshot.manifest);
     if (copyStored) {
         await storage.createVehicleManifest(snapshot.manifest);
         for (const file of snapshot.files || []) {
@@ -398,14 +437,14 @@ export async function createPlanningBundle({
         const second = verified.verification.polyline[1];
         const yaw = yawFromDirection(second.x - start.x, second.z - start.z);
         const storedScenario = await storage.createScenario(scenario);
-        const manifest = stateSensorManifest(source, {
+        const manifest = applyVehiclePluginSelection(stateSensorManifest(source, {
             environmentId: selectedEnvironmentId,
             storedScenario,
             bundleId,
             sensors,
             maxSteps,
             vehicleType: selectedVehicleId,
-        });
+        }), vehicle);
         applyStartPose(manifest, start, yaw);
         const created = await storage.createRunManifest(manifest);
         const validation = await storage.validateRunManifest(created.id);
@@ -413,7 +452,7 @@ export async function createPlanningBundle({
             const message = validation.issues.map((issue) => `${issue.path}: ${issue.message}`).join("\n");
             throw new Error(message || "Run manifest validation failed.");
         }
-        return storage.exportRunManifest(created.id);
+        return await storage.exportRunManifest(created.id);
     } finally {
         await fs.rm(ownedRoot, { recursive: true, force: true });
     }

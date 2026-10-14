@@ -134,7 +134,7 @@ with cev_sim.launch(config) as sim:
 | Argument | Default | Meaning |
 | --- | --- | --- |
 | `environment` | required | Saved or built-in environment id. |
-| `vehicle` | manifest car, `big-car` for the built-in run | Saved or built-in vehicle id. |
+| `vehicle` | manifest car, `big-car` for the built-in run | Saved or built-in vehicle id. A saved vehicle with a dynamics plant uses that plant when the package is installed in the same data directory. |
 | `start` | bundle pose | `(x, z)`, `(x, z, yaw)`, or `(x, z, yaw, speed)`. A two-number start takes its yaw from the nearest route segment. |
 | `goal` | `None` | `(x, z)` or `(x, z, yaw)`. `None` is a free drive. |
 | `goal_tolerance_m` | `1.0` | Success radius when `goal` is set. |

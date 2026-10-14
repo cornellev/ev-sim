@@ -4,9 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { stampVehiclePluginPlantLock } from "../app/plugin/PluginSensorAuthoring.js";
+import { verifyPluginPackage } from "../app/plugin/PluginPackage.js";
+import { PluginRunSession, PLG03_RUNTIME_CAPABILITIES } from "../app/plugin/PluginRunSession.js";
+import { HeadlessVehicleManager } from "../app/simulation/headless/HeadlessVehicleManager.js";
 import { createDefaultVehicleManifest } from "../app/vehicles/VehicleManifest.js";
 import { createPlanningBundle, firstClearRouteIndex, yawFromDirection } from "../server/headless/PlanningBundle.js";
 import { StorageService } from "../server/storage/StorageService.js";
+import { pluginFixtureResource } from "./helpers/pluginFixtures.js";
 
 function stripVolatile(value) {
     if (Array.isArray(value)) return value.map(stripVolatile);
@@ -58,6 +63,8 @@ test("create-bundle is deterministic, validated, and starts clear of obstacles",
     assert.ok(first.resolved.scenario.scenario.routes[0].verification.totalLength > 0);
     assert.match(first.resolvedHash, /^[0-9a-f]{64}$/);
     assert.equal(first.resolved.scenario.scenario.triggers[0].condition.kind, "zone-enter");
+    assert.deepEqual(first.resolved.identityProfile, { id: "world-bound", version: 2 });
+    assert.equal(first.resolved.pluginPackages, undefined);
 });
 
 test("finish none keeps a verified route and does not end at the far end", async () => {
@@ -136,4 +143,91 @@ test("a manifest without state sensors receives the localization rig", async (t)
     );
     const topicIds = new Set(bundle.manifest.topics.map((topic) => topic.id));
     assert.equal(topicIds.has("imu") && topicIds.has("gnss") && topicIds.has("wheel-odometry"), true);
+});
+
+test("a vehicle dynamics plant is copied into the planning bundle and steps", async (t) => {
+    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "cev-planning-plant-"));
+    t.after(() => fs.rm(dataDir, { recursive: true, force: true }));
+    const storage = new StorageService(dataDir);
+    const resource = await pluginFixtureResource({ fixture: "test.plant-fixture" });
+    const verified = verifyPluginPackage(resource);
+    await storage.plugins.putPackage(resource);
+    const plantId = verified.document.plants[0].id;
+    await storage.createVehicleManifest(createDefaultVehicleManifest({
+        id: "plant-car",
+        name: "Plant Car",
+        dynamics: { plant: plantId },
+        pluginLocks: stampVehiclePluginPlantLock(undefined, {
+            pluginId: verified.document.id,
+            version: verified.document.version,
+            packageHash: resource.packageHash,
+            runtimeHash: resource.runtimeHash,
+            plantId,
+        }),
+    }));
+    const bundle = await createPlanningBundle({ dataDir, vehicleId: "plant-car", bundleId: "plant-route" });
+    const ego = bundle.resolved.vehicles.find((entry) => entry.actorId === "ego");
+    assert.equal(ego.manifest.dynamics.plant, plantId);
+    assert.deepEqual(bundle.resolved.identityProfile, { id: "world-bound-plugins", version: 1 });
+    assert.equal(bundle.resolved.plugins[0].pluginId, verified.document.id);
+    assert.equal(bundle.resolved.plugins[0].packageHash, resource.packageHash);
+    assert.deepEqual(bundle.manifest.plugins.artifacts[0].capabilities, ["plant.step"]);
+    assert.equal(bundle.resolved.pluginPackages.length, 1);
+    assert.equal(verifyPluginPackage(bundle.resolved.pluginPackages[0]).document.id, verified.document.id);
+    const session = await new PluginRunSession({
+        moduleSource: { async importRuntime() { throw new Error("unexpected import"); } },
+        plugins: bundle.resolved.plugins,
+        availableCapabilities: PLG03_RUNTIME_CAPABILITIES,
+    }).prepareDefinitions(bundle.resolved.pluginPackages);
+    t.after(() => session.dispose());
+    const manager = new HeadlessVehicleManager();
+    await manager.configureFromManifest(bundle.manifest.initialState.vehicles, null, {
+        plants: session.plants,
+        resolvedVehicles: bundle.resolved.vehicles,
+    });
+    const before = manager.vehicles[0].position.x;
+    manager.vehicles[0].acceleration.x = 1;
+    manager.update(0.02);
+    assert.notEqual(manager.vehicles[0].position.x, before);
+});
+
+test("a dynamics plant without a lock or an installed package fails before export", async (t) => {
+    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "cev-planning-plant-fail-"));
+    t.after(() => fs.rm(dataDir, { recursive: true, force: true }));
+    const storage = new StorageService(dataDir);
+    await storage.createVehicleManifest(createDefaultVehicleManifest({
+        id: "plain-car",
+        name: "Plain Car",
+    }));
+    const vehiclePath = path.join(dataDir, "vehicles", "plain-car.json");
+    const stored = JSON.parse(await fs.readFile(vehiclePath, "utf8"));
+    stored.dynamics = { plant: "test.plant-fixture.bicycle" };
+    delete stored.pluginLocks;
+    await fs.writeFile(vehiclePath, JSON.stringify(stored));
+    await assert.rejects(
+        () => createPlanningBundle({ dataDir, vehicleId: "plain-car", bundleId: "unlocked" }),
+        /no matching plugin lock/,
+    );
+
+    const resource = await pluginFixtureResource({ fixture: "test.plant-fixture" });
+    const verified = verifyPluginPackage(resource);
+    await storage.plugins.putPackage(resource);
+    const plantId = verified.document.plants[0].id;
+    await storage.createVehicleManifest(createDefaultVehicleManifest({
+        id: "plant-car",
+        name: "Plant Car",
+        dynamics: { plant: plantId },
+        pluginLocks: stampVehiclePluginPlantLock(undefined, {
+            pluginId: verified.document.id,
+            version: verified.document.version,
+            packageHash: resource.packageHash,
+            runtimeHash: resource.runtimeHash,
+            plantId,
+        }),
+    }));
+    await fs.rm(path.join(dataDir, "plugins", "cas", "sha256", resource.packageHash), { recursive: true, force: true });
+    await assert.rejects(
+        () => createPlanningBundle({ dataDir, vehicleId: "plant-car", bundleId: "missing-package" }),
+        /must be installed in the data directory/,
+    );
 });

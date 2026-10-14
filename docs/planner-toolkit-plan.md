@@ -85,6 +85,14 @@ finish remains `route`, so existing bundles stay the same.
 `configure` defaults to `planning-oracle@1`. `CevSimEnv` and
 `gym.make("CevSim-v0")` stay on `measured-state`.
 
+### PLN-D07 — Plugin vehicle locks travel with the bundle
+
+`create-bundle` copies a stored vehicle's plugin locks onto the run and
+embeds the packages installed in the data directory. A dynamics plant
+therefore steps in `configure`. A vehicle with no plugin locks keeps
+`world-bound@2` and the previous plugin-free bundle shape. This does not
+change the Protobuf contract or the `measured-state` profile.
+
 ## Milestones
 
 ### PLN-01
@@ -203,3 +211,11 @@ seconds, `clock.steps()` reports simulation steps, and `clock.dt()` reports
 the bundle step length. `loop()` is true only while the episode is ready.
 `pose()`, `velocity()`, `steering()`, and `goal()` copy planning-oracle
 fields. `max_steps=0` is unchanged.
+
+### 2026-10-14 — Planning bundles carry vehicle plugin locks
+
+`create-bundle` stamps a stored vehicle's plugin locks onto the generated run
+and copies the installed packages into the temporary store before resolve. A
+dynamics plant selected on that vehicle is stepped by the existing headless
+worker. Plugin-free vehicles stay on `world-bound@2`. The Protobuf contract
+and `measured-state` hashes are unchanged.

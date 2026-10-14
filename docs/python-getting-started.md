@@ -100,7 +100,7 @@ What each piece does:
 | Piece | Meaning |
 | --- | --- |
 | `environment` | The saved or built-in map id. |
-| `vehicle` | The car id. Omit it to use `big-car`. |
+| `vehicle` | The car id. Omit it to use `big-car`. A saved vehicle with a dynamics plant uses that plant when its package is installed in the same data directory. |
 | `goal=None` | Free drive. Reaching the far end of the road does not end the episode. |
 | `launch` | Starts one worker. The `with` block closes it, even if the loop raises. |
 | `reset(seed=1)` | Places the car and starts a repeatable episode. |

@@ -15,6 +15,7 @@ import {
     sensorCatalogEntryLabel,
     stampManifestPluginSelectionForPlant,
     stampManifestPluginSelectionForSensor,
+    stampManifestPluginSelectionForVehicleLock,
     stampVehiclePluginPlantLock,
     stampVehiclePluginSensorLock,
     assertVehiclePluginLocksMatchRun,
@@ -424,6 +425,17 @@ test("plant locks survive reconcile, block sensor replacement, and stamp run gra
     assert.ok(issues.some((issue) => issue.path === "dynamics.plant"));
     const selection = stampManifestPluginSelectionForPlant(undefined, locked[0]);
     assert.deepEqual(selection.artifacts[0].capabilities, ["plant.step"]);
+    const vehicleSelection = stampManifestPluginSelectionForVehicleLock(undefined, {
+        ...locked[0],
+        sensorTypes: ["acme.dynamics.sensor"],
+    });
+    assert.deepEqual(vehicleSelection.artifacts[0].capabilities, ["plant.step", "sensors.sample.range-image"]);
+    const plantOnly = stampManifestPluginSelectionForVehicleLock(undefined, locked[0]);
+    assert.deepEqual(plantOnly.artifacts[0].capabilities, ["plant.step"]);
+    assert.throws(() => stampManifestPluginSelectionForVehicleLock(plantOnly, {
+        ...locked[0],
+        packageHash: "9".repeat(64),
+    }), /locked to plugin/);
     const moved = stampManifestPluginSelectionForPlant(selection, { ...locked[0], packageHash: "9".repeat(64) });
     assert.equal(moved.artifacts[0].expectedHash, "9".repeat(64));
     assert.ok(moved.artifacts[0].capabilities.includes("plant.step"));

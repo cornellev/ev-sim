@@ -30,7 +30,7 @@ environment into a temporary workspace, verifies a route, keeps state sensors
 unless `--sensors all` is set, and advances the start pose until the vehicle
 box is clear of obstacles. A source manifest with no IMU, GNSS, or wheel
 odometry receives those three sensors, so the bundle can still run. `--vehicle` selects a built-in or stored vehicle
-and uses that vehicle's box for the clearance check. `--finish route`, the
+and uses that vehicle's box for the clearance check. A stored vehicle that names `dynamics.plant` must also carry a matching plugin lock. `create-bundle` copies those locks onto the run and embeds the packages installed in `--data-dir`. A missing package fails before export. A vehicle with no plugin locks keeps the plugin-free `world-bound@2` bundle. `--finish route`, the
 default, ends the episode in a zone at the far end of the route. `--finish none`
 keeps the verified route and replaces that zone with a trigger on the flag
 `cev-sim.free-drive.stop`, which nothing sets, so arriving does not end the

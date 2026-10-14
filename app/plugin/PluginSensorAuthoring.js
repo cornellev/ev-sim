@@ -317,6 +317,42 @@ export function stampManifestPluginSelectionForSensor(selection, catalogEntry) {
     });
 }
 
+export function stampManifestPluginSelectionForVehicleLock(selection, lock) {
+    const plugin = String(lock?.pluginId ?? "").trim();
+    const packageHash = String(lock?.packageHash ?? "").trim();
+    if (!plugin || !packageHash) throw new TypeError("A vehicle plugin lock requires pluginId and packageHash.");
+    const grants = [];
+    if ((lock.plants ?? []).length > 0) grants.push(PLANT_STEP_CAPABILITY);
+    if ((lock.sensorTypes ?? []).length > 0) grants.push(pluginSensorRangeImageCapability());
+    if (grants.length === 0) return normalizePluginSelection(selection);
+    const current = normalizePluginSelection(selection) ?? { enabled: true, artifacts: [] };
+    const existing = current.artifacts.find((entry) => entry.pluginId === plugin);
+    if (!existing) {
+        return normalizePluginSelection({
+            enabled: true,
+            artifacts: [...current.artifacts, {
+                pluginId: plugin,
+                expectedHash: packageHash,
+                capabilities: grants,
+            }],
+        });
+    }
+    if (existing.expectedHash !== packageHash) {
+        throw pluginError(
+            PLUGIN_ERROR_CODES.REGISTRATION,
+            `Run is locked to plugin "${existing.pluginId}" package ${existing.expectedHash}; cannot add ${packageHash}.`,
+            { pluginId: existing.pluginId, packageHash },
+        );
+    }
+    const capabilities = uniqueSorted([...existing.capabilities, ...grants]);
+    return normalizePluginSelection({
+        enabled: true,
+        artifacts: current.artifacts.map((entry) => (
+            entry.pluginId === existing.pluginId ? { ...entry, capabilities } : entry
+        )),
+    });
+}
+
 export function stampManifestPluginSelectionForPlant(selection, lock) {
     const plugin = String(lock?.pluginId ?? "").trim();
     const packageHash = String(lock?.packageHash ?? "").trim();
