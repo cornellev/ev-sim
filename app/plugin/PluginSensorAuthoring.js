@@ -236,17 +236,31 @@ export function reconcileVehiclePluginLocks(locks, sensors = [], { sensorRegistr
     if (locks === undefined || locks === null) return undefined;
     const current = normalizeVehiclePluginLocks(locks) ?? [];
     const typesByPlugin = new Map();
+    const usedTypes = new Set();
     for (const sensor of sensors) {
-        const ownership = sensorRegistry.get(sensor?.type)?.pluginSensor?.ownership;
+        const type = String(sensor?.type ?? "").trim();
+        if (!type) continue;
+        usedTypes.add(type);
+        const ownership = sensorRegistry.get(type)?.pluginSensor?.ownership;
         if (!ownership?.pluginId) continue;
         const types = typesByPlugin.get(ownership.pluginId) ?? [];
-        if (!types.includes(sensor.type)) types.push(sensor.type);
+        if (!types.includes(type)) types.push(type);
         typesByPlugin.set(ownership.pluginId, types);
     }
     const selectedPlant = typeof dynamics?.plant === "string" ? dynamics.plant : "";
     const next = [];
     for (const lock of current) {
-        const types = typesByPlugin.get(lock.pluginId) ?? [];
+        const preserved = [];
+        for (const type of lock.sensorTypes) {
+            if (!usedTypes.has(type)) continue;
+            const definition = sensorRegistry.get(type);
+            if (!definition) {
+                preserved.push(type);
+                continue;
+            }
+            if (definition.pluginSensor?.ownership?.pluginId === lock.pluginId) preserved.push(type);
+        }
+        const types = uniqueSorted([...(typesByPlugin.get(lock.pluginId) ?? []), ...preserved]);
         const plants = selectedPlant && (lock.plants ?? []).includes(selectedPlant) ? [selectedPlant] : [];
         if (types.length === 0 && plants.length === 0) continue;
         next.push({
@@ -583,8 +597,13 @@ export function commitPluginSensorAuthoringPatch(sensor, definition, patch, {
     return normalized;
 }
 
-export function pluginSensorCatalogEntryForType(catalog, type) {
-    return (catalog?.sensors ?? []).find((entry) => entry.type === type) || null;
+export function pluginSensorCatalogEntryForType(catalog, type, packageHash = null) {
+    const sensors = catalog?.sensors ?? [];
+    if (packageHash) {
+        const exact = sensors.find((entry) => entry.type === type && entry.ownership?.packageHash === packageHash);
+        if (exact) return exact;
+    }
+    return sensors.find((entry) => entry.type === type) || null;
 }
 
 export function stampInheritedPluginSelections(manifest, catalog, registry = sensorTypeRegistry) {
@@ -633,6 +652,27 @@ export function sensorCatalogEntryKey(entry) {
 
 export function sensorCatalogEntryLabel(entry) {
     return entry?.label || entry?.type || "";
+}
+
+function catalogPackageIdentity(entry) {
+    const owner = entry?.ownership;
+    if (!owner || owner === "builtin") return "builtin";
+    return `${owner.packageHash || ""}@${owner.version || ""}`;
+}
+
+export function sensorCatalogEntryChoiceLabel(entry, entries = []) {
+    const label = sensorCatalogEntryLabel(entry);
+    const sameType = entries.filter((item) => item?.type === entry?.type);
+    const identities = new Set(sameType.map(catalogPackageIdentity));
+    if (identities.size < 2) return label;
+    const owner = entry?.ownership;
+    if (!owner || owner === "builtin") return label;
+    const versions = new Set(sameType.map((item) => (
+        item?.ownership && item.ownership !== "builtin" ? item.ownership.version || "" : "builtin"
+    )));
+    if (versions.size > 1 && owner.version) return `${label} (${owner.version})`;
+    const hash = String(owner.packageHash || "");
+    return hash ? `${label} (${hash.slice(0, 8)})` : label;
 }
 
 export { describePluginSensorObservation };

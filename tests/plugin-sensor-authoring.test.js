@@ -10,6 +10,7 @@ import {
     normalizeVehiclePluginLocks,
     reconcileVehiclePluginLocks,
     sensorCatalogEntries,
+    sensorCatalogEntryChoiceLabel,
     sensorCatalogEntryKey,
     sensorCatalogEntryLabel,
     stampManifestPluginSelectionForPlant,
@@ -18,6 +19,7 @@ import {
     stampVehiclePluginSensorLock,
     assertVehiclePluginLocksMatchRun,
 } from "../app/plugin/PluginSensorAuthoring.js";
+import { register } from "node:module";
 import { verifyPluginPackage } from "../app/plugin/PluginPackage.js";
 import { PLUGIN_ERROR_CODES } from "../app/plugin/PluginErrors.js";
 import { createSensorDefinitionRegistry } from "../app/simulation/sensors/SensorTypeRegistry.js";
@@ -89,6 +91,7 @@ test("sensor catalog entries fall back to the registry and keep package identity
     assert.equal(sensorCatalogEntryKey(fallback[0]), "camera:builtin");
     assert.equal(sensorCatalogEntryLabel(fallback[0]), "Camera");
     assert.equal(sensorCatalogEntryLabel({ type: "unnamed" }), "unnamed");
+    assert.equal(sensorCatalogEntryChoiceLabel(fallback[0], fallback), "Camera");
 
     const packageHash = "ab".repeat(32);
     const plugin = {
@@ -98,6 +101,16 @@ test("sensor catalog entries fall back to the registry and keep package identity
     };
     assert.deepEqual(sensorCatalogEntries({ sensors: [plugin] }), [plugin]);
     assert.equal(sensorCatalogEntryKey(plugin), `${FIXTURE_TYPE}:${packageHash}`);
+    const versioned = { ...plugin, ownership: { ...plugin.ownership, version: "1.2.3" } };
+    const otherVersion = { ...versioned, ownership: { ...versioned.ownership, packageHash: "cd".repeat(32), version: "9.9.9" } };
+    assert.equal(sensorCatalogEntryChoiceLabel(versioned, [versioned]), FIXTURE_TYPE);
+    assert.equal(sensorCatalogEntryChoiceLabel(versioned, [versioned, { ...versioned }]), FIXTURE_TYPE);
+    assert.equal(sensorCatalogEntryChoiceLabel(versioned, [versioned, otherVersion]), `${FIXTURE_TYPE} (1.2.3)`);
+    const sameVersion = { ...versioned, ownership: { ...versioned.ownership, packageHash: "ef".repeat(32) } };
+    assert.equal(
+        sensorCatalogEntryChoiceLabel(versioned, [versioned, sameVersion]),
+        `${FIXTURE_TYPE} (${versioned.ownership.packageHash.slice(0, 8)})`,
+    );
 });
 
 test("vehicle plugin locks normalize, conflict, reconcile, and omit legacy empties", async () => {
@@ -132,6 +145,20 @@ test("vehicle plugin locks normalize, conflict, reconcile, and omit legacy empti
 
     const reconciled = reconcileVehiclePluginLocks(vehicle.pluginLocks, [], { sensorRegistry: registry });
     assert.equal(reconciled, undefined);
+
+    const unknownRegistry = { get: () => null };
+    const preserved = reconcileVehiclePluginLocks(vehicle.pluginLocks, vehicle.sensors, { sensorRegistry: unknownRegistry });
+    assert.deepEqual(preserved[0].sensorTypes, [FIXTURE_TYPE]);
+    assert.equal(reconcileVehiclePluginLocks(vehicle.pluginLocks, [], { sensorRegistry: unknownRegistry }), undefined);
+    const builtinLike = { get: (type) => (type === FIXTURE_TYPE ? { vehicle: {} } : null) };
+    assert.equal(reconcileVehiclePluginLocks(vehicle.pluginLocks, vehicle.sensors, { sensorRegistry: builtinLike }), undefined);
+    const keptUnknown = normalizeVehicleManifest({
+        id: "unknown-lock",
+        sensors: [{ id: "custom", type: FIXTURE_TYPE, pose: {}, config: { measurementScale: 2 } }],
+        pluginLocks: stamped,
+    }, { sensorRegistry: unknownRegistry });
+    assert.equal(keptUnknown.sensors[0].type, FIXTURE_TYPE);
+    assert.deepEqual(keptUnknown.pluginLocks[0].sensorTypes, [FIXTURE_TYPE]);
 });
 
 test("authoring patches reject undeclared paths and invalid layouts", async () => {
@@ -431,4 +458,76 @@ test("plant locks survive reconcile, block sensor replacement, and stamp run gra
         }],
         pluginPackages: [resource],
     });
+});
+
+let BrowserSensorAuthoringSession;
+
+async function authoringSession(options) {
+    if (!BrowserSensorAuthoringSession) {
+        register(new URL("./helpers/stub-plugin-ui-host.js", import.meta.url));
+        ({ BrowserSensorAuthoringSession } = await import("../app/plugin/browser/BrowserSensorAuthoringSession.js"));
+    }
+    return new BrowserSensorAuthoringSession({
+        ...options,
+        authorizePackage: async () => ({}),
+        subscribePolicy: () => () => {},
+    });
+}
+
+function fixtureLock(verified, runtimeHash = verified.resource.runtimeHash) {
+    return {
+        pluginId: verified.document.id,
+        version: verified.document.version,
+        packageHash: verified.resource.packageHash,
+        runtimeHash,
+        sensorTypes: [FIXTURE_TYPE],
+    };
+}
+
+test("a plugin view failure still registers the sensor definition", async () => {
+    const resource = await pluginSensorFixtureResource();
+    const verified = verifyPluginPackage(resource);
+    const session = await authoringSession({
+        fetchPackage: async () => resource,
+        moduleSource: { importUi: async () => { throw new Error("ui exploded"); } },
+    });
+    await session.loadLock(fixtureLock(verified));
+    assert.ok(session.registry.get(FIXTURE_TYPE)?.pluginSensor);
+    assert.match(session.diagnosticFor(FIXTURE_TYPE), /ui exploded/);
+    session.beginVehicle();
+    assert.equal(session.registry.get(FIXTURE_TYPE), null);
+    session.dispose();
+});
+
+test("a plugin lock hash mismatch does not register the sensor", async () => {
+    const resource = await pluginSensorFixtureResource();
+    const verified = verifyPluginPackage(resource);
+    const session = await authoringSession({
+        fetchPackage: async () => resource,
+        moduleSource: { importUi: async () => { throw new Error("should not load"); } },
+    });
+    await assert.rejects(
+        session.loadLock(fixtureLock(verified, "c".repeat(64))),
+        /does not match/,
+    );
+    assert.equal(session.registry.get(FIXTURE_TYPE), null);
+    session.dispose();
+});
+
+test("an in-flight plugin load cannot register into the next vehicle", async () => {
+    const resource = await pluginSensorFixtureResource();
+    const verified = verifyPluginPackage(resource);
+    let release = () => {};
+    const pending = new Promise((resolve) => { release = () => resolve(resource); });
+    const session = await authoringSession({
+        fetchPackage: () => pending,
+        moduleSource: { importUi: async () => { throw new Error("should not load"); } },
+    });
+    const loading = session.loadLock(fixtureLock(verified));
+    session.beginVehicle();
+    release();
+    await assert.rejects(loading, /moved to another vehicle/);
+    assert.equal(session.registry.get(FIXTURE_TYPE), null);
+    assert.deepEqual(session.unresolvedLocks, []);
+    session.dispose();
 });

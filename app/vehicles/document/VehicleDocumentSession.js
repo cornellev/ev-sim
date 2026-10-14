@@ -301,6 +301,52 @@ export class VehicleDocumentSession {
         return { ok: true, dirty: this.dirty, stagedResources: this.stagedResources };
     }
 
+    /**
+     * Apply the current sensor registry to the open draft.
+     * A clean document keeps the normalized result as its baseline.
+     */
+    reapplyNormalization() {
+        if (this.gesture) {
+            return {
+                ok: false,
+                dirty: this.dirty,
+                changed: false,
+                issues: [{ code: "vehicle.session.gesture-active", path: "", message: "Finish the active gesture before running another command." }],
+            };
+        }
+        const current = this.draft.snapshot();
+        let normalized;
+        try {
+            normalized = normalizeVehicleManifest(current, this.normalizeOptions);
+        } catch (error) {
+            return {
+                ok: false,
+                dirty: this.dirty,
+                changed: false,
+                issues: [{ code: error.code ?? "vehicle.manifest.invalid", path: "", message: error.message }],
+            };
+        }
+        if (sameManifest(current, normalized)) return { ok: true, dirty: this.dirty, changed: false };
+        const wasDirty = this.dirty;
+        try {
+            this.draft.commit(normalized);
+        } catch (error) {
+            return {
+                ok: false,
+                dirty: this.dirty,
+                changed: false,
+                issues: [{ code: error.code ?? "vehicle.manifest.invalid", path: "", message: error.message }],
+            };
+        }
+        if (!wasDirty) {
+            this.baseline = {
+                ...this.baseline,
+                manifest: this.draft.snapshot(),
+            };
+        }
+        return { ok: true, dirty: this.dirty, changed: true };
+    }
+
     replaceBaseline(stored) {
         if (this.dirty || this.gesture || this.saveCapture) {
             return { ok: false, code: "vehicle.session.dirty" };

@@ -123,10 +123,35 @@ test("an edit during save stays dirty and a digest mismatch keeps the draft", as
 
 test("a plugin sensor unknown to the default registry survives an edit", () => {
     const registry = pluginRegistry();
-    const dropped = new VehicleEditorController();
-    dropped.open(pluginVehicle());
-    dropped.execute(editKinematics({ patch: { maxSpeed: 8 } }));
-    assert.equal(dropped.snapshot.manifest.pluginLocks, undefined);
+    const preserved = new VehicleEditorController();
+    preserved.open(pluginVehicle());
+    assert.equal(preserved.snapshot.dirty, false);
+    assert.equal(preserved.execute(editKinematics({ patch: { maxSpeed: 8 } })).ok, true);
+    assert.equal(preserved.snapshot.manifest.sensors[0].type, "acme.range");
+    assert.equal(preserved.snapshot.manifest.sensors[0].config.width, 4);
+    assert.equal(preserved.snapshot.manifest.pluginLocks[0].pluginId, "acme.range");
+    assert.deepEqual(preserved.snapshot.manifest.pluginLocks[0].sensorTypes, ["acme.range"]);
+
+    let ready = false;
+    const delayed = {
+        get(type) {
+            if (type === "acme.range" && ready) return registry.get(type);
+            return sensorTypeRegistry.get(type);
+        },
+        list: () => sensorTypeRegistry.list(),
+    };
+    const reopened = new VehicleEditorController({
+        resolveNormalizeOptions: () => ({ sensorRegistry: delayed }),
+    });
+    reopened.open(pluginVehicle());
+    assert.equal(reopened.snapshot.dirty, false);
+    assert.deepEqual(reopened.snapshot.manifest.pluginLocks[0].sensorTypes, ["acme.range"]);
+    ready = true;
+    const reapplied = reopened.reapplyNormalization();
+    assert.equal(reapplied.ok, true);
+    assert.equal(reopened.snapshot.dirty, false);
+    assert.equal(reopened.snapshot.manifest.sensors[0].config.width, 4);
+    assert.deepEqual(reopened.snapshot.manifest.pluginLocks[0].sensorTypes, ["acme.range"]);
 
     const kept = new VehicleEditorController({
         resolveNormalizeOptions: () => ({ sensorRegistry: registry }),
@@ -136,6 +161,16 @@ test("a plugin sensor unknown to the default registry survives an edit", () => {
     assert.equal(kept.snapshot.manifest.sensors[0].type, "acme.range");
     assert.equal(kept.snapshot.manifest.pluginLocks[0].pluginId, "acme.range");
     assert.equal(kept.snapshot.manifest.kinematics.maxSpeed, 8);
+
+    const gesturing = new VehicleEditorController();
+    gesturing.open(pluginVehicle());
+    assert.equal(gesturing.beginAxle("front").ok, true);
+    const skipped = gesturing.reapplyNormalization();
+    assert.equal(skipped.ok, false);
+    assert.equal(skipped.issues[0].code, "vehicle.session.gesture-active");
+    assert.equal(gesturing.snapshot.validation, null);
+    assert.equal(gesturing.snapshot.dirty, false);
+    assert.deepEqual(gesturing.snapshot.manifest.pluginLocks[0].sensorTypes, ["acme.range"]);
 });
 
 test("field edits coalesce, raw JSON validates, and undo of a staged model restores the previous stage", () => {

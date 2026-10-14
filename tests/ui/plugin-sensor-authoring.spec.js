@@ -11,7 +11,17 @@ const SENSOR_TYPE = "test.range-image-fixture.synthetic-3x4";
 
 async function addCatalogSensor(page, type) {
     const panel = page.getByRole("tabpanel", { name: "Sensors" });
-    await panel.getByRole("combobox", { name: "Sensor type" }).selectOption({ label: type });
+    const select = panel.getByRole("combobox", { name: "Sensor type" });
+    await expect(select.locator("option").filter({ hasText: type }).first()).toBeAttached();
+    const value = await select.evaluate((element, sensorType) => {
+        const options = [...element.options];
+        const exact = options.find((item) => item.label === sensorType);
+        const prefixed = options.find((item) => item.label.startsWith(`${sensorType} (`));
+        const option = exact || prefixed;
+        if (!option) throw new Error(`Missing sensor type ${sensorType}`);
+        return option.value;
+    }, type);
+    await select.selectOption(value);
     await panel.getByRole("button", { name: "Add sensor" }).click();
 }
 
@@ -134,7 +144,11 @@ test("Vehicle editor adds a custom sensor preview and round-trips export/import"
     await waitForSensorType(request, SENSOR_TYPE);
     await page.goto("/");
     await openWorkspace(page, "Vehicle editor");
-    await page.getByRole("button", { name: "New" }).first().click();
+    await page.getByRole("button", { name: /Open vehicle catalog/ }).click();
+    const catalog = page.getByRole("dialog", { name: "Vehicles" });
+    await catalog.getByRole("button", { name: "New", exact: true }).click();
+    await expect(catalog).toBeHidden();
+    const vehicleId = (await page.getByRole("textbox", { name: "Vehicle name" }).locator("xpath=following-sibling::p").textContent()).trim();
     await page.getByRole("tab", { name: "Sensors" }).click();
     await addCatalogSensor(page, SENSOR_TYPE);
     await expect(page.getByText(/plugin test\.range-image-fixture@/)).toBeVisible();
@@ -147,7 +161,13 @@ test("Vehicle editor adds a custom sensor preview and round-trips export/import"
     await expect(page.getByText("Unsaved")).toHaveCount(0, { timeout: 15_000 });
     await page.reload();
     await openWorkspace(page, "Vehicle editor");
+    await page.getByRole("button", { name: /Open vehicle catalog/ }).click();
+    const reopened = page.getByRole("dialog", { name: "Vehicles" });
+    await reopened.getByRole("option", { name: new RegExp(vehicleId) }).click();
+    await reopened.getByRole("button", { name: "Open", exact: true }).click();
+    await expect(reopened).toBeHidden();
     await page.getByRole("tab", { name: "Sensors" }).click();
+    await page.getByRole("button", { name: /synthetic-3x4/ }).click();
     await expect(page.getByLabel("measurementScale").first()).toHaveValue("1.25");
 });
 

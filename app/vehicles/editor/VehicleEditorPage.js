@@ -30,6 +30,8 @@ import PluginSensorAuthoringPanel from "../../plugin/browser/PluginSensorAuthori
 import {
     pluginSensorCatalogEntryForType,
     sensorCatalogEntries,
+    sensorCatalogEntryChoiceLabel,
+    sensorCatalogEntryKey,
     stampVehiclePluginPlantLock,
     stampVehiclePluginSensorLock,
 } from "../../plugin/PluginSensorAuthoring.js";
@@ -58,6 +60,7 @@ import {
     uploadVehicleStageMember,
     validateVehicleManifestOnServer,
 } from "../VehicleManifestClient.js";
+import { revealSelectedSensor, setSensorDisclosureOpen } from "./sensorDisclosure.js";
 import { VehicleEditorController } from "./VehicleEditorController.js";
 import { editManifestFields, applyModelReplacement, applyPlacementChange, adoptStandardAxles, assignModelWheels, classifyWheel, copyWheelFromPartner, detachWheel, suppressSourceWheels } from "../document/vehicleCommands.js";
 import { highlightedLinkIds, isBoundWheel, linkedPartnerId, resolveMotionLink, standardPartner } from "../document/wheelLink.js";
@@ -209,6 +212,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     const [sensorCatalog, setSensorCatalog] = useState({ revision: 0, sensors: [] });
     const [plantCatalog, setPlantCatalog] = useState([]);
     const [sensorRegistryTick, setSensorRegistryTick] = useState(0);
+    const [sensorVehicleGeneration, setSensorVehicleGeneration] = useState(0);
     const [assignment, setAssignment] = useState(null);
     const [dismissedNotices, setDismissedNotices] = useState({});
     const [placementPrompt, setPlacementPrompt] = useState(null);
@@ -223,6 +227,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     }, [sensorRegistryTick]);
 
     const draft = snapshot.manifest;
+    const pluginLockKey = JSON.stringify(draft?.pluginLocks ?? null);
     const draftStamp = useMemo(() => (draft ? JSON.stringify(draft) : ""), [draft]);
     const raw = snapshot.raw;
     const rawError = snapshot.rawError;
@@ -240,8 +245,10 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     }, []);
 
     const applyDocument = (id, document) => {
+        const generation = sensorSessionRef.current?.beginVehicle() ?? 0;
         controllerRef.current.open(document, { readOnly: isBuiltInVehicleManifest(id) });
         setSelectedId(id);
+        setSensorVehicleGeneration(generation);
         setError(null);
         setSteeringPreview(0);
         setModelNodes([]);
@@ -351,39 +358,49 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                     fetchPlantCatalog().catch(() => ({ plants: [] })),
                 ]);
                 if (!mounted) return;
-                sensorSessionRef.current?.registerCatalog(snapshot);
                 setSensorCatalog(snapshot);
                 setPlantCatalog(Array.isArray(plants?.plants) ? plants.plants : []);
-                bumpSensorRegistry();
             } catch (caught) {
                 if (mounted) setError(caught.message);
             }
         };
         refresh();
-        return subscribeStorageEvents((event) => {
+        const unsubscribe = subscribeStorageEvents((event) => {
             if (event.domain === "plugin") refresh();
         });
+        return () => {
+            mounted = false;
+            unsubscribe();
+        };
     }, []);
 
     useEffect(() => {
         const session = sensorSessionRef.current;
+        const controller = controllerRef.current;
         if (!session || !draft) return undefined;
+        const generation = session.generation;
+        const locks = draft.pluginLocks ?? [];
         let cancelled = false;
         (async () => {
-            for (const lock of draft.pluginLocks ?? []) {
+            for (const lock of locks) {
                 try {
-                    await session.loadLock(lock);
+                    await session.loadLock(lock, { generation });
                 } catch {
-                    // Missing packages remain visible as unresolved authoring state.
+                    // A replaced vehicle or a missing package stays on the draft.
                 }
-                if (cancelled) return;
+                if (cancelled || generation !== session.generation) return;
             }
-            if (!cancelled) bumpSensorRegistry();
+            if (cancelled || generation !== session.generation) return;
+            const result = controller.reapplyNormalization();
+            if (cancelled || generation !== session.generation) return;
+            const gesture = result?.issues?.[0]?.code === "vehicle.session.gesture-active";
+            if (result?.ok === false && !gesture) setError(result.issues?.[0]?.message || "Could not apply the plugin sensor lock.");
+            bumpSensorRegistry();
         })();
         return () => { cancelled = true; };
-        // Locks are derived from pluginLocks, not the whole draft.
+        // Reload only when the open vehicle or its lock records change.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [draft?.pluginLocks, sensorCatalog.revision]);
+    }, [sensorVehicleGeneration, pluginLockKey]);
     useEffect(() => {
         studioRef.current?.setSelection(readOnly ? null : selection);
         // A preview emits a new selection object with the same kind and id.
@@ -412,10 +429,9 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     const update = (path, value, options = {}) => {
         const controller = controllerRef.current;
         if (!path.length) {
-            controller.execute(editManifestFields(value, options.historyKey || "document"), options.coalesce ? { coalesceKey: options.historyKey || "document" } : {});
-            return;
+            return controller.execute(editManifestFields(value, options.historyKey || "document"), options.coalesce ? { coalesceKey: options.historyKey || "document" } : {});
         }
-        controller.editField(path, value, {
+        return controller.editField(path, value, {
             coalesce: options.coalesce ?? ["number", "string"].includes(typeof value),
             coalesceKey: options.historyKey || path.join("."),
         });
@@ -1123,6 +1139,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                                             {item === "Sensors" && (
                                                 <SensorsTab
                                                     draft={draft}
+                                                    readManifest={() => controllerRef.current.snapshot.manifest}
                                                     update={update}
                                                     selection={selection}
                                                     setSelection={setSelection}
@@ -1319,8 +1336,17 @@ function LidarZoneTab({ draft, update, voxelSize, setVoxelSize, generateZone, zo
     );
 }
 
+function isPluginCatalogEntry(entry) {
+    return Boolean(entry?.ownership && entry.ownership !== "builtin" && typeof entry.ownership === "object");
+}
+
+function pluginLockForType(locks, type) {
+    return (locks ?? []).find((entry) => (entry.sensorTypes ?? []).includes(type)) ?? null;
+}
+
 function SensorsTab({
     draft,
+    readManifest = () => draft,
     update,
     selection,
     setSelection,
@@ -1329,37 +1355,56 @@ function SensorsTab({
     onError = () => {},
     bumpRegistry = () => {},
 }) {
-    const [openSensorIds, setOpenSensorIds] = useState([]);
     const selectedSensorId = selection?.kind === "sensor" ? selection.id : null;
-    const shownSensorIds = selectedSensorId && !openSensorIds.includes(selectedSensorId)
-        ? [...openSensorIds, selectedSensorId]
-        : openSensorIds;
+    const [openSensorIds, setOpenSensorIds] = useState(() => (selectedSensorId ? [selectedSensorId] : []));
+    const [revealedSensorId, setRevealedSensorId] = useState(selectedSensorId);
+    if (selectedSensorId !== revealedSensorId) {
+        const revealed = revealSelectedSensor(openSensorIds, selectedSensorId, revealedSensorId);
+        setRevealedSensorId(revealed.revealedSensorId);
+        if (revealed.openSensorIds !== openSensorIds) setOpenSensorIds(revealed.openSensorIds);
+    }
     const registry = session?.registry ?? sensorTypeRegistry;
     const catalogEntries = sensorCatalogEntries(catalog, registry);
+    const preparePluginEntry = async (entry) => {
+        if (!isPluginCatalogEntry(entry)) return true;
+        const generation = session?.generation;
+        await session.loadLock({
+            pluginId: entry.ownership.pluginId,
+            version: entry.ownership.version,
+            packageHash: entry.ownership.packageHash,
+            runtimeHash: entry.ownership.runtimeHash,
+            sensorTypes: [entry.type],
+        }, { generation });
+        if (session.generation !== generation) return false;
+        bumpRegistry();
+        return true;
+    };
+    const commitSensors = (next, failure) => {
+        const result = update([], next);
+        if (!result?.ok) {
+            onError(result?.issues?.[0]?.message || failure);
+            return false;
+        }
+        return true;
+    };
     const addEntry = async (entry) => {
+        const generation = session?.generation;
         try {
-            const next = structuredClone(draft);
-            if (entry.ownership && entry.ownership !== "builtin") {
-                await session.loadLock({
-                    pluginId: entry.ownership.pluginId,
-                    version: entry.ownership.version,
-                    packageHash: entry.ownership.packageHash,
-                    runtimeHash: entry.ownership.runtimeHash,
-                    sensorTypes: [entry.type],
-                });
-                bumpRegistry();
-                next.pluginLocks = stampVehiclePluginSensorLock(next.pluginLocks, entry);
-            }
-            const definition = session?.registry.get(entry.type) || getSensorType(entry.type);
+            if (!await preparePluginEntry(entry)) return;
+            const next = structuredClone(readManifest() ?? draft);
+            if (isPluginCatalogEntry(entry)) next.pluginLocks = stampVehiclePluginSensorLock(next.pluginLocks, entry);
+            const activeRegistry = session?.registry ?? registry;
+            const definition = activeRegistry.get(entry.type) || getSensorType(entry.type);
             const id = nextId(next.sensors, definition?.idPrefix || "sensor");
             const sensor = createVehicleSensor(entry.type, {
                 id,
                 pose: { position: { x: 0.3, y: 0.8, z: 0 }, rotation: { x: 0, y: 0, z: 0, order: "XYZ" } },
-            }, next.sensors.length, session?.registry ?? registry);
+            }, next.sensors.length, activeRegistry);
             next.sensors = [...next.sensors, sensor];
-            update([], next);
+            if (!commitSensors(next, "Could not add that sensor.")) return;
             setSelection({ kind: "sensor", id });
         } catch (caught) {
+            if (session?.generation !== generation) return;
             onError(caught.message);
         }
     };
@@ -1372,25 +1417,27 @@ function SensorsTab({
                 const change = (parts, value) => update(["sensors", index, ...parts], value);
                 const definition = registry.get(sensor.type) || getSensorType(sensor.type);
                 const plugin = definition?.pluginSensor;
-                const unresolved = Boolean(plugin && session?.unresolvedLocks?.includes(plugin.ownership?.packageHash));
-                const changeType = async (type) => {
+                const lock = pluginLockForType(draft.pluginLocks, sensor.type);
+                const unresolved = Boolean(lock && session?.unresolvedLocks?.includes(lock.packageHash));
+                const selectedEntry = pluginSensorCatalogEntryForType(catalog, sensor.type, lock?.packageHash)
+                    ?? catalogEntries.find((entry) => entry.type === sensor.type)
+                    ?? null;
+                const typeValue = selectedEntry ? sensorCatalogEntryKey(selectedEntry) : sensor.type;
+                const changeType = async (key) => {
+                    const generation = session?.generation;
                     try {
-                        const entry = pluginSensorCatalogEntryForType(catalog, type);
-                        const next = structuredClone(draft);
-                        if (entry?.ownership && entry.ownership !== "builtin") {
-                            await session.loadLock({
-                                pluginId: entry.ownership.pluginId,
-                                version: entry.ownership.version,
-                                packageHash: entry.ownership.packageHash,
-                                runtimeHash: entry.ownership.runtimeHash,
-                                sensorTypes: [entry.type],
-                            });
-                            bumpRegistry();
-                            next.pluginLocks = stampVehiclePluginSensorLock(next.pluginLocks, entry);
-                        }
-                        next.sensors[index] = changeVehicleSensorType(sensor, type, session?.registry ?? registry);
-                        update([], next);
+                        const entry = catalogEntries.find((item) => sensorCatalogEntryKey(item) === key) ?? null;
+                        const type = entry?.type ?? key;
+                        if (!await preparePluginEntry(entry)) return;
+                        const source = readManifest() ?? draft;
+                        const current = source.sensors[index];
+                        if (!current) return;
+                        const next = structuredClone(source);
+                        if (isPluginCatalogEntry(entry)) next.pluginLocks = stampVehiclePluginSensorLock(next.pluginLocks, entry);
+                        next.sensors[index] = changeVehicleSensorType(current, type, session?.registry ?? registry);
+                        commitSensors(next, "Could not change that sensor.");
                     } catch (caught) {
+                        if (session?.generation !== generation) return;
                         onError(caught.message);
                     }
                 };
@@ -1400,11 +1447,9 @@ function SensorsTab({
                         className={selected ? "rounded-[var(--radius)] bg-[var(--slate-surface-3)]" : undefined}
                         label={sensor.id}
                         detail={definition?.label || sensor.type}
-                        open={shownSensorIds.includes(sensor.id)}
+                        open={openSensorIds.includes(sensor.id)}
                         onOpenChange={(open) => {
-                            setOpenSensorIds((current) => (
-                                open ? [...current.filter((id) => id !== sensor.id), sensor.id] : current.filter((id) => id !== sensor.id)
-                            ));
+                            setOpenSensorIds((current) => setSensorDisclosureOpen(current, sensor.id, open));
                             if (open) setSelection({ kind: "sensor", id: sensor.id });
                         }}
                     >
@@ -1420,13 +1465,16 @@ function SensorsTab({
                                 />
                             </Field>
                             <Field label="Type">
-                                <select value={sensor.type} onChange={(event) => changeType(event.target.value)}>
-                                    {catalogEntries.map((entry) => (
-                                        <option key={`${entry.type}:${entry.ownership?.packageHash || "builtin"}`} value={entry.type}>
-                                            {entry.label || entry.type}
-                                        </option>
-                                    ))}
-                                    {!definition && <option value={sensor.type}>{sensor.type} (unsupported)</option>}
+                                <select value={typeValue} onChange={(event) => changeType(event.target.value)}>
+                                    {catalogEntries.map((entry) => {
+                                        const key = sensorCatalogEntryKey(entry);
+                                        return (
+                                            <option key={key} value={key}>
+                                                {sensorCatalogEntryChoiceLabel(entry, catalogEntries)}
+                                            </option>
+                                        );
+                                    })}
+                                    {!selectedEntry && <option value={sensor.type}>{sensor.type} (unsupported)</option>}
                                 </select>
                             </Field>
                         </div>
@@ -1456,8 +1504,16 @@ function SensorsTab({
                                 onCommit={(next) => update(["sensors", index], next)}
                             />
                         )}
+                        {unresolved && !plugin && (
+                            <p className="mt-3 text-[11px] text-[var(--slate-warning)]" role="status">
+                                Locked package is missing from CAS. Restore the exact package to edit or save.
+                            </p>
+                        )}
                         {!definition && <p className="mt-3 text-[11px] text-[var(--slate-warning)]">This sensor type is not registered. Its data is preserved, but this vehicle cannot run until a supported type is selected.</p>}
-                        <button type="button" onClick={() => update(["sensors"], draft.sensors.filter((_, candidate) => candidate !== index))} className="mt-3 text-[11px] text-[var(--slate-danger)]">Remove sensor</button>
+                        <button type="button" onClick={() => {
+                            const result = update(["sensors"], draft.sensors.filter((_, candidate) => candidate !== index));
+                            if (result?.ok === false) onError(result.issues?.[0]?.message || "Could not remove that sensor.");
+                        }} className="mt-3 text-[11px] text-[var(--slate-danger)]">Remove sensor</button>
                     </Disclosure>
                 );
             })}

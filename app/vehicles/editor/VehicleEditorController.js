@@ -132,6 +132,15 @@ export class VehicleEditorController {
         return this.snapshot;
     }
 
+    reapplyNormalization() {
+        if (!this.session) return { ok: false, issues: [{ code: "vehicle.editor.closed", path: "", message: "No vehicle is open." }] };
+        const result = this.session.reapplyNormalization();
+        const gesture = result.issues?.[0]?.code === "vehicle.session.gesture-active";
+        if (result.ok === false && !gesture) this.validation = { ok: false, issues: result.issues ?? [] };
+        this.#emit();
+        return result;
+    }
+
     fieldValue(path) {
         const key = path.join(".");
         if (this.fieldBuffers.has(key)) return this.fieldBuffers.get(key);

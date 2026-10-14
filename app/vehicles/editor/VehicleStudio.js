@@ -660,6 +660,7 @@ export class VehicleStudio {
 
     setSensorRuntime(sensorRuntime) {
         this.sensorRuntime = sensorRuntime || sensorRuntimeRegistry;
+        if (this._manifest) this._syncSensors(this._manifest.sensors ?? []);
     }
 
     /**
