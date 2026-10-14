@@ -175,9 +175,13 @@ export class VehicleStudio {
             this._pointerDown = { x: event.clientX, y: event.clientY };
         };
         this._onPointerUp = (event) => {
+            // TransformControls only emits mouseUp while an axis is set. A preview that
+            // cleared the axis would otherwise leave the wheel gesture open.
+            const pendingWheelDrag = this._wheelDrag;
+            if (pendingWheelDrag) this._finishWheelDrag();
             const start = this._pointerDown;
             this._pointerDown = null;
-            if (!start || this.gizmo.dragging) return;
+            if (pendingWheelDrag || !start || this.gizmo.dragging) return;
             // Treat as a click only when the pointer barely moved (not an orbit).
             if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > 4) return;
             this._handleClick(event);
@@ -543,7 +547,9 @@ export class VehicleStudio {
             );
             return mesh;
         }, (object, wheel) => {
-            object.position.set(wheel.position.x, wheel.position.y, wheel.position.z);
+            if (!this._isDragging(object)) {
+                object.position.set(wheel.position.x, wheel.position.y, wheel.position.z);
+            }
             // Radius or width changes require new geometry; encode in signature.
             return `${wheel.radius}:${wheel.width}:${wheel.steerable}`;
         });
@@ -652,9 +658,16 @@ export class VehicleStudio {
 
     /** @param {{kind: string, id: string|null} | null} selection */
     setSelection(selection) {
-        this._selection = selection;
+        const next = selection?.kind ? selection : null;
+        const target = this._objectForSelection(next);
+        const current = this._selection?.kind ? this._selection : null;
+        const same = current?.kind === next?.kind && (current?.id ?? null) === (next?.id ?? null);
+        if (same && this.gizmo.object === target) {
+            this._selection = next;
+            return;
+        }
+        this._selection = next;
         this.gizmo.detach();
-        const target = this._objectForSelection(selection);
         if (target) this.gizmo.attach(target);
     }
 

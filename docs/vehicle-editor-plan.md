@@ -276,7 +276,7 @@ A wheel link is editor-session state on `VehicleDocumentSession`. It is cleared 
 
 ### VEH-05d — axle inspector
 
-A version 3 vehicle with a standard pair edits that axle as one collapsed row. The row edits full track width, which the plan also shows, and maps it to half-track. Model-bound geometry stays disabled until detach. A complete version 3 wheelbase is a read-only field. Version 2 and any unclassified wheels stay in the same collapsible list, including when Advanced is off. `adoptStandardAxles` groups the named front and rear pairs in one undo step. `classifyWheel` sets one wheel's axle and side, and clears a partner that would be left alone. Built-in documents stay inside the disabled fieldset, and the plan handles receive `readOnly` because an SVG slider is not a form control.
+A version 3 vehicle with a standard pair edits that axle as one collapsed row. The row edits full track width, which the plan also shows, and maps it to half-track. Model-bound geometry stays disabled until detach. A complete version 3 wheelbase is a read-only field. Version 2 and any unclassified wheels stay in the same collapsible list, including when Advanced is off. `adoptStandardAxles` groups the named front and rear pairs in one undo step. `classifyWheel` sets one wheel's axle and side without moving the wheel, and clears a partner that would be left alone. Mirror complementary and Align with front or rear then copy the complementary pose or the same-side lateral position in one undo step. Built-in documents stay inside the disabled fieldset, and the plan handles receive `readOnly` because an SVG slider is not a form control.
 
 ### VEH-05e — plan view
 

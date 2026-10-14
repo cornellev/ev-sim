@@ -392,29 +392,66 @@ export function classifyWheel({ wheelId, axle = null, side = null }) {
         wheel.axle = axle;
         wheel.side = side;
         wheel.steerable = axle === "front";
-        wheel.position = {
-            ...wheel.position,
-            z: canonicalFiniteNumber((side === "left" ? 1 : -1) * Math.abs(wheel.position.z)),
-        };
         next.version = VEHICLE_MANIFEST_VERSION_V3;
-        const pair = axlePair(next.wheels, axle);
-        if (pair.left && pair.right && pair.members.length === 2) {
-            const proposal = proposeStandardPair(pair.left, pair.right, { axle });
-            if (!proposal.withinTolerance || !proposal.proposed) {
-                for (const entry of proposal.issues) context.issue(entry.code, entry.path, entry.message);
-                return { ok: false };
-            }
-            for (const member of [pair.left, pair.right]) {
-                const sign = member.side === "left" ? 1 : -1;
-                member.position = {
-                    x: proposal.proposed.x,
-                    y: proposal.proposed.y,
-                    z: canonicalFiniteNumber(sign * proposal.proposed.z),
-                };
-                member.radius = proposal.proposed.radius;
-                member.width = proposal.proposed.width;
-                member.steerable = proposal.proposed.steerable === true;
-            }
+        context.setManifest(withWheelbase(next));
+        return { ok: true };
+    });
+}
+
+function partnerWheel(wheels, wheel, mode) {
+    if (!wheel?.axle || !wheel?.side) return null;
+    if (mode === "mirror") {
+        const side = wheel.side === "left" ? "right" : "left";
+        return wheels.find((entry) => entry.id !== wheel.id && entry.axle === wheel.axle && entry.side === side) ?? null;
+    }
+    const axle = wheel.axle === "front" ? "rear" : "front";
+    return wheels.find((entry) => entry.id !== wheel.id && entry.axle === axle && entry.side === wheel.side) ?? null;
+}
+
+/**
+ * Copy one partner onto the selected wheel.
+ * `mirror` reads the other side of the same axle and flips lateral position.
+ * `align` reads the same side of the other axle and copies only lateral position.
+ */
+export function copyWheelFromPartner({ wheelId, mode }) {
+    const label = mode === "align" ? "Align wheel" : "Mirror complementary wheel";
+    return command(label, (context) => {
+        if (mode !== "mirror" && mode !== "align") {
+            context.issue("vehicle.wheel.partner", "wheels", "Choose a complementary mirror or a same-side alignment.");
+            return { ok: false };
+        }
+        const next = cloneJson(context.manifest);
+        const wheel = next.wheels.find((entry) => entry.id === wheelId);
+        if (!wheel) {
+            context.issue("vehicle.wheel.missing", "wheels", `Wheel "${wheelId}" does not exist.`);
+            return { ok: false };
+        }
+        if (wheel.visual?.kind === "model-node") {
+            context.issue("vehicle.axle.geometry-locked", "wheels", "Detach the model-bound wheel before copying a partner.");
+            return { ok: false };
+        }
+        if (!wheel.axle || !wheel.side) {
+            context.issue("vehicle.wheel.partner", "wheels", "Classify this wheel before copying a partner.");
+            return { ok: false };
+        }
+        const source = partnerWheel(next.wheels, wheel, mode);
+        if (!source) {
+            const message = mode === "mirror"
+                ? "The other side of this axle is not classified."
+                : "The same side of the other axle is not classified.";
+            context.issue("vehicle.wheel.partner", "wheels", message);
+            return { ok: false };
+        }
+        if (mode === "mirror") {
+            wheel.position = {
+                x: source.position.x,
+                y: source.position.y,
+                z: canonicalFiniteNumber(-source.position.z),
+            };
+            wheel.radius = source.radius;
+            wheel.width = source.width;
+        } else {
+            wheel.position = { ...wheel.position, z: source.position.z };
         }
         context.setManifest(withWheelbase(next));
         return { ok: true };

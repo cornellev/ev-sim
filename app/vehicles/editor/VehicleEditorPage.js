@@ -59,7 +59,7 @@ import {
     validateVehicleManifestOnServer,
 } from "../VehicleManifestClient.js";
 import { VehicleEditorController } from "./VehicleEditorController.js";
-import { editManifestFields, applyModelReplacement, applyPlacementChange, adoptStandardAxles, assignModelWheels, classifyWheel, detachWheel, suppressSourceWheels } from "../document/vehicleCommands.js";
+import { editManifestFields, applyModelReplacement, applyPlacementChange, adoptStandardAxles, assignModelWheels, classifyWheel, copyWheelFromPartner, detachWheel, suppressSourceWheels } from "../document/vehicleCommands.js";
 import { highlightedLinkIds, isBoundWheel, linkedPartnerId, resolveMotionLink, standardPartner } from "../document/wheelLink.js";
 import { measurePlacedVehicleModel } from "../model/measurePlacedVehicle.js";
 import { stageVehicleClosure, stageVehiclePlan } from "./stageVehicleClosure.js";
@@ -109,6 +109,16 @@ const WHEEL_ROLES = [
     { value: "rear:left", label: "Rear left" },
     { value: "rear:right", label: "Rear right" },
 ];
+
+function wheelPartner(wheels, wheel, mode) {
+    if (!wheel?.axle || !wheel?.side) return null;
+    if (mode === "mirror") {
+        const side = wheel.side === "left" ? "right" : "left";
+        return wheels.find((entry) => entry.id !== wheel.id && entry.axle === wheel.axle && entry.side === side) ?? null;
+    }
+    const axle = wheel.axle === "front" ? "rear" : "front";
+    return wheels.find((entry) => entry.id !== wheel.id && entry.axle === axle && entry.side === wheel.side) ?? null;
+}
 const FaArrowsAlt = (props) => <IconArrowsMove size={14} stroke={1.75} {...props} />;
 const FaCube = (props) => <IconCube size={14} stroke={1.75} {...props} />;
 const FaPlus = (props) => <IconPlus size={14} stroke={1.75} {...props} />;
@@ -368,7 +378,12 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
         // Locks are derived from pluginLocks, not the whole draft.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [draft?.pluginLocks, sensorCatalog.revision]);
-    useEffect(() => { studioRef.current?.setSelection(readOnly ? null : selection); }, [selection, readOnly]);
+    useEffect(() => {
+        studioRef.current?.setSelection(readOnly ? null : selection);
+        // A preview emits a new selection object with the same kind and id.
+        // Rebinding on that object detaches the gizmo mid-drag.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selection?.kind, selection?.id, readOnly]);
     useEffect(() => { studioRef.current?.setGizmoMode(gizmoMode); }, [gizmoMode]);
     useEffect(() => {
         const partnerId = selection?.kind === "wheel" && draft
@@ -858,6 +873,11 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
         if (!result.ok) setError(result.issues?.[0]?.message || "Could not classify that wheel.");
     };
 
+    const copyWheelPartner = (wheelId, mode) => {
+        const result = executeCommand(copyWheelFromPartner({ wheelId, mode }));
+        if (!result.ok) setError(result.issues?.[0]?.message || "Could not copy that wheel.");
+    };
+
     const applyRaw = (value) => {
         controllerRef.current.applyRaw(value);
     };
@@ -1127,6 +1147,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                                                     onCancelGesture={cancelAxleGesture}
                                                     onGroupAxles={groupAxles}
                                                     onClassify={classifyWheelRole}
+                                                    onCopyFromPartner={copyWheelPartner}
                                                     wheelLink={snapshot.wheelLink}
                                                     onSetWheelLink={setWheelLink}
                                                     onBeginWheel={beginWheelMotion}
@@ -1477,6 +1498,7 @@ function WheelsTab({
     onCancelGesture,
     onGroupAxles,
     onClassify,
+    onCopyFromPartner,
     wheelLink = null,
     onSetWheelLink,
     onBeginWheel,
@@ -1569,11 +1591,7 @@ function WheelsTab({
         if (mirrored) onSetWheelLink?.({ ids: [added[0].id, added[1].id], mode: "mirror" });
     };
     const axles = draft.version === 3 ? standardAxleCards(draft.wheels) : [];
-    const showAxles = axles.length > 0;
-    const axleWheelIds = new Set(axles.flatMap((axle) => [axle.left.id, axle.right.id]));
-    const listedWheels = draft.wheels
-        .map((wheel, index) => ({ wheel, index }))
-        .filter(({ wheel }) => !showAxles || !axleWheelIds.has(wheel.id));
+    const listedWheels = draft.wheels.map((wheel, index) => ({ wheel, index }));
     const completeWheelbase = draft.version === 3 ? deriveCompleteWheelbase(draft.wheels) : null;
     const groupable = ["front", "rear"].filter((axle) => {
         const left = draft.wheels.find((wheel) => wheel.id === `${axle}-left` && !wheel.axle);
@@ -1659,6 +1677,7 @@ function WheelsTab({
                                 setSelection={setSelection}
                                 onDetach={onDetach}
                                 onClassify={onClassify}
+                                onCopyFromPartner={onCopyFromPartner}
                                 onBeginWheel={onBeginWheel}
                                 onPreviewWheel={onPreviewWheel}
                                 onCommitWheel={onCommitWheel}
@@ -1774,6 +1793,7 @@ function WheelCard({
     setSelection,
     onDetach,
     onClassify,
+    onCopyFromPartner,
     onBeginWheel,
     onPreviewWheel,
     onCommitWheel,
@@ -1783,6 +1803,8 @@ function WheelCard({
     const linked = Boolean(resolveMotionLink(draft.wheels, wheel.id, wheelLink));
     const change = (parts, value) => update(["wheels", index, ...parts], value);
     const role = wheel.axle && wheel.side ? `${wheel.axle}:${wheel.side}` : "";
+    const mirrorSource = wheelPartner(draft.wheels, wheel, "mirror");
+    const alignSource = wheelPartner(draft.wheels, wheel, "align");
     return (
         <div className={selected ? "rounded-[var(--radius)] bg-[var(--slate-surface-3)] p-1" : "p-1"}>
             <div className="grid grid-cols-2 gap-2">
@@ -1810,7 +1832,7 @@ function WheelCard({
                 </Field>
             </div>
             {bound && <p className="mt-2 text-[11px] text-[var(--slate-muted)]">Bound to model node {wheel.visual.nodeIndex}. Detach it before editing this geometry.</p>}
-            {role && <p className="mt-2 text-[11px] text-[var(--slate-muted)]">Assign the other side to complete this axle.</p>}
+            {role && !mirrorSource && <p className="mt-2 text-[11px] text-[var(--slate-muted)]">Assign the other side to complete this axle.</p>}
             <VectorFields
                 label="Position (m)"
                 value={wheel.position}
@@ -1826,10 +1848,18 @@ function WheelCard({
                 onGestureEnd={linked ? () => onCommitWheel?.() : undefined}
                 onGestureCancel={linked ? () => onCancelWheel?.() : undefined}
             />
-            <div className="mt-3 flex items-center justify-between">
-                {bound
-                    ? <button type="button" onClick={() => onDetach(wheel.id)} className="text-[11px] text-[var(--slate-fg-2)]">Detach</button>
-                    : <button type="button" onClick={() => update(["wheels", index, "position", "z"], -wheel.position.z)} className="text-[11px] text-[var(--slate-fg-2)]">Mirror to other side</button>}
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap gap-3">
+                    {bound && <button type="button" onClick={() => onDetach(wheel.id)} className="text-[11px] text-[var(--slate-fg-2)]">Detach</button>}
+                    {mirrorSource && (
+                        <button type="button" disabled={bound} onClick={() => onCopyFromPartner?.(wheel.id, "mirror")} className="text-[11px] text-[var(--slate-fg-2)] disabled:opacity-40">Mirror complementary</button>
+                    )}
+                    {alignSource && (
+                        <button type="button" disabled={bound} onClick={() => onCopyFromPartner?.(wheel.id, "align")} className="text-[11px] text-[var(--slate-fg-2)] disabled:opacity-40">
+                            {alignSource.axle === "front" ? "Align with front" : "Align with rear"}
+                        </button>
+                    )}
+                </div>
                 {!bound && <button type="button" onClick={() => update(["wheels"], draft.wheels.filter((_, candidate) => candidate !== index))} className="text-[11px] text-[var(--slate-danger)]">Remove</button>}
             </div>
         </div>
