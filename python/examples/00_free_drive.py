@@ -32,12 +32,9 @@ def main(argv: list[str] | None = None) -> int:
     with cev_sim.launch(config) as env:
         env.reset(seed=args.seed)
         action = np.array([0.35, 0.0], dtype=np.float32)
-        for step in range(args.steps):
-            _observation, _reward, terminated, truncated, _info = env.step(action)
-            if terminated or truncated:
-                print(f"stopped at step {step + 1}")
-                return 0
-        print(f"completed {args.steps} steps")
+        while env.loop():
+            env.step(action)
+        print(f"stopped at step {env.clock.steps()}")
     return 0
 
 

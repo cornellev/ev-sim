@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import shutil
 import tempfile
 import weakref
@@ -41,6 +42,53 @@ def _finalize_resources(
         finally:
             if temporary_output:
                 shutil.rmtree(temporary_output, ignore_errors=True)
+
+
+class SimClock:
+    """Simulation time since the latest reset."""
+
+    def __init__(self, step_ns: int) -> None:
+        if type(step_ns) is not int or step_ns <= 0:
+            raise CevSimConfigurationError("clock step must be a positive number of nanoseconds")
+        self._step_ns = step_ns
+        self._steps: int | None = None
+        self._time_ns: int | None = None
+
+    def update(self, info: Mapping[str, Any]) -> None:
+        self._steps = int(info["step"])
+        self._time_ns = int(info["simulation_time_ns"])
+
+    def clear(self) -> None:
+        self._steps = None
+        self._time_ns = None
+
+    def steps(self) -> int:
+        """Simulation steps since reset. One ``step()`` advances this by ``action_repeat``."""
+        if self._steps is None:
+            raise CevSimConfigurationError("reset() before reading the clock")
+        return self._steps
+
+    def time(self) -> float:
+        """Elapsed simulation seconds since reset."""
+        if self._time_ns is None:
+            raise CevSimConfigurationError("reset() before reading the clock")
+        return self._time_ns / 1_000_000_000
+
+    def dt(self) -> float:
+        """Seconds in one simulation step."""
+        return self._step_ns / 1_000_000_000
+
+
+def _bundle_step_ns(bundle: Any) -> int:
+    document = getattr(bundle, "document", None)
+    manifest = document.get("manifest") if isinstance(document, Mapping) else None
+    clock = manifest.get("clock") if isinstance(manifest, Mapping) else None
+    step_ns = clock.get("stepNs") if isinstance(clock, Mapping) else None
+    if isinstance(step_ns, bool) or not isinstance(step_ns, (int, float)) or not math.isfinite(float(step_ns)):
+        raise CevSimConfigurationError("Run bundle clock.stepNs must be a positive integer")
+    if int(step_ns) != step_ns or int(step_ns) <= 0:
+        raise CevSimConfigurationError("Run bundle clock.stepNs must be a positive integer")
+    return int(step_ns)
 
 
 def merge_reset_options(
@@ -137,6 +185,7 @@ class CevSimEnv(gym.Env[dict[str, np.ndarray[Any, Any]], np.ndarray[Any, Any]]):
             )
             self.action_space = self._batch.action_space
             self.observation_space = self._batch.observation_space
+            self.clock = SimClock(_bundle_step_ns(self._batch.bundle))
             self._finalizer = weakref.finalize(
                 self, _finalize_resources, self._batch, self._client, self._temporary_output
             )
@@ -168,7 +217,7 @@ class CevSimEnv(gym.Env[dict[str, np.ndarray[Any, Any]], np.ndarray[Any, Any]]):
             if self._batch.states[0] in {"ready", "terminal"}:
                 self._batch.finalize([0])
             observation, info = self._batch.reset([0], [reset_seed], None if overrides is None else [overrides])[0]
-            self._remember(observation)
+            self._remember(observation, info)
             return observation, info
         except _PROTOCOL_FAILURES:
             self._close_after_failure()
@@ -184,7 +233,7 @@ class CevSimEnv(gym.Env[dict[str, np.ndarray[Any, Any]], np.ndarray[Any, Any]]):
             raise CevSimConfigurationError("reset() must be called before step(), and again after an episode ends")
         try:
             observation, reward, terminated, truncated, info = self._batch.step([action])[0]
-            self._remember(observation)
+            self._remember(observation, info)
             return observation, reward, terminated, truncated, info
         except _PROTOCOL_FAILURES:
             self._close_after_failure()
@@ -199,6 +248,8 @@ class CevSimEnv(gym.Env[dict[str, np.ndarray[Any, Any]], np.ndarray[Any, Any]]):
         self._batch = None
         self._client = None
         self._temporary_output = None
+        if getattr(self, "clock", None) is not None:
+            self.clock.clear()
         try:
             try:
                 batch and batch.close(finalize_active_episodes=True)
@@ -222,6 +273,31 @@ class CevSimEnv(gym.Env[dict[str, np.ndarray[Any, Any]], np.ndarray[Any, Any]]):
         except Exception:
             pass
 
+    def loop(self) -> bool:
+        """True after ``reset`` until the episode is terminated or truncated."""
+        if self._closed or self._batch is None:
+            raise CevSimConfigurationError("Environment is closed")
+        return self._batch.states[0] == "ready"
+
+    def pose(self) -> np.ndarray[Any, Any]:
+        """Latest ``oracle/ego/pose`` as ``(x, z, yaw)``."""
+        return self._oracle("oracle/ego/pose", 3)
+
+    def velocity(self) -> np.ndarray[Any, Any]:
+        """Latest ``oracle/ego/velocity`` as ``(vx, vz, yaw_rate)``."""
+        return self._oracle("oracle/ego/velocity", 3)
+
+    def steering(self) -> float:
+        """Latest steering angle in radians."""
+        return float(self._oracle("oracle/ego/steering", 1)[0])
+
+    def goal(self) -> np.ndarray[Any, Any]:
+        """Latest ``oracle/goal`` as ``(x, z, yaw)``.
+
+        In a free drive this is the far end of the verified route, not a finish line.
+        """
+        return self._oracle("oracle/goal", 3)
+
     def set_overlay(self, path: Any) -> None:
         """Store a planned path, as an (N, 2) array of (x, z) points, for render()."""
         self._overlay_path = None if path is None else np.asarray(path, dtype=np.float64)
@@ -235,10 +311,24 @@ class CevSimEnv(gym.Env[dict[str, np.ndarray[Any, Any]], np.ndarray[Any, Any]]):
             self._viewer = PlanningRenderer(self.bundle, mode=self.render_mode)
         return self._viewer.draw(self._last_observation, self._overlay_path)
 
-    def _remember(self, observation: dict[str, np.ndarray[Any, Any]]) -> None:
+    def _remember(self, observation: dict[str, np.ndarray[Any, Any]], info: Mapping[str, Any]) -> None:
         self._last_observation = observation
+        self.clock.update(info)
         if self.render_mode == "human":
             self.render()
+
+    def _oracle(self, key: str, length: int) -> np.ndarray[Any, Any]:
+        if self._closed or self._batch is None:
+            raise CevSimConfigurationError("Environment is closed")
+        if self._last_observation is None:
+            raise CevSimConfigurationError("reset() before reading the observation")
+        value = self._last_observation.get(key)
+        if value is None:
+            raise CevSimConfigurationError(f"{key} requires the planning-oracle observation profile")
+        try:
+            return np.array(value, copy=True).reshape(length)
+        except ValueError as error:
+            raise CevSimConfigurationError(f"{key} must contain {length} values") from error
 
     def _reset_seed(self, seed: int | None) -> int:
         if seed is not None:

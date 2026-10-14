@@ -162,6 +162,13 @@ does not rebuild the bundle.
 `CevSimEnv` and `gym.make("CevSim-v0")` still default to `measured-state`.
 `configure` is the call that defaults to the planning view.
 
+After `reset`, `sim.loop()` stays true until the episode is terminated or
+truncated. It does not step. `sim.clock.steps()` is the simulation step,
+`sim.clock.time()` is elapsed seconds, and `sim.clock.dt()` is the seconds in
+one simulation step. `sim.pose()`, `sim.velocity()`, `sim.steering()`, and
+`sim.goal()` copy the latest planning-oracle values. `goal()` is the route end
+during a free drive. Those four readers require the planning view.
+
 ## Gymnasium environment
 
 Supply an existing Unix/TCP supervisor target, or omit both `target` and

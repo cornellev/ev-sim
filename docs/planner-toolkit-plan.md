@@ -24,6 +24,7 @@ is out of scope and tracked as a later item.
 | PLN-05: protocol 1.5 start/goal overrides | Complete | episode, supervisor, and Python integration tests |
 | PLN-06: rendering, examples, quickstart | Complete | example smoke runs |
 | PLN-07: Python `configure` / `launch` | Complete | `npm run test:cli`, `npm run test:python`, example `00` |
+| PLN-08: session clock, loop, and pose readers | Complete | `npm run lint:python`, `npm run test:python` |
 
 ## Locked decisions
 
@@ -139,6 +140,14 @@ starts one worker. `goal=None` does not add a finish line. A goal is a
 protocol 1.5 reset override. The tutorial is
 [`docs/python-getting-started.md`](python-getting-started.md).
 
+### PLN-08
+
+`sim.clock.time()` and `sim.clock.steps()` read elapsed simulation time since
+reset. `sim.clock.dt()` is the fixed simulation step in seconds. `sim.loop()`
+is true while that episode is running and does not itself step. `pose()`,
+`velocity()`, `steering()`, and `goal()` copy the latest `planning-oracle`
+values. `max_steps=0` remains no policy-step limit.
+
 ## Verification
 
 ```text
@@ -153,6 +162,7 @@ PLN-03 through PLN-05 also run `npm run test:headless`, `npm run test:supervisor
 `npm run test:cli`, and `npm run test:parity`. `npm run fixtures:headless` must
 show an empty characterization delta. PLN-06 runs each example with `--steps 50`.
 PLN-07 also runs `npm run test:cli` and `python python/examples/00_free_drive.py --steps 50`.
+PLN-08 runs `npm run lint:python` and `npm run test:python`.
 `npm run fixtures:planning` must leave the example bundles unchanged.
 
 ## Progress and decision log
@@ -185,3 +195,11 @@ Start and goal stay protocol 1.5 reset overrides. `configure` defaults to
 IMU, GNSS, or wheel odometry receives that localization rig, so a saved
 `igvc-default` can still launch. The getting-started tutorial is
 `docs/python-getting-started.md`.
+
+### 2026-10-14 — PLN-08
+
+`CevSimEnv` caches the latest transition. `clock.time()` reports elapsed
+seconds, `clock.steps()` reports simulation steps, and `clock.dt()` reports
+the bundle step length. `loop()` is true only while the episode is ready.
+`pose()`, `velocity()`, `steering()`, and `goal()` copy planning-oracle
+fields. `max_steps=0` is unchanged.

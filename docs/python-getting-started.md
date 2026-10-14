@@ -83,15 +83,14 @@ config = cev_sim.configure(
     environment="igvc",
     vehicle="big-car",
     goal=None,
+    max_steps=300,
 )
 with cev_sim.launch(config) as sim:
-    observation, info = sim.reset(seed=1)
-    for _ in range(300):
-        action = np.array([0.35, 0.0], dtype=np.float32)
-        observation, reward, terminated, truncated, info = sim.step(action)
-        if terminated or truncated:
-            print(info["termination_reason"], info["truncation_reason"])
-            break
+    sim.reset(seed=1)
+    action = np.array([0.35, 0.0], dtype=np.float32)
+    while sim.loop():
+        sim.step(action)
+    print(sim.clock.steps(), sim.clock.time())
 ```
 
 Save it as `drive.py` and run `python drive.py` from the checkout.
@@ -105,6 +104,7 @@ What each piece does:
 | `goal=None` | Free drive. Reaching the far end of the road does not end the episode. |
 | `launch` | Starts one worker. The `with` block closes it, even if the loop raises. |
 | `reset(seed=1)` | Places the car and starts a repeatable episode. |
+| `loop` | True after `reset` until the episode ends. It does not move the car. |
 | `step` | One action. The array is `[speed, steer]`, each in `[-1, 1]`. |
 
 `configure` also accepts `start=(x, z)`. Those are meters on the ground. The
@@ -161,7 +161,37 @@ Three ways to stop the drive:
   `truncated`.
 - Let the car hit something or leave the pavement. That comes back `terminated`.
 
-`max_steps=0`, the default, means no step limit.
+`max_steps=0`, the default, means no step limit. `loop()` then stays true until
+the car hits something, leaves the road, or you `break`.
+
+## Read the clock and the car
+
+`clock.time()` is seconds since `reset`. `clock.steps()` is the simulation
+step. `clock.dt()` is the length of one step in seconds. One `step` advances
+the clock by `dt` when each action runs one simulation step.
+
+`pose()` is the latest `(x, z, yaw)`. `velocity()` is `(vx, vz, yaw_rate)`.
+`steering()` is the steering angle in radians. `goal()` is `(x, z, yaw)` at
+the far end of the verified route. In a free drive that point does not finish
+the episode. These four readers need the planning view, which is the default
+from `configure`.
+
+```python
+import math
+
+import numpy as np
+
+import cev_sim
+
+config = cev_sim.configure(environment="igvc", vehicle="big-car", goal=None, max_steps=600)
+with cev_sim.launch(config) as sim:
+    sim.reset(seed=1)
+    while sim.loop():
+        steer = 0.25 * math.sin(2 * math.pi * 0.2 * sim.clock.time())
+        sim.step(np.array([0.35, steer], dtype=np.float32))
+        x, z, yaw = sim.pose()
+        print(f"{sim.clock.steps():4d}  x={x:7.2f}  z={z:7.2f}  yaw={yaw:6.2f}")
+```
 
 ## Drive to a goal
 

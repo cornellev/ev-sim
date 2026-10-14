@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from cev_sim import configure, environments, launch, vehicles
-from cev_sim.env import merge_reset_options
+from cev_sim.env import SimClock, merge_reset_options
 from cev_sim.errors import CevSimConfigurationError
 from cev_sim.quickstart import yaw_along_route
 from cev_sim.world import load_world, yaw_from_direction
@@ -189,5 +189,93 @@ def test_configured_goal_ends_the_episode(tmp_path: Path) -> None:
             _observation, _reward, terminated, truncated, info = env.step(np.zeros(2, dtype=np.float32))
             assert terminated and not truncated
             assert info["termination_reason"] == "success"
+    finally:
+        config.close()
+
+
+def test_clock_converts_nanoseconds_and_rejects_an_unread_episode() -> None:
+    clock = SimClock(16_666_667)
+    assert clock.dt() == pytest.approx(16_666_667 / 1_000_000_000)
+    with pytest.raises(CevSimConfigurationError):
+        clock.time()
+    with pytest.raises(CevSimConfigurationError):
+        clock.steps()
+    clock.update({"step": 2, "simulation_time_ns": 33_333_334})
+    assert clock.steps() == 2
+    assert clock.time() == pytest.approx(33_333_334 / 1_000_000_000)
+    clock.clear()
+    with pytest.raises(CevSimConfigurationError):
+        clock.steps()
+
+
+@pytest.mark.integration
+def test_loop_clock_and_pose_follow_the_episode(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    limited = configure(environment="igvc", vehicle="big-car", goal=None, data_dir=data_dir, max_steps=2)
+    try:
+        with launch(limited) as env:
+            assert env.loop() is False
+            with pytest.raises(CevSimConfigurationError):
+                env.clock.time()
+            with pytest.raises(CevSimConfigurationError):
+                env.pose()
+            observation, _info = env.reset(seed=1)
+            assert env.loop() is True
+            assert env.clock.steps() == 0
+            assert env.clock.time() == 0.0
+            np.testing.assert_allclose(env.pose(), observation["oracle/ego/pose"])
+            copied = env.pose()
+            copied[0] = 999.0
+            assert observation["oracle/ego/pose"][0] != 999.0
+            np.testing.assert_allclose(env.velocity(), observation["oracle/ego/velocity"])
+            assert env.steering() == pytest.approx(float(observation["oracle/ego/steering"][0]))
+            np.testing.assert_allclose(env.goal(), observation["oracle/goal"])
+            action = np.array([0.2, 0.0], dtype=np.float32)
+            env.step(action)
+            assert env.loop() is True
+            assert env.clock.steps() == 1
+            assert env.clock.time() == pytest.approx(env.clock.dt())
+            _observation, _reward, terminated, truncated, info = env.step(action)
+            assert env.loop() is False
+            assert terminated is False and truncated is True
+            assert info["truncation_reason"] == "max_episode_steps"
+            assert env.clock.steps() == 2
+            assert env.clock.time() == pytest.approx(2 * env.clock.dt())
+    finally:
+        limited.close()
+
+    unlimited = configure(environment="igvc", vehicle="big-car", goal=None, data_dir=data_dir, max_steps=0)
+    try:
+        with launch(unlimited) as env:
+            env.reset(seed=1)
+            action = np.zeros(2, dtype=np.float32)
+            for _step in range(3):
+                _observation, _reward, terminated, truncated, info = env.step(action)
+                assert env.loop() is True
+                assert terminated is False and truncated is False
+                assert info["truncation_reason"] == "none"
+            assert env.clock.steps() == 3
+    finally:
+        unlimited.close()
+
+
+@pytest.mark.integration
+def test_measured_view_rejects_pose(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    config = configure(
+        environment="igvc",
+        vehicle="big-car",
+        goal=None,
+        data_dir=data_dir,
+        view="measured",
+        max_steps=1,
+    )
+    try:
+        with launch(config) as env:
+            env.reset(seed=1)
+            with pytest.raises(CevSimConfigurationError, match="planning-oracle"):
+                env.pose()
     finally:
         config.close()

@@ -298,11 +298,15 @@ def test_v11_requires_explicit_identity_capability_before_batch_creation(headles
 def test_omitted_output_dir_is_temporary_and_removed(monkeypatch: pytest.MonkeyPatch) -> None:
     created: dict[str, object] = {}
 
+    class FakeBundle:
+        document = {"manifest": {"clock": {"stepNs": 16_666_667}}}
+
     class FakeBatch:
         batch_id = "batch"
         action_space = None
         observation_space = None
         states = ["prepared"]
+        bundle = FakeBundle()
 
         def close(self, **_kwargs: object) -> None:
             created["batch_closed"] = True
