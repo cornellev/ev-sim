@@ -14,6 +14,13 @@ import { VehicleModelLoader, publishedVehicleModelSource, stagedVehicleModelSour
 import { sensorRuntimeRegistry } from "../../3d/devices/SensorRuntimeRegistry.js";
 import { measurePlacedVehicleModel } from "../model/measurePlacedVehicle.js";
 import { visualWheelYaws } from "../plan/turnGeometry.js";
+import {
+    ORBIT_ALIGN_MS,
+    ORBIT_FREE_POLAR_ANGLE,
+    alignProgress,
+    orbitPoseForAxis,
+    slerpDirection,
+} from "./alignOrbitAxis.js";
 
 const COLORS = {
     background: 0x09090b,
@@ -87,9 +94,16 @@ export class VehicleStudio {
         this.orbit.target.set(0, 0.6, 0);
         this.orbit.enableDamping = true;
         this.orbit.dampingFactor = 0.08;
-        this.orbit.maxPolarAngle = Math.PI * 0.52;
+        this.orbit.maxPolarAngle = ORBIT_FREE_POLAR_ANGLE;
         this.orbit.minDistance = 0.5;
         this.orbit.maxDistance = 60;
+        this._align = null;
+        this._cameraListeners = new Set();
+        this._onOrbitStart = () => {
+            this._align = null;
+            this.camera.up.set(0, 1, 0);
+        };
+        this.orbit.addEventListener("start", this._onOrbitStart);
 
         this.gizmo = new TransformControls(this.camera, this.renderer.domElement);
         this.gizmo.setSize(0.8);
@@ -196,7 +210,9 @@ export class VehicleStudio {
         const animate = () => {
             if (this._disposed) return;
             this._frame = requestAnimationFrame(animate);
+            this._stepAlign();
             this.orbit.update();
+            this._publishCamera();
             this.renderer.render(this.scene, this.camera);
         };
         animate();
@@ -209,6 +225,8 @@ export class VehicleStudio {
         this._modelLease = null;
         if (this._ownsModelLoader) this.modelLoader.dispose();
         cancelAnimationFrame(this._frame);
+        this._cameraListeners.clear();
+        this.orbit.removeEventListener("start", this._onOrbitStart);
         this._resizeObserver.disconnect();
         this.renderer.domElement.removeEventListener("pointerdown", this._onPointerDown);
         this.renderer.domElement.removeEventListener("pointerup", this._onPointerUp);
@@ -217,6 +235,76 @@ export class VehicleStudio {
         this.orbit.dispose();
         this.renderer.dispose();
         this.renderer.domElement.remove();
+    }
+
+    /**
+     * Ease the orbit camera onto a vehicle axis, keeping the current target and distance.
+     * A later call replaces an alignment that is still running.
+     * @param {"+x"|"-x"|"+y"|"-y"|"+z"|"-z"} axisId
+     */
+    alignToAxis(axisId) {
+        const target = { x: this.orbit.target.x, y: this.orbit.target.y, z: this.orbit.target.z };
+        const from = {
+            x: this.camera.position.x - target.x,
+            y: this.camera.position.y - target.y,
+            z: this.camera.position.z - target.z,
+        };
+        const raw = Math.hypot(from.x, from.y, from.z);
+        const distance = Math.min(this.orbit.maxDistance, Math.max(this.orbit.minDistance, raw || 1));
+        const pose = orbitPoseForAxis({ axis: axisId, target, distance });
+        if (!pose) return;
+        // Open the limit before a bottom turn. A tighter limit waits until the
+        // ease finishes so orbit.update() does not clamp the path.
+        if (pose.maxPolarAngle > this.orbit.maxPolarAngle) this.orbit.maxPolarAngle = pose.maxPolarAngle;
+        this.camera.up.set(pose.up.x, pose.up.y, pose.up.z);
+        this._align = {
+            from,
+            to: {
+                x: pose.position.x - target.x,
+                y: pose.position.y - target.y,
+                z: pose.position.z - target.z,
+            },
+            target,
+            distance,
+            up: pose.up,
+            maxPolarAngle: pose.maxPolarAngle,
+            started: performance.now(),
+        };
+    }
+
+    /** @param {(quaternion: {x:number,y:number,z:number,w:number}) => void} listener */
+    onCameraFrame(listener) {
+        this._cameraListeners.add(listener);
+        listener(this._quaternionSnapshot());
+        return () => { this._cameraListeners.delete(listener); };
+    }
+
+    _stepAlign() {
+        if (!this._align) return;
+        const elapsed = performance.now() - this._align.started;
+        const direction = slerpDirection(this._align.from, this._align.to, alignProgress(elapsed));
+        const { target, distance, up, maxPolarAngle } = this._align;
+        this.camera.up.set(up.x, up.y, up.z);
+        this.camera.position.set(
+            target.x + direction.x * distance,
+            target.y + direction.y * distance,
+            target.z + direction.z * distance,
+        );
+        if (elapsed >= ORBIT_ALIGN_MS) {
+            this.orbit.maxPolarAngle = maxPolarAngle;
+            this._align = null;
+        }
+    }
+
+    _publishCamera() {
+        if (this._cameraListeners.size === 0) return;
+        const quaternion = this._quaternionSnapshot();
+        for (const listener of this._cameraListeners) listener(quaternion);
+    }
+
+    _quaternionSnapshot() {
+        const { x, y, z, w } = this.camera.quaternion;
+        return { x, y, z, w };
     }
 
     _resize() {

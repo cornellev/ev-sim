@@ -69,6 +69,7 @@ import { DragNumber } from "./DragNumber.js";
 import { VehiclePlanView } from "./VehiclePlanView.js";
 import { PlacementAcceptanceDialog, WheelAssignmentDialog } from "./WheelAssignmentDialog.js";
 import { canonicalVehicleGlb, rolesFromManifest } from "./wheelAssignmentState.js";
+import { AxisAlignGizmo } from "./AxisAlignGizmo.js";
 import { VehicleStudio } from "./VehicleStudio.js";
 import { VehicleWorkspace } from "./workspace/VehicleWorkspace.js";
 import { VehicleTopBar } from "./workspace/VehicleTopBar.js";
@@ -171,6 +172,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     const urdfButtonRef = useRef(null);
     const viewportRef = useRef(null);
     const studioRef = useRef(null);
+    const axisGizmoRef = useRef(null);
     const studioHandlers = useRef({});
     const loadRequest = useRef(0);
     const sensorSessionRef = useRef(null);
@@ -309,7 +311,11 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
             sensorRuntime: authoringRuntime,
         });
         studioRef.current = studio;
+        const detachCamera = studio.onCameraFrame((quaternion) => {
+            axisGizmoRef.current?.sync(quaternion);
+        });
         return () => {
+            detachCamera();
             studio.dispose();
             studioRef.current = null;
         };
@@ -1038,17 +1044,18 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                     {draft && (
                         <>
                             <div ref={viewportRef} className="absolute inset-0" />
-                            <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-end p-3">
+                            <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-end gap-2 p-3">
                                 {selection && (
                                     <div className="pointer-events-auto flex items-center gap-2 rounded-[var(--radius)] border border-[var(--slate-border)] bg-[var(--slate-floating)] px-2.5 py-1.5">
                                         <span className="text-[14px] font-medium text-[var(--slate-fg-2)]">{selectionLabel(selection)}</span>
                                         <button type="button" onClick={() => setSelection(null)} className="text-[12px] text-[var(--slate-muted)] hover:text-[var(--slate-fg)]">Deselect</button>
                                     </div>
                                 )}
+                                <AxisAlignGizmo ref={axisGizmoRef} studioRef={studioRef} />
                             </div>
-                            <p className="pointer-events-none absolute bottom-3 left-3 rounded-[var(--radius)] border border-[var(--slate-border)] bg-[var(--slate-floating)] px-2 py-1 text-[11px] text-[var(--slate-muted)]">
+                            {/* <p className="pointer-events-none absolute bottom-3 left-3 rounded-[var(--radius)] border border-[var(--slate-border)] bg-[var(--slate-floating)] px-2 py-1 text-[11px] text-[var(--slate-muted)]">
                                 {readOnly ? "Orbit to inspect. Duplicate this vehicle to edit it." : "Click a marker to select it. Drag the gizmo to place it."}
-                            </p>
+                            </p> */}
                         </>
                     )}
                 </section>
