@@ -191,6 +191,9 @@ function collectInterface(units, reachable) {
 
             if (port.portId) definition.portId = port.portId;
             if (port.sceneType) definition.sceneType = port.sceneType;
+            if (Array.isArray(port.sceneTypes) && port.sceneTypes.length > 0) {
+                definition.sceneTypes = [...port.sceneTypes];
+            }
 
             if (port.role === "input") programInterface.inputs.push(definition);
             if (port.role === "output") programInterface.outputs.push(definition);

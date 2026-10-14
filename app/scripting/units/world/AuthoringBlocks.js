@@ -13,6 +13,19 @@ const PLACE_PORTS = {
     ],
 };
 
+const CLONE_PORTS = {
+    inputs: [
+        { label: "sourceId", type: "scene_object" },
+        { label: "pose", type: "pose3d" },
+        { label: "parentId", type: "scene_object" },
+    ],
+    outputs: [
+        { label: "then", type: "unit" },
+        { label: "id", type: "string" },
+        { label: "ok", type: "boolean" },
+    ],
+};
+
 const GROUP_PORTS = {
     inputs: [
         { label: "name", type: "string" },
@@ -41,6 +54,7 @@ function staticPortsUnit(title, ports) {
 }
 
 export const PlaceFeatureUnit = staticPortsUnit("Place Feature", PLACE_PORTS);
+export const CloneObjectUnit = staticPortsUnit("Clone Object", CLONE_PORTS);
 export const CreateGroupUnit = staticPortsUnit("Create Group", GROUP_PORTS);
 
-export { CreateGroupBlock, PlaceFeatureBlock } from "./AuthoringBlocks.block.js";
+export { CloneObjectBlock, CreateGroupBlock, PlaceFeatureBlock } from "./AuthoringBlocks.block.js";

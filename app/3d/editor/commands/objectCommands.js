@@ -289,6 +289,7 @@ export function createObject({
     id = null,
     parentId = null,
     name = null,
+    typeVersion = null,
     label = "Create object",
 } = {}) {
     return {
@@ -297,11 +298,14 @@ export function createObject({
         run(ctx) {
             const type = String(typeId ?? "").trim();
             if (!type) return commandFailure(commandIssue(COMMAND_ISSUE_CODES.ARGUMENT_INVALID, "typeId is required."));
-            const definition = ctx.registry.get(type);
+            const requestedVersion = Number.isInteger(typeVersion) ? typeVersion : undefined;
+            const definition = ctx.registry.get(type, requestedVersion);
             if (!definition) {
                 return commandFailure(commandIssue(
                     OBJECT_ISSUE_CODES.TYPE_UNSUPPORTED,
-                    `Object type "${type}" is not registered.`,
+                    requestedVersion === undefined
+                        ? `Object type "${type}" is not registered.`
+                        : `Object type "${type}@${requestedVersion}" is not registered.`,
                 ));
             }
             const records = candidateRecords(ctx);

@@ -1,4 +1,4 @@
-import { linspace, nearestRoadEdge, sampleRoadFrame, sampleRouteFrame } from "../../../roads/PathFrame.js";
+import { linspace, nearestRoadEdge, roadCrossSection, sampleRoadFrame, sampleRouteFrame } from "../../../roads/PathFrame.js";
 import { sampleRoute } from "../../../scenarios/route/Route.js";
 import { cloneValue } from "../../runtime/SignalStore.js";
 import { BlockOutput } from "../../ScriptManager.js";
@@ -66,6 +66,17 @@ const SAMPLE_ROAD_PORTS = freezePorts(
     ],
     [
         { label: "pose", type: POSE3D_TYPE },
+        { label: "found", type: "boolean" },
+    ],
+);
+
+const ROAD_CROSS_SECTION_PORTS = freezePorts(
+    [
+        { label: "edgeId", type: ROAD_ID_TYPE },
+    ],
+    [
+        { label: "width", type: "float64" },
+        { label: "shoulderWidth", type: "float64" },
         { label: "found", type: "boolean" },
     ],
 );
@@ -140,6 +151,18 @@ export const SampleRoadBlock = defineBlock({
         return new BlockOutput()
             .set("pose", cloneValue(frame.pose))
             .set("found", frame.found);
+    },
+});
+
+export const RoadCrossSectionBlock = defineBlock({
+    type: "RoadCrossSectionBlock",
+    ports: ROAD_CROSS_SECTION_PORTS,
+    execute() {
+        const section = roadCrossSection(runtimeContext(this).world, this.getInput("edgeId"));
+        return new BlockOutput()
+            .set("width", section.width)
+            .set("shoulderWidth", section.shoulderWidth)
+            .set("found", section.found);
     },
 });
 
@@ -235,6 +258,7 @@ export const ScatterFeaturesBlock = defineBlock({
 export const WORLD_BLOCKS = Object.freeze({
     FrameAlongPathBlock,
     SampleRoadBlock,
+    RoadCrossSectionBlock,
     GetNearestRoadBlock,
     SpawnPropBlock,
     ScatterFeaturesBlock,
@@ -243,6 +267,7 @@ export const WORLD_BLOCKS = Object.freeze({
 export const WORLD_BLOCK_PORTS = Object.freeze({
     FrameAlongPathBlock: FRAME_ALONG_PATH_PORTS,
     SampleRoadBlock: SAMPLE_ROAD_PORTS,
+    RoadCrossSectionBlock: ROAD_CROSS_SECTION_PORTS,
     GetNearestRoadBlock: GET_NEAREST_ROAD_PORTS,
     SpawnPropBlock: SPAWN_PROP_PORTS,
     ScatterFeaturesBlock: SCATTER_FEATURES_PORTS,

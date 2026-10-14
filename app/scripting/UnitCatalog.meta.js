@@ -130,12 +130,22 @@ import {
 import {
     FrameAlongPathBlock,
     GetNearestRoadBlock,
+    RoadCrossSectionBlock,
     SampleRoadBlock,
     ScatterFeaturesBlock,
     SpawnPropBlock,
 } from "./units/world/WorldBlocks.block.js";
-import { DeriveFromAttachmentBlock } from "./units/world/DeriveFromAttachment.block.js";
-import { CreateGroupBlock, PlaceFeatureBlock } from "./units/world/AuthoringBlocks.block.js";
+import {
+    AssetAttachmentBlock,
+    BuildingAttachmentBlock,
+    DeriveFromAttachmentBlock,
+    GeneralAttachmentBlock,
+    GroupAttachmentBlock,
+    IntersectionAttachmentBlock,
+    PropAttachmentBlock,
+    RoadAttachmentBlock,
+} from "./units/world/DeriveFromAttachment.block.js";
+import { CloneObjectBlock, CreateGroupBlock, PlaceFeatureBlock } from "./units/world/AuthoringBlocks.block.js";
 import { ATTACHMENT_HOST_TYPE_IDS } from "./units/world/attachmentHosts.js";
 import { MaskBlock } from "./units/math/tex/Mask.block.js";
 import { IfBlock } from "./units/statements/If.block.js";
@@ -617,6 +627,9 @@ export const UNIT_CATALOG_META = [
     entry("SimulationClockBlock", "Simulation Clock", "simulator", SimulationClockBlock, ["simulation", "clock", "dt", "adapter"], { requiresSignals: true }),
     entry("ScenarioStatusBlock", "Scenario Status", "simulator", ScenarioStatusBlock, ["scenario", "status", "terminal", "adapter"], { requiresSignals: true }),
     entry("SampleRoadBlock", "Sample Road", "simulator", SampleRoadBlock, ["road", "sample", "pose", "edge"]),
+    entry("RoadCrossSectionBlock", "Road Cross Section", "simulator", RoadCrossSectionBlock, ["road", "width", "shoulder", "cross-section"], {
+        notes: "Carriageway width and shoulder of a road edge, in metres. Missing edge emits zeros and found:false.",
+    }),
     entry("GetNearestRoadBlock", "Get Nearest Road", "simulator", GetNearestRoadBlock, ["nearest", "road", "pose", "edge"]),
     entry("SpawnPropBlock", "Spawn Prop", "simulator", SpawnPropBlock, ["spawn", "prop", "barrel", "episode"], {
         notes: "Episode overlay upsert. Bind the graph to episode-reset. Ids are episode:{scriptId}:{n} when omitted. Does not mutate the environment document.",
@@ -625,12 +638,39 @@ export const UNIT_CATALOG_META = [
         notes: "One-node shoulder+lane scatter. Requires exactly one of route or edgeId. Spawn is upsert-by-id onto the episode overlay.",
     }),
     entry("DeriveFromAttachmentBlock", "Derive From Attachment", "simulator", DeriveFromAttachmentBlock, ["attachment", "host", "road", "derive"], {
+        placeable: false,
+        deprecated: true,
         settings: DERIVE_ATTACHMENT_SETTINGS,
-        notes: "Reads fields from the object this script is attached to. One host type per script. Missing or mismatched attachment emits empty fields and found:false.",
+        notes: "Legacy host dropdown. New scripts use a specific attachment block. One host type per script.",
+    }),
+    entry("GeneralAttachmentBlock", "General Attachment", "simulator", GeneralAttachmentBlock, ["attachment", "host", "object", "general"], {
+        notes: "Reads objectId and name from any selected object. A script with only this block can attach to every object.",
+    }),
+    entry("RoadAttachmentBlock", "Road Attachment", "simulator", RoadAttachmentBlock, ["attachment", "host", "road", "edge"], {
+        notes: "Declares a road host and reads edgeId and name. The script attaches only to roads.",
+    }),
+    entry("GroupAttachmentBlock", "Group Attachment", "simulator", GroupAttachmentBlock, ["attachment", "host", "group"], {
+        notes: "Declares a group host and reads objectId and name.",
+    }),
+    entry("BuildingAttachmentBlock", "Building Attachment", "simulator", BuildingAttachmentBlock, ["attachment", "host", "building"], {
+        notes: "Declares a building host and reads buildingId and name.",
+    }),
+    entry("IntersectionAttachmentBlock", "Intersection Attachment", "simulator", IntersectionAttachmentBlock, ["attachment", "host", "intersection", "node"], {
+        notes: "Declares an intersection host and reads nodeId and name.",
+    }),
+    entry("PropAttachmentBlock", "Prop Attachment", "simulator", PropAttachmentBlock, ["attachment", "host", "prop", "feature"], {
+        notes: "Declares a builtin prop host and reads objectId, assetId, and name.",
+    }),
+    entry("AssetAttachmentBlock", "Asset Attachment", "simulator", AssetAttachmentBlock, ["attachment", "host", "asset"], {
+        notes: "Declares an asset instance host and reads objectId, assetId, and name.",
     }),
     entry("PlaceFeatureBlock", "Place Feature", "simulator", PlaceFeatureBlock, ["place", "feature", "prop", "barrel", "permanent"], {
         authoring: true,
         notes: "Writes a permanent builtin prop through the editor script host. Throws if runtimeContext.author is missing. Does not use the episode overlay.",
+    }),
+    entry("CloneObjectBlock", "Clone Object", "simulator", CloneObjectBlock, ["clone", "obstacle", "copy", "prop", "asset", "permanent"], {
+        authoring: true,
+        notes: "Copies a prop or asset instance to a pose through the editor script host. Yaw and position come from the pose. Scale, asset pin, and prop type come from the source. Throws if runtimeContext.author or lookupObject is missing.",
     }),
     entry("CreateGroupBlock", "Create Group", "simulator", CreateGroupBlock, ["group", "subgroup", "create", "permanent"], {
         authoring: true,

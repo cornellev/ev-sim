@@ -182,6 +182,29 @@ function pointFromPose(pose) {
 }
 
 /**
+ * Carriageway width and shoulder of a world-description road edge, in metres.
+ * Missing edge → `found: false` and zero widths. A present edge with a
+ * missing or non-finite width reports `0`.
+ */
+export function roadCrossSection(world, edgeId) {
+    const id = String(edgeId ?? "").trim();
+    const edges = world?.roads?.edges;
+    if (!id || !Array.isArray(edges)) return { width: 0, shoulderWidth: 0, found: false };
+    const edge = edges.find((candidate) => String(candidate?.id) === id);
+    if (!edge) return { width: 0, shoulderWidth: 0, found: false };
+    return {
+        width: nonNegative(edge.width),
+        shoulderWidth: nonNegative(edge.shoulderWidth),
+        found: true,
+    };
+}
+
+function nonNegative(value) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
+}
+
+/**
  * Closest world-description road centerline to a pose, with no paved-footprint
  * gate. Missing world / no usable edges → `found: false`, empty `edgeId`.
  */

@@ -78,7 +78,8 @@ The compiler rejects missing ports, type mismatches, duplicate input edges, and 
 - `label`: external label.
 - `type`: exported type.
 - `portId`: optional stable internal port id, used by multi-output nodes.
-- `sceneType`: optional, only on `scene_object` program inputs. One of `road`, `group`, `building`, `intersection`, `builtin-prop`, `asset-instance`. Omitted means any object. An empty id is the hierarchy root only when `sceneType` is omitted.
+- `sceneType`: optional, only on `scene_object` program inputs. One of `road`, `group`, `building`, `intersection`, `builtin-prop`, `asset-instance`. Omitted means any object. An empty id is the hierarchy root only when `sceneType` and `sceneTypes` are both omitted.
+- `sceneTypes`: optional array of those same host ids when one input accepts more than one type. A single allowed type stays on `sceneType`. An empty id is not the root when `sceneTypes` is set.
 
 Program input/output labels must be unique within each role. Exported `type` values are concrete strings from `SUPPORTED_TYPES`, including `unit` and `actor_command`. They must never be `generic`.
 

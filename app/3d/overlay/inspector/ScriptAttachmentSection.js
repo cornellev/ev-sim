@@ -7,7 +7,7 @@ import { applyObjectScript } from "../../editor/scripts/applyObjectScript.js";
 import { attachmentContext, runObjectScript } from "../../editor/scripts/runObjectScript.js";
 import { getScriptDocument, listScriptDocuments } from "../../../scripting/ScriptStorage.js";
 import { artifactHasAuthoringBlocks } from "../../../scripting/units/world/AuthoringBlocks.block.js";
-import { ATTACHMENT_HOSTS, readAttachmentFields, scriptHostType } from "../../../scripting/units/world/attachmentHosts.js";
+import { ATTACHMENT_HOSTS, programInputHostTypes, readAttachmentFields, scriptHostType } from "../../../scripting/units/world/attachmentHosts.js";
 
 const SCALAR_TYPES = new Set(["float64", "int32", "boolean", "string"]);
 
@@ -32,7 +32,6 @@ export function ScriptAttachmentSection({ data, section, onResult }) {
     );
     const [library, setLibrary] = useState([]);
     const [artifacts, setArtifacts] = useState({});
-    const [scriptId, setScriptId] = useState("");
     const [status, setStatus] = useState("");
 
     useEffect(() => {
@@ -64,26 +63,6 @@ export function ScriptAttachmentSection({ data, section, onResult }) {
     }, [attachments, artifacts, library]);
 
     if (!record) return null;
-    const compatible = library.filter((entry) => {
-        const host = scriptHostType(entry.latestValidArtifact);
-        return host.ok && (!host.typeId || host.typeId === record.typeId);
-    });
-
-    const attach = () => {
-        const chosen = library.find((entry) => entry.id === scriptId);
-        const host = scriptHostType(chosen?.latestValidArtifact);
-        if (!chosen || !host.ok) {
-            onResult?.({ ok: false, error: host.error || "Choose a compiled script.", issues: [] });
-            return;
-        }
-        runCommand(data, attachScript({
-            objectId: record.id,
-            scriptId: chosen.id,
-            hostType: host.typeId,
-            parameters: {},
-            seed: 1,
-        }), onResult);
-    };
 
     return (
         <div className="space-y-3 py-1 text-[12px]">
@@ -100,21 +79,90 @@ export function ScriptAttachmentSection({ data, section, onResult }) {
                     onStatus={setStatus}
                 />
             ))}
-            <div className="flex items-center gap-1">
-                <select
-                    aria-label="Script to attach"
-                    value={scriptId}
-                    onChange={(event) => setScriptId(event.target.value)}
-                    className="min-w-0 flex-1 rounded border border-[var(--slate-border-60)] bg-[var(--slate-surface-2)] px-2 py-1"
-                >
-                    <option value="">Attach a script</option>
-                    {compatible.map((entry) => (
-                        <option key={entry.id} value={entry.id}>{entry.name || entry.id}</option>
-                    ))}
-                </select>
-                <Button size="compact" variant="ghost" disabled={!scriptId} onClick={attach}>Attach</Button>
-            </div>
+            <AddScriptPicker
+                key={record.id}
+                library={library}
+                record={record}
+                data={data}
+                onResult={onResult}
+            />
             {status && <p role="status" className="text-[var(--slate-warning)]">{status}</p>}
+        </div>
+    );
+}
+
+function hostOf(entry) {
+    return scriptHostType(entry?.graph || entry?.latestValidArtifact);
+}
+
+function AddScriptPicker({ library, record, data, onResult }) {
+    const [pickerOpen, setPickerOpen] = useState(false);
+    const [query, setQuery] = useState("");
+    const compatible = library.filter((entry) => {
+        const host = hostOf(entry);
+        return host.ok && (!host.typeId || host.typeId === record.typeId);
+    });
+    const needle = query.trim().toLowerCase();
+    const visible = needle
+        ? compatible.filter((entry) => `${entry.name || ""} ${entry.id}`.toLowerCase().includes(needle))
+        : compatible;
+
+    const attach = (nextScriptId) => {
+        const chosen = library.find((entry) => entry.id === nextScriptId);
+        const host = hostOf(chosen);
+        if (!chosen || !host.ok) {
+            onResult?.({ ok: false, error: host.error || "Choose a compiled script.", issues: [] });
+            return;
+        }
+        setPickerOpen(false);
+        setQuery("");
+        runCommand(data, attachScript({
+            objectId: record.id,
+            scriptId: chosen.id,
+            hostType: host.typeId,
+            parameters: {},
+            seed: 1,
+        }), onResult);
+    };
+
+    return (
+        <div className="space-y-2">
+            <Button
+                size="compact"
+                variant="ghost"
+                aria-expanded={pickerOpen}
+                onClick={() => setPickerOpen((open) => !open)}
+            >
+                Add Script
+            </Button>
+            {pickerOpen && (
+                <div className="space-y-2 rounded border border-[var(--slate-border-60)] p-2">
+                    <input
+                        aria-label="Search scripts"
+                        value={query}
+                        placeholder="Search scripts"
+                        onChange={(event) => setQuery(event.target.value)}
+                        className="w-full rounded border border-[var(--slate-border-60)] bg-[var(--slate-surface-2)] px-2 py-1"
+                    />
+                    {visible.length === 0 && (
+                        <p className="text-[var(--slate-muted)]">No scripts fit this object.</p>
+                    )}
+                    {visible.map((entry) => {
+                        const host = hostOf(entry);
+                        return (
+                            <button
+                                key={entry.id}
+                                type="button"
+                                onClick={() => attach(entry.id)}
+                                className="block w-full rounded px-2 py-1 text-left hover:bg-[var(--slate-surface-2)]"
+                            >
+                                <span className="block truncate">{entry.name || entry.id}</span>
+                                <span className="text-[var(--slate-muted)]">Host {hostLabel(host.hostType)}</span>
+                            </button>
+                        );
+                    })}
+                </div>
+            )}
         </div>
     );
 }
@@ -211,7 +259,11 @@ function AttachmentCard({ data, document, record, attachment, script, onResult, 
 function ParameterField({ port, value, objects, onChange }) {
     const current = value ?? "";
     if (port.type === "scene_object") {
-        const choices = objects.filter((entry) => !port.sceneType || entry.typeId === port.sceneType);
+        const allowed = programInputHostTypes(port);
+        const choices = objects.filter((entry) => allowed.length === 0 || allowed.includes(entry.typeId));
+        const placeholder = allowed.length === 0
+            ? "Root"
+            : `Select ${allowed.map((id) => ATTACHMENT_HOSTS[id]?.label ?? id).join(" or ")}`;
         return (
             <label className="grid grid-cols-[1fr_1.4fr] items-center gap-2">
                 <span>{port.label}</span>
@@ -221,8 +273,7 @@ function ParameterField({ port, value, objects, onChange }) {
                     onChange={(event) => onChange(event.target.value)}
                     className="rounded border border-[var(--slate-border-60)] bg-[var(--slate-surface-2)] px-2 py-1"
                 >
-                    {!port.sceneType && <option value="">Root</option>}
-                    {port.sceneType && <option value="">Select {port.sceneType}</option>}
+                    <option value="">{placeholder}</option>
                     {choices.map((entry) => (
                         <option key={entry.id} value={entry.id}>{entry.name || entry.id}</option>
                     ))}

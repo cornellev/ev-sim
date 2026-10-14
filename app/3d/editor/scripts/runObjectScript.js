@@ -10,7 +10,7 @@ import { registerBuiltInBlocks } from "../../../scripting/registerBuiltInBlocks.
 import { LoadedVisualScript } from "../../../scripting/ScriptRuntime.js";
 import { assertSupportedArtifact } from "../../../scripting/runtime/Artifact.js";
 import { parseValueByType } from "../../../scripting/units/program/ProgramTypes.js";
-import { scriptHostType } from "../../../scripting/units/world/attachmentHosts.js";
+import { hostTypePhrase, programInputHostTypes, scriptHostType } from "../../../scripting/units/world/attachmentHosts.js";
 
 export function attachmentContext(record, document) {
     const feature = document?.getFeature?.(record?.id) ?? null;
@@ -41,18 +41,73 @@ function programInputs(artifact, parameters = {}) {
 function sceneObjectError(artifact, inputs, document) {
     for (const port of artifact.interface?.inputs ?? []) {
         if (port.type !== "scene_object") continue;
+        const allowed = programInputHostTypes(port);
         const id = String(inputs[port.label] ?? "").trim();
         if (!id) {
-            if (port.sceneType) return `Program input "${port.label}" needs a ${port.sceneType}.`;
+            if (allowed.length > 0) return `Program input "${port.label}" needs a ${hostTypePhrase(allowed)}.`;
             continue;
         }
         const target = document?.getObject?.(id) ?? null;
         if (!target) return `Program input "${port.label}" names missing object "${id}".`;
-        if (port.sceneType && target.typeId !== port.sceneType) {
-            return `Program input "${port.label}" needs a ${port.sceneType}, not a ${target.typeId}.`;
+        if (allowed.length > 0 && !allowed.includes(target.typeId)) {
+            return `Program input "${port.label}" needs a ${hostTypePhrase(allowed)}, not a ${target.typeId}.`;
         }
     }
     return null;
+}
+
+function finiteScale(value, fallback = 1) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) && numeric > 0 ? numeric : fallback;
+}
+
+/** Snapshot a prop or asset instance so Clone Object can place copies. */
+export function lookupCloneSource(document, objectId) {
+    const id = String(objectId ?? "").trim();
+    const record = document?.getObject?.(id) ?? null;
+    if (!record) return null;
+    if (record.typeId === "builtin-prop") {
+        const feature = document.getFeature?.(record.id) ?? null;
+        if (!feature?.type) return null;
+        return {
+            typeId: "builtin-prop",
+            typeVersion: record.typeVersion ?? 1,
+            name: record.name || feature.type,
+            feature: {
+                type: String(feature.type),
+                dir: Number.isFinite(Number(feature.dir)) ? Number(feature.dir) : 0,
+                tags: Array.isArray(feature.tags) ? [...feature.tags] : [],
+            },
+        };
+    }
+    if (record.typeId === "asset-instance") {
+        const asset = record.components?.asset;
+        const assetId = typeof asset?.assetId === "string" ? asset.assetId.trim() : "";
+        if (!assetId) return null;
+        const overrides = asset.overrides && typeof asset.overrides === "object" ? structuredClone(asset.overrides) : {};
+        return {
+            typeId: "asset-instance",
+            typeVersion: Number.isInteger(record.typeVersion) ? record.typeVersion : 1,
+            name: record.name || assetId,
+            asset: {
+                assetId,
+                revision: asset.revision,
+                scale: {
+                    x: finiteScale(asset.scale?.x),
+                    y: finiteScale(asset.scale?.y),
+                    z: finiteScale(asset.scale?.z),
+                },
+                overrides,
+            },
+        };
+    }
+    return null;
+}
+
+function authoredIdKind(op) {
+    if (op?.op === "create-group") return "group";
+    if (op?.op === "clone-object" && op.spec?.typeId === "asset-instance") return "asset";
+    return "feature";
 }
 
 function worldFor(document, world) {
@@ -93,8 +148,7 @@ export function runObjectScript({
 
     const ops = [];
     const author = (op) => {
-        const kind = op?.op === "create-group" ? "group" : "feature";
-        const id = createId(kind);
+        const id = createId(authoredIdKind(op));
         ops.push({ ...op, id });
         return id;
     };
@@ -105,6 +159,7 @@ export function runObjectScript({
             world: worldFor(document, world),
             random: () => rng.next(),
             author,
+            lookupObject: (objectId) => lookupCloneSource(document, objectId),
             scriptId: artifact.name ?? "",
         },
     });

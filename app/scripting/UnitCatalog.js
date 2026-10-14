@@ -198,12 +198,22 @@ import {
 import {
     FrameAlongPathUnit,
     GetNearestRoadUnit,
+    RoadCrossSectionUnit,
     SampleRoadUnit,
     ScatterFeaturesUnit,
     SpawnPropUnit,
 } from "./units/world/WorldBlocks";
-import { DeriveFromAttachmentUnit } from "./units/world/DeriveFromAttachment";
-import { CreateGroupUnit, PlaceFeatureUnit } from "./units/world/AuthoringBlocks";
+import {
+    AssetAttachmentUnit,
+    BuildingAttachmentUnit,
+    DeriveFromAttachmentUnit,
+    GeneralAttachmentUnit,
+    GroupAttachmentUnit,
+    IntersectionAttachmentUnit,
+    PropAttachmentUnit,
+    RoadAttachmentUnit,
+} from "./units/world/DeriveFromAttachment";
+import { CloneObjectUnit, CreateGroupUnit, PlaceFeatureUnit } from "./units/world/AuthoringBlocks";
 import { MakeActorCommandUnit, SplitActorCommandUnit } from "./units/mission/ActorCommand";
 import {
     DistanceToRouteEndUnit,
@@ -465,11 +475,20 @@ const COMPONENT_BY_TYPE = new Map([
     ["SimulationClockBlock", SimulationClockUnit],
     ["ScenarioStatusBlock", ScenarioStatusUnit],
     ["SampleRoadBlock", SampleRoadUnit],
+    ["RoadCrossSectionBlock", RoadCrossSectionUnit],
     ["GetNearestRoadBlock", GetNearestRoadUnit],
     ["SpawnPropBlock", SpawnPropUnit],
     ["ScatterFeaturesBlock", ScatterFeaturesUnit],
     ["DeriveFromAttachmentBlock", DeriveFromAttachmentUnit],
+    ["GeneralAttachmentBlock", GeneralAttachmentUnit],
+    ["RoadAttachmentBlock", RoadAttachmentUnit],
+    ["GroupAttachmentBlock", GroupAttachmentUnit],
+    ["BuildingAttachmentBlock", BuildingAttachmentUnit],
+    ["IntersectionAttachmentBlock", IntersectionAttachmentUnit],
+    ["PropAttachmentBlock", PropAttachmentUnit],
+    ["AssetAttachmentBlock", AssetAttachmentUnit],
     ["PlaceFeatureBlock", PlaceFeatureUnit],
+    ["CloneObjectBlock", CloneObjectUnit],
     ["CreateGroupBlock", CreateGroupUnit],
     ["WaypointListBlock", WaypointListUnit],
     ["CurrentWaypointBlock", CurrentWaypointUnit],

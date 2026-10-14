@@ -21,7 +21,7 @@ import {
     VEC2_TYPE,
     VEC3_TYPE,
 } from "../../types/PortTypes.js";
-import { normalizeHostType } from "../world/attachmentHosts.js";
+import { hostTypeList, normalizeHostType } from "../world/attachmentHosts.js";
 
 export const SCENE_OBJECT_TYPE = "scene_object";
 
@@ -260,13 +260,22 @@ export function getInitialData(uuid, fallbackPrefix) {
 export function createProgramInputState(index = 0, overrides = {}) {
     const defaultLabel = index === 0 ? "input" : `input_${index + 1}`;
     const type = normalizeType(overrides.type);
-    const sceneType = type === SCENE_OBJECT_TYPE ? normalizeHostType(overrides.sceneType) : null;
+    const listed = type === SCENE_OBJECT_TYPE ? hostTypeList(overrides.sceneTypes) : [];
+    const single = type === SCENE_OBJECT_TYPE ? normalizeHostType(overrides.sceneType) : null;
+    const sceneTypes = [];
+    if (listed.length > 0) {
+        if (single && !listed.includes(single)) sceneTypes.push(single);
+        for (const host of listed) if (!sceneTypes.includes(host)) sceneTypes.push(host);
+    } else if (single) {
+        sceneTypes.push(single);
+    }
 
     return {
         label: sanitizeLabel(overrides.label, defaultLabel),
         type,
         defaultValue: overrides.defaultValue ?? "0",
-        ...(sceneType ? { sceneType } : {}),
+        ...(sceneTypes.length === 1 ? { sceneType: sceneTypes[0] } : {}),
+        ...(sceneTypes.length > 1 ? { sceneTypes } : {}),
     };
 }
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { linspace, nearestRoadEdge, sampleRoadFrame, sampleRouteFrame } from "../app/roads/PathFrame.js";
+import { linspace, nearestRoadEdge, roadCrossSection, sampleRoadFrame, sampleRouteFrame } from "../app/roads/PathFrame.js";
 
 const NORTH_ROUTE = {
     waypoints: [
@@ -54,6 +54,17 @@ test("sampleRoadFrame follows the same right-normal as route frames", () => {
 
     assert.equal(sampleRoadFrame(NORTH_ROAD_WORLD, "missing", 0.5, 0).found, false);
     assert.equal(sampleRoadFrame(null, "e0", 0.5, 0).found, false);
+});
+
+test("roadCrossSection reports carriageway width and shoulder", () => {
+    assert.deepEqual(roadCrossSection(NORTH_ROAD_WORLD, "missing"), { width: 0, shoulderWidth: 0, found: false });
+    assert.deepEqual(roadCrossSection(null, "e0"), { width: 0, shoulderWidth: 0, found: false });
+    assert.deepEqual(roadCrossSection({
+        roads: {
+            edges: [{ id: "e0", width: 8, shoulderWidth: 1.5 }],
+        },
+    }, "e0"), { width: 8, shoulderWidth: 1.5, found: true });
+    assert.deepEqual(roadCrossSection(NORTH_ROAD_WORLD, "e0"), { width: 0, shoulderWidth: 0, found: true });
 });
 
 test("nearestRoadEdge returns the closest centerline even off the pavement", () => {

@@ -1,5 +1,5 @@
 import { BlockOutput, UnitBlock } from "../../ScriptManager.js";
-import { freezePorts } from "../defineBlock.js";
+import { defineBlock, freezePorts } from "../defineBlock.js";
 import { hostFields, normalizeHostType, readAttachmentFields } from "./attachmentHosts.js";
 
 function runtimeContext(unit) {
@@ -13,6 +13,33 @@ export function deriveAttachmentPorts(state = {}) {
         { label: "found", type: "boolean" },
     ]);
 }
+
+function attachmentOutput(unit, hostType) {
+    const read = readAttachmentFields(hostType, runtimeContext(unit).attachment ?? null);
+    const output = new BlockOutput().set("found", read.found);
+    for (const field of hostFields(hostType)) output.set(field.label, read.values[field.label] ?? "");
+    return output;
+}
+
+export function defineAttachmentBlock(type, hostType) {
+    const ports = deriveAttachmentPorts({ hostType });
+    return defineBlock({
+        type,
+        ports,
+        valid: () => true,
+        execute() {
+            return attachmentOutput(this, hostType);
+        },
+    });
+}
+
+export const GeneralAttachmentBlock = defineAttachmentBlock("GeneralAttachmentBlock", "general");
+export const RoadAttachmentBlock = defineAttachmentBlock("RoadAttachmentBlock", "road");
+export const GroupAttachmentBlock = defineAttachmentBlock("GroupAttachmentBlock", "group");
+export const BuildingAttachmentBlock = defineAttachmentBlock("BuildingAttachmentBlock", "building");
+export const IntersectionAttachmentBlock = defineAttachmentBlock("IntersectionAttachmentBlock", "intersection");
+export const PropAttachmentBlock = defineAttachmentBlock("PropAttachmentBlock", "builtin-prop");
+export const AssetAttachmentBlock = defineAttachmentBlock("AssetAttachmentBlock", "asset-instance");
 
 export class DeriveFromAttachmentBlock extends UnitBlock {
     static blockType = "DeriveFromAttachmentBlock";
@@ -42,9 +69,6 @@ export class DeriveFromAttachmentBlock extends UnitBlock {
     }
 
     execute() {
-        const read = readAttachmentFields(this.state.hostType, runtimeContext(this).attachment ?? null);
-        const output = new BlockOutput().set("found", read.found);
-        for (const field of hostFields(this.state.hostType)) output.set(field.label, read.values[field.label] ?? "");
-        return output;
+        return attachmentOutput(this, this.state.hostType);
     }
 }

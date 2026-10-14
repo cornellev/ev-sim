@@ -615,7 +615,7 @@ export function registerEnvironmentTools(server, storage) {
         "environment_attach_script",
         {
             title: "Attach script to object",
-            description: "Attach a compiled visual script to an environment object. Host type comes from the script's Derive From Attachment blocks.",
+            description: "Attach a compiled visual script to an environment object. Host type comes from the script's attachment block. A script with no attachment block, or only General Attachment, fits any object.",
             inputSchema: {
                 environmentId: z.string().min(1),
                 objectId: z.string().min(1),
@@ -677,7 +677,7 @@ export function registerEnvironmentTools(server, storage) {
         "environment_run_object_script",
         {
             title: "Run object script",
-            description: "Run one object script attachment. Replaces objects that attachment created, then writes the new permanent features and groups.",
+            description: "Run one object script attachment. Replaces objects that attachment created, then writes the new permanent groups, props, and asset copies.",
             inputSchema: {
                 environmentId: z.string().min(1),
                 objectId: z.string().min(1),

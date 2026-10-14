@@ -209,16 +209,109 @@ export function getMarketplacePolicy({ signal } = {}) {
     return requestJson("/api/marketplace/policy", { signal });
 }
 
+const POLICY_EVENTS_URL = "/api/marketplace/policy/events";
+
+/**
+ * One SSE connection for every policy subscriber. A connection per session
+ * fills the browser's six-connection-per-host pool and leaves script saves
+ * and the unit catalog waiting with no response.
+ */
+export class MarketplacePolicyHub {
+    constructor(url = POLICY_EVENTS_URL, {
+        EventSourceImpl = globalThis.EventSource,
+        setTimeoutImpl = globalThis.setTimeout?.bind(globalThis),
+        clearTimeoutImpl = globalThis.clearTimeout?.bind(globalThis),
+    } = {}) {
+        this.url = url;
+        this.EventSourceImpl = EventSourceImpl;
+        this.setTimeoutImpl = setTimeoutImpl;
+        this.clearTimeoutImpl = clearTimeoutImpl;
+        this.listeners = new Set();
+        this.source = null;
+        this.reconnectTimer = null;
+        this.attempt = 0;
+    }
+
+    subscribe(listener) {
+        this.listeners.add(listener);
+        this.#connect();
+        return () => {
+            this.listeners.delete(listener);
+            if (this.listeners.size === 0) this.close();
+        };
+    }
+
+    close() {
+        if (this.reconnectTimer) this.clearTimeoutImpl?.(this.reconnectTimer);
+        this.reconnectTimer = null;
+        const source = this.source;
+        this.source = null;
+        this.attempt = 0;
+        source?.close?.();
+    }
+
+    #connect() {
+        if (this.source || this.reconnectTimer || this.listeners.size === 0 || !this.EventSourceImpl) return;
+        const source = new this.EventSourceImpl(this.url);
+        this.source = source;
+
+        source.addEventListener?.("policy", (event) => {
+            if (this.source !== source) return;
+            this.attempt = 0;
+            let payload;
+            try {
+                payload = JSON.parse(event.data);
+            } catch (error) {
+                this.#notify((listener) => listener.onError?.(error));
+                return;
+            }
+            this.#notify((listener) => {
+                try {
+                    listener.onPolicy?.(payload);
+                } catch (error) {
+                    listener.onError?.(error);
+                }
+            });
+        });
+
+        source.addEventListener?.("error", (event) => {
+            if (this.source !== source) return;
+            this.source = null;
+            source.close?.();
+            this.#notify((listener) => listener.onError?.(event));
+            if (this.listeners.size === 0) return;
+            this.attempt += 1;
+            const delay = Math.min(30_000, 1000 * (2 ** Math.min(this.attempt, 5)));
+            this.reconnectTimer = this.setTimeoutImpl?.(() => {
+                this.reconnectTimer = null;
+                this.#connect();
+            }, delay) ?? null;
+        });
+    }
+
+    #notify(deliver) {
+        for (const listener of [...this.listeners]) {
+            try {
+                deliver(listener);
+            } catch (error) {
+                console.warn("[marketplace-policy] listener failed:", error);
+            }
+        }
+    }
+}
+
+let policyHub = null;
+
 export function subscribeMarketplacePolicy({ onPolicy, onError } = {}) {
-    const events = new EventSource("/api/marketplace/policy/events");
-    events.addEventListener("policy", (event) => {
-        try { onPolicy?.(JSON.parse(event.data)); }
-        catch (error) { onError?.(error); }
-    });
-    events.addEventListener("error", (event) => {
-        if (events.readyState !== EventSource.CLOSED) onError?.(event);
-    });
-    return () => events.close();
+    if (typeof window === "undefined" || typeof EventSource === "undefined") {
+        return () => {};
+    }
+    if (!policyHub) policyHub = new MarketplacePolicyHub();
+    const unsubscribe = policyHub.subscribe({ onPolicy, onError });
+    return () => {
+        unsubscribe();
+        if (policyHub?.listeners.size === 0) policyHub = null;
+    };
 }
 
 export function setMarketplacePublisherApproval(input, { signal } = {}) {

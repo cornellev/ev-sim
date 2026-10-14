@@ -1,8 +1,33 @@
+import Unit from "../Unit";
 import { useState } from "react";
 import { requestUnitReconfiguration } from "../../ScriptManager.js";
-import Unit from "../Unit";
 import { ATTACHMENT_HOSTS, normalizeHostType } from "./attachmentHosts.js";
 import { deriveAttachmentPorts } from "./DeriveFromAttachment.block.js";
+
+function attachmentUnit(title, hostType) {
+    const ports = deriveAttachmentPorts({ hostType });
+    function AttachmentUnit({ _uuid }) {
+        return (
+            <Unit
+                title={title}
+                hasOptions={false}
+                _uuid={_uuid}
+                inputs={[]}
+                outputs={[...ports.outputs]}
+            />
+        );
+    }
+    AttachmentUnit.displayName = `${title.replace(/\s+/g, "")}Unit`;
+    return AttachmentUnit;
+}
+
+export const GeneralAttachmentUnit = attachmentUnit("General Attachment", "general");
+export const RoadAttachmentUnit = attachmentUnit("Road Attachment", "road");
+export const GroupAttachmentUnit = attachmentUnit("Group Attachment", "group");
+export const BuildingAttachmentUnit = attachmentUnit("Building Attachment", "building");
+export const IntersectionAttachmentUnit = attachmentUnit("Intersection Attachment", "intersection");
+export const PropAttachmentUnit = attachmentUnit("Prop Attachment", "builtin-prop");
+export const AssetAttachmentUnit = attachmentUnit("Asset Attachment", "asset-instance");
 
 export function DeriveFromAttachmentUnit({ _uuid, initialState = {} }) {
     const [hostType, setHostType] = useState(() => normalizeHostType(initialState.hostType) ?? "road");
@@ -39,4 +64,13 @@ export function DeriveFromAttachmentUnit({ _uuid, initialState = {} }) {
     );
 }
 
-export { DeriveFromAttachmentBlock } from "./DeriveFromAttachment.block.js";
+export {
+    AssetAttachmentBlock,
+    BuildingAttachmentBlock,
+    DeriveFromAttachmentBlock,
+    GeneralAttachmentBlock,
+    GroupAttachmentBlock,
+    IntersectionAttachmentBlock,
+    PropAttachmentBlock,
+    RoadAttachmentBlock,
+} from "./DeriveFromAttachment.block.js";

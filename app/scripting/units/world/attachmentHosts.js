@@ -1,9 +1,18 @@
 /**
- * Host fields a Derive From Attachment block can read. Kernel-safe.
+ * Host fields an attachment block can read. Kernel-safe.
  * The object id of a road, building, or intersection is the legacy id.
+ * `general` matches any selected object and is not a scene-object type.
  */
 
 export const ATTACHMENT_HOSTS = Object.freeze({
+    general: Object.freeze({
+        typeId: null,
+        label: "General",
+        fields: Object.freeze([
+            Object.freeze({ label: "objectId", type: "string" }),
+            Object.freeze({ label: "name", type: "string" }),
+        ]),
+    }),
     road: Object.freeze({
         typeId: "road",
         label: "Road",
@@ -58,9 +67,48 @@ export const ATTACHMENT_HOSTS = Object.freeze({
 
 export const ATTACHMENT_HOST_TYPE_IDS = Object.freeze(Object.keys(ATTACHMENT_HOSTS));
 
+/** Placeable attachment blocks. The value is the host id they declare. */
+export const ATTACHMENT_BLOCK_HOSTS = Object.freeze({
+    GeneralAttachmentBlock: "general",
+    RoadAttachmentBlock: "road",
+    GroupAttachmentBlock: "group",
+    BuildingAttachmentBlock: "building",
+    IntersectionAttachmentBlock: "intersection",
+    PropAttachmentBlock: "builtin-prop",
+    AssetAttachmentBlock: "asset-instance",
+});
+
 export function normalizeHostType(value) {
     const text = String(value ?? "").trim();
     return ATTACHMENT_HOSTS[text] ? text : null;
+}
+
+/** Unique host type ids. Unknown entries are dropped. */
+export function hostTypeList(value) {
+    if (!Array.isArray(value)) return [];
+    const found = [];
+    for (const entry of value) {
+        const host = normalizeHostType(entry);
+        if (host && !found.includes(host)) found.push(host);
+    }
+    return found;
+}
+
+function sceneObjectHost(hostType) {
+    const host = normalizeHostType(hostType);
+    return host && ATTACHMENT_HOSTS[host].typeId ? host : null;
+}
+
+/** Allowed types on a program input. Empty means any object. General is not a scene type. */
+export function programInputHostTypes(port) {
+    const listed = hostTypeList(port?.sceneTypes).map(sceneObjectHost).filter(Boolean);
+    if (listed.length > 0) return listed;
+    const single = sceneObjectHost(port?.sceneType);
+    return single ? [single] : [];
+}
+
+export function hostTypePhrase(types) {
+    return types.join(" or ");
 }
 
 export function hostFields(hostType) {
@@ -76,14 +124,21 @@ function text(value) {
  * @param {{ typeId?: string, objectId?: string, name?: string, edgeId?: string, buildingId?: string, nodeId?: string, assetId?: string }|null} attachment
  */
 export function readAttachmentFields(hostType, attachment) {
-    const spec = ATTACHMENT_HOSTS[normalizeHostType(hostType) ?? ""];
+    const normalized = normalizeHostType(hostType);
+    const spec = ATTACHMENT_HOSTS[normalized ?? ""];
     const values = {};
-    for (const field of spec?.fields ?? hostFields(hostType)) values[field.label] = "";
-    if (!spec || !attachment || attachment.typeId !== spec.typeId) {
+    for (const field of spec?.fields ?? []) values[field.label] = "";
+    if (!spec || !attachment) return { found: false, values };
+    if (normalized !== "general" && attachment.typeId !== spec.typeId) {
         return { found: false, values };
     }
     const objectId = text(attachment.objectId);
     const name = text(attachment.name);
+    if (normalized === "general") {
+        values.objectId = objectId;
+        values.name = name;
+        return { found: true, values };
+    }
     if (spec.typeId === "road") {
         values.edgeId = text(attachment.edgeId || objectId);
         values.name = name;
@@ -104,16 +159,25 @@ export function readAttachmentFields(hostType, attachment) {
     return { found: true, values };
 }
 
+function declaredHost(node) {
+    if (node?.type === "DeriveFromAttachmentBlock") {
+        return normalizeHostType(node.state?.hostType ?? node.storedData?.hostType) ?? "road";
+    }
+    return ATTACHMENT_BLOCK_HOSTS[node?.type] ?? null;
+}
+
 function collectHostTypes(source, found) {
     for (const node of source?.nodes ?? []) {
-        if (node?.type === "DeriveFromAttachmentBlock") {
-            found.add(normalizeHostType(node.state?.hostType ?? node.storedData?.hostType) ?? "road");
-        }
+        const host = declaredHost(node);
+        if (host) found.add(host);
         if (node?.state?.compiledProgram) collectHostTypes(node.state.compiledProgram, found);
     }
 }
 
-/** One host type per script. No derive block means the script can attach to any object. */
+/**
+ * One attachment host per script.
+ * No attachment block, or only General Attachment, fits any object.
+ */
 export function scriptHostType(source) {
     const found = new Set();
     collectHostTypes(source, found);
@@ -122,14 +186,15 @@ export function scriptHostType(source) {
             ok: false,
             hostType: null,
             typeId: null,
-            error: `Script derives from more than one host type (${[...found].join(", ")}).`,
+            error: `Script declares more than one attachment host (${[...found].join(", ")}).`,
         };
     }
     const hostType = found.size === 1 ? [...found][0] : null;
+    const typeId = hostType ? ATTACHMENT_HOSTS[hostType]?.typeId ?? null : null;
     return {
         ok: true,
         hostType,
-        typeId: hostType ? ATTACHMENT_HOSTS[hostType].typeId : null,
+        typeId,
         error: null,
     };
 }

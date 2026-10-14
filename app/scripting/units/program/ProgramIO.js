@@ -69,7 +69,10 @@ export function ProgramInputUnit({ _uuid, initialData = null }) {
                         onChange={(e) => {
                             const type = normalizeType(e.target.value);
                             const next = { ...data, type };
-                            if (type !== SCENE_OBJECT_TYPE) delete next.sceneType;
+                            if (type !== SCENE_OBJECT_TYPE) {
+                                delete next.sceneType;
+                                delete next.sceneTypes;
+                            }
                             commitData(next);
                         }}
                     >
@@ -84,18 +87,25 @@ export function ProgramInputUnit({ _uuid, initialData = null }) {
                         <span className="text-zinc-400">Scene type</span>
                         <select
                             aria-label="Scene type"
-                            value={data.sceneType || ""}
+                            value={data.sceneType || (Array.isArray(data.sceneTypes) && data.sceneTypes.length > 1 ? data.sceneTypes.join(",") : "")}
                             className="w-full rounded-sm border border-white/10 bg-[var(--slate-bg)] px-2.5 py-1.5 text-white outline-none transition-[border-color,box-shadow] duration-150 focus:border-white/30 focus:shadow-[0_0_0_3px_rgba(255,255,255,0.06)]"
                             onChange={(e) => {
                                 const sceneType = e.target.value;
                                 const next = { ...data, type: SCENE_OBJECT_TYPE };
-                                if (sceneType) next.sceneType = sceneType;
-                                else delete next.sceneType;
+                                delete next.sceneType;
+                                delete next.sceneTypes;
+                                if (sceneType.includes(",")) next.sceneTypes = sceneType.split(",");
+                                else if (sceneType) next.sceneType = sceneType;
                                 commitData(next);
                             }}
                         >
                             <option value="">Any object</option>
-                            {Object.entries(ATTACHMENT_HOSTS).map(([id, spec]) => (
+                            {Array.isArray(data.sceneTypes) && data.sceneTypes.length > 1 && (
+                                <option value={data.sceneTypes.join(",")}>
+                                    {data.sceneTypes.map((id) => ATTACHMENT_HOSTS[id]?.label ?? id).join(" or ")}
+                                </option>
+                            )}
+                            {Object.entries(ATTACHMENT_HOSTS).filter(([, spec]) => spec.typeId).map(([id, spec]) => (
                                 <option key={id} value={id}>{spec.label}</option>
                             ))}
                         </select>
