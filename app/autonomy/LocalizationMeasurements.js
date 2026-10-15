@@ -1,3 +1,4 @@
+import { Vector3 } from "three";
 import {
     composeRep103Poses,
     eulerToQuaternion,
@@ -127,6 +128,7 @@ export function captureVehicleSnapshot(vehicle, captureTimeNs, previous = null, 
     const bodyAngularVelocity = { x: 0, y: 0, z: yawRate };
 
     let bodyAcceleration = { x: 0, y: 0, z: 0 };
+    let bodyAngularAcceleration = { x: 0, y: 0, z: 0 };
     if (previous?.captureTimeNs != null && captureTimeNs > previous.captureTimeNs) {
         const dt = (captureTimeNs - previous.captureTimeNs) / 1e9;
         if (dt > 0) {
@@ -134,6 +136,11 @@ export function captureVehicleSnapshot(vehicle, captureTimeNs, previous = null, 
                 x: (bodyVelocity.x - previous.bodyVelocity.x) / dt,
                 y: (bodyVelocity.y - previous.bodyVelocity.y) / dt,
                 z: (bodyVelocity.z - previous.bodyVelocity.z) / dt,
+            };
+            bodyAngularAcceleration = {
+                x: 0,
+                y: 0,
+                z: (yawRate - Number(previous.bodyAngularVelocity?.z || 0)) / dt,
             };
         }
     }
@@ -149,11 +156,26 @@ export function captureVehicleSnapshot(vehicle, captureTimeNs, previous = null, 
         orientation,
         bodyVelocity,
         bodyAngularVelocity,
+        bodyAngularAcceleration,
         bodyAcceleration,
         wheelbase,
         steeringAngle,
         speed,
     };
+}
+
+/**
+ * Body-frame acceleration of a point at `offset` from base_link on a rigid body:
+ * a + alpha x r + omega x (omega x r).
+ */
+export function accelerationAtOffset(snapshot, offset) {
+    const r = new Vector3().copy(vec3(offset));
+    const omega = new Vector3().copy(snapshot.bodyAngularVelocity || { x: 0, y: 0, z: 0 });
+    const alpha = new Vector3().copy(snapshot.bodyAngularAcceleration || { x: 0, y: 0, z: 0 });
+    const tangential = new Vector3().crossVectors(alpha, r);
+    const centripetal = new Vector3().crossVectors(omega, new Vector3().crossVectors(omega, r));
+    const total = new Vector3().copy(snapshot.bodyAcceleration).add(tangential).add(centripetal);
+    return { x: total.x, y: total.y, z: total.z };
 }
 
 export function sensorFrameRotation(sensorPose = {}) {
@@ -196,7 +218,7 @@ export function buildImuMeasurement(snapshot, sensorConfig, rng, state = {}) {
     const sensorRotation = sensorFrameRotation(sensorConfig.pose);
     const angularVelocity = vectorToSensorFrame(snapshot.bodyAngularVelocity, sensorRotation);
     const specificForce = specificForceRep103(
-        snapshot.bodyAcceleration,
+        accelerationAtOffset(snapshot, sensorConfig.pose?.position),
         sensorRotation,
         sensorConfig.calibration.gravity,
         snapshot.orientation,
