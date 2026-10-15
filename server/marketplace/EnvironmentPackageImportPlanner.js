@@ -302,7 +302,7 @@ export async function planEnvironmentPackageImport({
             recordSha256: entry.descriptor.recordSha256,
             blobSha256: entry.use.asset.sha256,
         };
-        return { ...operation, operationId: assetImportOperationId(operation) };
+        return { ...operation, operationId: assetImportOperationId(operation, release) };
     });
     const revisionOperations = assetPlan.operations.filter((operation) => operation.kind === "publish-editor-asset-revision");
     const visualOperation = preparedDocument.visual ? (() => {
@@ -312,7 +312,7 @@ export async function planEnvironmentPackageImport({
             descriptorHash: preparedDocument.visual.descriptorHash,
             accessHash: preparedDocument.visual.accessHash,
         };
-        return { ...operation, operationId: assetImportOperationId(operation) };
+        return { ...operation, operationId: assetImportOperationId(operation, release) };
     })() : null;
     const publishOperation = {
         kind: "publish-environment",
@@ -358,7 +358,7 @@ export async function planEnvironmentPackageImport({
             ...useOperations,
             ...revisionOperations,
             ...(visualOperation ? [visualOperation] : []),
-            { ...publishOperation, operationId: assetImportOperationId(publishOperation) },
+            { ...publishOperation, operationId: assetImportOperationId(publishOperation, release) },
         ],
         rights,
         mappings: [...assetPlan.mappings, mapping],

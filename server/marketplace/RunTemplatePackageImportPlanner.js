@@ -9,6 +9,7 @@ import { normalizeScenario, stripScenarioMetadata } from "../../app/scenarios/Sc
 import { validateRouteVerification, verifyCanonicalRoute } from "../../app/scenarios/route/Route.js";
 import { computeResolvedRunHash, normalizeRunManifest } from "../../app/simulation/RunManifest.js";
 import { createWorldResource } from "../../app/simulation/world/WorldDescription.js";
+import { assetImportOperationId } from "./AssetPackageImportPlanner.js";
 import { planEnvironmentPackageImport, readPreparedEnvironment } from "./EnvironmentPackageImportPlanner.js";
 import { MARKETPLACE_ERROR_CODES, marketplaceError } from "./MarketplaceErrors.js";
 import { canonicalMarketplaceBytes, parseMarketplaceJsonBytes } from "./MarketplaceJson.js";
@@ -20,10 +21,8 @@ function conflict(message) {
     throw marketplaceError(MARKETPLACE_ERROR_CODES.CONFLICT, message);
 }
 
-function operationId(operation) {
-    const value = structuredClone(operation);
-    delete value.operationId;
-    return createHash("sha256").update(canonicalMarketplaceBytes(value)).digest("hex");
+function operationId(operation, release) {
+    return assetImportOperationId(operation, release);
 }
 
 // Authoring normalizers keep absent optional fields as explicit undefined.
@@ -248,7 +247,7 @@ export async function planRunTemplatePackageImport({
             contentHash: computeResolvedRunHash(selected.candidate),
             preparedHash,
         };
-        scriptPlans.push({ descriptor, selected, operation: { ...operation, operationId: operationId(operation) } });
+        scriptPlans.push({ descriptor, selected, operation: { ...operation, operationId: operationId(operation, release) } });
     }
 
     const vehicleIds = new Map();
@@ -299,7 +298,7 @@ export async function planRunTemplatePackageImport({
                 expectedVehicleContentHash: selected.current ? vehicleContentHash(selected.current) : null,
                 publishedVehicleContentHash: vehicleContentHash(selected.candidate),
             };
-            return { ...operation, operationId: operationId(operation) };
+            return { ...operation, operationId: operationId(operation, release) };
         });
         const operation = {
             kind: "publish-vehicle",
@@ -309,7 +308,7 @@ export async function planRunTemplatePackageImport({
             contentHash: computeResolvedRunHash(selected.candidate),
             preparedHash,
         };
-        vehiclePlans.push({ descriptor, selected, assetOperations, operation: { ...operation, operationId: operationId(operation) } });
+        vehiclePlans.push({ descriptor, selected, assetOperations, operation: { ...operation, operationId: operationId(operation, release) } });
     }
     for (const id of builtInVehicleIds) vehicleIds.set(id, id);
 
@@ -353,7 +352,7 @@ export async function planRunTemplatePackageImport({
             contentHash: computeResolvedRunHash(stripScenarioMetadata(selected.candidate)),
             preparedHash,
         };
-        scenarioPlans.push({ descriptor, selected, operation: { ...operation, operationId: operationId(operation) } });
+        scenarioPlans.push({ descriptor, selected, operation: { ...operation, operationId: operationId(operation, release) } });
     }
 
     const rootDescriptor = verified.manifest.root;
@@ -423,7 +422,7 @@ export async function planRunTemplatePackageImport({
             packageHash: plugin.packageHash,
             recordSha256: plugin.recordSha256,
         };
-        return { ...operation, operationId: operationId(operation) };
+        return { ...operation, operationId: operationId(operation, release) };
     });
     const mappings = [
         ...verified.manifest.plugins.map((plugin) => ({
@@ -476,7 +475,7 @@ export async function planRunTemplatePackageImport({
             ...vehiclePlans.flatMap((entry) => [...entry.assetOperations, entry.operation]),
             ...scriptPlans.map((entry) => entry.operation),
             ...scenarioPlans.map((entry) => entry.operation),
-            { ...runOperation, operationId: operationId(runOperation) },
+            { ...runOperation, operationId: operationId(runOperation, release) },
         ],
         rights: environmentPlan?.rights ?? [],
         conflicts: [],
