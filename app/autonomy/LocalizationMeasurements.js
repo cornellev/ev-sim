@@ -270,10 +270,12 @@ export function buildImuMeasurement(snapshot, sensorConfig, rng, state = {}) {
 export function buildGnssMeasurement(snapshot, sensorConfig, rng, state = {}) {
     const faults = sensorConfig.calibration.faults || {};
     const datum = sensorConfig.calibration.datum || { latitude: 42.4430, longitude: -76.4840, altitude: 200 };
+    // The fix is the antenna position: base_link plus the mount offset rotated into the map frame.
+    const antennaOffset = rotateVectorByQuaternion(vec3(sensorConfig.pose?.position), snapshot.orientation);
     const positionEnu = {
-        east: snapshot.pose.position.x,
-        north: snapshot.pose.position.y,
-        up: snapshot.pose.position.z,
+        east: snapshot.pose.position.x + antennaOffset.x,
+        north: snapshot.pose.position.y + antennaOffset.y,
+        up: snapshot.pose.position.z + antennaOffset.z,
     };
     const dt = state.lastCaptureTimeNs != null && snapshot.captureTimeNs > state.lastCaptureTimeNs
         ? (snapshot.captureTimeNs - state.lastCaptureTimeNs) / 1e9
