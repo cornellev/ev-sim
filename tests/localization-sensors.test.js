@@ -138,6 +138,36 @@ test("encoder quantization is deterministic and slip reduces travel", () => {
     assert.ok(q1 > 0);
 });
 
+test("wheel odometry carries partial ticks so distance does not drift with speed", () => {
+    const config = normalizeRunSensor({
+        type: "wheel-odometry",
+        rateHz: 50,
+        calibration: { poseNoise: { x: 0, y: 0, z: 0 }, twistNoise: { x: 0, y: 0, z: 0 } },
+    });
+    const tickLength = (2 * Math.PI * config.calibration.wheelRadius) / config.calibration.ticksPerRevolution;
+    const stepNs = 20_000_000;
+    const captures = 1500;
+    // 0.01 m/s moves less than half a tick per sample, which rounded to zero
+    // when each sample was quantized on its own.
+    for (const speed of [0.01, 0.2, 1, 3]) {
+        const rng = new SeededRNG(`wheel-ticks-${speed}`);
+        const vehicle = mockVehicle({ velocity: { x: speed, y: 0, z: 0 } });
+        let measurementState = createMeasurementSeedState(config, rng);
+        let lastSnapshot = null;
+        let position = null;
+        for (let step = 1; step <= captures; step += 1) {
+            const snapshot = captureVehicleSnapshot(vehicle, step * stepNs, lastSnapshot, stepNs);
+            lastSnapshot = snapshot;
+            const result = buildWheelOdometryMeasurement(snapshot, config, rng.fork(`sample-${step}`), measurementState);
+            measurementState = { ...measurementState, ...result.nextState };
+            position = result.measurement.position;
+        }
+        const truth = speed * captures * (stepNs / 1e9);
+        const traveled = Math.hypot(position.x, position.y);
+        assert.ok(Math.abs(traveled - truth) <= tickLength, `${speed} m/s: traveled ${traveled} m, truth ${truth} m`);
+    }
+});
+
 test("wheel odometry integrates independently from truth pose", () => {
     const config = normalizeRunSensor({ type: "wheel-odometry", rateHz: 50 });
     const rng = new SeededRNG("wheel");

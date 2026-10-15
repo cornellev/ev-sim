@@ -394,8 +394,15 @@ export function buildWheelOdometryMeasurement(snapshot, sensorConfig, rng, state
         calibration.trackWidth,
         calibration.slipFactor,
     );
-    const leftQuantized = quantizeTravel(leftTravel, calibration.wheelRadius, calibration.ticksPerRevolution);
-    const rightQuantized = quantizeTravel(rightTravel, calibration.wheelRadius, calibration.ticksPerRevolution);
+    // An encoder counts ticks of the total wheel rotation. Quantize the
+    // running total so fractions of a tick carry over to the next sample.
+    const tickLength = (2 * Math.PI * Math.max(Number.EPSILON, calibration.wheelRadius)) / calibration.ticksPerRevolution;
+    const leftTravelM = Number(state.leftTravelM || 0) + leftTravel;
+    const rightTravelM = Number(state.rightTravelM || 0) + rightTravel;
+    const leftTicks = Math.round(leftTravelM / tickLength);
+    const rightTicks = Math.round(rightTravelM / tickLength);
+    const leftQuantized = (leftTicks - Number(state.leftTicks || 0)) * tickLength;
+    const rightQuantized = (rightTicks - Number(state.rightTicks || 0)) * tickLength;
     const integrated = integrateWheelOdometry(
         { ...state.odometry, dt },
         leftQuantized,
@@ -432,8 +439,10 @@ export function buildWheelOdometryMeasurement(snapshot, sensorConfig, rng, state
         },
         nextState: {
             odometry: integrated,
-            leftTicks: Number(state.leftTicks || 0) + Math.round((leftQuantized / (2 * Math.PI * calibration.wheelRadius)) * calibration.ticksPerRevolution),
-            rightTicks: Number(state.rightTicks || 0) + Math.round((rightQuantized / (2 * Math.PI * calibration.wheelRadius)) * calibration.ticksPerRevolution),
+            leftTravelM,
+            rightTravelM,
+            leftTicks,
+            rightTicks,
             lastCaptureTimeNs: snapshot.captureTimeNs,
         },
     };
@@ -480,6 +489,8 @@ export function createMeasurementSeedState(sensorConfig, seed) {
         drift: { angular: { x: 0, y: 0, z: 0 }, acceleration: { x: 0, y: 0, z: 0 } },
         multipath: { x: 0, y: 0, z: 0 },
         odometry: { position: { x: 0, y: 0, z: 0 }, heading: 0 },
+        leftTravelM: 0,
+        rightTravelM: 0,
         leftTicks: 0,
         rightTicks: 0,
         inOutage: false,
