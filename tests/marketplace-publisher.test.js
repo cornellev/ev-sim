@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { allocatePublicationItemId } from "../server/marketplace/client/MarketplaceService.js";
 import { MarketplacePublicationCatalog } from "../server/marketplace/client/MarketplacePublicationCatalog.js";
 import { MARKETPLACE_PUBLICATION_TIMEOUT_MESSAGE, MarketplacePublisherClient } from "../server/marketplace/client/MarketplacePublisherClient.js";
 import { publicationJobPublicError } from "../server/marketplace/client/MarketplacePublishJobManager.js";
@@ -255,4 +256,21 @@ test("MKT-14 publisher transport permits only fixed-origin publication operation
     });
     await assert.rejects(changedOrigin.publishItem(Buffer.from("{}")), (error) => error.code === "SOURCE_UNAVAILABLE");
     assert.doesNotMatch(JSON.stringify(requests.map(({ url }) => url)), /secret-write-token/u);
+});
+
+test("a second create-item collection gets its own item ID when the default is taken", () => {
+    const taken = new Set(["org.cornellev.collection"]);
+    assert.equal(allocatePublicationItemId("org.cornellev.collection", {
+        taken: (itemId) => taken.has(itemId),
+        disambiguator: "testing-testing",
+    }), "org.cornellev.collection-testing-testing");
+    assert.equal(allocatePublicationItemId("org.cornellev.collection", {
+        taken: () => false,
+        disambiguator: "ignored",
+    }), "org.cornellev.collection");
+    taken.add("org.cornellev.collection-testing-testing");
+    assert.equal(allocatePublicationItemId("org.cornellev.collection", {
+        taken: (itemId) => taken.has(itemId),
+        disambiguator: "testing-testing",
+    }), "org.cornellev.collection-testing-testing-2");
 });
