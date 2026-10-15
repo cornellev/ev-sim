@@ -26,8 +26,18 @@ function operationId(operation) {
     return createHash("sha256").update(canonicalMarketplaceBytes(value)).digest("hex");
 }
 
+// Authoring normalizers keep absent optional fields as explicit undefined.
+// JSON omits those keys; the exact canonical writer rejects them.
+function omitUndefined(value) {
+    if (Array.isArray(value)) return value.map((entry) => omitUndefined(entry));
+    if (!value || typeof value !== "object") return value;
+    return Object.fromEntries(Object.entries(value).flatMap(([key, entry]) => (
+        entry === undefined ? [] : [[key, omitUndefined(entry)]]
+    )));
+}
+
 async function writePrepared(preparationDir, kind, document) {
-    const bytes = Buffer.from(canonicalMarketplaceBytes(document));
+    const bytes = Buffer.from(canonicalMarketplaceBytes(omitUndefined(document)));
     const preparedHash = createHash("sha256").update(bytes).digest("hex");
     const filePath = path.join(preparationDir, "generated", `run-template-${kind}-${preparedHash}.json`);
     await fs.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
