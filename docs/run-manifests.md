@@ -341,9 +341,25 @@ appearance/analytic readback.
 
 | Sensor | Rate | Key calibration | Units |
 | --- | --- | --- | --- |
-| IMU | 100 Hz | `gravity`, per-axis `angularVelocityStdDev`, `linearAccelerationStdDev`, drift τ, saturation | rad/s, m/s² |
+| IMU | 100 Hz | `gravity`, `angularVelocityNoiseDensity`, `linearAccelerationNoiseDensity` (or per-sample `angularVelocityStdDev`, `linearAccelerationStdDev`), drift τ, saturation | rad/s/√Hz, m/s²/√Hz (rad/s, m/s² per sample) |
 | GNSS | 10 Hz | `datum` (lat/lng/alt), `positionNoiseEnu`, `faults.dropoutProbability`, `faults.outageProbability`, multipath τ | deg, m |
 | Wheel odometry | 50 Hz | `wheelRadius`, `ticksPerRevolution`, `trackWidth`, `slipFactor`, pose/twist noise | m, ticks/rev |
+
+IMU white noise is set from datasheet noise densities. Each sample gets
+σ = density / √Δt, where Δt is the time since the previous capture. Raising
+the rate then raises per-sample noise, and noise averaged over a fixed time
+stays the same, as on a real sensor. Each density is one number for all
+three axes. Without a density, the IMU uses the per-sample
+`angularVelocityStdDev` or `linearAccelerationStdDev`, which does not scale
+with rate. Default runs set no density. The per-sample defaults
+(0.002 rad/s, 0.02 m/s²) equal 0.0002 rad/s/√Hz and 0.002 m/s²/√Hz at 100 Hz.
+
+Datasheet conversions:
+
+- gyro °/s/√Hz × π/180 = rad/s/√Hz
+- gyro angle random walk °/√h × π/180 / 60 = rad/s/√Hz
+- accelerometer µg/√Hz × 9.80665e-6 = m/s²/√Hz
+- accelerometer velocity random walk m/s/√h ÷ 60 = m/s²/√Hz
 
 GNSS treats map/odom position as ENU offset from the manifest datum. Wheel odometry integrates an independent measured `odom → base_link` estimate; oracle truth on `/oracle/vehicle/odometry` remains isolated for scoring.
 

@@ -159,8 +159,10 @@ function axisCalibration(source = {}, fallback = 0) {
 const imuRunFields = [
     { label: "Gravity (m/s²)", path: ["calibration", "gravity"], control: "number", min: 0, step: 0.001 },
     { label: "IMU topic ID", path: ["outputs", "imuTopicId"], control: "text", advanced: true },
-    { label: "Angular velocity σ (rad/s)", path: ["calibration", "angularVelocityStdDev", "x"], control: "number", min: 0, step: 0.0001, advanced: true },
-    { label: "Linear acceleration σ (m/s²)", path: ["calibration", "linearAccelerationStdDev", "z"], control: "number", min: 0, step: 0.001, advanced: true },
+    { label: "Gyro noise density (rad/s/√Hz)", path: ["calibration", "angularVelocityNoiseDensity"], control: "number", min: 0, step: 0.00001, advanced: true },
+    { label: "Accelerometer noise density (m/s²/√Hz)", path: ["calibration", "linearAccelerationNoiseDensity"], control: "number", min: 0, step: 0.0001, advanced: true },
+    { label: "Angular velocity σ per sample (rad/s), without density", path: ["calibration", "angularVelocityStdDev", "x"], control: "number", min: 0, step: 0.0001, advanced: true },
+    { label: "Linear acceleration σ per sample (m/s²), without density", path: ["calibration", "linearAccelerationStdDev", "z"], control: "number", min: 0, step: 0.001, advanced: true },
     { label: "Angular saturation (rad/s)", path: ["calibration", "angularVelocitySaturation"], control: "number", min: 0, advanced: true },
     { label: "Acceleration saturation (m/s²)", path: ["calibration", "linearAccelerationSaturation"], control: "number", min: 0, advanced: true },
 ];
