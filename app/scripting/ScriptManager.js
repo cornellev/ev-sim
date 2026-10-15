@@ -3,6 +3,7 @@ import { pluginOwnershipFromUnit, stampGraphPluginLock } from "../plugin/PluginG
 import { defaultBlockRegistry } from "./BlockRegistry.js";
 import { assertSupportedArtifact, createRuntimeError } from "./runtime/Artifact.js";
 import { compileVisualScript } from "./runtime/Compiler.js";
+import { graphEdges, loopPassUnits } from "./runtime/LoopFrames.js";
 import { createVisualScriptRunner } from "./runtime/Runner.js";
 import { captureRuntimeState, restoreRuntimeState } from "./runtime/RuntimeState.js";
 import { SignalStore } from "./runtime/SignalStore.js";
@@ -233,6 +234,13 @@ export class UnitBlock {
 
     hasOutput(label) {
         return !!this.outputs[this.resolveOutputLabel(label)];
+    }
+
+    inputSourceUuid(label) {
+        const connection = this.inputs[this.resolveInputLabel(label)];
+        if (!connection) return null;
+        if (typeof connection.getOutput === "function") return connection.getOutput().unit.uuid;
+        return connection.from ?? null;
     }
 
     addInput(label, connection) {
@@ -482,11 +490,30 @@ export class ScriptManager {
         this.evaluating = new Set();
         this.evaluationPolicy = { lazySelectors: true, memoizeExecute: true };
         this.restoreErrors = [];
+        this.loopFrames = new Map();
     }
 
     _beginEvaluation() {
         this.outputMemo = new Map();
         this.evaluating = new Set();
+        this.loopFrames = new Map();
+    }
+
+    getLoopPassUnits(uuid) {
+        return loopPassUnits(graphEdges(this.units), uuid);
+    }
+
+    invalidateOutputs(uuids) {
+        for (const uuid of uuids) this.outputMemo.delete(uuid);
+    }
+
+    setLoopFrame(uuid, frame) {
+        if (frame) this.loopFrames.set(uuid, frame);
+        else this.loopFrames.delete(uuid);
+    }
+
+    getLoopFrame(uuid) {
+        return this.loopFrames.get(uuid) ?? null;
     }
 
     pruneRestoreErrors() {

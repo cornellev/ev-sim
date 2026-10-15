@@ -57,6 +57,8 @@ Current supported program I/O types:
 
 Current effect blocks expose `then: unit` plus an identity or status output (`value`, `state`, `path`, `count`, `index`). They are reachable only when a downstream node consumes `then` or that identity output. Explicit `Sequence` / `Passthrough` is required for effect order.
 
+`repeat_ref` is a loop reference, not a value. Repeat's `repeat` output connects only to an Index block's `repeat` input. It never connects to `generic`, so `Pass` and other polymorphic blocks cannot carry it. The wire runs backward against the body (Repeat to Index to body to Repeat), so the compiler's cycle walk skips `repeat_ref` edges. The compiler then requires every reachable Index to sit upstream of its Repeat's `body` input.
+
 Frozen v2 and early-v3 artifacts may still snapshot `written`, `ok`, or `staged`. `BlockOutput.setDeclared(unit, label, value)` writes a label only when `unit.outputType(label)` exists, so one `execute()` body serves current ports and frozen legacy ports. Editable graphs that still wire `written` / `ok` / `staged` are not migrated; restore records `restoreErrors`, compile fails closed, and `latestValidArtifact` stays runnable until the user rewires.
 
 ## Actor Command

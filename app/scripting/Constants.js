@@ -26,6 +26,7 @@ const TYPES = {
     "texture_id": "oklch(58% 0.18 290)",
     "generic": "oklch(78% 0.02 250)",
     "unit": "oklch(68% 0.09 280)",
+    "repeat_ref": "oklch(72% 0.13 230)",
     "actor_command": "oklch(66% 0.16 345)",
 }
 

@@ -1,4 +1,5 @@
 import { assertSupportedArtifact, createRuntimeError } from "./Artifact.js";
+import { loopPassUnits } from "./LoopFrames.js";
 import { captureRuntimeState, restoreRuntimeState } from "./RuntimeState.js";
 import { SignalStore } from "./SignalStore.js";
 import { assertArtifactPluginRequirements } from "../../plugin/PluginRequirements.js";
@@ -33,6 +34,8 @@ export class VisualScriptRunner {
         this.externalOutputs = {};
         this.runtimeContext = options.runtimeContext || {};
         this.signalStore = options.signalStore || new SignalStore(options.signalSnapshot || {});
+        this.loopFrames = new Map();
+        this.loopPassCache = new Map();
 
         if (this.blockRegistry) {
             try {
@@ -88,6 +91,15 @@ export class VisualScriptRunner {
             getPluginHost: () => this.pluginHost,
             getPluginSession: () => this.pluginSession,
             getScopeId: () => this.scopeId,
+            getLoopPassUnits: (uuid) => this._loopPassUnits(uuid),
+            invalidateOutputs: (uuids) => {
+                for (const uuid of uuids) this.outputMemo?.delete(uuid);
+            },
+            setLoopFrame: (uuid, frame) => {
+                if (frame) this.loopFrames.set(uuid, frame);
+                else this.loopFrames.delete(uuid);
+            },
+            getLoopFrame: (uuid) => this.loopFrames.get(uuid) ?? null,
             blockRegistry: this.blockRegistry,
             pluginHost: this.pluginHost,
             pluginSession: this.pluginSession,
@@ -111,6 +123,13 @@ export class VisualScriptRunner {
 
     setRuntimeContext(context = {}) {
         this.runtimeContext = context || {};
+    }
+
+    _loopPassUnits(uuid) {
+        if (!this.loopPassCache.has(uuid)) {
+            this.loopPassCache.set(uuid, loopPassUnits(this.artifact.transitions.success, uuid));
+        }
+        return this.loopPassCache.get(uuid);
     }
 
     _hydrateUnits() {
@@ -252,6 +271,7 @@ export class VisualScriptRunner {
         this.externalOutputs = {};
         this.outputMemo = new Map();
         this.evaluating = new Set();
+        this.loopFrames.clear();
         const signalTransaction = this.signalStore.beginTransaction();
         const runtimeState = captureRuntimeState(this.units);
         const pluginTransaction = this.pluginSession?.beginEvaluation?.() ?? null;

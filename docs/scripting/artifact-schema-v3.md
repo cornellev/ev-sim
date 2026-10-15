@@ -56,6 +56,8 @@ The compiler snapshots `nodes[].ports` from resolved editor types. Those maps, `
 
 Effect order is not implied by graph layout. A write or assert runs only if it is reachable from a final state through `then`, an identity output, `Sequence`, or `Passthrough`.
 
+Transitions with `type: "repeat_ref"` (Repeat to Index) are emitted like any other transition, but they are excluded from cycle detection and are never resolved as inputs at run time. The runner computes each Repeat's pass set from `transitions.success` and caches it per artifact. Adding `repeat_ref` is additive within v3.
+
 ## Success Transition
 
 Each success transition has:

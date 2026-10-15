@@ -153,10 +153,11 @@ import { ConjugationBlock, EqualityBlock } from "./units/statements/Equality.blo
 import {
     IgnoreBlock,
     NopBlock,
+    PassBlock,
     PassthroughBlock,
     SequenceBlock,
 } from "./units/statements/Unit.block.js";
-import { RepeatProgramBlock } from "./units/statements/RepeatProgram.block.js";
+import { RepeatBlock, RepeatIndexBlock } from "./units/statements/Repeat.block.js";
 import { StringBlock } from "./units/objects/String.block.js";
 import { TextureImportBlock } from "./units/objects/TextureImport.block.js";
 import {
@@ -350,9 +351,6 @@ const ITEM_TYPE_SETTINGS = Object.freeze([
 const ARRAY_LITERAL_SETTINGS = Object.freeze([
     ...ITEM_TYPE_SETTINGS,
     Object.freeze({ target: "storedData", key: null, valueType: "json", default: [] }),
-]);
-const COMPILED_PROGRAM_SETTINGS = Object.freeze([
-    Object.freeze({ target: "state", key: "compiledProgram", valueType: "json", default: null }),
 ]);
 const ARRAY_GET_SETTINGS = Object.freeze([
     ...ITEM_TYPE_SETTINGS,
@@ -590,9 +588,12 @@ export const UNIT_CATALOG_META = [
     entry("IgnoreBlock", "Ignore", "statements", IgnoreBlock, ["ignore", "discard", "unit"]),
     entry("SequenceBlock", "Sequence", "statements", SequenceBlock, ["sequence", "then", "control"]),
     entry("PassthroughBlock", "Passthrough", "statements", PassthroughBlock, ["passthrough", "identity", "unit"]),
-    entry("RepeatProgramBlock", "Repeat Program", "statements", RepeatProgramBlock, ["repeat", "loop", "program"], {
-        settings: COMPILED_PROGRAM_SETTINGS,
-        notes: "Loops a compiled child artifact. Reserved program inputs index and item are supplied per iteration. Count is clamped to 256.",
+    entry("PassBlock", "Pass", "statements", PassBlock, ["pass", "identity", "reroute", "organize"]),
+    entry("RepeatBlock", "Repeat", "statements", RepeatBlock, ["repeat", "loop", "for"], {
+        notes: "Pulls body once per pass, up to 256 passes. Wire repeat into an Index block inside the body to read the current pass.",
+    }),
+    entry("RepeatIndexBlock", "Index", "statements", RepeatIndexBlock, ["index", "loop", "repeat", "iteration"], {
+        notes: "Reads the current pass of the Repeat wired to it, without running that Repeat. t runs from 0 to 1 across the passes.",
     }),
     entry("ProgramInputBlock", "Program Input", "program", ProgramInputBlock, ["program", "input", "parameter"], { settings: PROGRAM_INPUT_SETTINGS }),
     entry("OutputNodeBlock", "OutputNode", "program", OutputNodeBlock, ["program", "output", "head"], {

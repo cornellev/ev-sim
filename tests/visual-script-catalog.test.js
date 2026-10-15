@@ -181,7 +181,10 @@ test("simulator adapters and texture ops are placeable and searchable", () => {
     assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "TextureImportBlock").keywords.includes("texture"));
     assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "LogMessageBlock").keywords.includes("print"));
     assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "LinspaceBlock")?.category === "collections");
-    assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "RepeatProgramBlock")?.category === "statements");
+    for (const type of ["RepeatBlock", "RepeatIndexBlock", "PassBlock"]) {
+        assert.equal(UNIT_CATALOG_META.find((entry) => entry.type === type)?.category, "statements", type);
+    }
+    assert.equal(UNIT_CATALOG_META.some((entry) => entry.type === "RepeatProgramBlock"), false);
     assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "FrameAlongPathBlock")?.category === "mission");
     assert.ok(simulator.some((entry) => entry.type === "SimulationClockBlock"));
     assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "VehicleStateBlock").keywords.includes("adapter"));

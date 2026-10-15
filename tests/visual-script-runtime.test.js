@@ -52,6 +52,7 @@ import { IfBlock } from "../app/scripting/units/statements/If.block.js";
 import {
     IgnoreBlock,
     NopBlock,
+    PassBlock,
     PassthroughBlock,
     SequenceBlock,
 } from "../app/scripting/units/statements/Unit.block.js";
@@ -59,7 +60,11 @@ import {
     MakeActorCommandBlock,
     SplitActorCommandBlock,
 } from "../app/scripting/units/mission/ActorCommand.block.js";
-import { RepeatProgramBlock } from "../app/scripting/units/statements/RepeatProgram.block.js";
+import {
+    INDEX_OUTSIDE_REPEAT_ERROR,
+    RepeatBlock,
+    RepeatIndexBlock,
+} from "../app/scripting/units/statements/Repeat.block.js";
 import { SpawnPropBlock } from "../app/scripting/units/world/WorldBlocks.block.js";
 import { EpisodeOverlay } from "../app/simulation/episode/EpisodeOverlay.js";
 import { ACTOR_COMMAND_TYPE, UNIT, UNIT_TYPE } from "../app/scripting/types/PortTypes.js";
@@ -2462,25 +2467,6 @@ function addProgramInput(manager, uuid, label, type, defaultValue) {
     return uuid;
 }
 
-function compileSpawnChild() {
-    clearBlockTypeRegistryForTests();
-    registerBuiltInBlocks();
-    const manager = new ScriptManager();
-    const head = new OutputNodeBlock("head");
-    const config = { outputs: [{ id: "output", label: "then", type: UNIT_TYPE }] };
-    head.hydrateState(config);
-    manager.addUnit(head);
-    manager.storeData("head", config);
-    manager.setHead("head");
-    addProgramInput(manager, "asset", "assetId", "string", "barrel");
-    addProgramInput(manager, "pose", "pose", "pose3d", {});
-    manager.addUnit(new SpawnPropBlock("spawn"));
-    connect(manager, "asset", "input", "spawn", "assetId");
-    connect(manager, "pose", "input", "spawn", "pose");
-    connect(manager, "spawn", "then", "head", "output");
-    return manager.compile("spawn-child");
-}
-
 test("unconsumed Spawn Prop is omitted from compiled Q", () => {
     clearBlockTypeRegistryForTests();
     registerBuiltInBlocks();
@@ -2503,32 +2489,271 @@ test("unconsumed Spawn Prop is omitted from compiled Q", () => {
     assert.equal(artifact.Q.includes("spawn"), false);
 });
 
-test("Repeat Program loops a compiled Spawn Prop child", () => {
-    const compiledProgram = compileSpawnChild();
-    const overlay = new EpisodeOverlay();
-    const block = new RepeatProgramBlock("repeat");
-    block.hydrateState({ compiledProgram });
-    block.inputs = { count: {}, assetId: {}, pose: {} };
-    const values = {
-        count: 3,
-        assetId: "barrel",
-        pose: { position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0, order: "XYZ" } },
-    };
-    block.getInput = (label) => values[label];
-    block.setManager({
-        getSignalStore: () => null,
-        getRuntimeContext: () => ({
+const loopLog = [];
+
+class LoopIntBlock extends UnitBlock {
+    static blockType = "LoopIntBlock";
+
+    register() {
+        this.registerOutput("out", "int32");
+    }
+
+    valid() {
+        return true;
+    }
+
+    execute() {
+        return new BlockOutput().set("out", Number(this.state.value ?? 0));
+    }
+}
+
+class LoopTagBlock extends UnitBlock {
+    static blockType = "LoopTagBlock";
+
+    register() {
+        this.registerOutput("tag", "string");
+    }
+
+    valid() {
+        return true;
+    }
+
+    execute() {
+        loopLog.push("tag");
+        return new BlockOutput().set("tag", "g");
+    }
+}
+
+class LoopTickBlock extends UnitBlock {
+    static blockType = "LoopTickBlock";
+
+    register() {
+        this.registerOutput("then", UNIT_TYPE);
+    }
+
+    valid() {
+        return true;
+    }
+
+    execute() {
+        loopLog.push("tick");
+        return new BlockOutput().set("then", UNIT);
+    }
+}
+
+class LoopRecordBlock extends UnitBlock {
+    static blockType = "LoopRecordBlock";
+
+    register() {
+        this.registerInput("a", "int32");
+        this.registerInput("b", "string");
+        this.registerOutput("then", UNIT_TYPE);
+    }
+
+    valid() {
+        return this.hasInput("a") && this.hasInput("b");
+    }
+
+    execute() {
+        loopLog.push(`${this.getInput("b")}:${this.getInput("a")}`);
+        return new BlockOutput().set("then", UNIT);
+    }
+}
+
+class LoopPairBlock extends UnitBlock {
+    static blockType = "LoopPairBlock";
+
+    register() {
+        this.registerInput("a", "int32");
+        this.registerInput("b", "int32");
+        this.registerOutput("then", UNIT_TYPE);
+    }
+
+    valid() {
+        return this.hasInput("a") && this.hasInput("b");
+    }
+
+    execute() {
+        loopLog.push(`${this.getInput("a")}.${this.getInput("b")}`);
+        return new BlockOutput().set("then", UNIT);
+    }
+}
+
+class LoopPoseBlock extends UnitBlock {
+    static blockType = "LoopPoseBlock";
+
+    register() {
+        this.registerInput("x", "int32");
+        this.registerOutput("pose", "pose3d");
+    }
+
+    valid() {
+        return this.hasInput("x");
+    }
+
+    execute() {
+        return new BlockOutput().set("pose", {
+            position: { x: this.getInput("x"), y: 0, z: 0 },
+            rotation: { x: 0, y: 0, z: 0, order: "XYZ" },
+        });
+    }
+}
+
+function createLoopManager() {
+    clearBlockTypeRegistryForTests();
+    registerBuiltInBlocks();
+    for (const BlockClass of [LoopIntBlock, LoopTagBlock, LoopTickBlock, LoopRecordBlock, LoopPairBlock, LoopPoseBlock]) {
+        registerBlockType(BlockClass.blockType, BlockClass);
+    }
+    const manager = new ScriptManager();
+    const head = new OutputNodeBlock("head");
+    const config = { outputs: [{ id: "output", label: "then", type: UNIT_TYPE }] };
+    head.hydrateState(config);
+    manager.addUnit(head);
+    manager.storeData("head", config);
+    manager.setHead("head");
+    return manager;
+}
+
+function addLoopCount(manager, uuid, value) {
+    const block = new LoopIntBlock(uuid);
+    block.hydrateState({ value });
+    manager.addUnit(block);
+}
+
+function addRepeat(manager, uuid, count) {
+    addLoopCount(manager, `${uuid}-count`, count);
+    manager.addUnit(new RepeatBlock(uuid));
+    manager.addUnit(new RepeatIndexBlock(`${uuid}-index`));
+    connect(manager, `${uuid}-count`, "out", uuid, "count");
+    connect(manager, uuid, "repeat", `${uuid}-index`, "repeat");
+}
+
+function runLoopBothWays(manager, context = {}) {
+    loopLog.length = 0;
+    const editor = manager.executeProgram({}, { context });
+    const editorLog = [...loopLog];
+    loopLog.length = 0;
+    const compiled = ScriptManager.runCompiled(manager.compile("loop"), {}, { runtimeContext: context });
+    const compiledLog = [...loopLog];
+    assert.equal(editor.status, "success", editor.e?.message);
+    assert.equal(compiled.status, "success", compiled.e?.message);
+    assert.deepEqual(compiledLog, editorLog);
+    return editorLog;
+}
+
+function buildRecordLoop(count) {
+    const manager = createLoopManager();
+    addRepeat(manager, "repeat", count);
+    manager.addUnit(new LoopTagBlock("tag"));
+    manager.addUnit(new LoopTickBlock("tick"));
+    manager.addUnit(new LoopRecordBlock("record"));
+    manager.addUnit(new SequenceBlock("sequence"));
+    connect(manager, "repeat-index", "index", "record", "a");
+    connect(manager, "tag", "tag", "record", "b");
+    connect(manager, "tick", "then", "sequence", "first");
+    connect(manager, "record", "then", "sequence", "second");
+    connect(manager, "sequence", "then", "repeat", "body");
+    connect(manager, "repeat", "then", "head", "output");
+    return manager;
+}
+
+test("Repeat re-runs its body per pass and keeps data-only setup to one run", () => {
+    const log = runLoopBothWays(buildRecordLoop(3));
+    assert.deepEqual(log.filter((entry) => entry.startsWith("g:")), ["g:0", "g:1", "g:2"]);
+    assert.equal(log.filter((entry) => entry === "tag").length, 1, "a block feeding the body by data runs once");
+    assert.equal(log.filter((entry) => entry === "tick").length, 3, "a constant effect on the then chain runs every pass");
+});
+
+test("Repeat with count 0 skips the body and still fires then", () => {
+    assert.deepEqual(runLoopBothWays(buildRecordLoop(0)), []);
+});
+
+test("nested Repeat blocks each read their own Index", () => {
+    const manager = createLoopManager();
+    addRepeat(manager, "outer", 2);
+    addRepeat(manager, "inner", 3);
+    manager.addUnit(new LoopPairBlock("pair"));
+    connect(manager, "outer-index", "index", "pair", "a");
+    connect(manager, "inner-index", "index", "pair", "b");
+    connect(manager, "pair", "then", "inner", "body");
+    connect(manager, "inner", "then", "outer", "body");
+    connect(manager, "outer", "then", "head", "output");
+    assert.deepEqual(runLoopBothWays(manager), ["0.0", "0.1", "0.2", "1.0", "1.1", "1.2"]);
+});
+
+test("Repeat spawns one prop per pass with a pose from Index", () => {
+    const manager = createLoopManager();
+    addRepeat(manager, "repeat", 3);
+    addProgramInput(manager, "asset", "assetId", "string", "barrel");
+    manager.addUnit(new LoopPoseBlock("pose"));
+    manager.addUnit(new SpawnPropBlock("spawn"));
+    connect(manager, "repeat-index", "index", "pose", "x");
+    connect(manager, "asset", "input", "spawn", "assetId");
+    connect(manager, "pose", "pose", "spawn", "pose");
+    connect(manager, "spawn", "then", "repeat", "body");
+    connect(manager, "repeat", "then", "head", "output");
+
+    for (const run of [
+        (context) => manager.executeProgram({}, { context }),
+        (context) => ScriptManager.runCompiled(manager.compile("spawn-loop"), {}, { runtimeContext: context }),
+    ]) {
+        const overlay = new EpisodeOverlay();
+        const result = run({
             scriptId: "s",
             spawnProp: (spec) => overlay.upsert({ ...spec, scriptId: spec.scriptId ?? "s" }),
-        }),
-    });
-    const output = block.execute();
-    assert.equal(output.get("count"), 3);
-    assert.equal(output.get("then"), UNIT);
-    assert.equal(overlay.size, 3);
-    assert.deepEqual(overlay.snapshot().map((record) => record.id), [
-        "episode:s:0",
-        "episode:s:1",
-        "episode:s:2",
-    ]);
+        });
+        assert.equal(result.status, "success", result.e?.message);
+        assert.deepEqual(overlay.snapshot().map((record) => record.id), ["episode:s:0", "episode:s:1", "episode:s:2"]);
+    }
+});
+
+test("Index must feed the body of its Repeat", () => {
+    const manager = createLoopManager();
+    addRepeat(manager, "repeat", 2);
+    manager.addUnit(new LoopTickBlock("tick"));
+    manager.addUnit(new LoopTagBlock("tag"));
+    manager.addUnit(new LoopRecordBlock("record"));
+    manager.addUnit(new SequenceBlock("sequence"));
+    connect(manager, "tick", "then", "repeat", "body");
+    connect(manager, "repeat-index", "index", "record", "a");
+    connect(manager, "tag", "tag", "record", "b");
+    connect(manager, "repeat", "then", "sequence", "first");
+    connect(manager, "record", "then", "sequence", "second");
+    connect(manager, "sequence", "then", "head", "output");
+    assert.throws(() => manager.compile("outside"), /must feed the body of Repeat "repeat"/);
+    const editor = manager.executeProgram();
+    assert.equal(editor.status, "failure");
+    assert.match(editor.e.message, new RegExp(INDEX_OUTSIDE_REPEAT_ERROR));
+});
+
+test("Repeat without a body does not compile", () => {
+    const manager = createLoopManager();
+    addRepeat(manager, "repeat", 2);
+    connect(manager, "repeat", "then", "head", "output");
+    assert.throws(() => manager.compile("no-body"), /RepeatBlock\) is invalid/);
+});
+
+test("repeat_ref connects only to repeat_ref", () => {
+    const manager = createLoopManager();
+    addRepeat(manager, "repeat", 1);
+    manager.addUnit(new PassBlock("pass"));
+    manager.addUnit(new SequenceBlock("sequence"));
+    assert.equal(manager.connectUnitsDetailed("repeat", "repeat", "pass", "value").ok, false);
+    assert.equal(manager.connectUnitsDetailed("repeat", "repeat", "sequence", "first").ok, false);
+});
+
+test("Pass returns its input unchanged and infers the wired type", () => {
+    resetRegistry();
+    registerBlockType("PassBlock", PassBlock);
+    const manager = new ScriptManager();
+    manager.addUnit(new ConstBlock("value", 7.5));
+    manager.addUnit(new PassBlock("pass"));
+    manager.addUnit(new OutputBlock("output", "result", "float64"));
+    connect(manager, "value", "out", "pass", "value");
+    connect(manager, "pass", "value", "output", "output");
+    assert.equal(manager.units.find((unit) => unit.uuid === "pass").outputType("value"), "float64");
+    const run = ScriptManager.runCompiled(manager.compile("pass"), {});
+    assert.equal(run.status, "success", run.e?.message);
+    assert.equal(run.outputs.result, 7.5);
 });

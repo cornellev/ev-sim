@@ -15,6 +15,7 @@ export const POSE2D_TYPE = "pose2d";
 export const POSE3D_TYPE = "pose3d";
 export const ROAD_ID_TYPE = "road_id";
 export const TEXTURE_ID_TYPE = "texture_id";
+export const REPEAT_REF_TYPE = "repeat_ref";
 export const EULER_ORDERS = Object.freeze(["XYZ", "YZX", "ZXY", "XZY", "YXZ", "ZYX"]);
 
 export function finiteFloat(value, fallback = 0) {
@@ -175,6 +176,7 @@ export function isConcreteType(type) {
 export function portsCompatible(a, b) {
     if (!isConcreteType(a) && !isGeneric(a)) return false;
     if (!isConcreteType(b) && !isGeneric(b)) return false;
+    if (a === REPEAT_REF_TYPE || b === REPEAT_REF_TYPE) return a === b;
     if (isGeneric(a) || isGeneric(b)) return true;
     return a === b;
 }

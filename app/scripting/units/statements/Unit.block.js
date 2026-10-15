@@ -84,3 +84,27 @@ export class PassthroughBlock extends UnitBlock {
         return new BlockOutput().set("value", value);
     }
 }
+
+export class PassBlock extends UnitBlock {
+    static typeScheme = {
+        variables: {
+            T: {
+                inputs: ["value"],
+                outputs: ["value"]
+            }
+        }
+    };
+
+    register() {
+        this.registerInput("value", GENERIC_TYPE);
+        this.registerOutput("value", GENERIC_TYPE);
+    }
+
+    valid() {
+        return this.hasInput("value");
+    }
+
+    execute() {
+        return new BlockOutput().set("value", this.getInput("value"));
+    }
+}

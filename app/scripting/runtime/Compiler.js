@@ -4,7 +4,8 @@ import {
     mergePluginRequirements,
     requirementsForTypes,
 } from "../../plugin/PluginRequirements.js";
-import { GENERIC_TYPE, isGeneric } from "../types/PortTypes.js";
+import { GENERIC_TYPE, REPEAT_REF_TYPE, isGeneric } from "../types/PortTypes.js";
+import { graphEdges, loopBodyRegion } from "./LoopFrames.js";
 import {
     collectResolvedPortMap,
     findRejectedBinding,
@@ -78,6 +79,7 @@ function collectReachableUnits(finalStates, unitById) {
 
         Object.values(unit.inputs || {}).forEach((connection) => {
             const output = connection.getOutput();
+            if (output.unit.outputType(output.label) === REPEAT_REF_TYPE) return;
             visit(output.unit.uuid, [...path, uuid]);
         });
 
@@ -87,6 +89,21 @@ function collectReachableUnits(finalStates, unitById) {
 
     finalStates.forEach((uuid) => visit(uuid));
     return reachable;
+}
+
+function validateLoopReferences(units, reachable) {
+    const edges = graphEdges(units);
+    const regions = new Map();
+    for (const edge of edges) {
+        if (edge.type !== REPEAT_REF_TYPE || !reachable.has(edge.to)) continue;
+        if (!reachable.has(edge.from)) {
+            throw new Error(`Block "${edge.to}" must feed the body of Repeat "${edge.from}", but that Repeat never runs.`);
+        }
+        if (!regions.has(edge.from)) regions.set(edge.from, loopBodyRegion(edges, edge.from));
+        if (!regions.get(edge.from).has(edge.to)) {
+            throw new Error(`Block "${edge.to}" must feed the body of Repeat "${edge.from}".`);
+        }
+    }
 }
 
 function validateReachableUnit(unit, getBlockClass) {
@@ -258,6 +275,7 @@ export function compileVisualScript(manager, name, getBlockClass, blockRegistry 
     units.forEach((unit) => {
         if (reachable.has(unit.uuid)) validateReachableUnit(unit, getBlockClass);
     });
+    validateLoopReferences(units, reachable);
 
     const Q = units
         .filter((unit) => reachable.has(unit.uuid))

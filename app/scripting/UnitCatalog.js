@@ -121,8 +121,8 @@ import {
 import { Mask } from "./units/math/tex/Mask";
 import { IfUnit } from "./units/statements/If";
 import { Conjugation, Equality } from "./units/statements/Equality";
-import { IgnoreUnit, NopUnit, PassthroughUnit, SequenceUnit } from "./units/statements/Unit";
-import { RepeatProgramUnit } from "./units/statements/RepeatProgram";
+import { IgnoreUnit, NopUnit, PassthroughUnit, PassUnit, SequenceUnit } from "./units/statements/Unit";
+import { RepeatIndexUnit, RepeatUnit } from "./units/statements/Repeat";
 import { StringUnit } from "./units/objects/String";
 import { TextureImportUnit } from "./units/objects/TextureImport";
 import {
@@ -445,7 +445,9 @@ const COMPONENT_BY_TYPE = new Map([
     ["IgnoreBlock", IgnoreUnit],
     ["SequenceBlock", SequenceUnit],
     ["PassthroughBlock", PassthroughUnit],
-    ["RepeatProgramBlock", RepeatProgramUnit],
+    ["PassBlock", PassUnit],
+    ["RepeatBlock", RepeatUnit],
+    ["RepeatIndexBlock", RepeatIndexUnit],
     ["ProgramInputBlock", ProgramInputUnit],
     ["OutputNodeBlock", OutputNodeUnit],
     ["ReadSignalBlock", ReadSignalUnit],
