@@ -247,6 +247,8 @@ export function createLidarGeometry(worldResource, vehicleDependencies = []) {
         ...world.obstacles.map((entry) => entry.sourceId),
         ...world.drivableSurfaces.map((entry) => entry.sourceId),
         ...(world.assetProxies ?? []).flatMap((entry) => entry.lidar?.length ? [entry.sourceId] : []),
+        ...(world.primitives ?? []).map((entry) => entry.sourceId),
+        ...(world.groundPlane ? [world.groundPlane.id] : []),
         ...vehicleDependencies.map((entry) => entry.actorId),
     ];
     const instanceIds = allocateLidarInstanceIds(sourceIds, compareUtf8);
@@ -274,6 +276,18 @@ export function createLidarGeometry(worldResource, vehicleDependencies = []) {
                 triangleIndex,
             }))
         ))),
+        ...(world.primitives ?? []).flatMap((solid) => solid.triangles.map((triangle, triangleIndex) => createTriangleLidarTwin({
+            id: `${solid.id}:${triangleIndex}`,
+            sourceId: solid.sourceId,
+            vertices: triangle.map((vertexIndex) => {
+                const point = solid.vertices[vertexIndex];
+                return { x: point[0], y: point[1], z: point[2] };
+            }),
+            tags: [solid.semantic],
+            semanticId: perceptionClassId(solid.semantic),
+            instanceId: instanceIds.get(String(solid.sourceId)),
+            triangleIndex,
+        }))),
     ].sort((left, right) => compareUtf8(left.id, right.id));
     const actors = vehicleDependencies
         .map((dependency) => ({
@@ -282,12 +296,23 @@ export function createLidarGeometry(worldResource, vehicleDependencies = []) {
                 .sort((left, right) => compareUtf8(left.id, right.id)),
         }))
         .sort((left, right) => compareUtf8(left.actorId, right.actorId));
+    const planes = world.groundPlane ? [{
+        id: "lidar:floor",
+        sourceId: world.groundPlane.id,
+        shape: "plane",
+        y: world.groundPlane.y,
+        normal: { x: 0, y: 1, z: 0 },
+        tags: ["unknown"],
+        semanticId: perceptionClassId("unknown"),
+        instanceId: instanceIds.get(String(world.groundPlane.id)),
+    }] : [];
     return canonicalizeSimulationValue({
         kind: LIDAR_GEOMETRY_KIND,
         version: LIDAR_GEOMETRY_VERSION,
         coordinateFrame: world.coordinateFrame,
         staticPrimitives,
         actors,
+        ...(planes.length > 0 ? { planes } : {}),
     });
 }
 
@@ -370,6 +395,25 @@ export function assertLidarGeometryDescription(description) {
             throw new TypeError(`LiDAR primitive "${primitive.id}" is not canonical.`);
         }
     }
+    if (description.planes !== undefined) {
+        if (!Array.isArray(description.planes)) throw new TypeError("LiDAR planes must be an array.");
+        for (const plane of description.planes) {
+            if (plane?.shape !== "plane" || plane.sourceId !== "floor" || plane.id !== "lidar:floor" || plane.y !== 0) {
+                throw new TypeError("LiDAR support planes must describe the floor at y = 0.");
+            }
+            if (!Number.isInteger(plane.instanceId) || plane.instanceId <= 0 || plane.instanceId > 0x00ffffff) {
+                throw new TypeError("LiDAR floor plane has an invalid instance ID.");
+            }
+            const owner = instances.get(plane.instanceId);
+            if (owner && owner !== plane.sourceId) throw new TypeError(`LiDAR instance ID collision between "${owner}" and "${plane.sourceId}".`);
+            instances.set(plane.instanceId, plane.sourceId);
+            const sourceInstance = sourceInstances.get(plane.sourceId);
+            if (sourceInstance && sourceInstance !== plane.instanceId) {
+                throw new TypeError(`LiDAR source "${plane.sourceId}" has inconsistent instance IDs.`);
+            }
+            sourceInstances.set(plane.sourceId, plane.instanceId);
+        }
+    }
     const staticIds = description.staticPrimitives.map((entry) => entry.id);
     if ([...staticIds].sort(compareUtf8).some((id, index) => id !== staticIds[index])) {
         throw new TypeError("Static LiDAR primitives are not in canonical UTF-8 order.");
@@ -380,6 +424,7 @@ export function assertLidarGeometryDescription(description) {
         coordinateFrame: description.coordinateFrame,
         staticPrimitives: description.staticPrimitives,
         actors: description.actors,
+        ...(description.planes !== undefined ? { planes: description.planes } : {}),
     });
     if (simulationSha256(rebuiltDescription) !== simulationSha256(description)) {
         throw new TypeError("LiDAR geometry contains non-canonical fields.");

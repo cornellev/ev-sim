@@ -57,10 +57,14 @@ ED PR changes a contract, hash, gate, or milestone status.
   `geoFrame@1` and Earth source v2, clipped provenance-preserving OSM drafts,
   Add/Replace import commands, explicit Roads-only/Whole-environment
   georegistration, environment-owned bounded Google tile sessions, and
-  asset-backed GLTF `tile@2`), and **ED-09 — Acceptance** (`createObject` and
+  asset-backed GLTF `tile@2`), and   **ED-09 — Acceptance** (`createObject` and
   overlay-only duplicate, windowed asset catalog, write-once source/metrics
   copies, CommandBus MCP apply, default-on chrome, and the acceptance
-  Playwright/axe workflow).
+  Playwright/axe workflow), and **ED-10 — Primitives and floor** (box, sphere,
+  cylinder, cone, and pyramid solids in `document.primitives`, a Floor toolbar
+  toggle for the y = 0 support plane, world description v4 only when either is
+  used, convex collision, LiDAR triangles and an optional floor plane, and
+  `environment_add_primitive` / `environment_set_floor`).
   Existing environments retain their legacy behavior; schema v4 is the only
   writer.
 - Program goal: one consistent interaction model across hierarchy, scene, map,
@@ -77,7 +81,7 @@ ED PR changes a contract, hash, gate, or milestone status.
   that revision and assign one existing perception class. LiDAR authoring
   supports generated meshes and editable primitives.
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-10-01 — generated obstacle proxies size voxels from the mesh**.
+- Last updated: **2026-10-14 — scene primitives and the support-plane floor**.
 
 ## Normative contracts
 
@@ -1031,6 +1035,12 @@ Record in the ledger: focused-suite pass counts, `npm run lint` result,
   `6ca2ece3d5266822a2ceabba72e5f7dd9514789e76757e86f6aedd2730ab9a6a`.
 
 ## Decision log
+
+### 2026-10-14 — Scene primitives and the floor are optional world v4 fields
+
+Box, sphere, cylinder, cone, and pyramid records live in `document.primitives`. The floor is the scalar `document.floor`, omitted while disabled. Both are absent from snapshots, manifests, and world descriptions until used, so existing `worldHash` and LiDAR hashes stay put. When either is present the world description is version 4, a superset of the v1, v2, or v3 description it wraps. Primitive color is appearance. The hashed solid stores center, yaw, size, and one existing perception tag, default `unknown`. No perception class was added.
+
+Sphere tessellation is 24 by 12 and cylinder and cone rings are 24, matching the asset primitive policy. A mesh that fails the outward-convex predicate is replaced by the hull of its vertices for collision, LiDAR, and the editor mesh together. Worlds with primitives select `rapier3d-swept-compound-v2`. A floor alone stays on the prism backend. The floor is a Y-only support constraint on the kinematic origin (`ground:floor`), because the vehicle box is centered on that origin and a solid half-space at y = 0 would stop every vehicle. The visible floor is a 20 km checker at y = 0 and is not pickable. Raycasts use the infinite plane. `supportedScenePrimitiveVersions: [1]` is required to write a document that contains primitives or an enabled floor.
 
 ### 2026-10-02 — Collision proxies are outward convex hulls
 

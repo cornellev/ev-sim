@@ -28,6 +28,7 @@ import {
     ENVIRONMENT_SCHEMA_VERSION,
     ENVIRONMENT_UNGUARDED_WRITE,
     assertNoAssetMetricsDowngrade,
+    assertNoPrimitiveDowngrade,
     assertNoObjectGraphDowngrade,
     assertNoRoadGeometryDowngrade,
     assertNoEditorSourceDowngrade,
@@ -581,6 +582,7 @@ export class StorageService {
                 supportedRoadGeometryVersions: [1, 2],
                 supportedAssetMetricVersions: [1],
                 supportedEditorSourceVersions: [1],
+                supportedScenePrimitiveVersions: [1],
             });
             const committedHash = marketplaceEnvironmentContentHash(committed);
             if (committedHash !== contentHash) throw new Error("Committed marketplace environment content changed during serialization.");
@@ -997,6 +999,7 @@ export class StorageService {
                     supportedRoadGeometryVersions: [1, 2],
                     supportedAssetMetricVersions: [1],
                     supportedEditorSourceVersions: options.supportedEditorSourceVersions ?? [1],
+                    supportedScenePrimitiveVersions: [1],
                 }
                 : parseEnvironmentWriteInput(input);
             return this._commitEnvironment(environmentId, parsed.manifest, {
@@ -1006,6 +1009,7 @@ export class StorageService {
                 supportedRoadGeometryVersions: parsed.supportedRoadGeometryVersions,
                 supportedAssetMetricVersions: parsed.supportedAssetMetricVersions,
                 supportedEditorSourceVersions: parsed.supportedEditorSourceVersions,
+                supportedScenePrimitiveVersions: parsed.supportedScenePrimitiveVersions,
             });
         });
     }
@@ -3893,6 +3897,7 @@ export class StorageService {
         supportedRoadGeometryVersions = [1, 2],
         supportedAssetMetricVersions = [1],
         supportedEditorSourceVersions = [1],
+        supportedScenePrimitiveVersions = [1],
     } = {}) {
         const current = await this._readEnvironment(environmentId);
         const stored = await this._fileStore(this._environmentPath(environmentId), null).read();
@@ -3905,6 +3910,7 @@ export class StorageService {
                 assertNoObjectGraphDowngrade(manifest, current, environmentId);
                 assertNoRoadGeometryDowngrade(manifest, current, supportedRoadGeometryVersions);
                 assertNoAssetMetricsDowngrade(manifest, current, supportedAssetMetricVersions);
+                assertNoPrimitiveDowngrade(manifest, current, supportedScenePrimitiveVersions);
             } catch (error) {
                 throw environmentPolicyError(error);
             }

@@ -393,11 +393,11 @@ test("ED-01 MCP tools round-trip a v4 document, validate the graph, and list obj
         assert.equal(reloaded.document.objects[1].id, added.feature.id);
 
         assert.deepEqual(BUILTIN_OBJECT_TYPE_IDS, [
-            "group", "skybox", "tile", "road", "intersection", "building", "builtin-prop", "asset-instance",
+            "group", "skybox", "tile", "road", "intersection", "building", "builtin-prop", "asset-instance", "primitive", "floor",
         ]);
         assert.deepEqual(objectTypeRegistry.listAll().map(({ typeId, version }) => `${typeId}@${version}`), [
-            "asset-instance@1", "asset-instance@2", "building@1", "builtin-prop@1", "group@1",
-            "intersection@1", "road@1", "skybox@1", "tile@1", "tile@2",
+            "asset-instance@1", "asset-instance@2", "building@1", "builtin-prop@1", "floor@1", "group@1",
+            "intersection@1", "primitive@1", "road@1", "skybox@1", "tile@1", "tile@2",
         ]);
         const revisionBeforeRejectedAdds = reloaded.revision;
         for (const type of ["lamp", "test.marker", "group", "asset-instance"]) {
@@ -411,7 +411,7 @@ test("ED-01 MCP tools round-trip a v4 document, validate the graph, and list obj
         }
 
         const summary = await call("environment_get", { environmentId: "yard" });
-        assert.deepEqual(summary.objectTypes.map((entry) => entry.typeId), ["asset-instance", "building", "builtin-prop", "group", "intersection", "road", "skybox", "tile"]);
+        assert.deepEqual(summary.objectTypes.map((entry) => entry.typeId), ["asset-instance", "building", "builtin-prop", "floor", "group", "intersection", "primitive", "road", "skybox", "tile"]);
         assert.equal(summary.objectTypes.find((entry) => entry.typeId === "builtin-prop").legacyDomain, "features");
         assert.ok(summary.placementCatalog.some((asset) => asset.id === "cone"));
 

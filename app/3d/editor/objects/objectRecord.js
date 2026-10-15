@@ -3,8 +3,9 @@
  *
  * Records overlay the canonical legacy domains: a record for a prop shares the
  * feature's id, a building record shares `buildingId`, road and intersection
- * records share edge and node ids. Only `group`, `skybox`, and `tile` records
- * exist without a legacy counterpart. Geometry never lives here.
+ * records share edge and node ids, and a primitive record shares the solid id.
+ * The floor record shares the scalar id `floor`. Only `group`, `skybox`, and
+ * `tile` records exist without a legacy counterpart. Geometry never lives here.
  */
 
 import { boolean, isPlainObject, stringList } from "./ObjectOptions.js";
@@ -12,6 +13,7 @@ import { boolean, isPlainObject, stringList } from "./ObjectOptions.js";
 export const OBJECT_GRAPH_VERSION = 1;
 export const SKYBOX_OBJECT_ID = "skybox";
 export const TILE_OBJECT_ID = "tile";
+export const FLOOR_OBJECT_ID = "floor";
 
 /**
  * @typedef {{ id: string, scriptId: string, parameters: Record<string, unknown>, seed: number }} ScriptAttachment

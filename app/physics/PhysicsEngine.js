@@ -13,6 +13,32 @@ function bounds(center, half) {
     };
 }
 
+export const SUPPORT_PLANE_EPSILON = 1e-6;
+
+/**
+ * Keep a kinematic origin on or above a horizontal support plane. Only Y
+ * changes. A start already below the plane is lifted. Motion that would
+ * finish below the plane stops on it and keeps its horizontal result.
+ */
+export function supportPlanePosition(previous, candidate, planeY) {
+    const startY = Number(previous?.y) || 0;
+    const endY = Number(candidate?.y) || 0;
+    const position = {
+        x: Number(candidate?.x) || 0,
+        y: endY,
+        z: Number(candidate?.z) || 0,
+    };
+    if (startY < planeY - SUPPORT_PLANE_EPSILON || endY < planeY - SUPPORT_PLANE_EPSILON) {
+        position.y = planeY;
+        return { position, held: true };
+    }
+    if (Math.abs(endY - planeY) <= SUPPORT_PLANE_EPSILON) {
+        position.y = planeY;
+        return { position, held: true };
+    }
+    return { position, held: false };
+}
+
 export function aabbIntersects(left, right) {
     return left.min.x <= right.max.x && left.max.x >= right.min.x
         && left.min.y <= right.max.y && left.max.y >= right.min.y
@@ -261,6 +287,12 @@ export class PhysicsEngine {
                         convex,
                     }))
                 )),
+                ...(this.preparedWorldDescription?.primitives ?? []).map((solid) => ({
+                    id: String(solid.id),
+                    contactId: String(solid.sourceId),
+                    bounds: solid.bounds,
+                    convex: solid,
+                })),
             ]
             : [
                 ...[...(this.data.objects?.()?.boxes?.() || [])]
@@ -346,6 +378,16 @@ export class PhysicsEngine {
                 };
                 state.vehicle.updatePosition?.(clamped);
                 if (!state.vehicle.updatePosition && state.vehicle.position) Object.assign(state.vehicle.position, clamped);
+            }
+            const plane = this.preparedWorldDescription?.groundPlane;
+            if (plane && Number.isFinite(Number(plane.y))) {
+                const current = vector(state.vehicle.position);
+                const supported = supportPlanePosition(state.previous, current, Number(plane.y));
+                if (supported.held) {
+                    state.vehicle.updatePosition?.(supported.position);
+                    if (!state.vehicle.updatePosition && state.vehicle.position) Object.assign(state.vehicle.position, supported.position);
+                    this.pendingContacts.add(`${state.id}|ground:floor`);
+                }
             }
         }
 

@@ -104,7 +104,7 @@ test("ED-01 built-in registration is idempotent and lists every initial type", (
     );
     assert.deepEqual(
         [...BUILTIN_OBJECT_TYPE_IDS].sort(),
-        ["asset-instance", "building", "builtin-prop", "group", "intersection", "road", "skybox", "tile"],
+        ["asset-instance", "building", "builtin-prop", "floor", "group", "intersection", "primitive", "road", "skybox", "tile"],
     );
     // The shared singleton is populated by importing the index module.
     assert.deepEqual(listObjectTypes().map((entry) => entry.typeId).sort(), [...BUILTIN_OBJECT_TYPE_IDS].sort());

@@ -128,6 +128,20 @@ export function pickMapTarget(worldPoint, documentSnapshot, viewport, layers, sc
             }
         }
 
+        let nearestPrimitive = null;
+        let nearestPrimitiveDistance = radiusWorld;
+        for (const primitive of documentSnapshot.primitives ?? []) {
+            const radius = Math.max(Number(primitive.size?.x) || 1, Number(primitive.size?.z) || 1) * 0.5;
+            const distance = Math.hypot(primitive.position.x - worldPoint.x, primitive.position.z - worldPoint.z);
+            if (distance <= Math.max(nearestPrimitiveDistance, radius) && distance <= nearestPrimitiveDistance + radius) {
+                nearestPrimitiveDistance = distance;
+                nearestPrimitive = primitive;
+            }
+        }
+        if (nearestPrimitive && nearestPrimitiveDistance <= radiusWorld + Math.max(Number(nearestPrimitive.size?.x) || 1, Number(nearestPrimitive.size?.z) || 1) * 0.5) {
+            return { type: "primitive", id: nearestPrimitive.id };
+        }
+
         if (nearestFeature) {
             return { type: "feature", id: nearestFeature.id };
         }

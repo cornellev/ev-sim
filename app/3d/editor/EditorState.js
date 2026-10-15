@@ -25,6 +25,7 @@ export const MAP_TOOLS = Object.freeze({
     BUILDING_RECT: "building-rect",
     FEATURE_PLACE: "feature-place",
     ASSET_PLACE: "asset-place",
+    PRIMITIVE_PLACE: "primitive-place",
 });
 
 export const MAP_SELECTION_TYPES = Object.freeze({
@@ -33,6 +34,7 @@ export const MAP_SELECTION_TYPES = Object.freeze({
     ROAD: "road",
     INTERSECTION: "intersection",
     ASSET: "asset",
+    PRIMITIVE: "primitive",
 });
 
 export const EDITOR_MODES = Object.freeze({
@@ -395,6 +397,7 @@ export class EditorState {
             this.map.activeFeatureType = null;
         }
         if (tool !== MAP_TOOLS.ASSET_PLACE && this.activePlacement?.kind === "catalog") this.activePlacement = null;
+        if (tool !== MAP_TOOLS.PRIMITIVE_PLACE && this.activePlacement?.kind === "primitive") this.activePlacement = null;
         this.notify();
     }
 
@@ -494,13 +497,18 @@ export class EditorState {
                 label: asset.label ?? asset.name,
                 ...(asset.obstacle === true ? { obstacle: true, semantic: String(asset.semantic ?? "unknown") } : {}),
             }
-            : { kind: "builtin", id: String(asset.id), label: asset.label };
+            : asset.kind === "primitive"
+                ? { kind: "primitive", id: String(asset.id), label: asset.label }
+                : { kind: "builtin", id: String(asset.id), label: asset.label };
         this.activePlacement = placement;
         if (placement) {
             this.activeTool = EDITOR_TOOLS.PLACE;
             if (this.editorMode === EDITOR_MODES.MAP) {
                 if (placement.kind === "catalog") this.map.activeMapTool = MAP_TOOLS.ASSET_PLACE;
-                else {
+                else if (placement.kind === "primitive") {
+                    this.map.activeMapTool = MAP_TOOLS.PRIMITIVE_PLACE;
+                    this.map.activeFeatureType = null;
+                } else {
                     this.map.activeMapTool = MAP_TOOLS.FEATURE_PLACE;
                     this.map.activeFeatureType = placement.id;
                 }

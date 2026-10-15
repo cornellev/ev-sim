@@ -42,6 +42,7 @@ export const ENVIRONMENT_ROAD_GEOMETRY_INVALID = "ENVIRONMENT_ROAD_GEOMETRY_INVA
 export const ENVIRONMENT_ROAD_GEOMETRY_DOWNGRADE = "ENVIRONMENT_ROAD_GEOMETRY_DOWNGRADE";
 export const ENVIRONMENT_ASSET_METRICS_INVALID = "ENVIRONMENT_ASSET_METRICS_INVALID";
 export const ENVIRONMENT_ASSET_METRICS_DOWNGRADE = "ENVIRONMENT_ASSET_METRICS_DOWNGRADE";
+export const ENVIRONMENT_PRIMITIVE_DOWNGRADE = "ENVIRONMENT_PRIMITIVE_DOWNGRADE";
 export const ENVIRONMENT_EDITOR_SOURCE_INVALID = "ENVIRONMENT_EDITOR_SOURCE_INVALID";
 export const ENVIRONMENT_EDITOR_SOURCE_DOWNGRADE = "ENVIRONMENT_EDITOR_SOURCE_DOWNGRADE";
 export const EDITOR_SOURCE_VERSION = 1;
@@ -330,6 +331,9 @@ export function parseEnvironmentWriteEnvelope(body) {
         supportedEditorSourceVersions: Array.isArray(body.supportedEditorSourceVersions)
             ? [...new Set(body.supportedEditorSourceVersions.map(Number).filter(Number.isInteger))]
             : [],
+        supportedScenePrimitiveVersions: Array.isArray(body.supportedScenePrimitiveVersions)
+            ? [...new Set(body.supportedScenePrimitiveVersions.map(Number).filter(Number.isInteger))]
+            : [],
     };
 }
 
@@ -443,6 +447,30 @@ export function assertNoEditorSourceDowngrade(incoming, current, capabilities = 
         }
     }
     if (issues.length > 0) fail(ENVIRONMENT_EDITOR_SOURCE_INVALID, issues[0].message, issues);
+}
+
+function scenePrimitiveContent(document) {
+    return (Array.isArray(document?.primitives) && document.primitives.length > 0) || document?.floor?.enabled === true;
+}
+
+/** Reject writers that would drop stored primitives or an enabled floor. */
+export function assertNoPrimitiveDowngrade(incoming, current, capabilities = []) {
+    const incomingDocument = incoming?.document;
+    if (incomingDocument === undefined || incomingDocument === null) return;
+    const supported = new Set((capabilities ?? []).map(Number));
+    const fail = (message) => {
+        const error = new Error(message);
+        error.code = ENVIRONMENT_PRIMITIVE_DOWNGRADE;
+        error.statusCode = 409;
+        throw error;
+    };
+    if (scenePrimitiveContent(current?.document) && !scenePrimitiveContent(incomingDocument)) {
+        fail("This environment contains scene primitives or an enabled floor; full-document writes must preserve them.");
+    }
+    if (!scenePrimitiveContent(incomingDocument)) return;
+    if (!supported.has(1)) {
+        fail("Writing scene primitives or a floor requires supportedScenePrimitiveVersions to include 1.");
+    }
 }
 
 /** Reject writers that do not round-trip the optional ED-07 metric domain. */

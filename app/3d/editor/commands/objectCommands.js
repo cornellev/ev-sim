@@ -31,6 +31,7 @@ import { BUILTIN_PROP_TYPE_ID } from "../objects/types/builtinProp.js";
 import { INTERSECTION_TYPE_ID } from "../objects/types/intersection.js";
 import { ROAD_TYPE_ID } from "../objects/types/road.js";
 import { ASSET_INSTANCE_TYPE_ID } from "../objects/types/assetInstance.js";
+import { PRIMITIVE_TYPE_ID } from "../objects/types/primitive.js";
 import {
     OPTIONS_ISSUE_CODES,
     fieldPathKey,
@@ -70,6 +71,7 @@ const LEGACY_DUPLICABLE_TYPE_IDS = new Set([
     ROAD_TYPE_ID,
     INTERSECTION_TYPE_ID,
     ASSET_INSTANCE_TYPE_ID,
+    PRIMITIVE_TYPE_ID,
 ]);
 
 /** Shared command/presentation policy for one record; callers check descendants. */
@@ -437,7 +439,7 @@ export function deleteObjects({ objectIds = [], label = "Delete" } = {}) {
 
             const document = ctx.document;
             const byType = (typeId) => closure.filter((id) => byId.get(id).typeId === typeId);
-            const removed = { intersections: [], roads: [], buildings: [], features: [], groups: [] };
+            const removed = { intersections: [], roads: [], buildings: [], features: [], primitives: [], groups: [] };
             for (const id of byType(INTERSECTION_TYPE_ID)) {
                 if (document.getNode(id)) {
                     const result = removeIntersectionNode(document, id, { notify: false });
@@ -465,6 +467,10 @@ export function deleteObjects({ objectIds = [], label = "Delete" } = {}) {
                     if (!result.ok) return commandFailure(commandIssue(COMMAND_ISSUE_CODES.MUTATION_FAILED, result.error, { objectId: id }));
                 }
                 removed.features.push(id);
+            }
+            for (const id of byType(PRIMITIVE_TYPE_ID)) {
+                document.replaceDomainRecords("primitives", [[id, null]], { notify: false });
+                removed.primitives.push(id);
             }
             removed.groups = byType(GROUP_TYPE_ID);
             removeObjectRecords(document, closure, { notify: false });
@@ -574,6 +580,11 @@ export function duplicateObjects({ objectIds = [], label = "Duplicate" } = {}) {
                     newId = createId("feature");
                     const added = addFeature(document, { ...structuredClone(feature), id: newId }, { notify: false });
                     if (!added.ok) throw new Error(added.error);
+                } else if (record.typeId === PRIMITIVE_TYPE_ID) {
+                    const primitive = document.primitives.find((entry) => entry.id === id);
+                    if (!primitive) throw new Error(`Primitive "${id}" is missing.`);
+                    newId = createId("primitive");
+                    document.replaceDomainRecords("primitives", [[newId, { ...structuredClone(primitive), id: newId }]], { notify: false });
                 } else if (record.typeId === BUILDING_TYPE_ID) {
                     const building = document.getBuilding(id);
                     if (!building) throw new Error(`Building "${id}" is missing.`);

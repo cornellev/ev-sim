@@ -13,6 +13,7 @@ import { hasErrorIssue, isPlainObject, issue, text, OPTIONS_ISSUE_CODES } from "
 import { objectTypeRegistry } from "./ObjectTypeRegistry.js";
 import { TRANSFORM_ISSUE_CODES } from "./transformDelta.js";
 import {
+    FLOOR_OBJECT_ID,
     OBJECT_GRAPH_VERSION,
     SKYBOX_OBJECT_ID,
     STANDARD_COMPONENT_KEYS,
@@ -23,11 +24,14 @@ import {
 } from "./objectRecord.js";
 import { BUILDING_TYPE_ID } from "./types/building.js";
 import { BUILTIN_PROP_TYPE_ID, getBuiltinPropAsset } from "./types/builtinProp.js";
+import { FLOOR_TYPE_ID } from "./types/floor.js";
 import { GROUP_TYPE_ID } from "./types/group.js";
 import { INTERSECTION_TYPE_ID, isJunctionNode } from "./types/intersection.js";
+import { PRIMITIVE_TYPE_ID } from "./types/primitive.js";
 import { ROAD_TYPE_ID } from "./types/road.js";
 import { SKYBOX_TYPE_ID } from "./types/skybox.js";
 import { TILE_TYPE_ID } from "./types/tile.js";
+import { primitiveLabel } from "../../../simulation/world/PrimitiveRecords.js";
 
 export const OBJECT_ISSUE_CODES = Object.freeze({
     GRAPH_VERSION: "graph.version.unsupported",
@@ -94,14 +98,20 @@ export function legacyIndex(snapshot = {}) {
     for (const feature of Array.isArray(snapshot.features) ? snapshot.features : []) {
         if (feature?.id !== undefined && feature?.id !== null) features.set(String(feature.id), feature);
     }
+    const primitives = new Map();
+    for (const primitive of Array.isArray(snapshot.primitives) ? snapshot.primitives : []) {
+        if (primitive?.id !== undefined && primitive?.id !== null) primitives.set(String(primitive.id), primitive);
+    }
     return {
         nodes,
         edges,
         junctions,
         buildings,
         features,
+        primitives,
         degree,
         earth: isPlainObject(snapshot.earth) ? snapshot.earth : null,
+        floorEnabled: snapshot.floor?.enabled === true,
     };
 }
 
@@ -120,6 +130,10 @@ export function legacyRecordFor(index, definition, id, context = {}) {
             return id === TILE_OBJECT_ID ? index.earth : null;
         case "sky":
             return id === SKYBOX_OBJECT_ID ? (context.sky ?? {}) : null;
+        case "primitives":
+            return index.primitives?.get(id) ?? null;
+        case "floor":
+            return id === FLOOR_OBJECT_ID && index.floorEnabled ? { enabled: true } : null;
         default:
             return null;
     }
@@ -128,7 +142,9 @@ export function legacyRecordFor(index, definition, id, context = {}) {
 /** The typeId a legacy id implies, or null when the id is not a legacy id. */
 export function legacyTypeIdFor(index, id) {
     if (id === SKYBOX_OBJECT_ID) return SKYBOX_TYPE_ID;
+    if (id === FLOOR_OBJECT_ID) return index.floorEnabled ? FLOOR_TYPE_ID : null;
     if (id === TILE_OBJECT_ID) return index.earth ? TILE_TYPE_ID : null;
+    if (index.primitives?.has(id)) return PRIMITIVE_TYPE_ID;
     if (index.features.has(id)) return BUILTIN_PROP_TYPE_ID;
     if (index.buildings.has(id)) return BUILDING_TYPE_ID;
     if (index.edges.has(id)) return ROAD_TYPE_ID;
@@ -162,6 +178,11 @@ export function deriveObjectGraph(snapshot = {}, { startOrder = 0 } = {}) {
         const feature = index.features.get(id);
         push(id, BUILTIN_PROP_TYPE_ID, getBuiltinPropAsset(feature?.type)?.label ?? String(feature?.type ?? "Prop"));
     }
+    for (const id of sortedIds(index.primitives)) {
+        const primitive = index.primitives.get(id);
+        push(id, PRIMITIVE_TYPE_ID, primitiveLabel(primitive?.shape));
+    }
+    if (index.floorEnabled) push(FLOOR_OBJECT_ID, FLOOR_TYPE_ID, "Floor");
     return records;
 }
 
@@ -439,6 +460,8 @@ export function validateObjectRecords(records, index, registry = objectTypeRegis
         ...index.junctions.keys(),
         ...index.buildings.keys(),
         ...index.features.keys(),
+        ...index.primitives.keys(),
+        ...(index.floorEnabled ? [FLOOR_OBJECT_ID] : []),
     ];
     for (const id of expected) {
         if (!byId.has(id)) {

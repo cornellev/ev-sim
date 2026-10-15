@@ -30,6 +30,8 @@ export const PLAN_STEP_OPS = Object.freeze([
     "set-sky",
     "set-road-geometry",
     "set-node-record",
+    "set-primitive-record",
+    "set-floor",
 ]);
 
 function applyEarthSource(document, patch) {
@@ -98,6 +100,16 @@ export function applyPlanSteps(document, steps, runtime = { notify: false }) {
             }
         } else if (step.op === "set-node-record") {
             result = updateRoadNode(document, step.nodeId, step.patch ?? {}, quiet);
+        } else if (step.op === "set-primitive-record") {
+            const existing = document.primitives.find((record) => record.id === String(step.primitiveId));
+            if (!existing) result = { ok: false, error: `Primitive "${step.primitiveId}" does not exist.` };
+            else {
+                document.replaceDomainRecords("primitives", [[step.primitiveId, { ...step.record, id: String(step.primitiveId) }]], { notify: false });
+                result = { ok: true };
+            }
+        } else if (step.op === "set-floor") {
+            document.setScalar("floor", step.enabled === true ? { enabled: true } : null, { notify: false });
+            result = { ok: true };
         }
         if (!result?.ok) {
             return {

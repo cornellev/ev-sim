@@ -14,6 +14,7 @@ export const CHANGE_DOMAINS = Object.freeze([
     "roads.turnRules",
     "buildings",
     "features",
+    "primitives",
     "objects",
     "assetMetrics.definitions",
 ]);
@@ -26,6 +27,7 @@ export const CHANGE_SCALARS = Object.freeze([
     "featuresAuthored",
     "chunkSize",
     "sky",
+    "floor",
     "roadGeometryVersion",
     "assetMetricsVersion",
 ]);
@@ -49,6 +51,7 @@ export function domainKeyOf(domain, record) {
         case "roads.nodes":
         case "roads.edges":
         case "features":
+        case "primitives":
         case "objects":
             return record.id === undefined || record.id === null ? null : String(record.id);
         case "assetMetrics.definitions":
@@ -75,6 +78,8 @@ export function domainRecordsOf(snapshot, domain) {
             return snapshot?.buildings ?? [];
         case "features":
             return snapshot?.features ?? [];
+        case "primitives":
+            return snapshot?.primitives ?? [];
         case "objects":
             return snapshot?.objects ?? [];
         case "assetMetrics.definitions":

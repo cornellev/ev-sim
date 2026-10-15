@@ -349,6 +349,32 @@ export function handleBuildingRectUp({ editor, data }) {
     return { record: result.result.building };
 }
 
+export function handlePrimitivePlace({ worldPoint, editor, data }) {
+    const shape = editor.snapshot().activePlacement?.kind === "primitive" ? editor.snapshot().activePlacement.id : null;
+    if (!shape) return null;
+    const snapped = applySnap(worldPoint, editor);
+    const result = busOf(data).execute(legacyCommands.addPrimitive({
+        shape,
+        x: snapped.x,
+        z: snapped.z,
+        name: editor.snapshot().activePlacement.label,
+    }));
+    if (!result.ok) return null;
+    selectionOf(data)?.select(result.result.objectId);
+    data.simulation()?.render?.();
+    return { record: result.result.primitive, objectId: result.result.objectId };
+}
+
+export function beginPrimitiveDrag({ document, data, primitiveId, worldPoint = null }) {
+    const primitive = document.primitives.find((entry) => entry.id === primitiveId);
+    if (!primitive) return null;
+    selectionOf(data)?.select(primitiveId);
+    const begun = busOf(data).beginGesture({ objectIds: [primitiveId], label: "Move primitive" });
+    if (!begun.ok) return null;
+    const start = worldPoint ? { x: worldPoint.x, z: worldPoint.z } : { x: primitive.position.x, z: primitive.position.z };
+    return { type: "move-primitive", primitiveId, gestureId: begun.gestureId, start };
+}
+
 export function handleFeaturePlace({ worldPoint, editor, data }) {
     const featureType = editor.snapshot().map.activeFeatureType;
     if (!featureType) return null;

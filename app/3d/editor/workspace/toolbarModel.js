@@ -5,6 +5,7 @@
  * Tabler icons and renders the groups in order.
  */
 
+import { setFloor } from "../commands/legacyCommands.js";
 import { EDITOR_LAYERS, EDITOR_MODES, EDITOR_TOOLS, MAP_TOOLS } from "../EditorState.js";
 import { selectionCanDrapeRoads } from "../document/roadDrapeTargets.js";
 
@@ -15,6 +16,7 @@ export const TOOLBAR_ACTIONS = Object.freeze({
     SET_TRANSFORM_SPACE: "set-transform-space",
     TOGGLE_SNAP: "toggle-snap",
     TOGGLE_GRID: "toggle-grid",
+    TOGGLE_FLOOR: "toggle-floor",
     TOGGLE_CHUNKS: "toggle-chunks",
     TOGGLE_BOUNDS: "toggle-bounds",
     TOGGLE_ROAD_HANDLES: "toggle-road-handles",
@@ -154,6 +156,14 @@ export function buildToolbarModel({ editorSnapshot, busSnapshot = null, selectio
             active: view === "map" ? editor.map?.gridVisible !== false : editor.sceneGridVisible !== false,
             action: { type: TOOLBAR_ACTIONS.TOGGLE_GRID },
         }),
+        item({
+            id: "overlay-floor",
+            label: "Floor",
+            icon: "floor",
+            kind: "toggle",
+            active: document?.floor?.enabled === true,
+            action: { type: TOOLBAR_ACTIONS.TOGGLE_FLOOR },
+        }),
     ];
     if (view === "scene") {
         overlays.push(item({ id: "overlay-chunks", label: "Chunks", icon: "chunks", kind: "toggle", active: editor.chunkOutlinesVisible !== false, action: { type: TOOLBAR_ACTIONS.TOGGLE_CHUNKS } }));
@@ -216,6 +226,12 @@ export function runToolbarAction(data, action, { focus = null, drapeRoadsToGlb =
             const snapshot = editor?.snapshot?.();
             if (snapshot?.editorMode === EDITOR_MODES.MAP) editor?.setMapSnapEnabled?.(!(snapshot.map?.snapEnabled === true));
             else editor?.setTransformSnapEnabled?.(!(snapshot?.transformSnap?.enabled === true));
+            break;
+        }
+        case TOOLBAR_ACTIONS.TOGGLE_FLOOR: {
+            const document = data?.environment?.()?.getDocument?.();
+            const enabled = document?.floor?.enabled === true;
+            data?.commands?.()?.execute?.(setFloor({ enabled: !enabled }));
             break;
         }
         case TOOLBAR_ACTIONS.TOGGLE_GRID: {

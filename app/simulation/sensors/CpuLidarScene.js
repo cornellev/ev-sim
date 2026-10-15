@@ -108,6 +108,25 @@ function hitOrder(left, right) {
         || left.triangleIndex - right.triangleIndex;
 }
 
+function raycastPlanes(planes, ray, range, near = CPU_LIDAR_NEAR_METERS) {
+    const hits = [];
+    for (const plane of planes ?? []) {
+        const denom = ray.direction.y;
+        if (Math.abs(denom) <= 1e-7) continue;
+        const distance = (plane.y - ray.origin.y) / denom;
+        if (distance < near || distance > range) continue;
+        hits.push({
+            primitiveId: plane.id,
+            triangleIndex: 0,
+            semanticId: plane.semanticId,
+            instanceId: plane.instanceId,
+            distance,
+            incidence: Math.abs(denom),
+        });
+    }
+    return hits;
+}
+
 function raycastIndex(index, ray, range, near = CPU_LIDAR_NEAR_METERS) {
     if (!index) return [];
     return index.bvh.raycast(ray, DoubleSide, near, range)
@@ -127,6 +146,7 @@ export class CpuLidarScene {
     constructor(resource) {
         const description = assertLidarGeometryResource(resource);
         this.staticIndex = createIndex(description.staticPrimitives);
+        this.planes = description.planes ?? [];
         this.actorIndexes = new Map(description.actors.map((actor) => [
             actor.actorId,
             createIndex(actor.primitives),
@@ -167,6 +187,7 @@ export class CpuLidarScene {
                 const candidates = [
                     ...raycastIndex(this.staticIndex, worldRay, maxRange, minRange),
                     ...raycastIndex(this.episodeIndex, worldRay, maxRange, minRange),
+                    ...raycastPlanes(this.planes, worldRay, maxRange, minRange),
                 ];
                 for (const [actorId, index] of this.actorIndexes) {
                     if (actorId === config.parentId || !index) continue;
@@ -219,6 +240,7 @@ export class CpuLidarScene {
                 const candidates = [
                     ...raycastIndex(this.staticIndex, worldRay, range),
                     ...raycastIndex(this.episodeIndex, worldRay, range),
+                    ...raycastPlanes(this.planes, worldRay, range),
                 ];
                 for (const [actorId, index] of this.actorIndexes) {
                     if (actorId === config.parentId || !index) continue;

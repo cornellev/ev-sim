@@ -14,6 +14,7 @@ import {
     validateObjectGraph,
 } from "../../app/3d/editor/objects/index.js";
 import { environmentObjectTypeUnsupportedError } from "../storage/StorageErrors.js";
+import { PRIMITIVE_SHAPES } from "../../app/simulation/world/PrimitiveRecords.js";
 import { storageEvents } from "./events.js";
 import { fail, maybeFailStrict, ok } from "./toolResult.js";
 import { applyObjectScript } from "../../app/3d/editor/scripts/applyObjectScript.js";
@@ -88,6 +89,7 @@ export function registerEnvironmentTools(server, storage) {
                     name: name ?? id,
                     templateId: templateId ?? "blank",
                     supportedEditorSourceVersions: [1],
+                    supportedScenePrimitiveVersions: [1],
                 });
                 storageEvents.publish({ domain: "environment", id, action: "created", revision: manifest.revision });
                 return ok({ ok: true, environment: summarizeManifest(manifest) });
@@ -514,6 +516,70 @@ export function registerEnvironmentTools(server, storage) {
     );
 
     server.registerTool(
+        "environment_add_primitive",
+        {
+            title: "Add primitive",
+            description: "Add a box, sphere, cylinder, cone, or pyramid. The solid rests on y = 0 unless y is set.",
+            inputSchema: {
+                environmentId: z.string().min(1),
+                shape: z.enum(PRIMITIVE_SHAPES),
+                x: z.number().optional(),
+                y: z.number().optional(),
+                z: z.number().optional(),
+                rotationY: z.number().optional(),
+                size: z.object({ x: z.number(), y: z.number(), z: z.number() }).optional(),
+                color: z.string().optional(),
+                name: z.string().optional(),
+                parentId: z.string().min(1).nullable().optional(),
+            },
+        },
+        async ({ environmentId, shape, x, y, z, rotationY, size, color, name, parentId }) => {
+            try {
+                const { manifest, document, service } = await loadDocument(storage, environmentId);
+                const result = service.run("addPrimitive", {
+                    shape,
+                    x: x ?? 0,
+                    y,
+                    z: z ?? 0,
+                    rotationY: rotationY ?? 0,
+                    size,
+                    color,
+                    name,
+                    parentId: parentId ?? null,
+                });
+                if (!result.ok) return fail(result.error ?? "Could not add primitive.", { issues: result.issues });
+                await saveDocument(storage, environmentId, manifest, document);
+                return ok({ ok: true, primitive: result.result.primitive, objectId: result.result.objectId });
+            } catch (error) {
+                return fail(error);
+            }
+        },
+    );
+
+    server.registerTool(
+        "environment_set_floor",
+        {
+            title: "Set floor",
+            description: "Enable or disable the scene floor. The floor is a support plane at y = 0.",
+            inputSchema: {
+                environmentId: z.string().min(1),
+                enabled: z.boolean(),
+            },
+        },
+        async ({ environmentId, enabled }) => {
+            try {
+                const { manifest, document, service } = await loadDocument(storage, environmentId);
+                const result = service.run("setFloor", { enabled });
+                if (!result.ok) return fail(result.error ?? "Could not set the floor.", { issues: result.issues });
+                await saveDocument(storage, environmentId, manifest, document);
+                return ok({ ok: true, enabled: result.result.enabled });
+            } catch (error) {
+                return fail(error);
+            }
+        },
+    );
+
+    server.registerTool(
         "environment_move_object",
         {
             title: "Move placed object",
@@ -779,6 +845,7 @@ async function saveDocument(storage, environmentId, manifest, document) {
         supportedRoadGeometryVersions: [1, 2],
         supportedAssetMetricVersions: [1],
         supportedEditorSourceVersions: [1],
+        supportedScenePrimitiveVersions: [1],
     });
     storageEvents.publish({
         domain: "environment",

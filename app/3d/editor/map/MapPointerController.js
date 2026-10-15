@@ -3,6 +3,7 @@ import { MAP_SELECTION_TYPES, MAP_TOOLS } from "../EditorState.js";
 import { pickMapTarget } from "./mapHitTest.js";
 import {
     beginFeatureDrag,
+    beginPrimitiveDrag,
     beginAssetDrag,
     beginNodeDrag,
     beginRoadDrag,
@@ -17,6 +18,7 @@ import {
     handleBuildingRectMove,
     handleBuildingRectUp,
     handleFeaturePlace,
+    handlePrimitivePlace,
     handleIntersectionPlace,
     handleRoadPenClick,
     panViewport,
@@ -151,6 +153,11 @@ export class MapPointerController {
             return true;
         }
 
+        if (tool === MAP_TOOLS.PRIMITIVE_PLACE) {
+            handlePrimitivePlace({ worldPoint: world, editor, data });
+            return true;
+        }
+
         if (tool === MAP_TOOLS.ASSET_PLACE) {
             const controller = environment.toolController?.assetPlacementController;
             controller?.updatePoint?.(world, { map: true });
@@ -194,6 +201,14 @@ export class MapPointerController {
                 selection?.select(pick.id);
                 this.activeInteraction = pendingObject(
                     () => beginAssetDrag({ document, data, objectId: pick.id, worldPoint: worldStart }),
+                );
+                return true;
+            }
+
+            if (pick?.type === MAP_SELECTION_TYPES.PRIMITIVE && !isAdditive(event)) {
+                selection?.select(pick.id);
+                this.activeInteraction = pendingObject(
+                    () => beginPrimitiveDrag({ document, data, primitiveId: pick.id, worldPoint: worldStart }),
                 );
                 return true;
             }
@@ -282,7 +297,7 @@ export class MapPointerController {
             return;
         }
 
-        if (this.activeInteraction?.type === "move-feature") {
+        if (this.activeInteraction?.type === "move-feature" || this.activeInteraction?.type === "move-primitive") {
             const world = getWorldFromEvent(event);
             if (world) updateFeatureDrag({ interaction: this.activeInteraction, editor, data, worldPoint: world });
             return;
@@ -386,7 +401,7 @@ export class MapPointerController {
             return;
         }
 
-        if (interaction.type === "move-feature") {
+        if (interaction.type === "move-feature" || interaction.type === "move-primitive") {
             finishFeatureDrag({ interaction, editor, data, worldPoint: world });
             return;
         }

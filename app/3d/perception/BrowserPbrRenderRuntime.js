@@ -583,6 +583,18 @@ export class BrowserPbrRenderRuntime {
                 this._addRoadAppearance(primitive);
             }
         }
+        for (const plane of analyticTruth.planes ?? []) {
+            const geometry = new THREE.PlaneGeometry(20000, 20000);
+            geometry.rotateX(-Math.PI / 2);
+            const material = new THREE.MeshBasicMaterial({
+                color: semanticColor(plane.semanticId),
+                side: THREE.DoubleSide,
+            });
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.name = plane.id;
+            mesh.position.y = plane.y;
+            this.analyticScene.add(mesh);
+        }
         for (const actor of analyticTruth.actors) {
             const analyticGroup = new THREE.Group();
             analyticGroup.name = `cev-sim.analytic-actor:${actor.actorId}`;
