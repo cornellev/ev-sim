@@ -14,7 +14,7 @@ import { rep103PoseToThree } from "../../autonomy/CoordinateFrames.js";
 export class ManifestImu extends Device {
     constructor(config, options = {}) {
         const threePose = rep103PoseToThree(config.pose);
-        super("Manifest IMU", {
+        super(config.id || "Manifest IMU", {
             telemetryId: config.id,
             position: new THREE.Vector3(threePose.position.x, threePose.position.y, threePose.position.z),
             rotation: new THREE.Euler(threePose.rotation.x, threePose.rotation.y, threePose.rotation.z, threePose.rotation.order || "XYZ"),

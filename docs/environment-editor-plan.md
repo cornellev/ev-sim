@@ -1036,6 +1036,10 @@ Record in the ledger: focused-suite pass counts, `npm run lint` result,
 
 ## Decision log
 
+### 2026-10-15 — Catalog meshes stay visible in Simulation
+
+Catalog `asset-instance` meshes load in Simulation as well as the environment editor. Entering Simulation no longer calls `setEditorAssetsEnabled(false)`. The registry entry stays `editorOnly`, so these meshes still skip chunks, bake, persistence, and `worldHash`. Collision and LiDAR continue to use the published metric proxies. Road authoring handles stay hidden in Simulation. This supersedes the 2026-09-15 loading-screen note that Simulation loaded only GLTF Tiles. Schema v4, world description versions, and fixture hashes are unchanged. This is not an ED milestone.
+
 ### 2026-10-14 — Scene primitives and the floor are optional world v4 fields
 
 Box, sphere, cylinder, cone, and pyramid records live in `document.primitives`. The floor is the scalar `document.floor`, omitted while disabled. Both are absent from snapshots, manifests, and world descriptions until used, so existing `worldHash` and LiDAR hashes stay put. When either is present the world description is version 4, a superset of the v1, v2, or v3 description it wraps. Primitive color is appearance. The hashed solid stores center, yaw, size, and one existing perception tag, default `unknown`. No perception class was added.

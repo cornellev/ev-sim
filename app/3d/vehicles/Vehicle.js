@@ -86,7 +86,7 @@ export class Vehicle {
         this.sceneObject.position.copy(this.position).add(this.offset ? this.offset : new THREE.Vector3(0, 0, 0));
 
         for (let device of this.devices) {
-            device.onParentUpdate();
+            device.onParentUpdate?.();
         }
     }
 
@@ -99,7 +99,7 @@ export class Vehicle {
         this.sceneObject.rotation.copy(this.rotation);
         
         for (let device of this.devices) {
-            device.onParentUpdate();
+            device.onParentUpdate?.();
         }
     }
 
@@ -149,6 +149,21 @@ export class Vehicle {
             acceleration: vector(this.acceleration),
             steeringAngle: Number(this.steeringAngle) || 0,
         };
+    }
+
+    /**
+     * Drop sensors created from the vehicle document. A run that inherits
+     * those mounts uses the rig device instead of a disabled twin.
+     */
+    releaseVehicleOwnedDevices() {
+        const deviceDatabase = this.db?.getParent?.()?.devices?.();
+        for (const device of [...this.devices]) {
+            if (!device.vehicleOwned) continue;
+            if (!deviceDatabase?.removeDevice?.(device)) {
+                this.devices = this.devices.filter((candidate) => candidate !== device);
+                device.dispose?.();
+            }
+        }
     }
 
     dispose() {

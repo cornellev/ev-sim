@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { IconPower } from "@tabler/icons-react";
 import { DeviceOverlay } from "./DeviceOverlay";
 import { planActorId, setPlanSelection, subscribePlanSelection } from "../../spatial/planview/selection.js";
+import { deviceHierarchyLabel } from "./deviceHierarchyLabel.js";
 
 const EMPTY_VEHICLES = [];
 const HIERARCHY_CONTROL_LOCK = "simulation-vehicle-hierarchy";
@@ -123,15 +124,16 @@ export function VehicleOverlay({ data }) {
                                                 const selected =
                                                     selectedDeviceRef?.vehicleIndex === vehicleIndex &&
                                                     selectedDeviceRef?.deviceIndex === deviceIndex;
+                                                const deviceLabel = deviceHierarchyLabel(device);
 
                                                 return (
                                                     <button
-                                                        key={`${device.name}_${vehicleIndex}_${deviceIndex}`}
+                                                        key={`${deviceLabel}_${vehicleIndex}_${deviceIndex}`}
                                                         type="button"
                                                         className="sf-device-hierarchy-row"
                                                         data-enabled={deviceEnabled}
                                                         data-selected={selected || undefined}
-                                                        aria-label={`${device.name}, ${deviceEnabled ? "enabled" : "disabled"}`}
+                                                        aria-label={`${deviceLabel}, ${deviceEnabled ? "enabled" : "disabled"}`}
                                                         onClick={() => {
                                                             setPlanSelection(actorId);
                                                             const isSameOpen =
@@ -152,7 +154,7 @@ export function VehicleOverlay({ data }) {
                                                         }}
                                                     >
                                                         <IconPower className="sf-device-hierarchy-row__state" size={13} stroke={1.9} aria-hidden="true" />
-                                                        <span className="sf-device-hierarchy-row__name">{device.name}</span>
+                                                        <span className="sf-device-hierarchy-row__name">{deviceLabel}</span>
                                                     </button>
                                                 );
                                             })}

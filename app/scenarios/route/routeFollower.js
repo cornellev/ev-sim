@@ -20,9 +20,25 @@ import {
 
 const EPSILON = 1e-9;
 const LOOKAHEAD_GAIN = 0.6;
+/** Straight-approach aim distance, also the "near the finish" stop window. */
 const LOOKAHEAD_MIN_M = 4;
 const LOOKAHEAD_MAX_M = 12;
+/** Do not aim closer than this, even when the chord is cutting a bend. */
+const LOOKAHEAD_CURVE_FLOOR_M = 0.8;
+/** Shrink the aim point when the path leaves its chord by more than this. */
+const CHORD_LATERAL_BUDGET_M = 0.35;
+/**
+ * Upcoming bend used to shorten the aim point. A 4 m chord through a shallow
+ * hook can still sit inside the lateral budget, so curvature over this window
+ * pulls the aim point in before the car is committed to the chord.
+ */
+const LOOKAHEAD_CURVATURE_HORIZON_M = 4;
+/** Aim distance ≈ this / κ, then clamped to the speed window and the curve floor. */
+const LOOKAHEAD_CURVATURE_GAIN = 1.2;
 const CURVATURE_PREVIEW_MIN_M = 12;
+/** Heading change is measured over this length so one short sample cannot set κ. */
+const CURVATURE_BASELINE_M = 1;
+const CURVATURE_MIN_SPAN_M = 0.5;
 const CURVATURE_SPEED_GAIN = 1.2;
 const MIN_TURN_SPEED_MPS = 0.35;
 const STOP_DISTANCE_M = 0.15;
@@ -46,36 +62,86 @@ export function resolveFollowerKinematics(candidates = []) {
     return { ...FOLLOW_PATH_DEFAULT_KINEMATICS };
 }
 
+function lineDistanceXZ(point, start, end) {
+    const dx = end.x - start.x;
+    const dz = end.z - start.z;
+    const length = Math.hypot(dx, dz);
+    if (length <= EPSILON) return distanceXZ(point, start);
+    return Math.abs((point.x - start.x) * dz - (point.z - start.z) * dx) / length;
+}
+
 /**
- * Peak absolute path curvature |dθ/ds| over [fromDistance, fromDistance + horizon].
+ * How far the polyline between two arc positions leaves the chord that joins them.
+ * A straight approach stays near zero; a weave or a corner cut grows with lookahead.
+ */
+function chordDeviation(arc, origin, fromDistance, lookahead) {
+    const endDistance = Math.min(arc.totalLength, fromDistance + Math.max(0, finiteNumber(lookahead, 0)));
+    if (endDistance <= fromDistance + EPSILON) return 0;
+    const start = origin ?? pointAtDistance(arc.polyline, fromDistance, arc);
+    const end = pointAtDistance(arc.polyline, endDistance, arc);
+    if (!start || !end) return 0;
+    let peak = 0;
+    for (let index = 0; index < arc.polyline.length; index += 1) {
+        const distance = arc.cumulativeDistances[index];
+        if (distance <= fromDistance + EPSILON) continue;
+        if (distance >= endDistance - EPSILON) break;
+        const deviation = lineDistanceXZ(arc.polyline[index], start, end);
+        if (deviation > peak) peak = deviation;
+    }
+    return peak;
+}
+
+/**
+ * Longest lookahead in [floor, requested] whose path chord stays inside the lateral budget.
+ */
+function fitChordLookahead(arc, origin, fromDistance, requested, floor) {
+    const upper = Math.max(0, finiteNumber(requested, 0));
+    const lower = Math.min(Math.max(0, finiteNumber(floor, 0)), upper);
+    if (upper <= lower + EPSILON) return upper;
+    if (chordDeviation(arc, origin, fromDistance, upper) <= CHORD_LATERAL_BUDGET_M) return upper;
+    if (chordDeviation(arc, origin, fromDistance, lower) > CHORD_LATERAL_BUDGET_M) return lower;
+    let lo = lower;
+    let hi = upper;
+    for (let step = 0; step < 12; step += 1) {
+        const mid = (lo + hi) / 2;
+        if (chordDeviation(arc, origin, fromDistance, mid) <= CHORD_LATERAL_BUDGET_M) lo = mid;
+        else hi = mid;
+    }
+    return lo;
+}
+
+function pathHeading(arc, distance) {
+    const span = 0.25;
+    let from = Math.max(0, Math.min(arc.totalLength, finiteNumber(distance, 0)));
+    let to = from + span;
+    if (to > arc.totalLength) {
+        to = arc.totalLength;
+        from = Math.max(0, to - span);
+    }
+    if (to <= from + EPSILON) return 0;
+    const start = pointAtDistance(arc.polyline, from, arc);
+    const end = pointAtDistance(arc.polyline, to, arc);
+    if (!start || !end) return 0;
+    return Math.atan2(end.x - start.x, end.z - start.z);
+}
+
+/**
+ * Peak |dθ/ds| over [fromDistance, fromDistance + horizon], measured on a ~1 m baseline.
  */
 export function previewPathCurvature(points, fromDistance, horizonMeters, arc = null) {
     const resolved = arc ?? buildArcLengthPolyline(points, FOLLOW_DISTANCE_METRIC);
     if (resolved.polyline.length < 2 || resolved.totalLength <= EPSILON) return 0;
     const start = Math.max(0, finiteNumber(fromDistance, 0));
     const end = Math.min(resolved.totalLength, start + Math.max(EPSILON, finiteNumber(horizonMeters, CURVATURE_PREVIEW_MIN_M)));
-    if (end <= start + EPSILON) return 0;
+    const span = end - start;
+    if (span < CURVATURE_MIN_SPAN_M) return 0;
 
+    const window = Math.min(CURVATURE_BASELINE_M, span);
+    const step = Math.max(window * 0.5, EPSILON);
     let peak = 0;
-    for (let index = 0; index < resolved.polyline.length - 1; index += 1) {
-        const segStart = resolved.cumulativeDistances[index];
-        const segEnd = resolved.cumulativeDistances[index + 1];
-        if (segEnd < start - EPSILON || segStart > end + EPSILON) continue;
-        const a = resolved.polyline[index];
-        const b = resolved.polyline[index + 1];
-        const ds = Math.hypot(b.x - a.x, b.z - a.z);
-        if (ds <= EPSILON) continue;
-        let nextHeading;
-        if (index + 2 < resolved.polyline.length) {
-            const c = resolved.polyline[index + 2];
-            nextHeading = Math.atan2(c.x - b.x, c.z - b.z);
-        } else {
-            nextHeading = Math.atan2(b.x - a.x, b.z - a.z);
-        }
-        const heading = Math.atan2(b.x - a.x, b.z - a.z);
-        const dYaw = Math.abs(normalizeAngle(nextHeading - heading));
-        // Curvature of the vertex at b, attributed to the outbound segment length.
-        const kappa = dYaw / Math.max(ds, EPSILON);
+    for (let distance = start; distance <= end - window + EPSILON; distance += step) {
+        const dYaw = Math.abs(normalizeAngle(pathHeading(resolved, distance + window) - pathHeading(resolved, distance)));
+        const kappa = dYaw / window;
         if (kappa > peak) peak = kappa;
     }
     return peak;
@@ -134,7 +200,15 @@ export function routeFollowerCommand({
         achievedSpeedMps == null ? cruise : achievedSpeedMps,
         cruise,
     ));
-    const lookaheadM = clamp(LOOKAHEAD_GAIN * Math.max(speedHint, Math.abs(cruise)), LOOKAHEAD_MIN_M, LOOKAHEAD_MAX_M);
+    const speedLookahead = clamp(LOOKAHEAD_GAIN * Math.max(speedHint, Math.abs(cruise)), LOOKAHEAD_MIN_M, LOOKAHEAD_MAX_M);
+    const curveFloor = Math.min(speedLookahead, Math.max(LOOKAHEAD_CURVE_FLOOR_M, limits.wheelbase));
+    const upcomingKappa = previewPathCurvature(arc.polyline, along, LOOKAHEAD_CURVATURE_HORIZON_M, arc);
+    const curvatureLookahead = upcomingKappa > EPSILON
+        ? LOOKAHEAD_CURVATURE_GAIN / upcomingKappa
+        : speedLookahead;
+    const requestedLookahead = Math.min(speedLookahead, Math.max(curveFloor, curvatureLookahead));
+    const pathPoint = pointAtDistance(arc.polyline, along, arc) ?? pose;
+    const lookaheadM = fitChordLookahead(arc, pathPoint, along, requestedLookahead, curveFloor);
     const target = pointAtDistance(arc.polyline, along + lookaheadM, arc) ?? end;
 
     const dx = finiteNumber(target.x) - pose.x;

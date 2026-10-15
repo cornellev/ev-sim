@@ -66,7 +66,10 @@ export class VehicleDatabase extends Database {
                 this.removeVehicle(vehicle);
                 vehicle = null;
             }
-            if (vehicle) continue;
+            if (vehicle) {
+                if (options.skipManifestDevices === true) vehicle.releaseVehicleOwnedDevices?.();
+                continue;
+            }
             const position = entry.pose?.position || { x: 0, y: 0, z: 0 };
             const rotation = entry.pose?.rotation || { x: 0, y: 0, z: 0, order: "XYZ" };
             const manifest = dependency?.manifest
@@ -85,6 +88,7 @@ export class VehicleDatabase extends Database {
                 plantPluginId: mount.plantPluginId,
                 plantRuntimeHash: mount.plantRuntimeHash,
                 plants,
+                skipManifestDevices: options.skipManifestDevices === true,
             });
             vehicle.telemetryId = entry.id;
             if (vehicle.plant) {

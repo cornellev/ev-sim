@@ -163,6 +163,7 @@ export class PluginSensorDevice {
         transformRuntime = null,
     } = {}) {
         this.id = admission.sensor.id;
+        this.name = this.id;
         this.telemetryId = this.id;
         this.type = admission.sensor.type;
         this.config = admission.sensor;

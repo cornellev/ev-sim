@@ -35,7 +35,7 @@ function gaussian(rng) {
 export class ManifestCamera extends Device {
     constructor(config, options = {}) {
         const threePose = rep103PoseToThree(config.pose);
-        super("Manifest Camera", {
+        super(config.id || "Manifest Camera", {
             telemetryId: config.id,
             position: new THREE.Vector3(threePose.position.x, threePose.position.y, threePose.position.z),
             rotation: new THREE.Euler(threePose.rotation.x, threePose.rotation.y, threePose.rotation.z, threePose.rotation.order || "XYZ"),

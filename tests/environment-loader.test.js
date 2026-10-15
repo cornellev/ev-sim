@@ -72,6 +72,7 @@ test("EnvironmentLoader overlaps asset idle with visual preview and Scene waits 
     assert.ok(previewIndex > idleIndex);
     assert.ok(awaitIdleIndex > previewIndex);
     assert.match(scene, /waitForEnvironmentGltfPresentation/);
-    assert.match(scene, /editorAssetsEnabled: modeRef\.current === THREE_D_MODES\.ENVIRONMENT/);
+    assert.match(scene, /editorAssetsEnabled: true/);
+    assert.doesNotMatch(scene, /setEditorAssetsEnabled\?\.\(false\)/);
 });
 

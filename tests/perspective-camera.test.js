@@ -155,7 +155,7 @@ test("perspective enter locks to the vehicle camera and exit restores orbit", ()
     const entered = controller.enter();
     assert.equal(entered.active, true);
     assert.equal(entered.locked, true);
-    assert.equal(entered.label, "Manifest Camera");
+    assert.equal(entered.label, "front");
     assert.equal(settings.cameraControlsEnabled, false);
     assert.equal(controls.enabled, false);
     assert.equal(camera.fov, 48);

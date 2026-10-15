@@ -10,6 +10,7 @@ import {
     followRadiusM,
     FOLLOW_PATH_DEFAULT_KINEMATICS,
     minTurningRadius,
+    projectPointToPolyline,
     routeFollowerCommand,
     sameEndpoints,
     stableStringify,
@@ -147,6 +148,7 @@ test("routeFollowerCommand tracks a straight path with near-zero steer at cruise
         kinematics: FOLLOW_PATH_DEFAULT_KINEMATICS,
     });
     assert.equal(command.speedMps, 4);
+    assert.equal(command.lookaheadM, 4);
     assert.ok(Math.abs(command.steeringRad) < 0.05);
 });
 
@@ -206,8 +208,9 @@ test("city-grid style first corner gets early steer with big-car kinematics", ()
         { x: 40, y: 0, z: 40 },
     ];
     const follow = filletPolyline(path, followRadiusM(kinematics));
+    // Close enough that the curvature-shortened lookahead still reaches the fillet.
     const command = routeFollowerCommand({
-        position: { x: 36, y: 0, z: 0 },
+        position: { x: 36.5, y: 0, z: 0 },
         yaw: 0,
         cruiseSpeedMps: 2,
         achievedSpeedMps: 2,
@@ -217,6 +220,53 @@ test("city-grid style first corner gets early steer with big-car kinematics", ()
     assert.ok(follow.length > path.length);
     assert.ok(command.steeringRad < -0.05, `expected early left steer before (40,0), got ${command.steeringRad}`);
     assert.ok(command.speedMps <= 2);
+});
+
+test("weave shorter than the straight lookahead is tracked instead of chord-cut", () => {
+    const kinematics = { wheelbase: 0.6604, maxSteeringAngle: 0.349066 };
+    const amplitude = 1;
+    const wavelength = 10;
+    const path = [];
+    for (let distance = 0; distance <= 16; distance += 0.25) {
+        path.push({
+            x: distance,
+            y: 0,
+            z: amplitude * Math.sin((2 * Math.PI * distance) / wavelength),
+        });
+    }
+    const slope = amplitude * 2 * Math.PI / wavelength;
+    let x = 0;
+    let z = 0;
+    let yaw = -Math.atan2(slope, 1);
+    let peakSteer = 0;
+    let peakCrossTrack = 0;
+    let shortestLookahead = Infinity;
+    const dt = 0.02;
+    for (let step = 0; step < 800; step += 1) {
+        const command = routeFollowerCommand({
+            position: { x, y: 0, z },
+            yaw,
+            cruiseSpeedMps: 2,
+            achievedSpeedMps: 2,
+            followPolyline: path,
+            kinematics,
+        });
+        peakSteer = Math.max(peakSteer, Math.abs(command.steeringRad));
+        shortestLookahead = Math.min(shortestLookahead, command.lookaheadM);
+        const projection = projectPointToPolyline({ x, z }, path, { distanceMetric: "xz" });
+        const distanceAlong = projection?.distanceAlong ?? 0;
+        if (distanceAlong < wavelength / 2) {
+            peakCrossTrack = Math.max(peakCrossTrack, projection?.distance ?? Infinity);
+        }
+        if (distanceAlong >= 12) break;
+        const speed = command.speedMps;
+        x += Math.cos(yaw) * speed * dt;
+        z += -Math.sin(yaw) * speed * dt;
+        yaw += (speed / kinematics.wheelbase) * Math.tan(command.steeringRad) * dt;
+    }
+    assert.ok(shortestLookahead < 3.5, `expected the weave to pull lookahead inside 4 m, got ${shortestLookahead}`);
+    assert.ok(peakSteer > 0.15, `expected steer well above the old ~5° chord command, got ${peakSteer}`);
+    assert.ok(peakCrossTrack < 0.5, `expected to stay near the centerline through the first bend, cross-track ${peakCrossTrack}`);
 });
 
 test("overlapping out-and-back visits keep forward progress instead of looping the first pass", () => {
