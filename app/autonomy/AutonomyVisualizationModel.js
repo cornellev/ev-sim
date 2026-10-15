@@ -457,6 +457,18 @@ export function normalizeOdometry(payload, {
     };
 }
 
+function yawOf(q = {}) {
+    const x = Number(q.x || 0);
+    const y = Number(q.y || 0);
+    const z = Number(q.z || 0);
+    const w = Number(q.w ?? 1);
+    return Math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z));
+}
+
+function wrapPi(angle) {
+    return Math.atan2(Math.sin(angle), Math.cos(angle));
+}
+
 export function localizationError(estimate, truth) {
     if (!estimate || !truth) return null;
     const dx = Number(estimate.position.x) - Number(truth.position.x);
@@ -468,6 +480,59 @@ export function localizationError(estimate, truth) {
         dz,
         horizontalM: Math.hypot(dx, dy),
         positionM: Math.hypot(dx, dy, dz),
+        headingRad: wrapPi(yawOf(estimate.orientation) - yawOf(truth.orientation)),
+        truthCaptureTimeNs: truth.captureTimeNs ?? null,
+    };
+}
+
+function lerp(a, b, alpha) {
+    return Number(a) + (Number(b) - Number(a)) * alpha;
+}
+
+function nlerpQuaternion(a, b, alpha) {
+    // Take the shorter arc: q and -q are the same rotation.
+    const sign = (a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w) < 0 ? -1 : 1;
+    const q = {
+        x: lerp(a.x, sign * b.x, alpha),
+        y: lerp(a.y, sign * b.y, alpha),
+        z: lerp(a.z, sign * b.z, alpha),
+        w: lerp(a.w, sign * b.w, alpha),
+    };
+    const norm = Math.hypot(q.x, q.y, q.z, q.w) || 1;
+    return { x: q.x / norm, y: q.y / norm, z: q.z / norm, w: q.w / norm };
+}
+
+/**
+ * Truth pose at `captureTimeNs`, interpolated between the two nearest samples.
+ * `history` holds normalized truth odometry sorted by ascending `captureTimeNs`.
+ * Returns null when the time is outside the history.
+ */
+export function truthAtCaptureTime(history, captureTimeNs) {
+    if (!Array.isArray(history) || history.length === 0 || !Number.isFinite(captureTimeNs)) return null;
+    let high = history.length - 1;
+    if (captureTimeNs > history[high].captureTimeNs || captureTimeNs < history[0].captureTimeNs) return null;
+    let low = 0;
+    while (high - low > 1) {
+        const middle = (low + high) >> 1;
+        if (history[middle].captureTimeNs <= captureTimeNs) low = middle;
+        else high = middle;
+    }
+    const before = history[low];
+    const after = history[high];
+    if (before.captureTimeNs === captureTimeNs) return before;
+    if (after.captureTimeNs === captureTimeNs) return after;
+    const alpha = (captureTimeNs - before.captureTimeNs) / (after.captureTimeNs - before.captureTimeNs);
+    const position = {
+        x: lerp(before.position.x, after.position.x, alpha),
+        y: lerp(before.position.y, after.position.y, alpha),
+        z: lerp(before.position.z, after.position.z, alpha),
+    };
+    return {
+        ...before,
+        captureTimeNs,
+        position,
+        orientation: nlerpQuaternion(before.orientation, after.orientation, alpha),
+        threePosition: rep103ToThreeVector(position),
     };
 }
 
