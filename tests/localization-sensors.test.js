@@ -113,24 +113,6 @@ test("WGS84 conversion returns datum at zero ENU offset", () => {
     assert.ok(Math.abs(converted.lng - datum.lng) < 1e-4);
 });
 
-test("GNSS dropout returns no sample and outage emits no-fix status", () => {
-    const config = normalizeRunSensor({
-        type: "gnss",
-        calibration: { faults: { dropoutProbability: 1, outageProbability: 0 } },
-    });
-    const rng = new SeededRNG("gnss-dropout");
-    const snapshot = captureVehicleSnapshot(mockVehicle(), 16_666_667);
-    const dropped = buildGnssMeasurement(snapshot, config, rng, createMeasurementSeedState(config, rng));
-    assert.equal(dropped.measurement, null);
-
-    const outageConfig = normalizeRunSensor({
-        type: "gnss",
-        calibration: { faults: { dropoutProbability: 0, outageProbability: 1 } },
-    });
-    const outage = buildGnssMeasurement(snapshot, outageConfig, new SeededRNG("gnss-outage"), createMeasurementSeedState(outageConfig, rng));
-    assert.equal(outage.measurement.noFix, true);
-});
-
 test("GNSS outage ends after outageDurationSec and is permanent without it", () => {
     const run = (faults) => {
         const start = normalizeRunSensor({ type: "gnss", calibration: { faults: { ...faults, outageProbability: 1 } } });
@@ -153,6 +135,24 @@ test("GNSS outage ends after outageDurationSec and is permanent without it", () 
     assert.ok(timed.slice(5).every((value) => value === false));
     assert.ok(run({}).every((value) => value === true));
     assert.ok(run({ outageDurationSec: 0 }).every((value) => value === true));
+});
+
+test("GNSS dropout returns no sample and outage emits no-fix status", () => {
+    const config = normalizeRunSensor({
+        type: "gnss",
+        calibration: { faults: { dropoutProbability: 1, outageProbability: 0 } },
+    });
+    const rng = new SeededRNG("gnss-dropout");
+    const snapshot = captureVehicleSnapshot(mockVehicle(), 16_666_667);
+    const dropped = buildGnssMeasurement(snapshot, config, rng, createMeasurementSeedState(config, rng));
+    assert.equal(dropped.measurement, null);
+
+    const outageConfig = normalizeRunSensor({
+        type: "gnss",
+        calibration: { faults: { dropoutProbability: 0, outageProbability: 1 } },
+    });
+    const outage = buildGnssMeasurement(snapshot, outageConfig, new SeededRNG("gnss-outage"), createMeasurementSeedState(outageConfig, rng));
+    assert.equal(outage.measurement.noFix, true);
 });
 
 test("encoder quantization is deterministic and slip reduces travel", () => {
