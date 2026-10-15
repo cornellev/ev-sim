@@ -1,3 +1,4 @@
+import { Euler, Quaternion, Vector3 } from "three";
 /**
  * Renderer-neutral primitives for candidate/oracle perception and localization overlays.
  * Capture-time metadata travels with each snapshot so replay does not need ROS re-decode.
@@ -457,18 +458,6 @@ export function normalizeOdometry(payload, {
     };
 }
 
-function yawOf(q = {}) {
-    const x = Number(q.x || 0);
-    const y = Number(q.y || 0);
-    const z = Number(q.z || 0);
-    const w = Number(q.w ?? 1);
-    return Math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z));
-}
-
-function wrapPi(angle) {
-    return Math.atan2(Math.sin(angle), Math.cos(angle));
-}
-
 export function localizationError(estimate, truth) {
     if (!estimate || !truth) return null;
     const dx = Number(estimate.position.x) - Number(truth.position.x);
@@ -480,26 +469,13 @@ export function localizationError(estimate, truth) {
         dz,
         horizontalM: Math.hypot(dx, dy),
         positionM: Math.hypot(dx, dy, dz),
-        headingRad: wrapPi(yawOf(estimate.orientation) - yawOf(truth.orientation)),
+        // Yaw (the ZYX Euler angle about +Z) of the rotation from truth to estimate, in (-pi, pi].
+        headingRad: new Euler().setFromQuaternion(
+            new Quaternion().copy(truth.orientation).invert().multiply(new Quaternion().copy(estimate.orientation)),
+            "ZYX",
+        ).z,
         truthCaptureTimeNs: truth.captureTimeNs ?? null,
     };
-}
-
-function lerp(a, b, alpha) {
-    return Number(a) + (Number(b) - Number(a)) * alpha;
-}
-
-function nlerpQuaternion(a, b, alpha) {
-    // Take the shorter arc: q and -q are the same rotation.
-    const sign = (a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w) < 0 ? -1 : 1;
-    const q = {
-        x: lerp(a.x, sign * b.x, alpha),
-        y: lerp(a.y, sign * b.y, alpha),
-        z: lerp(a.z, sign * b.z, alpha),
-        w: lerp(a.w, sign * b.w, alpha),
-    };
-    const norm = Math.hypot(q.x, q.y, q.z, q.w) || 1;
-    return { x: q.x / norm, y: q.y / norm, z: q.z / norm, w: q.w / norm };
 }
 
 /**
@@ -522,16 +498,18 @@ export function truthAtCaptureTime(history, captureTimeNs) {
     if (before.captureTimeNs === captureTimeNs) return before;
     if (after.captureTimeNs === captureTimeNs) return after;
     const alpha = (captureTimeNs - before.captureTimeNs) / (after.captureTimeNs - before.captureTimeNs);
-    const position = {
-        x: lerp(before.position.x, after.position.x, alpha),
-        y: lerp(before.position.y, after.position.y, alpha),
-        z: lerp(before.position.z, after.position.z, alpha),
-    };
+    const interpolated = new Vector3().lerpVectors(
+        new Vector3().copy(before.position),
+        new Vector3().copy(after.position),
+        alpha,
+    );
+    const position = { x: interpolated.x, y: interpolated.y, z: interpolated.z };
+    const rotation = new Quaternion().copy(before.orientation).slerp(new Quaternion().copy(after.orientation), alpha);
     return {
         ...before,
         captureTimeNs,
         position,
-        orientation: nlerpQuaternion(before.orientation, after.orientation, alpha),
+        orientation: { x: rotation.x, y: rotation.y, z: rotation.z, w: rotation.w },
         threePosition: rep103ToThreeVector(position),
     };
 }
