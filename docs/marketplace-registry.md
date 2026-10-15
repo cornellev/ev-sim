@@ -31,6 +31,8 @@ cev-mkt publisher register --root /srv/cev-marketplace --file publisher.json
 cev-mkt publisher provision --root /srv/cev-marketplace \
   --origin https://marketplace.example --display-name "Company Marketplace" \
   --namespace com.example --output /etc/cev-sim/marketplace/connections.d/company
+cev-mkt publisher grant-namespace --root /srv/cev-marketplace \
+  --publisher-id com.example.publisher --namespace vendor.example.dynamics,vendor.example.lidar
 cev-mkt sign release --file release.json --private-key publisher.pem --output release.dsse.json
 cev-mkt admit release --root /srv/cev-marketplace --file release.dsse.json --track stable
 cev-mkt token create --root /srv/cev-marketplace --subject publisher \
@@ -100,6 +102,15 @@ connection bundle containing mode-`0600` documents and secrets. The first
 namespace is the publisher ID. The output parent must be owner-only and the
 command refuses to overwrite an existing bundle. It prints identifiers and the
 output path, never token or private-key material.
+
+`publisher grant-namespace` adds namespaces to an existing publisher and to
+that publisher's live, unrevoked write tokens. The token secret stays the same.
+A namespace that the publisher already covers is left in place. A namespace
+that equals, contains, or sits inside another publisher's namespace is
+rejected, and the publisher document is unchanged. Later enrollment copies the
+publisher's current namespaces onto the new write token. Run the command on
+the registry host, then publish again; the simulator reads the updated
+publisher target on its next refresh.
 
 To rotate credentials or signing identity, use the granular token/key commands,
 write replacement secret and `connection.json` files beside the live bundle,

@@ -47,6 +47,7 @@ curl -fsSL https://raw.githubusercontent.com/cornellev/ev-sim/v0.2.0/install.sh 
 
 The installer writes the clone to `./ev-sim`, creates `.env.local`, and asks whether to enable the marketplace.
 Enter enables it. `n` writes `CEV_SIM_MARKETPLACE_ENABLED=0`. An existing value is kept.
+When `server/data/visual-source-registry.json` is absent, the installer creates it with a local `owned-lab` grant. An existing registry is kept.
 To start up the app, run these commands:
 
 ```bash

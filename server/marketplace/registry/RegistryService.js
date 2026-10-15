@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import semver from "semver";
 
+import { compareUtf8 } from "../../../app/math/compareUtf8.js";
 import {
     createArtifactStagingArea,
     stageArtifactStream,
@@ -262,8 +263,16 @@ function releaseKey(release) {
     return `${release.itemId}\u0000${release.releaseVersion}`;
 }
 
+function namespaceCovers(namespace, itemId) {
+    return itemId === namespace || itemId.startsWith(`${namespace}.`);
+}
+
+function namespacesOverlap(left, right) {
+    return namespaceCovers(left, right) || namespaceCovers(right, left);
+}
+
 function publisherOwnsItem(publisher, itemId) {
-    return publisher.namespaces.some((namespace) => itemId === namespace || itemId.startsWith(`${namespace}.`));
+    return publisher.namespaces.some((namespace) => namespaceCovers(namespace, itemId));
 }
 
 function exactReleaseReference(summary) {
@@ -503,11 +512,13 @@ export class MarketplaceRegistryService {
             await this.addPublisherKey(publisherId, key, { actor: ENROLLMENT_ACTOR });
         }
         const auth = await RegistryAuthStore.open(this.store.paths, { now: this.now });
+        const enrolledPublisher = await this.publisherStore.getPublisher(publisherId, await this.store.readCatalog());
+        const namespaces = enrolledPublisher?.namespaces?.length ? [...enrolledPublisher.namespaces] : [publisherId];
         const reader = await auth.createToken({ subject: "reader", scopes: ["read"] });
         const writer = await auth.createToken({
             subject: "publisher",
             publisherId,
-            namespaces: [publisherId],
+            namespaces,
             scopes: ENROLLMENT_WRITE_SCOPES,
         });
         return Object.freeze({
@@ -567,7 +578,7 @@ export class MarketplaceRegistryService {
             const catalog = await this.store.readCatalog();
             const current = await this.publisherStore.getPublisher(publisherId, catalog);
             if (!current) throw conflict("Publisher identity is not registered.");
-            const nextPublisher = assertMarketplacePublisher(mutate(structuredClone(current)));
+            const nextPublisher = assertMarketplacePublisher(await mutate(structuredClone(current)));
             if (nextPublisher.publisherId !== publisherId) throw conflict("Publisher identity is immutable.");
             const bytes = marketplaceDocumentBytes(nextPublisher);
             const publisherHash = hashMarketplaceBytes(bytes);
@@ -589,6 +600,39 @@ export class MarketplaceRegistryService {
             });
             await this.store.commitCatalogMutation(prepared, next);
             return Object.freeze({ publisherId, publisherHash, revision: next.revision, changed: true });
+        });
+    }
+
+    async grantPublisherNamespaces(publisherId, namespaces, { actor } = {}) {
+        assertMarketplaceId(publisherId, "publisherId");
+        if (!Array.isArray(namespaces) || namespaces.length < 1 || namespaces.some((entry) => typeof entry !== "string")) {
+            throw conflict("Publisher namespace grant requires at least one namespace.");
+        }
+        const requested = [...new Set(namespaces)];
+        requested.forEach((namespace) => assertMarketplaceId(namespace, "namespace"));
+        const replaced = await this.#replacePublisher(publisherId, "grant-publisher-namespace", async (publisher) => {
+            const catalog = await this.store.readCatalog();
+            const others = await this.publisherStore.listPublishers(catalog);
+            for (const namespace of requested) {
+                if (publisher.namespaces.some((owned) => namespaceCovers(owned, namespace))) continue;
+                for (const current of others) {
+                    if (current.publisherId === publisherId) continue;
+                    if (current.namespaces.some((owned) => namespacesOverlap(owned, namespace))) {
+                        throw conflict(`Publisher namespace ${namespace} overlaps an existing publisher namespace.`);
+                    }
+                }
+                publisher.namespaces.push(namespace);
+            }
+            publisher.namespaces.sort(compareUtf8);
+            return publisher;
+        }, { actor });
+        const auth = await RegistryAuthStore.open(this.store.paths, { now: this.now });
+        const tokensUpdated = await auth.grantNamespaces(publisherId, requested);
+        const publisher = await this.publisherStore.getPublisher(publisherId, await this.store.readCatalog());
+        return Object.freeze({
+            ...replaced,
+            namespaces: Object.freeze([...(publisher?.namespaces ?? requested)]),
+            tokensUpdated,
         });
     }
 

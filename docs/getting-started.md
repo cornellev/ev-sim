@@ -40,11 +40,15 @@ alias for `--ref`.
 
 The installer creates `.env.local` and asks whether to enable the marketplace. Enter, `y`, or `yes` writes `CEV_SIM_MARKETPLACE_ENABLED=1`. `n` or `no` writes `0`. An existing assignment is kept unless `--marketplace` or `--no-marketplace` is passed. A run with no terminal creates the file and leaves that setting unchanged, which leaves the marketplace enabled.
 
+When `visual-source-registry.json` is absent, the installer creates it with a local `owned-lab` grant so editor Import can upload models. The default path is `server/data/visual-source-registry.json`. `CEV_SIM_VISUAL_SOURCE_REGISTRY`, or `CEV_SIM_DATA_DIR` when that registry variable is unset, selects another path from the environment or `.env.local`. An existing registry is kept.
+
 If you already cloned the repo:
 
 ```bash
 npm ci
 ```
+
+A manual clone does not create `server/data/visual-source-registry.json`. Copy the owned-lab grant in [Development](development.md), or re-run the installer, before using editor Import.
 
 ## Run The App
 

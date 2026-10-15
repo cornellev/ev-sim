@@ -84,6 +84,7 @@ export function registryCliHelp() {
         "  admit release --root DIR --file DSSE_FILE [--track stable|beta]",
         "  publisher register --root DIR --file PUBLISHER_JSON",
         "  publisher provision --root DIR --origin URL --display-name NAME --namespace CSV --output DIR",
+        "  publisher grant-namespace --root DIR --publisher-id ID --namespace CSV",
         "  publisher add-key --root DIR --publisher-id ID --file KEY_JSON",
         "  publisher set-key-status --root DIR --publisher-id ID --key-id SHA256 --status retired|revoked",
         "  key generate --private-key FILE --public-key FILE",
@@ -310,7 +311,7 @@ async function execute(parsed, signal, { stdout }) {
         throw usage(`Unknown admission kind ${JSON.stringify(kind)}.`);
     }
     if (command === "publisher") {
-        if (positional.length !== 1) throw usage("publisher requires register, provision, add-key, or set-key-status.");
+        if (positional.length !== 1) throw usage("publisher requires register, provision, grant-namespace, add-key, or set-key-status.");
         if (positional[0] === "provision") {
             exactOptions(options, ["root", "origin", "display-name", "namespace", "output"]);
             const origin = normalizeMarketplaceOrigin(options.origin);
@@ -400,6 +401,22 @@ async function execute(parsed, signal, { stdout }) {
             return withStore(options.root, {}, async (_store, service) => ({
                 ok: true, command, operation: "register", ...await service.registerPublisher(bytes, { actor: LOCAL_ADMIN_ACTOR }),
             }));
+        }
+        if (positional[0] === "grant-namespace") {
+            exactOptions(options, ["root", "publisher-id", "namespace"]);
+            return withStore(options.root, {}, async (_store, service) => {
+                const granted = await service.grantPublisherNamespaces(options["publisher-id"], csv(options.namespace, "namespace", { required: true }), { actor: LOCAL_ADMIN_ACTOR });
+                return {
+                    ok: true,
+                    command,
+                    operation: "grant-namespace",
+                    publisherId: granted.publisherId,
+                    namespaces: granted.namespaces,
+                    revision: granted.revision,
+                    changed: granted.changed,
+                    tokensUpdated: granted.tokensUpdated,
+                };
+            });
         }
         if (positional[0] === "add-key") {
             exactOptions(options, ["root", "publisher-id", "file"]);

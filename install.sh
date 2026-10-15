@@ -14,6 +14,9 @@
 #   --marketplace                Write CEV_SIM_MARKETPLACE_ENABLED=1 to .env.local
 #   --no-marketplace             Write CEV_SIM_MARKETPLACE_ENABLED=0 to .env.local
 #   -h, --help                   Show help
+#
+# Creates server/data/visual-source-registry.json with the local owned-lab
+# grant when that file is absent. An existing registry is kept.
 
 set -euo pipefail
 
@@ -26,6 +29,8 @@ START_DEV=0
 # Empty means ask. 1 or 0 skips the prompt.
 MARKETPLACE_CHOICE=""
 MARKETPLACE_FLAG_SET=0
+# created or kept. Empty until configure_visual_source_registry runs.
+VISUAL_REGISTRY_STATUS=""
 REQUIRED_NODE_VERSION="22.22.2"
 SUPPORTED_NODE_MAJOR=22
 NVM_INSTALL_VERSION="v0.40.3"
@@ -81,6 +86,12 @@ The installer creates .env.local in the install directory. Without
 Enter, y, or yes writes CEV_SIM_MARKETPLACE_ENABLED=1. n or no writes 0.
 An existing assignment is kept unless a flag is passed.
 A non-interactive run creates the file and leaves that setting unchanged.
+When visual-source-registry.json is absent, the installer creates it with
+the local owned-lab grant. The default path is
+server/data/visual-source-registry.json. An existing registry is kept.
+CEV_SIM_VISUAL_SOURCE_REGISTRY, or CEV_SIM_DATA_DIR when the registry
+variable is unset, selects another path from the environment or from
+.env.local.
 When Node.js >=22.22.2 <23 is not active and nvm already has 22.22.2, the
 installer switches to it. When 22.22.2 is not installed, the installer asks
 whether to install it with nvm and make it the default.
@@ -380,7 +391,6 @@ cleanup() {
   spin_stop quiet
   printf '\033[?25h' 2>/dev/null || true
 }
-trap cleanup EXIT INT TERM
 
 # Replace KEY= in .env.local, or append it. Other lines stay as they are.
 write_env_assignment() {
@@ -450,7 +460,209 @@ EOF
   fi
 }
 
+# ── visual source registry ──────────────────────────────────────────────────
+# Operator grant file. The running app has no mutation API for it.
+# The document matches the local owned-lab example in docs/development.md.
+
+# Print a simply quoted or unquoted value. 2 = empty, 1 = unsupported.
+parse_env_assignment() {
+  local raw="$1"
+  local inner=""
+  local inner_length=0
+  if [[ -z "$raw" ]]; then
+    return 2
+  fi
+  if [[ "$raw" == \"* ]]; then
+    if [[ "$raw" != *\" || ${#raw} -lt 2 ]]; then
+      return 1
+    fi
+    inner_length=$(( ${#raw} - 2 ))
+    if [[ "$inner_length" -lt 1 ]]; then
+      return 2
+    fi
+    inner="${raw:1:inner_length}"
+    if [[ "$inner" == *\"* || "$raw" != "\"${inner}\"" ]]; then
+      return 1
+    fi
+    printf '%s\n' "$inner"
+    return 0
+  fi
+  if [[ "$raw" == \'* ]]; then
+    if [[ "$raw" != *\' || ${#raw} -lt 2 ]]; then
+      return 1
+    fi
+    inner_length=$(( ${#raw} - 2 ))
+    if [[ "$inner_length" -lt 1 ]]; then
+      return 2
+    fi
+    inner="${raw:1:inner_length}"
+    if [[ "$inner" == *\'* || "$raw" != "'${inner}'" ]]; then
+      return 1
+    fi
+    printf '%s\n' "$inner"
+    return 0
+  fi
+  if [[ "$raw" == *\"* || "$raw" == *\'* ]]; then
+    return 1
+  fi
+  printf '%s\n' "$raw"
+}
+
+# First supported assignment wins. Process environment, then .env.local.
+lookup_install_setting() {
+  local key="$1"
+  local outvar="$2"
+  local from_env="${!key-}"
+  local file="" line="" raw="" parsed="" status=0
+  if [[ -n "$from_env" ]]; then
+    printf -v "$outvar" '%s' "$from_env"
+    return 0
+  fi
+  file="${INSTALL_DIR}/.env.local"
+  if [[ ! -f "$file" ]]; then
+    return 1
+  fi
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    [[ "$line" == "${key}="* ]] || continue
+    raw="${line#"${key}="}"
+    status=0
+    parsed="$(parse_env_assignment "$raw")" || status=$?
+    if [[ "$status" -eq 0 ]]; then
+      printf -v "$outvar" '%s' "$parsed"
+      return 0
+    fi
+    if [[ "$status" -eq 2 ]]; then
+      continue
+    fi
+    fail "Unsupported ${key} assignment in ${file}"
+  done < "$file"
+  return 1
+}
+
+resolve_install_path() {
+  local value="$1"
+  local outvar="$2"
+  if [[ "$value" == "~" || "$value" == "~/"* ]]; then
+    if [[ -z "${HOME-}" ]]; then
+      fail "Cannot expand ~ in ${value}"
+    fi
+    value="${HOME}${value:1}"
+  fi
+  if [[ "$value" != /* ]]; then
+    value="${INSTALL_DIR%/}/${value}"
+  fi
+  printf -v "$outvar" '%s' "$value"
+}
+
+visual_source_registry_path() {
+  local outvar="$1"
+  local registry="" data="" resolved=""
+  if lookup_install_setting CEV_SIM_VISUAL_SOURCE_REGISTRY registry; then
+    resolve_install_path "$registry" resolved
+    printf -v "$outvar" '%s' "$resolved"
+    return 0
+  fi
+  if lookup_install_setting CEV_SIM_DATA_DIR data; then
+    data="${data%/}"
+    resolve_install_path "${data}/visual-source-registry.json" resolved
+    printf -v "$outvar" '%s' "$resolved"
+    return 0
+  fi
+  printf -v "$outvar" '%s' "${INSTALL_DIR%/}/server/data/visual-source-registry.json"
+}
+
+# 0 when dest is a regular file. 1 when it is absent. Anything else stops.
+registry_destination_state() {
+  local dest="$1"
+  if [[ -L "$dest" || ( -e "$dest" && ! -f "$dest" ) ]]; then
+    fail "${dest} exists and is not a regular file"
+  fi
+  if [[ -f "$dest" ]]; then
+    return 0
+  fi
+  return 1
+}
+
+configure_visual_source_registry() {
+  local dest="" parent="" tmp=""
+  step "Visual source registry"
+  visual_source_registry_path dest
+  if registry_destination_state "$dest"; then
+    info "Kept existing visual-source-registry.json"
+    VISUAL_REGISTRY_STATUS="kept"
+    return 0
+  fi
+  parent="$(dirname -- "$dest")"
+  mkdir -p -- "$parent" || fail "Could not create ${parent}"
+  if registry_destination_state "$dest"; then
+    info "Kept existing visual-source-registry.json"
+    VISUAL_REGISTRY_STATUS="kept"
+    return 0
+  fi
+  tmp="$(mktemp "${parent}/.visual-source-registry.XXXXXX")"
+  cat >"$tmp" <<'EOF'
+{
+  "kind": "cev-sim.visual-source-registry",
+  "version": 1,
+  "sources": [
+    {
+      "id": "owned-lab",
+      "kind": "owned",
+      "status": "active",
+      "ancestorIds": [],
+      "permissions": {
+        "attribution": true,
+        "derivatives": true,
+        "display": true,
+        "export": true,
+        "live-preview-display": true,
+        "machine-interpretation": true,
+        "ml": true,
+        "persistent-cache": true,
+        "retention": true,
+        "transient-cache": true,
+        "worker-access": true
+      }
+    }
+  ]
+}
+EOF
+  chmod 644 "$tmp"
+  if [[ -L "$dest" || ( -e "$dest" && ! -f "$dest" ) ]]; then
+    rm -f -- "$tmp"
+    fail "${dest} exists and is not a regular file"
+  fi
+  if [[ -f "$dest" ]]; then
+    rm -f -- "$tmp"
+    info "Kept existing visual-source-registry.json"
+    VISUAL_REGISTRY_STATUS="kept"
+    return 0
+  fi
+  mv -n -- "$tmp" "$dest"
+  if [[ -e "$tmp" ]]; then
+    rm -f -- "$tmp"
+    if registry_destination_state "$dest"; then
+      info "Kept existing visual-source-registry.json"
+      VISUAL_REGISTRY_STATUS="kept"
+      return 0
+    fi
+    fail "Could not create ${dest}"
+  fi
+  if [[ -L "$dest" || ! -f "$dest" ]]; then
+    fail "${dest} exists and is not a regular file"
+  fi
+  ok "Created visual-source-registry.json with the owned-lab grant"
+  VISUAL_REGISTRY_STATUS="created"
+}
+
+# Tests source this file and call configure_visual_source_registry directly.
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+  return 0
+fi
+
 # ── main ────────────────────────────────────────────────────────────────────
+trap cleanup EXIT INT TERM
 banner
 
 step "Checking prerequisites"
@@ -536,6 +748,8 @@ fi
 
 configure_local_env
 
+configure_visual_source_registry
+
 if [[ "$RUN_BUILD" -eq 1 ]]; then
   step "Building"
   info "npm run build  (this may take a minute)"
@@ -587,6 +801,11 @@ if [[ "$MARKETPLACE_CHOICE" == "1" ]]; then
   printf '  Marketplace is enabled in %s.env.local%s.\n' "$BOLD" "$RESET"
 elif [[ "$MARKETPLACE_CHOICE" == "0" ]]; then
   printf '  Marketplace is disabled in %s.env.local%s.\n' "$BOLD" "$RESET"
+fi
+if [[ "$VISUAL_REGISTRY_STATUS" == "created" ]]; then
+  printf '  Created %svisual-source-registry.json%s with the local owned-lab grant.\n' "$BOLD" "$RESET"
+elif [[ "$VISUAL_REGISTRY_STATUS" == "kept" ]]; then
+  printf '  Kept the existing %svisual-source-registry.json%s.\n' "$BOLD" "$RESET"
 fi
 printf '  Optional: %spython -m pip install -e ./python%s (Python 3.10–3.13, docs/python-headless.md)\n' "$CYAN" "$RESET"
 printf '  Optional: %snpx cev-sim --help%s (cameras need CEV_SIM_HEADLESS_SUPERVISOR_CONFIG)\n' "$CYAN" "$RESET"
