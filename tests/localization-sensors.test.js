@@ -131,6 +131,42 @@ test("GNSS dropout returns no sample and outage emits no-fix status", () => {
     assert.equal(outage.measurement.noFix, true);
 });
 
+test("GNSS covariance includes multipath variance and matches the sampled error", () => {
+    const config = normalizeRunSensor({
+        type: "gnss",
+        calibration: {
+            positionNoiseEnu: { x: 0.05, y: 0.05, z: 0.05 },
+            faults: { multipathStdDev: { x: 0.1, y: 0.1, z: 0.1 }, multipathTauSec: 1 },
+        },
+    });
+    const rng = new SeededRNG("gnss-covariance");
+    let state = createMeasurementSeedState(config, rng);
+    const exactConfig = normalizeRunSensor({
+        type: "gnss",
+        calibration: {
+            positionNoiseEnu: { x: 0, y: 0, z: 0 },
+            faults: { multipathStdDev: { x: 0, y: 0, z: 0 } },
+        },
+    });
+    const exactSnapshot = captureVehicleSnapshot(mockVehicle(), 100_000_000);
+    const reference = buildGnssMeasurement(exactSnapshot, exactConfig, new SeededRNG("gnss-exact"), createMeasurementSeedState(exactConfig, rng)).measurement;
+    const metersPerDegree = 111_000;
+    let sumSquares = 0;
+    let covariance = null;
+    const samples = 20_000;
+    for (let index = 1; index <= samples; index += 1) {
+        const snapshot = captureVehicleSnapshot(mockVehicle(), index * 100_000_000);
+        const result = buildGnssMeasurement(snapshot, config, rng, state);
+        state = { ...state, ...result.nextState };
+        covariance = result.measurement.positionCovariance;
+        sumSquares += ((result.measurement.latitude - reference.latitude) * metersPerDegree) ** 2;
+    }
+    const expectedVariance = 0.05 ** 2 + 0.1 ** 2;
+    assert.ok(Math.abs(covariance[4] - expectedVariance) < 1e-12);
+    const sampledVariance = sumSquares / samples;
+    assert.ok(Math.abs(sampledVariance / expectedVariance - 1) < 0.15, `sampled variance ${sampledVariance}`);
+});
+
 test("encoder quantization is deterministic and slip reduces travel", () => {
     const q1 = quantizeTravel(0.123, 0.15, 1024);
     const q2 = quantizeTravel(0.123, 0.15, 1024);
