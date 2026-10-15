@@ -131,6 +131,30 @@ test("GNSS dropout returns no sample and outage emits no-fix status", () => {
     assert.equal(outage.measurement.noFix, true);
 });
 
+test("GNSS outage ends after outageDurationSec and is permanent without it", () => {
+    const run = (faults) => {
+        const start = normalizeRunSensor({ type: "gnss", calibration: { faults: { ...faults, outageProbability: 1 } } });
+        const after = normalizeRunSensor({ type: "gnss", calibration: { faults: { ...faults, outageProbability: 0 } } });
+        const rng = new SeededRNG("gnss-outage-duration");
+        let state = createMeasurementSeedState(start, rng);
+        const noFix = [];
+        // 10 Hz fixes. The outage starts on the first fix only.
+        for (let index = 1; index <= 20; index += 1) {
+            const snapshot = captureVehicleSnapshot(mockVehicle(), index * 100_000_000);
+            const result = buildGnssMeasurement(snapshot, index === 1 ? start : after, rng, state);
+            state = { ...state, ...result.nextState };
+            noFix.push(result.measurement.noFix);
+        }
+        return noFix;
+    };
+    // Starts at 0.1 s and ends at 0.6 s: fixes at 0.1 through 0.5 s have no fix.
+    const timed = run({ outageDurationSec: 0.5 });
+    assert.deepEqual(timed.slice(0, 5), [true, true, true, true, true]);
+    assert.ok(timed.slice(5).every((value) => value === false));
+    assert.ok(run({}).every((value) => value === true));
+    assert.ok(run({ outageDurationSec: 0 }).every((value) => value === true));
+});
+
 test("encoder quantization is deterministic and slip reduces travel", () => {
     const q1 = quantizeTravel(0.123, 0.15, 1024);
     const q2 = quantizeTravel(0.123, 0.15, 1024);
