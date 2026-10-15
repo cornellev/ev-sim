@@ -226,7 +226,11 @@ export class BakeView {
                 u_boxTagTex: { value: null },
                 u_triPosTex: { value: null },
                 u_triTagTex: { value: null },
+                sphereCount: { value: 0 },
+                u_spherePosTex: { value: null },
+                u_sphereTagTex: { value: null },
                 u_sensorRotation: { value: new THREE.Matrix3() },
+                u_pinhole: { value: 0 },
             }
         );
 
@@ -452,6 +456,7 @@ export class BakeView {
 
         const { posTexture, scaleTexture, tagTexture: boxTagTexture, count } = objectDb.t_boxes();
         const { posTexture: triPosTexture, tagTexture: triTagTexture, count: triCount } = objectDb.t_triangles();
+        const spheres = objectDb.t_spheres?.() ?? { posTexture: null, tagTexture: null, count: 0 };
 
         // Align the LiDAR scan with the camera view direction so reconstructed
         // hit points fall inside the camera frustum (see buildSensorRotationMatrix).
@@ -467,6 +472,9 @@ export class BakeView {
             triCount: { value: triCount },
             u_triPosTex: { value: triPosTexture },
             u_triTagTex: { value: triTagTexture },
+            sphereCount: { value: spheres.count ?? 0 },
+            u_spherePosTex: { value: spheres.posTexture },
+            u_sphereTagTex: { value: spheres.tagTexture },
         });
 
         if (!this.buff) return null;

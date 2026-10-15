@@ -135,6 +135,7 @@ export class KinematicVehiclePlant {
         this.manifestId = definition.vehicleManifestId;
         this.motionModel = definition.motionModel;
         this.collisionDimensions = { ...definition.dimensions };
+        this.collisionCenter = { ...vec3(definition.boundingBoxCenter) };
         this.dimensions = this.collisionDimensions;
         this.kinematics = { ...definition.kinematics };
         this.keyframes = definition.keyframes.map((frame) => ({ ...frame }));

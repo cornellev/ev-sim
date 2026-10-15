@@ -1,6 +1,6 @@
 import { assertPhysicsBackendSelection, PHYSICS_BACKEND_CONFIG } from "./PhysicsBackend.js";
 import { compareUtf8 } from "../simulation/world/WorldDescription.js";
-import { sweepAabbConvex } from "./SweptConvex.js";
+import { boxSupportRadius, obbAsConvex, orientedBoxCenter, sweepAabbConvex, sweepObbConvex } from "./SweptConvex.js";
 
 function vector(value = {}) {
     return { x: Number(value.x || 0), y: Number(value.y || 0), z: Number(value.z || 0) };
@@ -71,17 +71,17 @@ function projectionInterval(points, axis) {
     return { min: Math.min(...values), max: Math.max(...values) };
 }
 
-function movingInterval(start, end, half, axis, target, current) {
+function movingInterval(start, end, half, axis, target, current, radius = null) {
     const startCenter = start.x * axis.x + start.z * axis.z;
     const endCenter = end.x * axis.x + end.z * axis.z;
     const delta = endCenter - startCenter;
-    const radius = Math.abs(axis.x) * half.x + Math.abs(axis.z) * half.z;
+    const extent = radius ?? (Math.abs(axis.x) * half.x + Math.abs(axis.z) * half.z);
     if (Math.abs(delta) <= 1e-15) {
-        if (startCenter + radius < target.min || startCenter - radius > target.max) return null;
+        if (startCenter + extent < target.min || startCenter - extent > target.max) return null;
         return current;
     }
-    const first = (target.min - (startCenter + radius)) / delta;
-    const second = (target.max - (startCenter - radius)) / delta;
+    const first = (target.min - (startCenter + extent)) / delta;
+    const second = (target.max - (startCenter - extent)) / delta;
     return {
         entry: Math.max(current.entry, Math.min(first, second)),
         exit: Math.min(current.exit, Math.max(first, second)),
@@ -102,8 +102,10 @@ function movingYInterval(start, end, half, minY, maxY, current) {
     };
 }
 
-/** Continuous XZ SAT plus a continuous Y-slab test for an AABB and triangle prism. */
-export function sweepAabbTrianglePrism(start, end, half, points, minY, maxY) {
+/** Continuous XZ SAT plus a continuous Y-slab test for a yaw-oriented box and a triangle prism. */
+export function sweepObbTrianglePrism(start, end, box, points, minY, maxY) {
+    const startCenter = orientedBoxCenter(start, box);
+    const endCenter = orientedBoxCenter(end, box);
     const axes = [{ x: 1, z: 0 }, { x: 0, z: 1 }];
     for (let index = 0; index < points.length; index += 1) {
         const point = points[index];
@@ -114,12 +116,18 @@ export function sweepAabbTrianglePrism(start, end, half, points, minY, maxY) {
     }
     let interval = { entry: -Infinity, exit: Infinity };
     for (const axis of axes) {
-        interval = movingInterval(start, end, half, axis, projectionInterval(points, axis), interval);
+        const radius = boxSupportRadius([axis.x, 0, axis.z], box);
+        interval = movingInterval(startCenter, endCenter, box.half, axis, projectionInterval(points, axis), interval, radius);
         if (!interval || interval.entry > interval.exit) return null;
     }
-    interval = movingYInterval(start, end, half, minY, maxY, interval);
+    interval = movingYInterval(startCenter, endCenter, box.half, minY, maxY, interval);
     if (!interval || interval.entry > interval.exit || interval.exit < 0 || interval.entry > 1) return null;
     return Math.max(0, interval.entry);
+}
+
+/** Yaw-zero, center-zero wrapper around {@link sweepObbTrianglePrism}. */
+export function sweepAabbTrianglePrism(start, end, half, points, minY, maxY) {
+    return sweepObbTrianglePrism(start, end, { half, center: { x: 0, y: 0, z: 0 }, yaw: 0 }, points, minY, maxY);
 }
 
 function axisAlignedRectangle(obstacle) {
@@ -133,14 +141,61 @@ function axisAlignedRectangle(obstacle) {
 
 function sweepWorldObstacle(start, end, half, obstacle) {
     if (axisAlignedRectangle(obstacle)) return sweepAabb(start, end, half, obstacle.bounds);
+    return sweepObbWorldObstacle(start, end, { half, center: { x: 0, y: 0, z: 0 }, yaw: 0 }, obstacle);
+}
+
+function aabbAsConvex(target) {
+    const center = {
+        x: (target.min.x + target.max.x) / 2,
+        y: (target.min.y + target.max.y) / 2,
+        z: (target.min.z + target.max.z) / 2,
+    };
+    const half = {
+        x: (target.max.x - target.min.x) / 2,
+        y: (target.max.y - target.min.y) / 2,
+        z: (target.max.z - target.min.z) / 2,
+    };
+    return obbAsConvex(center, { half, center: { x: 0, y: 0, z: 0 }, yaw: 0 });
+}
+
+function sweepObbWorldObstacle(start, end, box, obstacle) {
+    if (axisAlignedRectangle(obstacle)) return sweepObbConvex(start, end, box, aabbAsConvex(obstacle.bounds));
     let firstImpact = null;
     for (const triangle of obstacle.triangles ?? []) {
         const points = triangle.map((index) => obstacle.footprint[index]);
         if (points.some((point) => !point)) continue;
-        const impact = sweepAabbTrianglePrism(start, end, half, points, obstacle.minY, obstacle.maxY);
+        const impact = sweepObbTrianglePrism(start, end, box, points, obstacle.minY, obstacle.maxY);
         if (impact !== null && (firstImpact === null || impact < firstImpact)) firstImpact = impact;
     }
     return firstImpact;
+}
+
+const ALIGNED_BOX_EPSILON = 1e-12;
+
+function isWorldAlignedBox(box) {
+    return Math.abs(Math.sin(box.yaw)) <= ALIGNED_BOX_EPSILON
+        && Math.abs(box.center.x) <= ALIGNED_BOX_EPSILON
+        && Math.abs(box.center.y) <= ALIGNED_BOX_EPSILON
+        && Math.abs(box.center.z) <= ALIGNED_BOX_EPSILON;
+}
+
+function vehicleBox(vehicle) {
+    return {
+        half: vehicleHalfExtents(vehicle),
+        center: vector(vehicle.collisionCenter),
+        yaw: Number(vehicle.rotation?.y) || 0,
+    };
+}
+
+function sweepVehicleObstacle(start, end, box, obstacle) {
+    if (isWorldAlignedBox(box)) {
+        if (obstacle.convex) return sweepAabbConvex(start, end, box.half, obstacle.convex);
+        if (obstacle.obstacle) return sweepWorldObstacle(start, end, box.half, obstacle);
+        return sweepAabb(start, end, box.half, obstacle.bounds);
+    }
+    if (obstacle.convex) return sweepObbConvex(start, end, box, obstacle.convex);
+    if (obstacle.obstacle) return sweepObbWorldObstacle(start, end, box, obstacle);
+    return sweepObbConvex(start, end, box, aabbAsConvex(obstacle.bounds));
 }
 
 function vehicleHalfExtents(vehicle) {
@@ -352,13 +407,10 @@ export class PhysicsEngine {
         this.pendingContacts = new Set();
         for (const state of this.vehicleStates) {
             const candidate = vector(state.vehicle.position);
+            const box = vehicleBox(state.vehicle);
             const hits = [];
             for (const obstacle of this.staticColliders) {
-                const time = obstacle.convex
-                    ? sweepAabbConvex(state.previous, candidate, state.half, obstacle.convex)
-                    : obstacle.obstacle
-                        ? sweepWorldObstacle(state.previous, candidate, state.half, obstacle)
-                        : sweepAabb(state.previous, candidate, state.half, obstacle.bounds);
+                const time = sweepVehicleObstacle(state.previous, candidate, box, obstacle);
                 if (time === null) continue;
                 hits.push({ id: obstacle.contactId ?? obstacle.id, time });
             }
@@ -397,17 +449,29 @@ export class PhysicsEngine {
                 const right = this.vehicleStates[rightIndex];
                 const leftCandidate = vector(left.vehicle.position);
                 const rightCandidate = vector(right.vehicle.position);
-                const relativeStart = {
-                    x: left.previous.x - right.previous.x,
-                    y: left.previous.y - right.previous.y,
-                    z: left.previous.z - right.previous.z,
-                };
-                const relativeEnd = {
-                    x: leftCandidate.x - rightCandidate.x,
-                    y: leftCandidate.y - rightCandidate.y,
-                    z: leftCandidate.z - rightCandidate.z,
-                };
-                const impact = sweepAabb(relativeStart, relativeEnd, left.half, bounds({ x: 0, y: 0, z: 0 }, right.half));
+                const leftBox = vehicleBox(left.vehicle);
+                const rightBox = vehicleBox(right.vehicle);
+                let impact;
+                if (isWorldAlignedBox(leftBox) && isWorldAlignedBox(rightBox)) {
+                    const relativeStart = {
+                        x: left.previous.x - right.previous.x,
+                        y: left.previous.y - right.previous.y,
+                        z: left.previous.z - right.previous.z,
+                    };
+                    const relativeEnd = {
+                        x: leftCandidate.x - rightCandidate.x,
+                        y: leftCandidate.y - rightCandidate.y,
+                        z: leftCandidate.z - rightCandidate.z,
+                    };
+                    impact = sweepAabb(relativeStart, relativeEnd, leftBox.half, bounds({ x: 0, y: 0, z: 0 }, rightBox.half));
+                } else {
+                    const end = {
+                        x: left.previous.x + (leftCandidate.x - left.previous.x) - (rightCandidate.x - right.previous.x),
+                        y: left.previous.y + (leftCandidate.y - left.previous.y) - (rightCandidate.y - right.previous.y),
+                        z: left.previous.z + (leftCandidate.z - left.previous.z) - (rightCandidate.z - right.previous.z),
+                    };
+                    impact = sweepObbConvex(left.previous, end, leftBox, obbAsConvex(right.previous, rightBox));
+                }
                 if (impact === null) continue;
                 this.pendingContacts.add(`${left.id}|${right.id}`);
                 const safeImpact = Math.max(0, impact - 1e-9);

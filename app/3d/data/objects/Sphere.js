@@ -1,38 +1,33 @@
-import { GLSLObject } from "./Object";
-import * as THREE from "three";
+import { Vector3 } from "three";
+import { GLSLObject } from "./Object.js";
 
+/**
+ * Analytic LiDAR sphere. The camera mesh stays on the solids projector;
+ * this record is the center and radius the shader evaluates.
+ */
 export class Sphere extends GLSLObject {
     /**
-     * Constructor
-     * @param {Vector3} position 
-     * @param {number} radius 
+     * @param {Vector3|{ x: number, y: number, z: number }} position
+     * @param {number} radius
      */
     constructor(position, radius) {
         super(true, false, false);
-        this.position = position;
-        this.radius = radius;
+        if (position instanceof Vector3) this.position.copy(position);
+        else this.position.set(position?.x ?? 0, position?.y ?? 0, position?.z ?? 0);
+        this.radius = Number(radius) || 0;
+        this.shape = "sphere";
+        this.visible = false;
     }
 
-    getSDF() {
-        return `` +
-`float sdSphere(vec3 p, float r) {
-    return length(p) - r;
-}`;
+    /**
+     * @param {number} radius
+     */
+    setRadius(radius) {
+        this.radius = Number(radius) || 0;
+        this._notifyTexture?.(this);
     }
 
-    getStruct() {
-        return super.getStruct()
-            .addField("float", "radius")
-            .rename("Sphere");
-    }
-
-    addToScene(scene) {
-        const geometry = new THREE.SphereGeometry(this.radius, 32, 32);
-        const material = new THREE.MeshStandardMaterial({ color: this.getColor() });
-        const sphere = new THREE.Mesh(geometry, material);
-        sphere.position.set(this.position.x, this.position.y, this.position.z);
-        scene.add(sphere);
-
-        this._mesh = sphere;
+    addToScene() {
+        return undefined;
     }
 }

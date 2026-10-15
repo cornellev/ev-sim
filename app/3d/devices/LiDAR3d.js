@@ -51,8 +51,12 @@ export class LiDAR3d extends Device {
                 u_boxTagTex: { value: null },
                 u_triPosTex: { value: null },
                 u_triTagTex: { value: null },
+                sphereCount: { value: 0 },
+                u_spherePosTex: { value: null },
+                u_sphereTagTex: { value: null },
                 u_sensorRotation: { value: new THREE.Matrix3() },
                 u_excludedInstanceId: { value: 0 },
+                u_pinhole: { value: 0 },
             }
         );
 
@@ -143,6 +147,7 @@ export class LiDAR3d extends Device {
         const objects = this.getParent().getParent().objects();
         const { posTexture, scaleTexture, tagTexture: boxTagTexture, count } = objects.t_boxes();
         const { posTexture: triPosTexture, tagTexture: triTagTexture, count: triCount } = objects.t_triangles();
+        const spheres = objects.t_spheres?.() ?? { posTexture: null, tagTexture: null, count: 0 };
 
         const sensorRotationMatrix = new THREE.Matrix3().setFromMatrix4(
             new THREE.Matrix4().makeRotationFromEuler(this.getRotation())
@@ -163,6 +168,9 @@ export class LiDAR3d extends Device {
             triCount: { value: triCount },
             u_triPosTex: { value: triPosTexture },
             u_triTagTex: { value: triTagTexture },
+            sphereCount: { value: spheres.count ?? 0 },
+            u_spherePosTex: { value: spheres.posTexture },
+            u_sphereTagTex: { value: spheres.tagTexture },
         })
     }
 

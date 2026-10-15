@@ -42,8 +42,9 @@ export class ManifestVehicle extends PhysicalVehicle {
         this.steeringAngle = 0;
         this.displaySteeringAngle = 0;
 
-        // Physics reads collisionDimensions for the swept AABB half extents.
+        // Physics reads collisionDimensions and collisionCenter for the swept oriented box.
         this.collisionDimensions = { ...this.manifest.boundingBox.size };
+        this.collisionCenter = { ...this.manifest.boundingBox.center };
         const catalogProvided = options.plants !== undefined;
         attachVehiclePlant(this, {
             id: this.telemetryId || this.manifest.id,

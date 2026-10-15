@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import * as THREE from "three";
 
 import { EnvironmentDocument, resetDocumentIdCounter } from "../app/3d/editor/document/EnvironmentDocument.js";
+import { createSolidsProjector } from "../app/3d/editor/projection/projectors/solidsProjector.js";
 import { createEnvironmentCommandService } from "../app/3d/editor/commands/EnvironmentCommandService.js";
 import { proxyMeshFailure } from "../app/simulation/world/ConvexMesh.js";
 import { supportPlanePosition } from "../app/physics/PhysicsEngine.js";
@@ -122,4 +124,95 @@ test("adding a primitive and enabling the floor are undoable and stay out of emp
     assert.equal(document.floor, null);
     assert.equal(document.objects.some((record) => record.typeId === "floor"), false);
     assert.equal(JSON.stringify(document.snapshot()), before);
+});
+
+function primitiveMeshes(scene) {
+    const meshes = [];
+    scene.traverse((object) => {
+        if (typeof object.name === "string" && object.name.startsWith("primitive:")) meshes.push(object);
+    });
+    return meshes;
+}
+
+/** Reparents meshes into a chunk group, the same way ChunkManager.assignEntity does. */
+function chunkRegistry(scene) {
+    const entities = new Map();
+    const chunk = new THREE.Group();
+    chunk.name = "EnvironmentChunk:0,0";
+    scene.add(chunk);
+    const reparent = (mesh) => {
+        if (mesh && mesh.parent !== chunk) chunk.attach(mesh);
+    };
+    return {
+        chunk,
+        getEntity(id) {
+            return entities.get(id) ?? null;
+        },
+        registerEntity(entity) {
+            entities.set(entity.id, entity);
+            reparent(entity.object3D);
+            return entity;
+        },
+        updateEntityTransform(id, object3D = null, options = {}) {
+            const entity = entities.get(id);
+            if (!entity) return null;
+            if (object3D) entity.object3D = object3D;
+            entity.lastAffectsPersistence = options.affectsPersistence;
+            reparent(entity.object3D);
+            return entity;
+        },
+        unregisterEntity(id) {
+            return entities.delete(id);
+        },
+    };
+}
+
+function boxRecord(position) {
+    return {
+        id: "box-1",
+        shape: "box",
+        position: { ...position },
+        rotationY: 0,
+        size: { x: 1, y: 1, z: 1 },
+        color: "#a3a3a3",
+        tags: ["unknown"],
+    };
+}
+
+test("a reparented primitive mesh moves in place", () => {
+    const scene = new THREE.Scene();
+    const registry = chunkRegistry(scene);
+    const record = boxRecord({ x: 0, y: 0.5, z: 0 });
+    const document = { environmentId: "yard", primitives: [record], floor: null };
+    const projector = createSolidsProjector();
+    const changeSet = { domains: { primitives: true } };
+    projector.apply({ scene, document, registry, changeSet, transient: true });
+    record.position = { x: 4, y: 0.5, z: 1 };
+    projector.apply({ scene, document, registry, changeSet, transient: true });
+
+    const meshes = primitiveMeshes(scene);
+    assert.equal(meshes.length, 1);
+    assert.equal(meshes[0].position.x, 4);
+    assert.equal(meshes[0].position.z, 1);
+    assert.equal(meshes[0].parent, registry.chunk);
+    assert.equal(registry.getEntity("primitive:box-1").lastAffectsPersistence, false);
+});
+
+test("removing a primitive disposes meshes left in chunk groups", () => {
+    const scene = new THREE.Scene();
+    const registry = chunkRegistry(scene);
+    const record = boxRecord({ x: 1, y: 0.5, z: 2 });
+    const document = { environmentId: "yard", primitives: [record], floor: null };
+    const projector = createSolidsProjector();
+    const changeSet = { domains: { primitives: true } };
+    projector.apply({ scene, document, registry, changeSet, transient: false });
+    const trail = primitiveMeshes(scene)[0].clone();
+    trail.name = "primitive:box-1";
+    registry.chunk.add(trail);
+    assert.equal(primitiveMeshes(scene).length, 2);
+
+    document.primitives = [];
+    projector.apply({ scene, document, registry, changeSet, transient: false });
+    assert.equal(primitiveMeshes(scene).length, 0);
+    assert.equal(registry.getEntity("primitive:box-1"), null);
 });

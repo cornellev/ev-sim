@@ -20,6 +20,7 @@ export function attachVehiclePlant(vehicle, entry, dependency = null, options = 
     vehicle.plant = plant;
     if (plant.dynamicsStatus) vehicle.dynamicsStatus = plant.dynamicsStatus;
     vehicle.collisionDimensions = { ...plant.collisionDimensions };
+    vehicle.collisionCenter = { ...plant.collisionCenter };
     syncPlantFromVehicle(vehicle);
     if (options.world || options.environment || options.getEnvironment) {
         bindRoadGroundSampler([plant], options);

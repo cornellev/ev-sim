@@ -371,10 +371,12 @@ browser application root remains private. See [Headless release and CI gates](he
 
 Physics pins Rapier `0.19.3` under one of two world-derived capabilities.
 Legacy worlds retain `rapier3d-swept-prism-v1`: authoritative first impact uses
-continuous XZ prism SAT with a Y-slab test. A world with collision asset proxies
-selects `rapier3d-swept-compound-v2`, whose shared `SweptConvex` path performs
-continuous 3D SAT for a translating vehicle AABB against static convex faces,
-edges, and box axes after swept-AABB broad phase. Compound-part hits collapse
+continuous XZ prism SAT with a Y-slab test against a yaw-oriented vehicle box.
+A world with collision asset proxies selects `rapier3d-swept-compound-v2`,
+whose shared `SweptConvex` path performs continuous 3D SAT for that same box
+(local length along +X, width along +Z, offset by the bounding-box center)
+against static convex faces, edges, and the box axes after a swept
+world-aligned broad phase. Compound-part hits collapse
 to the environment instance id with deterministic earliest-contact ordering.
 Rapier still owns fixed and kinematic bodies; roads remain drivable surfaces.
 

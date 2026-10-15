@@ -18,6 +18,7 @@ export function SimulationChrome({ data, onOpenReplay }) {
     const [sensorPanelVisible, setSensorPanelVisible] = useState(true);
     const [compact, setCompact] = useState(false);
     const [viewMode, setViewMode] = useState("3d");
+    const [lidarViewportEnabled, setLidarViewportEnabled] = useState(false);
     const perspectiveView = data?.simulation?.()?.perspectiveView ?? null;
     const [perspective, setPerspective] = useState(() => perspectiveView?.getSnapshot?.() ?? INACTIVE_PERSPECTIVE);
 
@@ -46,6 +47,12 @@ export function SimulationChrome({ data, onOpenReplay }) {
         simulation?.setSceneRenderEnabled?.(!mapActive);
         return () => simulation?.setSceneRenderEnabled?.(true);
     }, [data, mapActive]);
+
+    useEffect(() => {
+        const simulation = data?.simulation?.();
+        simulation?.setLidarViewportEnabled?.(lidarViewportEnabled);
+        return () => simulation?.setLidarViewportEnabled?.(false);
+    }, [data, lidarViewportEnabled]);
 
     useEffect(() => {
         if (!mapActive) return undefined;
@@ -102,6 +109,8 @@ export function SimulationChrome({ data, onOpenReplay }) {
                 onOpenReplay={onOpenReplay}
                 viewMode={viewMode}
                 onViewModeChange={setViewMode}
+                lidarViewportEnabled={lidarViewportEnabled}
+                onLidarViewportEnabledChange={setLidarViewportEnabled}
             />
         </>
     );

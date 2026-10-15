@@ -4,6 +4,7 @@ import { attachPerspectiveView, detachPerspectiveView } from "../3d/camera/persp
 import { AutonomyOverlay } from "../3d/overlay/AutonomyOverlay.js";
 import { BrowserPbrRenderRuntime } from "../3d/perception/BrowserPbrRenderRuntime.js";
 import { BrowserPbrWorkerRuntime } from "../3d/perception/BrowserPbrWorkerRuntime.js";
+import { LidarViewportPreview } from "../3d/perception/LidarViewportPreview.js";
 import { ScenarioDiagnostics } from "../scenarios/ScenarioDiagnostics.js";
 import { ScenarioRuntime } from "../scenarios/ScenarioRuntime.js";
 import { SimulationKernel } from "./kernel/SimulationKernel.js";
@@ -94,6 +95,7 @@ export class SimulationEngine {
         this.listeners = new Set();
         this.viewportActive = true;
         this.sceneRenderEnabled = true;
+        this.lidarViewport = new LidarViewportPreview(this.data);
         this.environmentRuntime = null;
         this.renderRuntime = null;
         this.renderProviderStatus = null;
@@ -567,6 +569,8 @@ export class SimulationEngine {
         this.kernel.dispose();
         this.scenarioDiagnostics.dispose();
         this.autonomyOverlay?.dispose?.();
+        this.lidarViewport?.dispose();
+        this.lidarViewport = null;
         this.listeners.clear();
         this.scene = null;
         this.camera = null;
@@ -723,6 +727,13 @@ export class SimulationEngine {
         if (this.sceneRenderEnabled === next) return;
         this.sceneRenderEnabled = next;
         if (next) this.render();
+    }
+
+    setLidarViewportEnabled(enabled) {
+        const next = enabled === true;
+        if (!this.lidarViewport || this.lidarViewport.enabled === next) return;
+        this.lidarViewport.setEnabled(next);
+        if (this.sceneRenderEnabled) this.render();
     }
 
     async applyRunManifest(resolved, options = {}) {
@@ -1076,6 +1087,11 @@ export class SimulationEngine {
             width: this.renderer.domElement?.width,
             height: this.renderer.domElement?.height,
         });
+        if (this.lidarViewport?.enabled && this.lidarViewport.render(this.renderer, this.camera)) {
+            this.frames += 1;
+            browserSimulationPerformance.recordPresentation();
+            return true;
+        }
         if (this.data.skyManager?.()?.render?.()) {
             this.frames += 1;
             browserSimulationPerformance.recordPresentation();

@@ -6,9 +6,15 @@
 
 import * as THREE from "three";
 import { EDITOR_LAYERS } from "../../EditorState.js";
-import { localPrimitiveMesh } from "../../../../simulation/world/PrimitiveSolids.js";
+import { compilePrimitiveSolid, localPrimitiveMesh } from "../../../../simulation/world/PrimitiveSolids.js";
 import { normalizePrimitiveRecord } from "../../../../simulation/world/PrimitiveRecords.js";
 import { createWorldResource } from "../../../../simulation/world/WorldDescription.js";
+import {
+    PRIMITIVE_LIDAR_TYPE,
+    semanticOf,
+    sphereFromPrimitive,
+    trianglesFromSolid,
+} from "../lidarSolidTriangles.js";
 
 const FLOOR_EXTENT = 20000;
 const GROUP_NAME = "scene-primitives";
@@ -52,10 +58,36 @@ function publishWorld(context) {
     environment.setWorldDescription(resource.description, resource.hash);
 }
 
-function syncPrimitive(group, registry, record) {
+function findPrimitiveMesh(scene, registry, name) {
+    const registered = registry?.getEntity?.(name)?.object3D ?? null;
+    if (registered) return registered;
+    let found = null;
+    scene?.traverse?.((object) => {
+        if (!found && object.name === name) found = object;
+    });
+    return found;
+}
+
+function primitiveMeshes(scene) {
+    const meshes = [];
+    scene?.traverse?.((object) => {
+        if (typeof object.name === "string" && object.name.startsWith("primitive:")) meshes.push(object);
+    });
+    return meshes;
+}
+
+function disposeMesh(mesh) {
+    mesh.geometry?.dispose?.();
+    mesh.material?.dispose?.();
+    mesh.parent?.remove(mesh);
+}
+
+function syncPrimitive(context, group, record) {
     const normalized = normalizePrimitiveRecord(record);
     const name = `primitive:${normalized.id}`;
-    let mesh = group.getObjectByName(name);
+    const registry = context.registry;
+    let mesh = findPrimitiveMesh(context.scene, registry, name);
+    const created = !mesh;
     const nextSignature = signature(normalized);
     if (!mesh || mesh.userData.primitiveSignature !== nextSignature) {
         const geometry = geometryFromMesh(localPrimitiveMesh(normalized));
@@ -79,29 +111,37 @@ function syncPrimitive(group, registry, record) {
     mesh.position.set(normalized.position.x, normalized.position.y, normalized.position.z);
     mesh.rotation.set(0, normalized.rotationY, 0);
     mesh.updateMatrixWorld(true);
-    registry?.registerEntity?.({
+    const entity = {
         id: name,
         sourceId: normalized.id,
         kind: "primitive",
         layer: EDITOR_LAYERS.PROPS,
         object3D: mesh,
         record: normalized,
-    });
+    };
+    if (created || !registry?.getEntity?.(name)) {
+        registry?.registerEntity?.(entity);
+    } else {
+        const current = registry.getEntity(name);
+        if (current) current.record = normalized;
+        registry.updateEntityTransform?.(name, mesh, context.transient ? { affectsPersistence: false } : {});
+    }
+    return mesh;
 }
 
 function syncPrimitives(context) {
     const group = ensureGroup(context.scene);
-    const live = new Set();
+    const live = new Map();
     for (const record of context.document.primitives ?? []) {
-        syncPrimitive(group, context.registry, record);
-        live.add(`primitive:${record.id}`);
+        const mesh = syncPrimitive(context, group, record);
+        live.set(mesh.name, mesh);
     }
-    for (const child of [...group.children]) {
-        if (child.name === FLOOR_NAME || live.has(child.name)) continue;
-        context.registry?.unregisterEntity?.(child.name, { affectsPersistence: false });
-        child.geometry?.dispose?.();
-        child.material?.dispose?.();
-        group.remove(child);
+    for (const mesh of primitiveMeshes(context.scene)) {
+        if (live.get(mesh.name) === mesh) continue;
+        if (!live.has(mesh.name)) {
+            context.registry?.unregisterEntity?.(mesh.name, { affectsPersistence: false });
+        }
+        disposeMesh(mesh);
     }
 }
 
@@ -155,10 +195,38 @@ function syncFloor(context) {
     group.add(mesh);
 }
 
+function syncLidarSolids(context) {
+    const objects = context.data?.objects?.();
+    if (typeof objects?.replaceTriangles !== "function" || typeof objects?.replaceSpheres !== "function") return;
+    const triangles = [];
+    const spheres = [];
+    for (const record of context.document.primitives ?? []) {
+        const normalized = normalizePrimitiveRecord(record);
+        if (normalized.shape === "sphere") {
+            spheres.push(sphereFromPrimitive(record, context.document));
+            continue;
+        }
+        const solid = compilePrimitiveSolid(record, semanticOf(context.document, normalized));
+        triangles.push(...trianglesFromSolid(solid, {
+            geometryType: PRIMITIVE_LIDAR_TYPE,
+            sourceId: normalized.id,
+        }));
+    }
+    objects.replaceTriangles(
+        (triangle) => triangle.environmentGeometryType === PRIMITIVE_LIDAR_TYPE,
+        triangles,
+    );
+    objects.replaceSpheres(
+        (sphere) => sphere.environmentGeometryType === PRIMITIVE_LIDAR_TYPE,
+        spheres,
+    );
+}
+
 function sync(context, { publish = false } = {}) {
     if (!context.scene || !context.document) return;
     syncPrimitives(context);
     syncFloor(context);
+    syncLidarSolids(context);
     if (publish) publishWorld(context);
 }
 

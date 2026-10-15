@@ -1,4 +1,4 @@
-import { MAX_BOXES, MAX_TRIANGLES } from "../data/ObjectDatabase";
+import { MAX_BOXES, MAX_SPHERES, MAX_TRIANGLES } from "../data/ObjectDatabase";
 import { Box } from "../data/objects/Box";
 import { Triangle } from "../data/objects/Triangle";
 import { common } from "./Shader";
@@ -18,6 +18,7 @@ ${new Triangle().getStruct().toString()}
 // box array via data textures
 #define MAX_BOXES ${MAX_BOXES}
 #define MAX_TRIANGLES ${MAX_TRIANGLES}
+#define MAX_SPHERES ${MAX_SPHERES}
 uniform sampler2D u_boxPosTex;
 uniform sampler2D u_boxScaleTex;
 uniform int boxCount;
@@ -28,6 +29,10 @@ uniform sampler2D u_triTagTex;
 uniform int triCount;
 
 uniform sampler2D u_boxTagTex;
+
+uniform sampler2D u_spherePosTex;
+uniform sampler2D u_sphereTagTex;
+uniform int sphereCount;
 
 uniform vec3 u_origin;
 uniform mat3 u_sensorRotation;
@@ -45,6 +50,10 @@ uniform float u_phiStep;
 
 uniform float u_range;
 uniform float u_excludedInstanceId;
+
+// 0 keeps the spherical scan used by sensor products. 1 casts one pinhole
+// ray per pixel through the theta/phi frustum, for the viewport preview.
+uniform int u_pinhole;
 
 // obx
 ${new Box().getSDF()}
@@ -103,6 +112,28 @@ float rayBoxIntersect(vec3 orig, vec3 dir, vec3 center, vec3 size, out vec3 norm
     return hitT;
 }
 
+// Sphere signed distance. The ray hit is the nearest positive root of this
+// function, solved directly rather than marched.
+float sdSphere(vec3 p, vec3 center, float radius) {
+    return length(p - center) - radius;
+}
+
+float raySphereDistance(vec3 orig, vec3 dir, vec3 center, float radius, out vec3 normal) {
+    vec3 oc = orig - center;
+    float b = dot(oc, dir);
+    float c = dot(oc, oc) - radius * radius;
+    float discriminant = b * b - c;
+    if (discriminant < 0.0) return -1.0;
+    float root = sqrt(discriminant);
+    float nearT = -b - root;
+    float farT = -b + root;
+    float hitT = nearT > 1e-4 ? nearT : farT;
+    if (hitT < 1e-4) return -1.0;
+    vec3 hit = orig + dir * hitT;
+    normal = normalize(hit - center);
+    return hitT;
+}
+
 struct Hit {
     bool hit;
     float distance;
@@ -112,12 +143,23 @@ struct Hit {
 };
 
 Hit raycast(float theta, float phi) {
-    // direction vector in 3D
-    vec3 localDir = vec3(
-        cos(phi) * cos(theta),
-        sin(phi),
-        cos(phi) * sin(theta)
-    );
+    // Spherical scans stay the default when u_pinhole is 0. Pinhole mode
+    // matches a perspective camera: x is tan(theta) across the frustum and
+    // y is tan(phi), then the ray is normalize(1, y, x) in sensor space.
+    vec3 localDir;
+    if (u_pinhole == 1) {
+        float u = gl_FragCoord.x / max(u_resolution.x, 1.0);
+        float v = gl_FragCoord.y / max(u_resolution.y, 1.0);
+        float xPlane = mix(tan(toRadians(u_thetaStart)), tan(toRadians(u_thetaEnd)), u);
+        float yPlane = mix(tan(toRadians(u_phiStart)), tan(toRadians(u_phiEnd)), v);
+        localDir = normalize(vec3(1.0, yPlane, xPlane));
+    } else {
+        localDir = vec3(
+            cos(phi) * cos(theta),
+            sin(phi),
+            cos(phi) * sin(theta)
+        );
+    }
     vec3 dir = normalize(u_sensorRotation * localDir);
 
     // --- Exact triangle intersections (Möller–Trumbore) ---
@@ -187,6 +229,35 @@ Hit raycast(float theta, float phi) {
         ++bb;
     }
 
+    float sphereHitDist = -1.0;
+    float sphereHitIncidence = 0.0;
+    int sphereHitIndex = -1;
+    int sb = 0;
+    for (int j = 0; j < MAX_SPHERES; j++) {
+        if (sb >= sphereCount) break;
+        float idx = float(j);
+        float texWidth = float(MAX_SPHERES);
+        vec2 uv = vec2((idx + 0.5) / texWidth, 0.5);
+        vec4 encoded = texture2D(u_spherePosTex, uv);
+        if (encoded.w <= 0.0) {
+            ++sb;
+            continue;
+        }
+        vec4 sphereTag = texture2D(u_sphereTagTex, uv);
+        if (u_excludedInstanceId > 0.0 && sphereTag.y == u_excludedInstanceId) {
+            ++sb;
+            continue;
+        }
+        vec3 normal;
+        float distance = raySphereDistance(u_origin, dir, encoded.xyz, encoded.w, normal);
+        if (distance > 0.0 && distance <= u_range && (sphereHitDist < 0.0 || distance < sphereHitDist)) {
+            sphereHitDist = distance;
+            sphereHitIndex = j;
+            sphereHitIncidence = abs(dot(-dir, normal));
+        }
+        ++sb;
+    }
+
     Hit result;
     result.hit = false;
     result.distance = 0.0;
@@ -194,7 +265,21 @@ Hit raycast(float theta, float phi) {
     result.tagId = 0.0;
     result.instanceId = 0.0;
 
-    if (boxHitDist > 0.0 && (triHitDist < 0.0 || boxHitDist <= triHitDist)) {
+    float bestDist = -1.0;
+    int bestKind = 0;
+    if (boxHitDist > 0.0) {
+        bestDist = boxHitDist;
+        bestKind = 1;
+    }
+    if (triHitDist > 0.0 && (bestDist < 0.0 || triHitDist < bestDist)) {
+        bestDist = triHitDist;
+        bestKind = 2;
+    }
+    if (sphereHitDist > 0.0 && (bestDist < 0.0 || sphereHitDist < bestDist)) {
+        bestDist = sphereHitDist;
+        bestKind = 3;
+    }
+    if (bestKind == 1) {
         result.hit = true;
         result.distance = boxHitDist;
         result.incidence = boxHitIncidence;
@@ -202,12 +287,20 @@ Hit raycast(float theta, float phi) {
         vec4 tag = texture2D(u_boxTagTex, vec2(uCoord, 0.5));
         result.tagId = tag.x;
         result.instanceId = tag.y;
-    } else if (triHitDist > 0.0) {
+    } else if (bestKind == 2) {
         result.hit = true;
         result.distance = triHitDist;
         result.incidence = triHitIncidence;
         float uCoord = (float(triHitIndex) + 0.5) / float(MAX_TRIANGLES);
         vec4 tag = texture2D(u_triTagTex, vec2(uCoord, 0.5));
+        result.tagId = tag.x;
+        result.instanceId = tag.y;
+    } else if (bestKind == 3) {
+        result.hit = true;
+        result.distance = sphereHitDist;
+        result.incidence = sphereHitIncidence;
+        float uCoord = (float(sphereHitIndex) + 0.5) / float(MAX_SPHERES);
+        vec4 tag = texture2D(u_sphereTagTex, vec2(uCoord, 0.5));
         result.tagId = tag.x;
         result.instanceId = tag.y;
     }

@@ -445,7 +445,7 @@ export class SimulationKernel {
                 world: this.resolvedRun.world,
                 environment: this.resolvedRun.environment,
                 plants: candidatePluginSession?.plants ?? new Map(),
-                skipManifestDevices: manifest.sensorRig?.inheritance?.mode === "vehicle",
+                skipManifestDevices: true,
             });
             this._configureControlRuntimeLimits(manifest);
             const renderRuntime = await this.context.rendering?.prepare?.(this.resolvedRun, {

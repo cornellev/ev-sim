@@ -454,6 +454,18 @@ export function lidarTwinFromGlslObject(object) {
         semanticId: Number(object?.tagId ?? 0),
         instanceId: Number(object?.lidarInstanceId ?? stableInstanceIdFromSource(sourceId)),
     };
+    if (object?.shape === "sphere" && object?.position) {
+        return {
+            ...common,
+            shape: "sphere",
+            center: {
+                x: Number(object.position.x) || 0,
+                y: Number(object.position.y) || 0,
+                z: Number(object.position.z) || 0,
+            },
+            radius: Number(object.radius),
+        };
+    }
     if (object?.a && object?.b && object?.c) {
         return createTriangleLidarTwin({
             ...common,

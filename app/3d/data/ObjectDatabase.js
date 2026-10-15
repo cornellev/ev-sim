@@ -2,6 +2,7 @@ import { Database } from "./Database";
 import { Box } from "./objects/Box";
 import { GLSLObject, Object } from "./objects/Object";
 import * as THREE from "three";
+import { Sphere } from "./objects/Sphere";
 import { Triangle } from "./objects/Triangle";
 import Values from "@/app/util/Values";
 import { lidarTwinFromGlslObject } from "../../simulation/lidar/LidarGeometry.js";
@@ -10,8 +11,24 @@ import { compareUtf8 } from "../../simulation/world/WorldDescription.js";
 
 const MAX_BOXES = 2000;
 const MAX_TRIANGLES = 5000;
+const MAX_SPHERES = 256;
 
-export { MAX_BOXES, MAX_TRIANGLES };
+export { MAX_BOXES, MAX_TRIANGLES, MAX_SPHERES };
+
+let triangleCapacityWarned = false;
+let sphereCapacityWarned = false;
+
+function warnTriangleCapacity() {
+    if (triangleCapacityWarned) return;
+    triangleCapacityWarned = true;
+    console.warn(`LiDAR triangle texture is full (${MAX_TRIANGLES}). Further triangles were skipped.`);
+}
+
+function warnSphereCapacity() {
+    if (sphereCapacityWarned) return;
+    sphereCapacityWarned = true;
+    console.warn(`LiDAR sphere texture is full (${MAX_SPHERES}). Further spheres were skipped.`);
+}
 
 function lidarSourceId(object) {
     return String(object.perceptionSourceId ?? object.environmentSourceId
@@ -59,6 +76,8 @@ function setupTextures(obj) {
             _boxTagData: new Float32Array(4 * MAX_BOXES),
             _trianglePosData: new Float32Array(4 * MAX_TRIANGLES * 3),
             _triangleTagData: new Float32Array(4 * MAX_TRIANGLES),
+            _spherePosData: new Float32Array(4 * MAX_SPHERES),
+            _sphereTagData: new Float32Array(4 * MAX_SPHERES),
         },
         textures: {
             _boxPosTexture: null,
@@ -66,10 +85,13 @@ function setupTextures(obj) {
             _boxTagTexture: null,
             _trianglePosTexture: null,
             _triangleTagTexture: null,
+            _spherePosTexture: null,
+            _sphereTagTexture: null,
         },
         counts: {
             boxCount: 0,
             triCount: 0,
+            sphereCount: 0,
         },
     };
 
@@ -92,6 +114,14 @@ function setupTextures(obj) {
     obj.textures.textures._triangleTagTexture = createObjectDataTexture(
         obj.textures.data._triangleTagData,
         MAX_TRIANGLES
+    );
+    obj.textures.textures._spherePosTexture = createObjectDataTexture(
+        obj.textures.data._spherePosData,
+        MAX_SPHERES
+    );
+    obj.textures.textures._sphereTagTexture = createObjectDataTexture(
+        obj.textures.data._sphereTagData,
+        MAX_SPHERES
     );
 }
 
@@ -158,6 +188,27 @@ function writeTriangleTextureSlot(database, triangle, index) {
     database.textures.textures._triangleTagTexture.needsUpdate = true;
 }
 
+/**
+ * Center in xyz and radius in w. An empty slot keeps w at 0.
+ * @param {ObjectDatabase} database
+ * @param {Sphere} sphere
+ * @param {number} index
+ */
+function writeSphereTextureSlot(database, sphere, index) {
+    const dataIndex = index * 4;
+    const twin = database.updateLidarTwin(sphere);
+    database.textures.data._spherePosData[dataIndex + 0] = twin.center.x;
+    database.textures.data._spherePosData[dataIndex + 1] = twin.center.y;
+    database.textures.data._spherePosData[dataIndex + 2] = twin.center.z;
+    database.textures.data._spherePosData[dataIndex + 3] = twin.radius;
+    database.textures.data._sphereTagData[dataIndex + 0] = twin.semanticId;
+    database.textures.data._sphereTagData[dataIndex + 1] = twin.instanceId;
+    database.textures.data._sphereTagData[dataIndex + 2] = 0;
+    database.textures.data._sphereTagData[dataIndex + 3] = 1;
+    database.textures.textures._spherePosTexture.needsUpdate = true;
+    database.textures.textures._sphereTagTexture.needsUpdate = true;
+}
+
 export class ObjectDatabase extends Database {
     constructor(parent) {
         super(parent);
@@ -182,8 +233,14 @@ export class ObjectDatabase extends Database {
             triangle: (triangle) => {
                 const uuid = triangle._uuid;
                 const index = this.triangles().findIndex((obj) => obj._uuid === uuid);
-                if (index === -1) return;
+                if (index === -1 || index >= MAX_TRIANGLES) return;
                 writeTriangleTextureSlot(this, triangle, index);
+            },
+            sphere: (sphere) => {
+                const uuid = sphere._uuid;
+                const index = this.spheres().findIndex((obj) => obj._uuid === uuid);
+                if (index === -1 || index >= MAX_SPHERES) return;
+                writeSphereTextureSlot(this, sphere, index);
             },
         }
     }
@@ -237,12 +294,12 @@ export class ObjectDatabase extends Database {
         if (!(object instanceof Object)) return;
         if (!object.lidarTwinId) {
             const sourceId = lidarSourceId(object);
-            const shape = object instanceof Triangle ? "triangle" : "box";
+            const shape = object instanceof Triangle ? "triangle" : object instanceof Sphere ? "sphere" : "box";
             const index = this.objects.filter((entry) => {
                 const entrySource = entry.perceptionSourceId ?? entry.environmentSourceId
                     ?? entry._vehicleId ?? entry._buildingId ?? entry._roadId ?? entry._uuid;
-                return String(entrySource) === String(sourceId)
-                    && (entry instanceof Triangle ? "triangle" : "box") === shape;
+                const entryShape = entry instanceof Triangle ? "triangle" : entry instanceof Sphere ? "sphere" : "box";
+                return String(entrySource) === String(sourceId) && entryShape === shape;
             }).length;
             object.lidarTwinId = `${sourceId}:${shape}:${index}`;
             if (shape === "triangle") object.lidarTriangleIndex = index;
@@ -256,10 +313,23 @@ export class ObjectDatabase extends Database {
             writeBoxTextureSlot(this, object, index);
             this.textures.counts.boxCount += 1;
         } else if (object instanceof Triangle) {
-            object.setNotifyTexture(this.notifiers.triangle);
             const index = this.triangles().length - 1;
-            writeTriangleTextureSlot(this, object, index);
-            this.textures.counts.triCount += 1;
+            if (index >= MAX_TRIANGLES) {
+                warnTriangleCapacity();
+            } else {
+                object.setNotifyTexture(this.notifiers.triangle);
+                writeTriangleTextureSlot(this, object, index);
+                this.textures.counts.triCount += 1;
+            }
+        } else if (object instanceof Sphere) {
+            const index = this.spheres().length - 1;
+            if (index >= MAX_SPHERES) {
+                warnSphereCapacity();
+            } else {
+                object.setNotifyTexture(this.notifiers.sphere);
+                writeSphereTextureSlot(this, object, index);
+                this.textures.counts.sphereCount += 1;
+            }
         }
     }
 
@@ -285,6 +355,19 @@ export class ObjectDatabase extends Database {
         this.rebuildTextureData();
     }
 
+    /**
+     * Replace one sphere domain and rebuild the GPU buffers.
+     * @param {(sphere: Sphere) => boolean} predicate
+     * @param {Sphere[]} spheres
+     */
+    replaceSpheres(predicate, spheres = []) {
+        this.objects = this.objects.filter(
+            (object) => !(object instanceof Sphere && predicate(object)),
+        );
+        for (const sphere of spheres) this.addObject(sphere);
+        this.rebuildTextureData();
+    }
+
     rebuildTextureData() {
         const textureData = this.textures.data;
         Values(textureData).forEach((array) => array.fill(0));
@@ -292,6 +375,7 @@ export class ObjectDatabase extends Database {
         this.rebuildLidarInstanceRegistry();
         this.textures.counts.boxCount = 0;
         this.textures.counts.triCount = 0;
+        this.textures.counts.sphereCount = 0;
 
         this.boxes().forEach((box, index) => {
             box.setNotifyTexture(this.notifiers.box);
@@ -299,9 +383,22 @@ export class ObjectDatabase extends Database {
             this.textures.counts.boxCount += 1;
         });
         this.triangles().forEach((triangle, index) => {
+            if (index >= MAX_TRIANGLES) {
+                warnTriangleCapacity();
+                return;
+            }
             triangle.setNotifyTexture(this.notifiers.triangle);
             writeTriangleTextureSlot(this, triangle, index);
             this.textures.counts.triCount += 1;
+        });
+        this.spheres().forEach((sphere, index) => {
+            if (index >= MAX_SPHERES) {
+                warnSphereCapacity();
+                return;
+            }
+            sphere.setNotifyTexture(this.notifiers.sphere);
+            writeSphereTextureSlot(this, sphere, index);
+            this.textures.counts.sphereCount += 1;
         });
     }
 
@@ -327,6 +424,18 @@ export class ObjectDatabase extends Database {
 
     triangles() {
         return this.objects.filter((obj) => obj instanceof Triangle);
+    }
+
+    spheres() {
+        return this.objects.filter((obj) => obj instanceof Sphere);
+    }
+
+    t_spheres() {
+        return {
+            posTexture: this.textures.textures._spherePosTexture,
+            tagTexture: this.textures.textures._sphereTagTexture,
+            count: this.textures.counts.sphereCount,
+        };
     }
     
     t_triangles() {

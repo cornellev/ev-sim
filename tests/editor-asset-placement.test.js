@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import * as THREE from "three";
 
 import { AssetPlacementController } from "../app/3d/editor/assets/AssetPlacementController.js";
 import { EditorState, EDITOR_MODES, MAP_TOOLS } from "../app/3d/editor/EditorState.js";
-import { assetMapFootprint, pickMapTarget } from "../app/3d/editor/map/mapHitTest.js";
+import { assetMapFootprint, assetMapShapes, pickMapTarget } from "../app/3d/editor/map/mapHitTest.js";
 
 test("ED-06 catalog placement pins a revision, snaps consistently, commits once, and cancellation only releases the ghost", async () => {
     const editor = new EditorState({ transformSnap: { enabled: true, translation: 0.5 }, map: { snapEnabled: true, snapSize: 0.5 } });
@@ -48,4 +49,84 @@ test("ED-06 map assets use stable object ids and transformed bounds", () => {
     editor.setPlacementAsset({ kind: "catalog", assetId: "tree", revision: 3 });
     assert.equal(editor.snapshot().map.activeMapTool, MAP_TOOLS.ASSET_PLACE);
     assert.equal(editor.persistedSnapshot().activePlacement, undefined);
+});
+
+function boxVertices(min, max) {
+    const vertices = [];
+    for (const x of [min[0], max[0]]) {
+        for (const y of [min[1], max[1]]) {
+            for (const z of [min[2], max[2]]) vertices.push([x, y, z]);
+        }
+    }
+    return vertices;
+}
+
+test("map asset shapes use the published collision hull and fall back when it is absent", () => {
+    const record = {
+        id: "cone",
+        typeId: "asset-instance",
+        typeVersion: 2,
+        components: {
+            asset: {
+                assetId: "cone",
+                revision: 7,
+                position: { x: 0, y: 0, z: 0 },
+                rotationY: 0,
+                scale: { x: 1, y: 1, z: 1 },
+            },
+        },
+    };
+    const document = {
+        objects: [record],
+        roads: { nodes: [], edges: [] },
+        features: [],
+        buildings: [],
+        assetMetrics: {
+            definitions: [{
+                assetId: "cone",
+                revision: 7,
+                collision: [{ id: "collision-generated-1", vertices: boxVertices([-0.075, 0.09, -0.075], [0.075, 0.27, 0.075]) }],
+            }],
+        },
+    };
+    const shapes = assetMapShapes(record, document, { min: { x: -1, z: -1 }, max: { x: 1, z: 1 } });
+    assert.equal(shapes.source, "collision");
+    assert.equal(shapes.footprints.length, 1);
+    const xs = shapes.footprints[0].map((point) => point.x);
+    const zs = shapes.footprints[0].map((point) => point.z);
+    assert.ok(Math.max(...xs) - Math.min(...xs) < 0.16);
+    assert.ok(Math.max(...zs) - Math.min(...zs) < 0.16);
+    const layers = { props: true, roads: true, buildings: true, detail: true };
+    const viewport = { zoom: 10 };
+    assert.deepEqual(pickMapTarget({ x: 0, z: 0 }, document, viewport, layers), { type: "asset", id: "cone" });
+    assert.equal(pickMapTarget({ x: 0.4, z: 0 }, document, viewport, layers), null);
+
+    const turned = structuredClone(record);
+    turned.components.asset.rotationY = Math.PI / 2;
+    const long = structuredClone(document);
+    long.assetMetrics.definitions[0].collision[0].vertices = boxVertices([-0.2, 0, -0.05], [0.2, 0.1, 0.05]);
+    long.objects = [turned];
+    const turnedHull = assetMapShapes(turned, long).footprints[0];
+    const turnedX = turnedHull.map((point) => point.x);
+    const turnedZ = turnedHull.map((point) => point.z);
+    assert.ok(Math.max(...turnedX) - Math.min(...turnedX) < 0.12);
+    assert.ok(Math.max(...turnedZ) - Math.min(...turnedZ) > 0.3);
+
+    const unbound = { ...record, typeVersion: 1 };
+    const visual = { min: { x: -1, y: 0, z: -2 }, max: { x: 1, y: 2, z: 2 } };
+    const fallback = assetMapShapes(unbound, document, visual);
+    assert.equal(fallback.source, "visual");
+    assert.deepEqual(fallback.footprints[0], assetMapFootprint(unbound, visual));
+
+    const placeholder = assetMapShapes(record, { objects: [record] });
+    assert.equal(placeholder.source, "placeholder");
+    assert.deepEqual(placeholder.footprints[0], assetMapFootprint(record));
+});
+
+test("asset collision shapes paint above the road surface", () => {
+    const source = readFileSync(new URL("../app/3d/overlay/map/MapSurfaceLayers.js", import.meta.url), "utf8");
+    const roads = source.indexOf('data-map-layer="roads"');
+    const assets = source.indexOf('data-map-layer="assets"');
+    const buildings = source.indexOf('data-map-layer="buildings"');
+    assert.ok(roads >= 0 && assets > roads && buildings > assets);
 });
