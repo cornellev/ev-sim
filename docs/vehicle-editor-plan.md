@@ -231,9 +231,11 @@ the measured proposal, is rejected and the stored manifest stays unchanged.
 ### VEH-04c — bound-wheel rendering
 
 A version 3 lease carries the canonical `glbBytes`. `presentBoundWheels`
-hides `hiddenNodeIndices`, parents each bound mesh to a pivot at the accepted
-wheel center, and preserves that mesh's world matrix so the rest pose matches
-the placed source. Unbound wheels stay cylinders. Steerable pivots use
+hides `hiddenNodeIndices`, parents each bound mesh to a pivot at that node's
+placed geometric center, and preserves that mesh's world matrix so the rest
+pose matches the placed source. A node with no geometry uses the accepted
+wheel position. This does not change `wheel.position`, wheelbase, or the
+plant. Unbound wheels stay cylinders. Steerable pivots use
 `rotation.y`. A version 3 standard front pair uses the ideal inner and outer
 yaw; every other steerable pivot uses the shared display angle. Legacy URL loads keep
 `applyModelPlacement` and cylinders. A stale or aborted lease does not

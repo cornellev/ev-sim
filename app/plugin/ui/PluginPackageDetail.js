@@ -26,8 +26,9 @@ function installLabel(installState) {
     return null;
 }
 
-function installButtonLabel(installState) {
-    return installState === "update-available" ? "Update" : "Install";
+function showPackageAction(installState, imported) {
+    if (installState === "unavailable") return false;
+    return imported || installState === "detected" || installState === "update-available";
 }
 
 export function PluginPackageDetail({
@@ -38,7 +39,9 @@ export function PluginPackageDetail({
     onRetry,
     installState = "unavailable",
     installing = false,
+    imported = false,
     installError = null,
+    installMessage = null,
     onInstall,
 }) {
     if (status === "loading") {
@@ -70,11 +73,12 @@ export function PluginPackageDetail({
                 <h1>{document.id}</h1>
                 <p>{document.version}</p>
                 {installLabel(installState) ? <p className={styles.packageStatus}>{installLabel(installState)}</p> : null}
-                {installState === "detected" || installState === "update-available" ? (
+                {showPackageAction(installState, imported) ? (
                     <div className={styles.detailActions}>
-                        <Button size="compact" loading={installing} onClick={onInstall}>{installButtonLabel(installState)}</Button>
+                        <Button size="compact" loading={installing} onClick={onInstall}>{imported ? "Reimport" : "Install"}</Button>
                     </div>
                 ) : null}
+                {installMessage ? <p className={styles.installMessage}>{installMessage}</p> : null}
                 {installError ? <p className={styles.installError}>{installError}</p> : null}
             </header>
             <dl className={styles.meta}>

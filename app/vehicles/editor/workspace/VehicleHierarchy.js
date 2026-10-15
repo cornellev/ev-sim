@@ -7,13 +7,15 @@ import {
     IconCompass,
     IconComponents,
     IconCube,
+    IconEye,
+    IconEyeOff,
     IconGripHorizontal,
     IconHexagon,
     IconRadar2,
     IconSatellite,
     IconWheel,
 } from "@tabler/icons-react";
-import { buildVehicleHierarchy } from "./vehicleHierarchyModel.js";
+import { buildVehicleHierarchy, hierarchyVisibilityKey } from "./vehicleHierarchyModel.js";
 
 const TAB_FOR_KIND = {
     body: "Body",
@@ -36,10 +38,11 @@ const KIND_ICONS = {
 
 function sensorIcon(type) {
     const id = String(type || "");
-    if (id.startsWith("camera")) return IconCamera;
-    if (id.startsWith("lidar")) return IconRadar2;
-    if (id.startsWith("imu")) return IconCompass;
-    if (id.startsWith("gnss") || id.startsWith("gps")) return IconSatellite;
+    const family = id.includes(".") ? id.split(".").at(-1) : id;
+    if (family.startsWith("camera")) return IconCamera;
+    if (family.startsWith("lidar")) return IconRadar2;
+    if (family.startsWith("imu")) return IconCompass;
+    if (family.startsWith("gnss") || family.startsWith("gps")) return IconSatellite;
     return IconAntennaBars5;
 }
 
@@ -48,10 +51,18 @@ function rowIcon(row) {
     return KIND_ICONS[row.kind] ?? IconBox;
 }
 
-export function VehicleHierarchy({ manifest, nodes, selection, onSelect, linkedIds = [] }) {
-    const rows = buildVehicleHierarchy(manifest, { nodes });
+function selectionMatchesRow(row, selection) {
+    if (!selection?.kind) return false;
+    if (row.kind === "wheel" || row.kind === "sensor") return selection.kind === row.kind && selection.id === row.id;
+    if (row.kind === "axle") return selection.kind === "axle" && selection.id === row.id.replace(/^axle-/, "");
+    if (row.kind === "model-node") return selection.kind === "model";
+    return selection.kind === row.kind;
+}
+
+export function VehicleHierarchy({ manifest, nodes, selection, onSelect, onToggleHidden, linkedIds = [], hiddenIds = [] }) {
+    const rows = buildVehicleHierarchy(manifest, { nodes, hiddenIds });
     const onKeyDown = (event) => {
-        const current = rows.findIndex((row) => row.id === selection?.id || (selection?.kind === row.kind && !selection?.id && row.kind === "body"));
+        const current = rows.findIndex((row) => selectionMatchesRow(row, selection));
         if (event.key !== "ArrowDown" && event.key !== "ArrowUp" && event.key !== "Home" && event.key !== "End") return;
         event.preventDefault();
         const nextIndex = event.key === "Home"
@@ -62,13 +73,7 @@ export function VehicleHierarchy({ manifest, nodes, selection, onSelect, linkedI
         const row = rows[nextIndex];
         if (row) onSelect(row, TAB_FOR_KIND[row.kind]);
     };
-    const isSelected = (row) => {
-        if (!selection?.kind) return false;
-        if (row.kind === "wheel" || row.kind === "sensor") return selection.kind === row.kind && selection.id === row.id;
-        if (row.kind === "axle") return selection.kind === "axle" && selection.id === row.id.replace(/^axle-/, "");
-        if (row.kind === "model-node") return selection.kind === "model";
-        return selection.kind === row.kind;
-    };
+    const isSelected = (row) => selectionMatchesRow(row, selection);
     return (
         <div
             role="tree"
@@ -86,21 +91,40 @@ export function VehicleHierarchy({ manifest, nodes, selection, onSelect, linkedI
                     : linked
                         ? "bg-[var(--slate-surface-2)]"
                         : "hover:bg-[var(--slate-surface-2)]";
+                const EyeIcon = row.ownHidden ? IconEyeOff : IconEye;
                 return (
-                    <button
-                        key={row.id}
-                        type="button"
+                    <div
+                        key={hierarchyVisibilityKey(row.kind, row.id)}
                         role="treeitem"
                         aria-selected={selected}
                         data-linked={linked ? "true" : undefined}
-                        disabled={row.disabled}
-                        className={`flex w-full items-center gap-1.5 rounded-[var(--radius)] px-2 py-1.5 text-left text-[12px] ${tone}`}
+                        className={`flex w-full items-center gap-1 rounded-[var(--radius)] py-1 pr-1 text-left text-[12px] ${tone} ${row.hidden ? "opacity-45" : ""}`}
                         style={{ paddingLeft: 8 + row.depth * 14 }}
-                        onClick={() => onSelect(row, TAB_FOR_KIND[row.kind])}
                     >
-                        <Icon className="h-3 w-3 shrink-0 text-[var(--slate-muted)]" aria-hidden="true" />
-                        <span className="truncate">{row.label}</span>
-                    </button>
+                        <button
+                            type="button"
+                            disabled={row.disabled}
+                            className="flex min-w-0 flex-1 items-center gap-1.5 py-0.5 text-left disabled:cursor-default"
+                            onClick={() => onSelect(row, TAB_FOR_KIND[row.kind])}
+                        >
+                            <Icon className="h-3 w-3 shrink-0 text-[var(--slate-muted)]" aria-hidden="true" />
+                            <span className="truncate">{row.label}</span>
+                        </button>
+                        <button
+                            type="button"
+                            tabIndex={-1}
+                            className="ml-auto flex h-5 w-5 shrink-0 items-center justify-center text-[var(--slate-muted)] hover:text-[var(--slate-fg)]"
+                            aria-label={row.ownHidden ? `Show ${row.label}` : `Hide ${row.label}`}
+                            aria-pressed={row.ownHidden}
+                            title={row.ownHidden ? "Show" : "Hide"}
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                onToggleHidden?.(row);
+                            }}
+                        >
+                            <EyeIcon className="h-3 w-3" />
+                        </button>
+                    </div>
                 );
             })}
         </div>

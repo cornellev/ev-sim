@@ -3,6 +3,7 @@ import express from "express";
 import { storageEvents } from "../mcp/events.js";
 import { installPluginSource, removePluginSource } from "../plugins/pluginLibrary.js";
 import { installDetectedPlugin, listLocalPlugins } from "../plugins/localPlugins.js";
+import { reimportDetectedPlugin } from "../plugins/reimportLocalPlugin.js";
 import { readLocalBuilds } from "../plugins/plantBuild.js";
 import { listPlantCatalog } from "../plugins/plantCatalog.js";
 import { listSensorCatalog } from "../plugins/sensorCatalog.js";
@@ -103,6 +104,24 @@ export function createPluginRouter(service, { jsonParser } = {}) {
                 ok: true,
                 package: metadata,
                 revision: library.revision,
+            });
+        } catch (error) {
+            sendError(res, error);
+        }
+    });
+
+    router.post("/local/reimport", parser, async (req, res) => {
+        try {
+            const result = await reimportDetectedPlugin(service, req.body?.directory);
+            if (!result.unchanged) {
+                publishLibrary(result.package.pluginId, "installed", result.package.packageHash, result.revision);
+            }
+            res.json({
+                ok: true,
+                unchanged: result.unchanged === true,
+                package: result.package,
+                revision: result.revision,
+                updated: result.updated,
             });
         } catch (error) {
             sendError(res, error);

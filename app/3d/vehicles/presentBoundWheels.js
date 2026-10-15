@@ -1,5 +1,6 @@
 /**
  * Present bound wheel meshes on vehicle-frame pivots.
+ * A bound pivot sits at the placed geometric center of that node.
  * Placement is applied to the full source hierarchy before any wheel is moved.
  */
 
@@ -92,6 +93,21 @@ function hideSubtree(object) {
     object.visible = false;
 }
 
+function component(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : 0;
+}
+
+/** Placed center of a bound node, in wheelsGroup local space. */
+function placedMeshCenter(object, wheelsGroup, THREE) {
+    wheelsGroup.updateWorldMatrix(true, false);
+    const box = new THREE.Box3().setFromObject(object);
+    if (box.isEmpty()) return null;
+    const center = box.getCenter(new THREE.Vector3());
+    wheelsGroup.worldToLocal(center);
+    return center;
+}
+
 /**
  * Hide suppressed subtrees, reparent bound meshes onto pivots, and build
  * cylinders for wheels that are not bound to a source node.
@@ -116,10 +132,11 @@ export function presentBoundWheels({
             bound.visible = true;
             bound.updateWorldMatrix(true, true);
             const world = bound.matrixWorld.clone();
+            const center = placedMeshCenter(bound, wheelsGroup, THREE) ?? wheel.position;
             bound.removeFromParent();
             const pivot = new THREE.Group();
             pivot.name = `wheel-pivot-${wheel.id}`;
-            pivot.position.set(wheel.position.x, wheel.position.y, wheel.position.z);
+            pivot.position.set(component(center.x), component(center.y), component(center.z));
             pivot.userData.presentedWheel = true;
             pivot.userData.boundWheel = true;
             pivot.userData.pick = { kind: "wheel", id: wheel.id };

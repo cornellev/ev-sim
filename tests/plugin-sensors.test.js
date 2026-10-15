@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
+import { register } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -14,6 +15,10 @@ import {
     encodeNativeSensorPacket,
 } from "../app/simulation/sensors/NativeSensorPacket.js";
 import { createCpuLidarBackendSelection } from "../app/simulation/sensors/CpuLidarBackend.js";
+import {
+    PLUGIN_SENSOR_LIFECYCLE_METHODS,
+    PluginSensorDevice,
+} from "../app/simulation/sensors/PluginSensorAdapter.js";
 import { planSensorAdmission } from "../app/simulation/sensors/SensorAdmission.js";
 import { createSensorDefinitionRegistry } from "../app/simulation/sensors/SensorTypeRegistry.js";
 import { HeadlessRunner } from "../server/headless/HeadlessRunner.js";
@@ -588,4 +593,49 @@ test("PLG-05 plugin sensor lifecycle survives deterministic reset and hydration 
     }
     await episode.disposeAsync();
     assert.equal(device.instance, null);
+});
+
+test("plugin range-image devices tolerate vehicle parent updates", async () => {
+    register(new URL("./helpers/resolve-app-modules.js", import.meta.url));
+    // Vehicle.js imports VehicleDatabase, which imports ManifestVehicle before
+    // PhysicalVehicle is initialized. Loading the database first breaks that cycle.
+    await import("../app/3d/data/VehicleDatabase.js");
+    const { Vehicle } = await import("../app/3d/vehicles/Vehicle.js");
+    const instance = Object.fromEntries(PLUGIN_SENSOR_LIFECYCLE_METHODS.map((method) => [method, () => {}]));
+    const device = new PluginSensorDevice({
+        sensor: {
+            id: "helios",
+            type: FIXTURE_TYPE,
+            calibration: {},
+        },
+        products: [],
+    }, {
+        factory: {
+            pluginId: "test.range-image-fixture",
+            packageHash: "fixture",
+            type: FIXTURE_TYPE,
+        },
+        instance,
+        Publisher: class StubPublisher {},
+    });
+    const pose = () => ({
+        copy() { return this; },
+        add() { return this; },
+    });
+    const vehicle = {
+        telemetryId: "ego",
+        devices: [],
+        position: pose(),
+        rotation: pose(),
+        sceneObject: { position: pose(), rotation: pose() },
+    };
+    device.parentVehicle = vehicle;
+    vehicle.devices.push(device);
+
+    assert.equal(typeof device.onParentUpdate, "function");
+    assert.equal(Object.hasOwn(instance, "onParentUpdate"), false);
+    Vehicle.prototype.updatePosition.call(vehicle, vehicle.position);
+    Vehicle.prototype.updateRotation.call(vehicle, vehicle.rotation);
+    assert.equal(Object.hasOwn(instance, "onParentUpdate"), false);
+    device.dispose();
 });

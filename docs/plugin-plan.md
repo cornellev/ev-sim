@@ -575,8 +575,11 @@ Locked contracts:
   target directory is under the plugin store. Marketplace install never runs
   Cargo. `local-builds.json` is operational and stays out of `library.json`,
   `worldHash`, `resolvedHash`, and run-package identity.
-- Update installs a second package. Vehicle locks, resolved runs, and live
-  sessions keep the previous hash until the user picks the new build.
+- Local Reimport uses that same pack or build, then replaces other manual
+  library rows for the plugin id and rewrites saved vehicle locks, script
+  locks and compiled requirements, and run-manifest artifact hashes onto the
+  new package. Install stays add-only. Marketplace-owned rows, resolved runs,
+  and live sessions keep the previous hash.
 - The native entry point is `pub fn step` in the plant library. A Zenoh driver
   is a sibling crate and is outside the source fingerprint.
 
@@ -755,6 +758,15 @@ change the outstanding PR-12 hosted, soak, NVIDIA x64, or Jetson ARM64 gates.
 
 ## Decision log
 
+- **2026-10-15 — Local Reimport adopts a new package into saved authoring documents.**
+  The plugin menu Reimport packs or rebuilds the selected `plugins/` directory,
+  replaces other manual library rows for that plugin id, and rewrites saved
+  vehicle `pluginLocks`, script graph locks and compiled `pluginRequirements`,
+  and run-manifest `plugins.artifacts` expected hashes onto the new package.
+  Install stays add-only. Marketplace-owned rows, resolved runs, live sessions,
+  and `worldHash` stay unchanged. A saved document that lost a locked sensor,
+  plant, unit, or granted capability blocks the replacement. This does not
+  renumber PLG-08.
 - **2026-10-08 — PLG-08 declarative plants.** The host mounts `plugin.json` and
   `plant.wasm` with zero WASM imports. A JavaScript adapter is not part of
   this milestone. Local Install is the only path that runs Cargo, and only

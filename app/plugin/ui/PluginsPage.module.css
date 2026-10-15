@@ -135,10 +135,18 @@
     margin-top: 14px;
 }
 
+.installMessage,
 .installError {
     margin: 8px 0 0;
-    color: var(--slate-danger);
     font-size: 12px;
+}
+
+.installMessage {
+    color: var(--slate-muted);
+}
+
+.installError {
+    color: var(--slate-danger);
 }
 
 .detail {

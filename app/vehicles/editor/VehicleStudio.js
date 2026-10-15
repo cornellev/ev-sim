@@ -10,6 +10,9 @@ import {
     presentBoundWheels,
     restoreModelRest,
 } from "../../3d/vehicles/presentBoundWheels.js";
+import { applyEditorVisibility, isObjectShown } from "./editorVisibility.js";
+import { gizmoHoldsPresentedWheel, syncPresentedWheelPositions } from "./presentedWheelSync.js";
+import { hierarchyNodesFromLease } from "./workspace/vehicleHierarchyModel.js";
 import { VehicleModelLoader, publishedVehicleModelSource, stagedVehicleModelSource } from "../../3d/vehicles/VehicleModelLoader.js";
 import { sensorRuntimeRegistry } from "../../3d/devices/SensorRuntimeRegistry.js";
 import { measurePlacedVehicleModel } from "../model/measurePlacedVehicle.js";
@@ -173,12 +176,14 @@ export class VehicleStudio {
         this._manifest = null;
         this._modelUrl = null;
         this._canonical = false;
+        this._presentedStructureKey = null;
         this._modelRest = null;
         this._presentationSuspended = false;
         this._placementDrag = null;
         this._wheelDrag = null;
         this._cancelWheelDrag = false;
         this._linkedWheelId = null;
+        this._editorHiddenIds = new Set();
         this._loadToken = 0;
         this._disposed = false;
 
@@ -334,6 +339,7 @@ export class VehicleStudio {
         this._syncBody(manifest);
         this._syncZone(manifest.lidarZone);
         this._applySteeringPreview();
+        this._applyEditorVisibility();
     }
 
     setSteeringPreview(angle) {
@@ -371,6 +377,7 @@ export class VehicleStudio {
             this._modelLease?.dispose();
             this._modelLease = null;
             this._canonical = false;
+            this._presentedStructureKey = null;
             this._modelRest = null;
             this._presentationSuspended = false;
             this.modelRoot.clear();
@@ -392,7 +399,10 @@ export class VehicleStudio {
                     }
                     if (!lease?.root || lease.stale || lease.aborted) {
                         lease?.dispose?.();
-                        if (!lease?.stale && !lease?.aborted) this._syncPlaceholder(this._pendingBoundingBox);
+                        if (!lease?.stale && !lease?.aborted) {
+                            this._syncPlaceholder(this._pendingBoundingBox);
+                            this._applyEditorVisibility();
+                        }
                         return;
                     }
                     this.modelRoot.clear();
@@ -405,6 +415,7 @@ export class VehicleStudio {
                         this._presentCanonical(this._manifest);
                     } else {
                         this._canonical = false;
+                        this._presentedStructureKey = null;
                         this._modelAlignment = applyModelPlacement(
                             this._modelObject,
                             this._pendingModel ?? model,
@@ -414,11 +425,13 @@ export class VehicleStudio {
                         this._applyWheelLinkTint();
                     }
                     if (this._selection) this.setSelection(this._selection);
+                    this._applyEditorVisibility();
                 }).catch((error) => {
                     console.warn("Vehicle editor could not load model:", error);
                     if (this._disposed || token !== this._loadToken) return;
                     this.onModelLease?.(null);
                     this._syncPlaceholder(this._pendingBoundingBox);
+                    this._applyEditorVisibility();
                 });
             } else {
                 this._syncPlaceholder(boundingBox);
@@ -443,6 +456,7 @@ export class VehicleStudio {
         const lease = this._modelLease;
         if (!lease?.glbBytes || !this._modelObject || manifest?.version !== 3) {
             this._canonical = false;
+            this._presentedStructureKey = null;
             return;
         }
         try {
@@ -450,43 +464,61 @@ export class VehicleStudio {
         } catch (error) {
             console.warn("Vehicle editor could not present bound wheels:", error);
             this._canonical = false;
+            this._presentedStructureKey = null;
             this._modelAlignment = applyModelPlacement(
                 this._modelObject,
                 manifest.model,
                 manifest.boundingBox,
             );
+            this._applyEditorVisibility();
         }
     }
 
     _presentMeasured(manifest, lease) {
-        if (this._modelRest) restoreModelRest(this._modelRest);
-        const measurement = measurePlacedVehicleModel({
-            glbBytes: lease.glbBytes,
-            model: manifest.model,
-            boundingBox: manifest.boundingBox,
-            hiddenNodeIndices: manifest.model?.hiddenNodeIndices ?? [],
-        });
-        applyMeasuredPlacement(this._modelObject, measurement.placement);
-        this._modelAlignment = { ...(measurement.placement.alignment ?? { x: 0, y: 0, z: 0 }) };
-        this._modelRest = captureModelRest(this._modelObject, lease.nodeMappings);
-        this._clearMarkerWheels();
-        presentBoundWheels({
-            root: this._modelObject,
+        // Position edits keep the pivot TransformControls is attached to.
+        // Rebuilding it leaves the gizmo on an object that has left the scene.
+        const sync = syncPresentedWheelPositions({
             wheelsGroup: this.wheelsGroup,
             manifest,
-            nodeMappings: lease.nodeMappings,
-            THREE,
+            structureKey: this._presentedStructureKey,
+            gizmo: this.gizmo,
+            selection: this._selection,
+            rebuild: () => {
+                if (this._modelRest) restoreModelRest(this._modelRest);
+                const measurement = measurePlacedVehicleModel({
+                    glbBytes: lease.glbBytes,
+                    model: manifest.model,
+                    boundingBox: manifest.boundingBox,
+                    hiddenNodeIndices: manifest.model?.hiddenNodeIndices ?? [],
+                });
+                applyMeasuredPlacement(this._modelObject, measurement.placement);
+                this._modelAlignment = { ...(measurement.placement.alignment ?? { x: 0, y: 0, z: 0 }) };
+                this._modelRest = captureModelRest(this._modelObject, lease.nodeMappings);
+                this._clearMarkerWheels();
+                presentBoundWheels({
+                    root: this._modelObject,
+                    wheelsGroup: this.wheelsGroup,
+                    manifest,
+                    nodeMappings: lease.nodeMappings,
+                    THREE,
+                });
+            },
         });
+        this._presentedStructureKey = sync.structureKey;
+        if (!sync.rebuilt) return;
         this._canonical = true;
         this._presentationSuspended = false;
         this._applySteeringPreview();
         this._applyWheelLinkTint();
+        this._applyEditorVisibility();
     }
 
     _suspendPresentation() {
         if (!this._canonical || this._presentationSuspended) return;
+        if (gizmoHoldsPresentedWheel(this.gizmo.object)) this.gizmo.detach();
         restoreModelRest(this._modelRest ?? []);
         clearPresentedWheels(this.wheelsGroup);
+        this._presentedStructureKey = null;
         this._presentationSuspended = true;
     }
 
@@ -661,6 +693,44 @@ export class VehicleStudio {
     setSensorRuntime(sensorRuntime) {
         this.sensorRuntime = sensorRuntime || sensorRuntimeRegistry;
         if (this._manifest) this._syncSensors(this._manifest.sensors ?? []);
+        this._applyEditorVisibility();
+    }
+
+    /**
+     * Session viewport hides. Reapplied after presentation, which rewrites
+     * `object.visible` for semantic hides and bound wheels.
+     * @param {Iterable<string>} hiddenIds `kind:id` keys
+     */
+    setEditorVisibility(hiddenIds) {
+        this._editorHiddenIds = new Set(hiddenIds ?? []);
+        this._applyEditorVisibility();
+    }
+
+    _applyEditorVisibility() {
+        applyEditorVisibility({
+            bboxMesh: this.bboxMesh,
+            modelRoot: this.modelRoot,
+            zoneGroup: this.zoneGroup,
+            wheelsGroup: this.wheelsGroup,
+            sensorsGroup: this.sensorsGroup,
+            nodeMappings: this._modelLease?.nodeMappings ?? null,
+        }, {
+            manifest: this._manifest,
+            nodes: hierarchyNodesFromLease(this._modelLease),
+            hiddenIds: this._editorHiddenIds,
+        });
+        this._syncGizmoForVisibility();
+    }
+
+    _syncGizmoForVisibility() {
+        const selection = this._selection;
+        if (!selection?.kind) return;
+        const target = this._objectForSelection(selection);
+        if (!target || !isObjectShown(target)) {
+            if (this.gizmo.object) this.gizmo.detach();
+            return;
+        }
+        if (!this.gizmo.dragging && this.gizmo.object !== target) this.gizmo.attach(target);
     }
 
     /**
@@ -735,14 +805,6 @@ export class VehicleStudio {
         this.zoneGroup.add(mesh);
     }
 
-    setZoneVisible(visible) {
-        this.zoneGroup.visible = visible;
-    }
-
-    setModelVisible(visible) {
-        this.modelRoot.visible = visible;
-    }
-
     // --- Selection and the gizmo --------------------------------------------
 
     /** @param {{kind: string, id: string|null} | null} selection */
@@ -750,14 +812,12 @@ export class VehicleStudio {
         const next = selection?.kind ? selection : null;
         const target = this._objectForSelection(next);
         const current = this._selection?.kind ? this._selection : null;
+        const shown = Boolean(target && isObjectShown(target));
         const same = current?.kind === next?.kind && (current?.id ?? null) === (next?.id ?? null);
-        if (same && this.gizmo.object === target) {
-            this._selection = next;
-            return;
-        }
         this._selection = next;
+        if (same && shown && this.gizmo.object === target) return;
         this.gizmo.detach();
-        if (target) this.gizmo.attach(target);
+        if (shown) this.gizmo.attach(target);
     }
 
     setGizmoMode(mode) {
@@ -798,7 +858,8 @@ export class VehicleStudio {
         );
         this._raycaster.setFromCamera(this._pointer, this.camera);
         const pickables = [...this.wheelsGroup.children, ...this.sensorsGroup.children, this.egoMarker];
-        const hits = this._raycaster.intersectObjects(pickables, true);
+        const hits = this._raycaster.intersectObjects(pickables, true)
+            .filter((hit) => isObjectShown(hit.object));
         const pick = hits.find((hit) => hit.object.userData.pick)?.object.userData.pick
             ?? hits[0]?.object.parent?.userData.pick
             ?? null;

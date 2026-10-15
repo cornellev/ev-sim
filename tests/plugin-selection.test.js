@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { localPackageInstallState, selectLocalPackage, selectPackageHash } from "../app/plugin/ui/pluginSelection.js";
+import {
+    formatReimportResult,
+    localPackageImported,
+    localPackageInstallState,
+    selectLocalPackage,
+    selectPackageHash,
+} from "../app/plugin/ui/pluginSelection.js";
 
 const first = { pluginId: "acme.controls", version: "1.0.0", packageHash: "a".repeat(64) };
 const second = { pluginId: "acme.controls", version: "2.0.0", packageHash: "b".repeat(64) };
@@ -28,6 +34,25 @@ test("selectLocalPackage keeps the current directory and otherwise uses the firs
     assert.equal(selectLocalPackage(packages, "helios32/package"), "helios32/package");
     assert.equal(selectLocalPackage(packages, "missing"), "acme.controls");
     assert.equal(selectLocalPackage([], "helios32/package"), null);
+});
+
+test("localPackageImported matches any library row for the plugin id", () => {
+    const entry = { id: "folder", document: { id: "acme.controls", version: "1.1.0" } };
+    assert.equal(localPackageImported(entry, []), false);
+    assert.equal(localPackageImported(entry, [second]), true);
+    assert.equal(localPackageImported({ id: "acme.controls" }, [first]), true);
+    assert.equal(localPackageImported(null, [first]), false);
+});
+
+test("formatReimportResult summarizes adopted documents", () => {
+    assert.equal(formatReimportResult({ unchanged: true, updated: { vehicles: ["a"] } }), "Already current.");
+    assert.equal(formatReimportResult({ updated: { vehicles: [], scripts: [], runManifests: [] } }), "Imported.");
+    assert.equal(formatReimportResult({
+        updated: { vehicles: ["truck"], scripts: ["scale"], runManifests: ["run"] },
+    }), "Updated 1 vehicle, 1 script, 1 run manifest.");
+    assert.equal(formatReimportResult({
+        updated: { vehicles: ["a", "b"], scripts: [], runManifests: [] },
+    }), "Updated 2 vehicles.");
 });
 
 test("localPackageInstallState matches plugin id and version", () => {

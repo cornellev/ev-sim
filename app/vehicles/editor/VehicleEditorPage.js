@@ -78,7 +78,16 @@ import { VehicleWorkspace } from "./workspace/VehicleWorkspace.js";
 import { VehicleTopBar } from "./workspace/VehicleTopBar.js";
 import { VehicleToolbar } from "./workspace/VehicleToolbar.js";
 import { VehicleHierarchy } from "./workspace/VehicleHierarchy.js";
-import { hierarchyNodesFromLease } from "./workspace/vehicleHierarchyModel.js";
+import {
+    clearModelNodeVisibility,
+    hierarchyNodesFromLease,
+    hierarchyVisibilityKey,
+    MODEL_VISIBILITY_KEY,
+    retainModelAndZoneVisibility,
+    setVisibilityKey,
+    toggleVisibilityKey,
+    ZONE_VISIBILITY_KEY,
+} from "./workspace/vehicleHierarchyModel.js";
 import { VehiclePickerDialog, copyIdFor } from "./workspace/VehiclePickerDialog.js";
 import { VehicleUrdfReviewDialog } from "./workspace/VehicleUrdfReviewDialog.js";
 import { normalizeVehiclePaneLayout } from "./workspace/vehiclePaneLayout.js";
@@ -197,8 +206,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     const [error, setError] = useState(null);
     const [gizmoMode, setGizmoMode] = useState("translate");
     const [assetVersion, setAssetVersion] = useState(0);
-    const [zoneVisible, setZoneVisible] = useState(true);
-    const [modelVisible, setModelVisible] = useState(true);
+    const [hiddenIds, setHiddenIds] = useState(() => new Set());
     const [voxelSize, setVoxelSize] = useState(0.2);
     const [fitTarget, setFitTarget] = useState({ length: 2.7, width: 1.25 });
     const [placementRevision, setPlacementRevision] = useState(0);
@@ -227,6 +235,26 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     }, [sensorRegistryTick]);
 
     const draft = snapshot.manifest;
+    const modelAsset = draft?.model?.asset ?? null;
+    const [visibilityScope, setVisibilityScope] = useState({ vehicleId: selectedId, asset: modelAsset });
+    if (visibilityScope.vehicleId !== selectedId || visibilityScope.asset !== modelAsset) {
+        const vehicleChanged = visibilityScope.vehicleId !== selectedId;
+        setVisibilityScope({ vehicleId: selectedId, asset: modelAsset });
+        setHiddenIds((current) => (
+            vehicleChanged ? retainModelAndZoneVisibility(current) : clearModelNodeVisibility(current)
+        ));
+    }
+    const modelVisible = !hiddenIds.has(MODEL_VISIBILITY_KEY);
+    const zoneVisible = !hiddenIds.has(ZONE_VISIBILITY_KEY);
+    const setModelVisible = (visible) => {
+        setHiddenIds((current) => setVisibilityKey(current, MODEL_VISIBILITY_KEY, visible === false));
+    };
+    const setZoneVisible = (visible) => {
+        setHiddenIds((current) => setVisibilityKey(current, ZONE_VISIBILITY_KEY, visible === false));
+    };
+    const toggleRowHidden = (row) => {
+        setHiddenIds((current) => toggleVisibilityKey(current, hierarchyVisibilityKey(row.kind, row.id)));
+    };
     const pluginLockKey = JSON.stringify(draft?.pluginLocks ?? null);
     const draftStamp = useMemo(() => (draft ? JSON.stringify(draft) : ""), [draft]);
     const raw = snapshot.raw;
@@ -423,8 +451,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
         window.addEventListener("keydown", onKey, true);
         return () => window.removeEventListener("keydown", onKey, true);
     }, []);
-    useEffect(() => { studioRef.current?.setZoneVisible(zoneVisible); }, [zoneVisible]);
-    useEffect(() => { studioRef.current?.setModelVisible(modelVisible); }, [modelVisible]);
+    useEffect(() => { studioRef.current?.setEditorVisibility(hiddenIds); }, [hiddenIds, draft]);
 
     const update = (path, value, options = {}) => {
         const controller = controllerRef.current;
@@ -1038,8 +1065,10 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                     <VehicleHierarchy
                         manifest={draft}
                         nodes={modelNodes}
+                        hiddenIds={hiddenIds}
                         selection={selection}
                         linkedIds={draft ? highlightedLinkIds(draft.wheels, selection, snapshot.wheelLink) : []}
+                        onToggleHidden={toggleRowHidden}
                         onSelect={(row, nextTab) => {
                             if (row.kind === "wheel" || row.kind === "sensor") setSelection({ kind: row.kind, id: row.id });
                             else if (row.kind === "axle") setSelection({ kind: "axle", id: row.id.replace(/^axle-/, "") });

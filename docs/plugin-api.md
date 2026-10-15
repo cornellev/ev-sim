@@ -154,10 +154,12 @@ One package per `pluginId` per graph. Stamping a second `packageHash` for the sa
 catalog from the local library; placing a unit stamps `pluginLocks`. Missing packages render
 `UnresolvedPluginUnit` placeholders and cannot compile.
 
-Library install/remove does not hot-swap an open graph. Reload the document to
-pick up a newly installed catalog entry. Existing `pluginLocks` still resolve
-from CAS after library removal. Compiled artifacts keep their previous
-`latestValidArtifact` when a later lint fails.
+Library install/remove does not hot-swap an open graph. Reimport rewrites
+saved vehicle, script, and run-manifest pins, but an open editor keeps its
+draft until reload. Reload the document to pick up a newly installed catalog
+entry. Existing `pluginLocks` still resolve from CAS after library removal.
+Compiled artifacts keep their previous `latestValidArtifact` when a later lint
+fails.
 
 ## Plant ABI 1
 
@@ -183,7 +185,7 @@ After a successful step the host drapes the vehicle onto the road: it overwrites
 
 Local discovery builds that crate when the user clicks Install and both `plants` and `Cargo.toml` are present. The build writes `CARGO_TARGET_DIR` under the plugin store, copies `plugin.json` and the wasm into a temporary package, and installs that package. It does not modify `plugins/`. A missing `cargo` fails with `PLUGIN_BUILD_FAILED` and the message `Install rustup to build plant plugins.` Cargo `build.rs` scripts run during that trusted local install. Marketplace Discover installs signed bytes and never runs Cargo. A prebuilt tree with `plants` and no `Cargo.toml` is packed as it stands.
 
-A successful local build records `{ directoryKey, sourceFingerprint, pluginId, version, packageHash }` in `<plugin store>/local-builds.json` (`cev-sim.plugin-local-builds` version 1). That file is operational. It is not part of `library.json` or any semantic hash. The library shows Update when a build record exists and the source fingerprint differs. Update installs a second CAS package. It does not rewrite vehicle locks, resolved runs, or a live session. Adopting it is a vehicle-picker and run-selection action. Two machines can compile the same commit to different wasm bytes; `Cargo.lock` and `rust-toolchain.toml` do not make wasm bit-identical.
+A successful local build records `{ directoryKey, sourceFingerprint, pluginId, version, packageHash }` in `<plugin store>/local-builds.json` (`cev-sim.plugin-local-builds` version 1). That file is operational. It is not part of `library.json` or any semantic hash. The library shows Update available when a build record exists and the source fingerprint differs. Install adds a library row and does not rewrite locks. Reimport, from the plugin menu or `POST /api/storage/plugins/local/reimport` with `{ directory }`, packs or rebuilds that directory and replaces other manual library rows for the same plugin id. It rewrites saved vehicle `pluginLocks`, script `graph.pluginLocks` and compiled `pluginRequirements`, and run-manifest `plugins.artifacts` expected hashes onto the new package. It does not add capability grants. A saved document that no longer declares a locked sensor, plant, unit, or granted capability blocks the replacement and leaves the previous manual rows in place. Marketplace-owned rows, resolved runs, live sessions, and open editor drafts stay on the previous hash. Two machines can compile the same commit to different wasm bytes; `Cargo.lock` and `rust-toolchain.toml` do not make wasm bit-identical.
 
 Scaffold a plant with:
 

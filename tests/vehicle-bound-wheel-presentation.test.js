@@ -124,6 +124,50 @@ test("bound wheel pivots keep the placed mesh pose and hide a detached subtree",
     assert.equal(root.children.filter((child) => child.name === "wheel-left").length, 1);
 });
 
+test("a bound tire yaws about its mesh center when the stored position is the origin", () => {
+    const root = new THREE.Group();
+    const tire = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.2));
+    tire.geometry.translate(1.2, 0.3, 0.75);
+    root.add(tire);
+    const wheelsGroup = new THREE.Group();
+    const scene = new THREE.Group();
+    scene.add(root, wheelsGroup);
+    scene.updateMatrixWorld(true);
+    const before = new THREE.Box3().setFromObject(tire).getCenter(new THREE.Vector3());
+
+    presentBoundWheels({
+        root,
+        wheelsGroup,
+        manifest: {
+            wheels: [{
+                id: "front-left",
+                position: { x: 0, y: 0, z: 0 },
+                radius: 0.25,
+                width: 0.2,
+                steerable: true,
+                visual: { kind: "model-node", nodeIndex: 0 },
+            }],
+        },
+        nodeMappings: new Map([[tire, { nodeIndex: 0 }]]),
+        THREE,
+    });
+
+    closeTo(tire.parent.position.x, before.x);
+    closeTo(tire.parent.position.y, before.y);
+    closeTo(tire.parent.position.z, before.z);
+    const rest = new THREE.Box3().setFromObject(tire).getCenter(new THREE.Vector3());
+    closeTo(rest.x, before.x);
+    closeTo(rest.y, before.y);
+    closeTo(rest.z, before.z);
+    tire.parent.rotation.y = 0.5;
+    tire.parent.updateMatrixWorld(true);
+    const yawed = new THREE.Box3().setFromObject(tire).getCenter(new THREE.Vector3());
+    closeTo(yawed.x, before.x);
+    closeTo(yawed.y, before.y);
+    closeTo(yawed.z, before.z);
+    tire.geometry.dispose();
+});
+
 test("ManifestVehicle presents a canonical binding and keeps a legacy load on cylinders", async () => {
     const { VehicleDatabase } = await import("../app/3d/data/VehicleDatabase.js");
     const { ManifestVehicle } = await import("../app/3d/vehicles/ManifestVehicle.js");

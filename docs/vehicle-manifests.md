@@ -82,7 +82,7 @@ Version 3 geometric scalars — model placement, body bounds, wheel position, ra
 `VehicleDatabase.configureFromManifest` spawns any non-built-in `type` as a `ManifestVehicle` by loading the matching vehicle manifest from storage. A `ManifestVehicle`:
 
 - loads and places the GLTF model (or renders a placeholder body when no asset is set),
-- renders a version 3 wheel bound to a model node on a pivot at the accepted wheel center, keeping the source mesh's placed pose; unbound wheels stay cylinders. A complete version 3 front axle uses the ideal inner and outer yaw for its two wheels. Every other steerable pivot, including version 2 and an unclassified or singular layout, tracks the shared steering angle. The plant still integrates `kinematics.wheelbase`,
+- renders a version 3 wheel bound to a model node on a pivot at that node's placed geometric center, keeping the source mesh's placed pose. A node with no geometry uses the accepted wheel position. Unbound wheels stay cylinders. A complete version 3 front axle uses the ideal inner and outer yaw for its two wheels. Every other steerable pivot, including version 2 and an unclassified or singular layout, tracks the shared steering angle. The plant still integrates `kinematics.wheelbase`,
 - measures wheel assignment from the decoded canonical GLB before hiding or reparenting any node; publication repeats that measurement and rejects a binding that is outside pair tolerance or does not reproduce the measured proposal,
 - drives planar bicycle kinematics from `kinematics.wheelbase`, like `BigCar`, then drapes pose Y/pitch onto the paved road surface,
 - exposes `collisionDimensions` from `boundingBox.size` so the physics engine sweeps the correct AABB,

@@ -48,6 +48,16 @@ export async function installLocalPlugin(directory) {
     }
 }
 
+export async function reimportLocalPlugin(directory) {
+    try {
+        return await storagePost("plugins/local/reimport", { directory });
+    } catch (error) {
+        const message = error?.payload?.message;
+        if (typeof message === "string" && message) throw new Error(message);
+        throw error;
+    }
+}
+
 export async function installPluginFile(file) {
     const response = await fetch("/api/storage/plugins/install-file", {
         method: "POST",
