@@ -157,6 +157,30 @@ test("wheel odometry integrates independently from truth pose", () => {
     }
 });
 
+test("wheel odometry integrates over the real capture interval, not 1 / rateHz", () => {
+    // 50 Hz on a 60 Hz step: the schedule rounds the period to one step, so
+    // captures arrive every 16.67 ms instead of every 20 ms.
+    const config = normalizeRunSensor({ type: "wheel-odometry", rateHz: 50 });
+    const rng = new SeededRNG("wheel-interval");
+    const vehicle = mockVehicle({ velocity: { x: 3, y: 0, z: 0 } });
+    const stepNs = 16_666_667;
+    const captures = 180;
+    let measurementState = createMeasurementSeedState(config, rng);
+    let lastSnapshot = null;
+    let position = null;
+    for (let step = 1; step <= captures; step += 1) {
+        const snapshot = captureVehicleSnapshot(vehicle, step * stepNs, lastSnapshot, stepNs);
+        lastSnapshot = snapshot;
+        const result = buildWheelOdometryMeasurement(snapshot, config, rng.fork(`sample-${step}`), measurementState);
+        measurementState = { ...measurementState, ...result.nextState };
+        position = result.measurement.position;
+    }
+    // The first capture has no previous one and integrates over 1 / rateHz.
+    const truth = 3 * (1 / 50 + ((captures - 1) * stepNs) / 1e9);
+    const traveled = Math.hypot(position.x, position.y);
+    assert.ok(Math.abs(traveled / truth - 1) < 0.01, `traveled ${traveled} m, truth ${truth} m`);
+});
+
 test("measurement reset reproduces identical streams for the same seed", () => {
     const config = normalizeRunSensor({ type: "imu", calibration: { angularVelocityStdDev: { x: 0.01, y: 0.01, z: 0.01 } } });
     const run = (seed) => {

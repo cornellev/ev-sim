@@ -353,10 +353,9 @@ export function quantizeTravel(distanceMeters, wheelRadius, ticksPerRevolution) 
     return (ticks / ticksPerRevolution) * circumference;
 }
 
-export function wheelTravelFromBicycle(snapshot, trackWidth, slipFactor = 0) {
+export function wheelTravelFromBicycle(snapshot, trackWidth, slipFactor = 0, dt = 1 / 50) {
     const speed = snapshot.speed;
     const yawRate = snapshot.bodyAngularVelocity.z;
-    const dt = 1 / Math.max(1, snapshot.rateHz || 50);
     const centerTravel = speed * dt;
     const leftTravel = centerTravel * (1 - slipFactor) - (yawRate * trackWidth * dt) / 2;
     const rightTravel = centerTravel * (1 - slipFactor) + (yawRate * trackWidth * dt) / 2;
@@ -388,11 +387,16 @@ export function integrateWheelOdometry(state, leftTravel, rightTravel, trackWidt
 
 export function buildWheelOdometryMeasurement(snapshot, sensorConfig, rng, state = {}) {
     const calibration = sensorConfig.calibration;
-    snapshot.rateHz = sensorConfig.rateHz;
-    const { leftTravel, rightTravel, dt } = wheelTravelFromBicycle(
+    // The fixed-step schedule rounds the sensor period to whole steps, so the
+    // real capture interval can differ from 1 / rateHz.
+    const dt = state.lastCaptureTimeNs != null && snapshot.captureTimeNs > state.lastCaptureTimeNs
+        ? (snapshot.captureTimeNs - state.lastCaptureTimeNs) / 1e9
+        : 1 / Math.max(1, sensorConfig.rateHz);
+    const { leftTravel, rightTravel } = wheelTravelFromBicycle(
         snapshot,
         calibration.trackWidth,
         calibration.slipFactor,
+        dt,
     );
     const leftQuantized = quantizeTravel(leftTravel, calibration.wheelRadius, calibration.ticksPerRevolution);
     const rightQuantized = quantizeTravel(rightTravel, calibration.wheelRadius, calibration.ticksPerRevolution);
