@@ -49,6 +49,11 @@ export function advanceCorrelatedDrift(state, tauSeconds, sigma, dtSeconds, rng)
     return next;
 }
 
+export function combinedStdDev(left, right) {
+    const combine = (axis) => Math.hypot(Number(left[axis] || 0), Number(right[axis] || 0));
+    return { x: combine("x"), y: combine("y"), z: combine("z") };
+}
+
 export function diagonalCovariance(values) {
     const matrix = new Array(9).fill(0);
     matrix[0] = values.x * values.x;
@@ -279,10 +284,12 @@ export function buildGnssMeasurement(snapshot, sensorConfig, rng, state = {}) {
         ? (snapshot.captureTimeNs - state.lastCaptureTimeNs) / 1e9
         : 1 / Math.max(1, sensorConfig.rateHz);
 
+    const whiteStdDev = sensorConfig.calibration.positionNoiseEnu || { x: 0, y: 0, z: 0 };
+    const multipathStdDev = faults.multipathStdDev || whiteStdDev;
     const nextMultipath = advanceCorrelatedDrift(
         state.multipath || { x: 0, y: 0, z: 0 },
         faults.multipathTauSec || 30,
-        faults.multipathStdDev || sensorConfig.calibration.positionNoiseEnu || { x: 0, y: 0, z: 0 },
+        multipathStdDev,
         dt,
         rng,
     );
@@ -315,7 +322,7 @@ export function buildGnssMeasurement(snapshot, sensorConfig, rng, state = {}) {
 
     const positionNoise = sampleAxisNoise(
         rng,
-        sensorConfig.calibration.positionNoiseEnu || { x: 0, y: 0, z: 0 },
+        whiteStdDev,
         { x: 0, y: 0, z: 0 },
         nextMultipath,
     );
@@ -325,7 +332,8 @@ export function buildGnssMeasurement(snapshot, sensorConfig, rng, state = {}) {
         up: positionEnu.up + positionNoise.z,
     };
     const wgs84 = enuOffsetToWgs84(noisyEnu.east, noisyEnu.north, noisyEnu.up, datum);
-    const positionCovariance = diagonalCovariance(sensorConfig.calibration.positionNoiseEnu || { x: 0, y: 0, z: 0 });
+    // The fix carries white noise plus multipath drift, so report both variances.
+    const positionCovariance = diagonalCovariance(combinedStdDev(whiteStdDev, multipathStdDev));
 
     return {
         measurement: {
