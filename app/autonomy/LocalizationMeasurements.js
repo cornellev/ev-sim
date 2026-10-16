@@ -33,6 +33,17 @@ export function gaussianSample(rng) {
     return Math.sqrt(-2 * Math.log(left)) * Math.cos(2 * Math.PI * rng.next());
 }
 
+/**
+ * Per-sample standard deviation, on every axis, for white noise given as a
+ * datasheet noise density (units/√Hz): sigma = density / √dt. Without a
+ * density, returns `perSample` unchanged.
+ */
+export function noiseStdDevFromDensity(density, perSample, dtSeconds) {
+    if (density == null) return perSample;
+    const sigma = Math.max(0, Number(density)) / Math.sqrt(Math.max(Number.EPSILON, dtSeconds));
+    return { x: sigma, y: sigma, z: sigma };
+}
+
 export function sampleAxisNoise(rng, stdDev, bias = { x: 0, y: 0, z: 0 }, drift = { x: 0, y: 0, z: 0 }) {
     const perturb = (axis) => (Number(bias[axis] || 0) + Number(drift[axis] || 0))
         + gaussianSample(rng) * Number(stdDev[axis] || 0);
@@ -252,15 +263,25 @@ export function buildImuMeasurement(snapshot, sensorConfig, rng, state = {}) {
         ),
     };
 
+    const angularStdDev = noiseStdDevFromDensity(
+        noise.angularVelocityNoiseDensity ?? sensorConfig.calibration.angularVelocityNoiseDensity,
+        noise.angularVelocityStdDev || sensorConfig.calibration.angularVelocityStdDev || { x: 0, y: 0, z: 0 },
+        dt,
+    );
+    const accelerationStdDev = noiseStdDevFromDensity(
+        noise.linearAccelerationNoiseDensity ?? sensorConfig.calibration.linearAccelerationNoiseDensity,
+        noise.linearAccelerationStdDev || sensorConfig.calibration.linearAccelerationStdDev || { x: 0, y: 0, z: 0 },
+        dt,
+    );
     const angularNoise = sampleAxisNoise(
         rng,
-        noise.angularVelocityStdDev || sensorConfig.calibration.angularVelocityStdDev || { x: 0, y: 0, z: 0 },
+        angularStdDev,
         turnOnBias.angular || turnOnBias,
         nextDrift.angular,
     );
     const accelerationNoise = sampleAxisNoise(
         rng,
-        noise.linearAccelerationStdDev || sensorConfig.calibration.linearAccelerationStdDev || { x: 0, y: 0, z: 0 },
+        accelerationStdDev,
         turnOnBias.acceleration || { x: 0, y: 0, z: 0 },
         nextDrift.acceleration,
     );
@@ -281,8 +302,8 @@ export function buildImuMeasurement(snapshot, sensorConfig, rng, state = {}) {
             angularVelocity: measuredAngular,
             linearAcceleration: measuredAcceleration,
             orientationCovariance: unavailableOrientationCovariance(),
-            angularVelocityCovariance: diagonalCovariance(noise.angularVelocityStdDev || sensorConfig.calibration.angularVelocityStdDev || { x: 0, y: 0, z: 0 }),
-            linearAccelerationCovariance: diagonalCovariance(noise.linearAccelerationStdDev || sensorConfig.calibration.linearAccelerationStdDev || { x: 0, y: 0, z: 0 }),
+            angularVelocityCovariance: diagonalCovariance(angularStdDev),
+            linearAccelerationCovariance: diagonalCovariance(accelerationStdDev),
         },
         nextState: {
             turnOnBias,
