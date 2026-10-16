@@ -174,6 +174,7 @@ const gnssRunFields = [
     { label: "Position noise N (m)", path: ["calibration", "positionNoiseEnu", "y"], control: "number", min: 0, step: 0.001, advanced: true },
     { label: "Dropout probability", path: ["calibration", "faults", "dropoutProbability"], control: "number", min: 0, max: 1, step: 0.001, advanced: true },
     { label: "Outage probability", path: ["calibration", "faults", "outageProbability"], control: "number", min: 0, max: 1, step: 0.001, advanced: true },
+    { label: "Outage duration (s, 0 = rest of run)", path: ["calibration", "faults", "outageDurationSec"], control: "number", min: 0, step: 0.1, advanced: true },
 ];
 
 const wheelOdometryRunFields = [

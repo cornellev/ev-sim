@@ -303,8 +303,17 @@ export function buildGnssMeasurement(snapshot, sensorConfig, rng, state = {}) {
     }
 
     const outageProbability = Number(faults.outageProbability ?? 0);
-    const inOutage = state.inOutage || (outageProbability > 0 && rng.next() < outageProbability);
-    if (inOutage) {
+    // A missing or zero duration means the outage lasts to the end of the run.
+    const outageDurationNs = Math.max(0, Number(faults.outageDurationSec || 0)) * 1e9;
+    const outageEnded = state.inOutage
+        && state.outageEndNs != null
+        && snapshot.captureTimeNs >= state.outageEndNs;
+    const continuing = state.inOutage && !outageEnded;
+    const starting = !continuing && outageProbability > 0 && rng.next() < outageProbability;
+    if (continuing || starting) {
+        const outageEndNs = starting
+            ? (outageDurationNs > 0 ? snapshot.captureTimeNs + outageDurationNs : null)
+            : state.outageEndNs ?? null;
         return {
             measurement: {
                 status: -1,
@@ -316,7 +325,7 @@ export function buildGnssMeasurement(snapshot, sensorConfig, rng, state = {}) {
                 positionCovarianceType: 0,
                 noFix: true,
             },
-            nextState: { ...state, multipath: nextMultipath, inOutage: true, lastCaptureTimeNs: snapshot.captureTimeNs },
+            nextState: { ...state, multipath: nextMultipath, inOutage: true, outageEndNs, lastCaptureTimeNs: snapshot.captureTimeNs },
         };
     }
 
@@ -346,7 +355,7 @@ export function buildGnssMeasurement(snapshot, sensorConfig, rng, state = {}) {
             positionCovarianceType: 2,
             noFix: false,
         },
-        nextState: { ...state, multipath: nextMultipath, inOutage: false, lastCaptureTimeNs: snapshot.captureTimeNs, dropped: false },
+        nextState: { ...state, multipath: nextMultipath, inOutage: false, outageEndNs: null, lastCaptureTimeNs: snapshot.captureTimeNs, dropped: false },
     };
 }
 
