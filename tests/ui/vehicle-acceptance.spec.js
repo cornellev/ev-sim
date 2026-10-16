@@ -159,4 +159,17 @@ test.describe("vehicle acceptance", () => {
         await expect(page.getByRole("dialog", { name: "Create from URDF" })).toBeVisible();
         expect(await seriousViolations(page, "[role='dialog']")).toEqual([]);
     });
+
+    test("coverage toggles a readout from the top bar", async ({ page }) => {
+        test.setTimeout(300_000);
+        await openVehicleEditor(page);
+        const toggle = page.getByRole("button", { name: "Coverage", exact: true });
+        await expect(toggle).toHaveAttribute("aria-pressed", "false");
+        await toggle.click();
+        await expect(toggle).toHaveAttribute("aria-pressed", "true");
+        await expect(page.getByRole("region", { name: "Sensor coverage" })).toBeVisible();
+        await toggle.click();
+        await expect(toggle).toHaveAttribute("aria-pressed", "false");
+        await expect(page.getByRole("region", { name: "Sensor coverage" })).toHaveCount(0);
+    });
 });

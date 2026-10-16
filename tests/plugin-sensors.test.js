@@ -115,6 +115,18 @@ async function fixtureEpisode(bundle, t) {
     });
 }
 
+test("plugin range-image sensors expose point dropout on the run form", async () => {
+    const verified = verifyPluginPackage(await fixtureResource());
+    const registry = createSensorDefinitionRegistry([verified]);
+    const field = registry.get(FIXTURE_TYPE).run.fields.find((entry) => entry.path.join(".") === "noise.pointDropoutProbability");
+    assert.equal(field?.label, "Point dropout probability");
+    assert.equal(field.advanced, true);
+    assert.equal(field.control, "number");
+    assert.equal(field.min, 0);
+    assert.equal(field.max, 1);
+    assert.equal(field.step, 0.001);
+});
+
 test("PLG-05 rejects invalid grants and explicit layouts while preserving legacy package omission", async () => {
     const legacyDocument = {
         kind: "cev-sim.plugin",

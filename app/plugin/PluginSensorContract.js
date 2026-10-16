@@ -219,6 +219,18 @@ export function normalizePluginSensorParameters(descriptor, value = {}, path = "
     ])));
 }
 
+const pluginRangeImageRunFields = Object.freeze([
+    Object.freeze({
+        label: "Point dropout probability",
+        path: Object.freeze(["noise", "pointDropoutProbability"]),
+        control: "number",
+        min: 0,
+        max: 1,
+        step: 0.001,
+        advanced: true,
+    }),
+]);
+
 export function createPluginSensorTypeDefinition(descriptor, ownership) {
     const pointCloudProducts = descriptor.products.filter((product) => product.kind === "pointCloud");
     return Object.freeze({
@@ -228,7 +240,7 @@ export function createPluginSensorTypeDefinition(descriptor, ownership) {
         pluginSensor: Object.freeze({ descriptor, ownership: Object.freeze({ ...ownership }) }),
         run: Object.freeze({
             defaultRateHz: descriptor.defaults.rateHz,
-            fields: Object.freeze([]),
+            fields: pluginRangeImageRunFields,
             outputs: Object.freeze(pointCloudProducts.map((product) => Object.freeze({
                 key: product.outputKey,
                 signal: product.productId,

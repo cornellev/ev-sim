@@ -22,7 +22,6 @@ import { LoadRoadsFromGeoJSON } from "./city/CityBuilder";
 import { SimulationChrome } from "./overlay/SimulationChrome";
 import { EnvironmentEditorChrome } from "./overlay/EnvironmentEditorChrome";
 import { isThreeDMode, THREE_D_MODES } from "./viewState";
-import { SensorTest } from "./scenes/SensorTest";
 import { setupScanCar } from "./vehicles/ScanCar";
 import { Q1 } from "./igvc/mini/q1";
 import { Q2 } from "./igvc/mini/q2";
@@ -830,7 +829,6 @@ export default function TotalScene({
             await environmentLoader.load(environmentId, {
                 editorAssetsEnabled: true,
             });
-            // await SensorTest(data, scene);
             // const miniKey =
             //     typeof window !== "undefined"
             //         ? new URLSearchParams(window.location.search).get("mini")

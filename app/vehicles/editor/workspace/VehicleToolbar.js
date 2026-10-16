@@ -9,6 +9,7 @@ import {
     IconFileImport,
     IconRadar2,
     IconRotateClockwise,
+    IconView360,
 } from "@tabler/icons-react";
 import { IconButton } from "../../../ui";
 
@@ -45,6 +46,9 @@ export function VehicleToolbar({
     onApplyUrdf,
     createUrdfDisabled = false,
     applyUrdfDisabled = false,
+    coverageEnabled = false,
+    onCoverageEnabled,
+    coverageDisabled = false,
 }) {
     const move = gizmoMode === "translate";
     const rotate = gizmoMode === "rotate";
@@ -97,6 +101,18 @@ export function VehicleToolbar({
                     onClick={() => onZoneVisible(!zoneVisible)}
                 >
                     <ToolIcon icon={IconRadar2} />
+                </IconButton>
+            </Group>
+            <Group label="Coverage">
+                <IconButton
+                    label="Coverage"
+                    variant={coverageEnabled ? "default" : "ghost"}
+                    active={coverageEnabled || undefined}
+                    aria-pressed={coverageEnabled}
+                    disabled={coverageDisabled}
+                    onClick={() => onCoverageEnabled?.(!coverageEnabled)}
+                >
+                    <ToolIcon icon={IconView360} />
                 </IconButton>
             </Group>
             <Group label="Import">

@@ -15,6 +15,17 @@ import { gizmoHoldsPresentedWheel, syncPresentedWheelPositions } from "./present
 import { hierarchyNodesFromLease } from "./workspace/vehicleHierarchyModel.js";
 import { VehicleModelLoader, publishedVehicleModelSource, stagedVehicleModelSource } from "../../3d/vehicles/VehicleModelLoader.js";
 import { sensorRuntimeRegistry } from "../../3d/devices/SensorRuntimeRegistry.js";
+import { enumerateCoverageRays } from "./coverage/enumerateCoverageRays.js";
+import {
+    COVERAGE_CHUNK_RAYS,
+    COVERAGE_CHUNK_THRESHOLD,
+    CoverageMeasurement,
+    bodyFootprintRadius,
+    buildCoverageOccluder,
+    coverageGroundY,
+    coveragePointPositions,
+    disposeCoverageOccluder,
+} from "./coverage/measureSensorCoverage.js";
 import { measurePlacedVehicleModel } from "../model/measurePlacedVehicle.js";
 import { visualWheelYaws } from "../plan/turnGeometry.js";
 import {
@@ -24,11 +35,10 @@ import {
     orbitPoseForAxis,
     slerpDirection,
 } from "./alignOrbitAxis.js";
+import { VehicleFloorUnitGrid } from "./VehicleFloorUnitGrid.js";
 
 const COLORS = {
     background: 0x09090b,
-    grid: 0x27272a,
-    gridCenter: 0x3f3f46,
     wheel: 0x18181b,
     wheelSteerable: 0x0c4a6e,
     wheelLink: 0x38bdf8,
@@ -39,7 +49,7 @@ const COLORS = {
 };
 
 /**
- * Standalone three.js studio scene for the vehicle editor: grid, lighting,
+ * Standalone three.js studio scene for the vehicle editor: floor units, lighting,
  * orbit controls, a transform gizmo, and in-place synchronization from a
  * vehicle manifest draft. Owns no React state; the page drives it.
  */
@@ -79,10 +89,8 @@ export class VehicleStudio {
         this.modelLoader = modelLoader ?? new VehicleModelLoader({ THREE, renderer: this.renderer });
         this._ownsModelLoader = modelLoader == null;
 
-        const grid = new THREE.GridHelper(40, 40, COLORS.gridCenter, COLORS.grid);
-        grid.material.transparent = true;
-        grid.material.opacity = 0.6;
-        this.scene.add(grid);
+        this.floorGrid = new VehicleFloorUnitGrid(THREE);
+        this.scene.add(this.floorGrid.group);
         this.scene.add(new THREE.AxesHelper(0.75));
 
         this.scene.add(new THREE.HemisphereLight(0xdbeafe, 0x18181b, 1.4));
@@ -140,7 +148,9 @@ export class VehicleStudio {
         this.wheelsGroup = new THREE.Group();
         this.sensorsGroup = new THREE.Group();
         this.zoneGroup = new THREE.Group();
-        this.scene.add(this.modelRoot, this.wheelsGroup, this.sensorsGroup, this.zoneGroup);
+        this.coverageGroup = new THREE.Group();
+        this.coverageGroup.name = "sensor-coverage";
+        this.scene.add(this.modelRoot, this.wheelsGroup, this.sensorsGroup, this.zoneGroup, this.coverageGroup);
         this._steeringPreview = 0;
 
         this.bboxMesh = new THREE.Mesh(
@@ -186,6 +196,18 @@ export class VehicleStudio {
         this._editorHiddenIds = new Set();
         this._loadToken = 0;
         this._disposed = false;
+        this._coverageEnabled = false;
+        this._coverageManifest = null;
+        this._coverageDefinitions = null;
+        this._coverageShell = 5;
+        this._coverageShellVisible = true;
+        this._coverageFloorVisible = true;
+        this._coverageRevision = 0;
+        this._coverageSignature = null;
+        this._coveragePass = null;
+        this._coverageOccluder = null;
+        this._coverageModelToken = 0;
+        this.onCoverageReport = null;
 
         this._raycaster = new THREE.Raycaster();
         this._pointer = new THREE.Vector2();
@@ -216,8 +238,10 @@ export class VehicleStudio {
             if (this._disposed) return;
             this._frame = requestAnimationFrame(animate);
             this._stepAlign();
+            this._stepCoverage();
             this.orbit.update();
             this._publishCamera();
+            this._syncFloorGrid();
             this.renderer.render(this.scene, this.camera);
         };
         animate();
@@ -225,10 +249,13 @@ export class VehicleStudio {
 
     dispose() {
         this._disposed = true;
+        this.onCoverageReport = null;
+        this._clearCoverage();
         this._modelAbort?.abort();
         this._modelLease?.dispose();
         this._modelLease = null;
         if (this._ownsModelLoader) this.modelLoader.dispose();
+        this.floorGrid?.dispose();
         cancelAnimationFrame(this._frame);
         this._cameraListeners.clear();
         this.orbit.removeEventListener("start", this._onOrbitStart);
@@ -320,6 +347,15 @@ export class VehicleStudio {
         this.renderer.setSize(width, height);
     }
 
+    _syncFloorGrid() {
+        this.floorGrid?.sync({
+            camera: this.camera,
+            target: this.orbit.target,
+            viewportWidth: this.container.clientWidth || 1,
+            viewportHeight: this.container.clientHeight || 1,
+        });
+    }
+
     // --- Manifest synchronization -------------------------------------------
 
     /**
@@ -402,6 +438,7 @@ export class VehicleStudio {
                         if (!lease?.stale && !lease?.aborted) {
                             this._syncPlaceholder(this._pendingBoundingBox);
                             this._applyEditorVisibility();
+                            this._noteCoverageSceneChange();
                         }
                         return;
                     }
@@ -426,12 +463,14 @@ export class VehicleStudio {
                     }
                     if (this._selection) this.setSelection(this._selection);
                     this._applyEditorVisibility();
+                    this._noteCoverageSceneChange();
                 }).catch((error) => {
                     console.warn("Vehicle editor could not load model:", error);
                     if (this._disposed || token !== this._loadToken) return;
                     this.onModelLease?.(null);
                     this._syncPlaceholder(this._pendingBoundingBox);
                     this._applyEditorVisibility();
+                    this._noteCoverageSceneChange();
                 });
             } else {
                 this._syncPlaceholder(boundingBox);
@@ -889,6 +928,178 @@ export class VehicleStudio {
     }
 
     /**
+     * Turn coverage analysis on or off and keep it aligned with the open draft.
+     * Shell-radius edits repaint the sphere without casting the rays again.
+     */
+    setCoverage({ enabled, manifest, definitions, shellRadiusM, shellVisible = true, floorVisible = true, revision = 0 } = {}) {
+        const shell = Number(shellRadiusM);
+        this._coverageShell = Number.isFinite(shell) && shell > 0 ? shell : 5;
+        this._coverageShellVisible = shellVisible !== false;
+        this._coverageFloorVisible = floorVisible !== false;
+        this._coverageDefinitions = definitions ?? null;
+        this._coverageManifest = manifest ?? null;
+        this._coverageRevision = revision;
+        if (enabled !== true) {
+            this._coverageEnabled = false;
+            this._clearCoverage();
+            this.onCoverageReport?.(null);
+            return;
+        }
+        this._coverageEnabled = true;
+        const signature = this._coverageSignatureOf(manifest);
+        if (signature !== this._coverageSignature) {
+            this._coverageSignature = signature;
+            this._beginCoverage();
+            return;
+        }
+        if (this._coveragePass?.complete && this._coveragePublishedShell !== this._coverageShell) {
+            this._publishCoverage(this._coveragePass.report({ shellRadiusM: this._coverageShell }));
+            return;
+        }
+        applyCoverageLayerVisibility(this);
+    }
+
+    _coverageSignatureOf(manifest) {
+        const zone = manifest?.lidarZone;
+        return JSON.stringify({
+            sensors: manifest?.sensors ?? null,
+            wheels: manifest?.wheels ?? null,
+            bounds: manifest?.boundingBox ?? null,
+            model: manifest?.model ?? null,
+            zoneVertices: zone?.vertices?.length ?? 0,
+            zoneTriangles: zone?.triangles?.length ?? 0,
+            zoneHead: zone?.vertices?.[0] ?? null,
+            zoneTail: zone?.vertices?.at?.(-1) ?? null,
+            zoneVoxel: zone?.params?.voxelSize ?? null,
+            scene: this._coverageModelToken,
+            revision: this._coverageRevision,
+        });
+    }
+
+    _noteCoverageSceneChange() {
+        this._coverageModelToken += 1;
+        if (!this._coverageEnabled || !this._coverageManifest) return;
+        this._coverageSignature = this._coverageSignatureOf(this._coverageManifest);
+        this._beginCoverage();
+    }
+
+    _beginCoverage() {
+        disposeCoverageOccluder(this._coverageOccluder);
+        this._coverageOccluder = null;
+        this._coveragePass = null;
+        const manifest = this._coverageManifest;
+        if (!manifest) {
+            this._disposeCoverageVisuals();
+            this.onCoverageReport?.(null);
+            return;
+        }
+        let built = { occluder: null, source: "none" };
+        try {
+            built = this._coverageOccluderFromScene();
+        } catch (error) {
+            console.warn("Sensor coverage occluder failed:", error);
+        }
+        this._coverageOccluder = built.occluder;
+        const census = enumerateCoverageRays(manifest, this._coverageDefinitions);
+        const vertices = built.occluder?.vertices ?? null;
+        this._coveragePass = new CoverageMeasurement(census.rays, built.occluder, {
+            groundY: coverageGroundY(manifest.wheels, vertices),
+            shellRadiusM: this._coverageShell,
+            occluderSource: built.source,
+            bodyFootprintRadiusM: vertices ? bodyFootprintRadius(vertices) : 0,
+            skipped: census.skipped,
+        });
+        if (census.rays.length === 0) {
+            this._publishCoverage(this._coveragePass.report());
+            return;
+        }
+        this._disposeCoverageVisuals();
+        this._coveragePublishedShell = null;
+        this.onCoverageReport?.(null);
+    }
+
+    _coverageOccluderFromScene() {
+        const zone = this._coverageManifest?.lidarZone;
+        if (Array.isArray(zone?.triangles) && zone.triangles.length > 0 && Array.isArray(zone?.vertices) && zone.vertices.length > 0) {
+            const occluder = buildCoverageOccluder(zone.vertices, zone.triangles);
+            if (occluder) return { occluder, source: "lidar-zone" };
+        }
+        const optimizer = TriangleOptimizer.fromObject(this.modelRoot);
+        if (optimizer.triangles.length === 0) return { occluder: null, source: "none" };
+        // A generated lidar zone is already voxel-sized. A raw studio mesh is
+        // denser than that bake, so simplify only this transient copy at 0.2 m.
+        if (optimizer.triangles.length > 1500) optimizer.optimize(0.2);
+        if (optimizer.triangles.length === 0) return { occluder: null, source: "none" };
+        const flat = new Float32Array(optimizer.vertices.length * 3);
+        optimizer.vertices.forEach((vertex, index) => {
+            flat[index * 3] = vertex.x;
+            flat[index * 3 + 1] = vertex.y;
+            flat[index * 3 + 2] = vertex.z;
+        });
+        const occluder = buildCoverageOccluder(flat, optimizer.triangles);
+        return occluder ? { occluder, source: "model" } : { occluder: null, source: "none" };
+    }
+
+    _stepCoverage() {
+        applyCoverageLayerVisibility(this);
+        const pass = this._coveragePass;
+        if (!this._coverageEnabled || !pass || pass.complete) return;
+        const remaining = pass.rays.length - pass.cursor;
+        const budget = pass.rays.length > COVERAGE_CHUNK_THRESHOLD ? COVERAGE_CHUNK_RAYS : remaining;
+        pass.step(budget);
+        this._publishCoverage(pass.report({ shellRadiusM: this._coverageShell }));
+    }
+
+    _publishCoverage(report) {
+        this._disposeCoverageVisuals();
+        if (!report || !this._coverageEnabled) {
+            this.onCoverageReport?.(report ?? null);
+            return;
+        }
+        const points = coveragePointPositions(this._coveragePass?.samples, {
+            shellRadiusM: report.shell.radiusM,
+            groundY: report.groundY,
+        });
+        const shell = coveragePointCloud(points.shell, 0xfde68a, "sensor-coverage-sphere");
+        const ground = coveragePointCloud(points.ground, 0xf59e0b, "sensor-coverage-ground");
+        if (shell) this.coverageGroup.add(shell);
+        if (ground) this.coverageGroup.add(ground);
+
+        if (report.groundBlindRadiusM != null && report.groundBlindRadiusM > 0) {
+            const ring = new THREE.LineLoop(
+                new THREE.BufferGeometry().setFromPoints(blindRadiusRing(report.groundBlindRadiusM, report.groundY + 0.02)),
+                new THREE.LineBasicMaterial({ color: 0xfbbf24 }),
+            );
+            ring.name = "sensor-coverage-blind-radius";
+            this.coverageGroup.add(ring);
+        }
+        applyCoverageLayerVisibility(this);
+        this._coveragePublishedShell = report.shell.radiusM;
+        this.onCoverageReport?.(report);
+    }
+
+    _disposeCoverageVisuals() {
+        if (!this.coverageGroup) return;
+        for (const child of [...this.coverageGroup.children]) {
+            child.geometry?.dispose?.();
+            const materials = Array.isArray(child.material) ? child.material : [child.material];
+            for (const material of materials) {
+                material?.map?.dispose?.();
+                material?.dispose?.();
+            }
+            this.coverageGroup.remove(child);
+        }
+    }
+
+    _clearCoverage() {
+        this._coveragePass = null;
+        this._coverageSignature = null;
+        disposeCoverageOccluder(this._coverageOccluder);
+        this._coverageOccluder = null;
+        this._disposeCoverageVisuals();
+    }
+
+    /**
      * Run the voxel-clustering simplifier over the placed model and return
      * bakeable lidar zone arrays.
      */
@@ -920,4 +1131,45 @@ function zoneSignature(lidarZone) {
         ...first,
         ...last,
     ].join(":");
+}
+
+/** Show or hide the shell points and the floor points without casting rays again. */
+export function applyCoverageLayerVisibility(studio, shellVisible, floorVisible) {
+    if (!studio?.coverageGroup) return;
+    if (shellVisible !== undefined) studio._coverageShellVisible = shellVisible !== false;
+    if (floorVisible !== undefined) studio._coverageFloorVisible = floorVisible !== false;
+    const showShell = studio._coverageShellVisible !== false;
+    const showFloor = studio._coverageFloorVisible !== false;
+    for (const child of studio.coverageGroup.children) {
+        if (child.name === "sensor-coverage-sphere") child.visible = showShell;
+        else if (child.name === "sensor-coverage-ground" || child.name === "sensor-coverage-blind-radius") child.visible = showFloor;
+    }
+}
+
+function coveragePointCloud(positions, color, name) {
+    if (!positions?.length) return null;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    const cloud = new THREE.Points(geometry, new THREE.PointsMaterial({
+        color,
+        size: 4,
+        sizeAttenuation: false,
+        transparent: true,
+        opacity: 0.9,
+        depthWrite: false,
+        toneMapped: false,
+    }));
+    cloud.name = name;
+    cloud.renderOrder = 3;
+    return cloud;
+}
+
+function blindRadiusRing(radius, y) {
+    const points = [];
+    const segments = 64;
+    for (let index = 0; index < segments; index += 1) {
+        const angle = (index / segments) * Math.PI * 2;
+        points.push(new THREE.Vector3(Math.cos(angle) * radius, y, Math.sin(angle) * radius));
+    }
+    return points;
 }

@@ -73,7 +73,8 @@ import { VehiclePlanView } from "./VehiclePlanView.js";
 import { PlacementAcceptanceDialog, WheelAssignmentDialog } from "./WheelAssignmentDialog.js";
 import { canonicalVehicleGlb, rolesFromManifest } from "./wheelAssignmentState.js";
 import { AxisAlignGizmo } from "./AxisAlignGizmo.js";
-import { VehicleStudio } from "./VehicleStudio.js";
+import { VehicleStudio, applyCoverageLayerVisibility } from "./VehicleStudio.js";
+import { CoverageReadout } from "./coverage/CoverageReadout.js";
 import { VehicleWorkspace } from "./workspace/VehicleWorkspace.js";
 import { VehicleTopBar } from "./workspace/VehicleTopBar.js";
 import { VehicleToolbar } from "./workspace/VehicleToolbar.js";
@@ -217,6 +218,14 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     const [validatedStamp, setValidatedStamp] = useState(null);
     const [modelNodes, setModelNodes] = useState([]);
     const [layout, setLayout] = useState(() => normalizeVehiclePaneLayout(readVehicleEditorPreference(VEHICLE_EDITOR_PREFERENCE_KEYS.PANE_LAYOUT)));
+    const [coverageEnabled, setCoverageEnabled] = useState(() => readVehicleEditorPreference(VEHICLE_EDITOR_PREFERENCE_KEYS.COVERAGE, null)?.enabled === true);
+    const [shellRadiusM, setShellRadiusM] = useState(() => {
+        const radius = Number(readVehicleEditorPreference(VEHICLE_EDITOR_PREFERENCE_KEYS.COVERAGE, null)?.shellRadiusM);
+        return Number.isFinite(radius) && radius > 0 ? radius : 5;
+    });
+    const [shellVisible, setShellVisible] = useState(() => readVehicleEditorPreference(VEHICLE_EDITOR_PREFERENCE_KEYS.COVERAGE, null)?.shellVisible !== false);
+    const [floorVisible, setFloorVisible] = useState(() => readVehicleEditorPreference(VEHICLE_EDITOR_PREFERENCE_KEYS.COVERAGE, null)?.floorVisible !== false);
+    const [coverageReport, setCoverageReport] = useState(null);
     const [sensorCatalog, setSensorCatalog] = useState({ revision: 0, sensors: [] });
     const [plantCatalog, setPlantCatalog] = useState([]);
     const [sensorRegistryTick, setSensorRegistryTick] = useState(0);
@@ -345,14 +354,17 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
             onWheelDragCancel: () => studioHandlers.current.onWheelDragCancel?.(),
             sensorRuntime: authoringRuntime,
         });
+        studio.onCoverageReport = (report) => setCoverageReport(report);
         studioRef.current = studio;
         const detachCamera = studio.onCameraFrame((quaternion) => {
             axisGizmoRef.current?.sync(quaternion);
         });
         return () => {
             detachCamera();
+            studio.onCoverageReport = null;
             studio.dispose();
             studioRef.current = null;
+            setCoverageReport(null);
         };
         // Recreate only when a draft appears; runtime updates go through setSensorRuntime.
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -371,6 +383,40 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     useEffect(() => {
         studioRef.current?.setSensorRuntime(authoringRuntime);
     }, [authoringRuntime]);
+
+    useEffect(() => {
+        writeVehicleEditorPreference(VEHICLE_EDITOR_PREFERENCE_KEYS.COVERAGE, {
+            enabled: coverageEnabled,
+            shellRadiusM,
+            shellVisible,
+            floorVisible,
+        });
+    }, [coverageEnabled, shellRadiusM, shellVisible, floorVisible]);
+
+    useEffect(() => {
+        const studio = studioRef.current;
+        if (!studio) return;
+        studio.setCoverage({
+            enabled: coverageEnabled && Boolean(draft),
+            manifest: draft,
+            definitions: sensorSessionRef.current?.registry ?? sensorTypeRegistry,
+            shellRadiusM,
+            shellVisible,
+            floorVisible,
+            revision: sensorRegistryTick,
+        });
+        // The studio instance can outlive a hot reload of its class. Apply the
+        // layer flags to the objects directly, and again after every later publish.
+        applyCoverageLayerVisibility(studio, shellVisible, floorVisible);
+        if (!studio._coverageLayerEnforced) {
+            const step = studio._stepCoverage?.bind(studio);
+            studio._stepCoverage = () => {
+                step?.();
+                applyCoverageLayerVisibility(studio);
+            };
+            studio._coverageLayerEnforced = true;
+        }
+    }, [coverageEnabled, draft, shellRadiusM, shellVisible, floorVisible, sensorRegistryTick]);
 
     useEffect(() => () => {
         sensorSessionRef.current?.dispose();
@@ -1059,6 +1105,9 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                         onApplyUrdf={() => setUrdfMode("apply")}
                         createUrdfDisabled={busy}
                         applyUrdfDisabled={busy || !draft || readOnly}
+                        coverageEnabled={coverageEnabled}
+                        coverageDisabled={!draft}
+                        onCoverageEnabled={setCoverageEnabled}
                     />
                 )}
                 hierarchy={(
@@ -1089,6 +1138,17 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                     {draft && (
                         <>
                             <div ref={viewportRef} className="absolute inset-0" />
+                            {coverageEnabled && (
+                                <CoverageReadout
+                                    report={coverageReport}
+                                    shellRadiusM={shellRadiusM}
+                                    onShellRadius={setShellRadiusM}
+                                    shellVisible={shellVisible}
+                                    floorVisible={floorVisible}
+                                    onShellVisible={setShellVisible}
+                                    onFloorVisible={setFloorVisible}
+                                />
+                            )}
                             <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-end gap-2 p-3">
                                 {selection && (
                                     <div className="pointer-events-auto flex items-center gap-2 rounded-[var(--radius)] border border-[var(--slate-border)] bg-[var(--slate-floating)] px-2.5 py-1.5">
