@@ -356,10 +356,8 @@ appearance/analytic readback.
 
 | Sensor | Rate | Key calibration | Units |
 | --- | --- | --- | --- |
-| IMU | 100 Hz | `gravity`, `angularVelocityNoiseDensity`, `linearAccelerationNoiseDensity` (or per-sample `angularVelocityStdDev`, `linearAccelerationStdDev`), drift τ, saturation | rad/s/√Hz, m/s²/√Hz (rad/s, m/s² per sample) |
-| GNSS | 10 Hz | `datum` (lat/lng/alt), `positionNoiseEnu`, `faults.dropoutProbability`, `faults.outageProbability`, multipath τ | deg, m |
-| IMU | 100 Hz | `gravity`, per-axis `angularVelocityStdDev`, `linearAccelerationStdDev`, drift τ, saturation | rad/s, m/s² |
-| GNSS | 10 Hz | `datum` (lat/lng/alt), `positionNoiseEnu`, `faults.dropoutProbability`, `faults.outageProbability`, `faults.outageDurationSec` (0 or absent: outage lasts to the end of the run), multipath τ | deg, m |
+| IMU | 100 Hz | `gravity`, `angularVelocityNoiseDensity`, `linearAccelerationNoiseDensity` (one value for all axes; or per-axis per-sample `angularVelocityStdDev`, `linearAccelerationStdDev`), `angularDriftTauSec`, `accelerationDriftTauSec`, `angularVelocitySaturation`, `linearAccelerationSaturation` | rad/s/√Hz, m/s²/√Hz (rad/s, m/s² per sample) |
+| GNSS | 10 Hz | `datum` (lat/lng/alt), `positionNoiseEnu`, `faults.dropoutProbability`, `faults.outageProbability`, `faults.outageDurationSec` (0 or absent: outage lasts to the end of the run), `faults.multipathTauSec` | deg, m |
 | Wheel odometry | 50 Hz | `wheelRadius`, `ticksPerRevolution`, `trackWidth`, `slipFactor`, pose/twist noise | m, ticks/rev |
 
 IMU white noise is set from datasheet noise densities. Each sample gets
