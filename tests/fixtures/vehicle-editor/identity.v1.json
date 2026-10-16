@@ -1,0 +1,23 @@
+{
+  "kind": "cev-sim.vehicle-editor-identity",
+  "version": 1,
+  "algorithm": "computeResolvedRunHash",
+  "legacy": {
+    "big-car": "4c39469acfa250f98dfee99560ea646619aa65230415b39c6c31b46368f161af",
+    "igvc-car": "da17fa26f3a1243264747cfd718098a6f253d076af83c6d47d1f15d84e9da300",
+    "scenario-car": "ce16fe842506c8a9949d21b8d4a84444d7b57148cd923a44305a55cb06992eb7",
+    "defaultBlank": "d8c818fa23f12642a97d28e239410bbea42c8a043054796c2a28b3211911779d",
+    "blankV3Definition": "03716fbb799f0e92e5c7295f6f710f4dc2888e0fdc39a7d4d1921b29ffdc1d56",
+    "portableTruckBundle": "9c093454c448845a3ade39417d175c3a89c0b11d217d368d197d57d60c0c50cd"
+  },
+  "nonsemantic": [
+    "stageId",
+    "operationId",
+    "journal",
+    "receipt",
+    "preMigrationSnapshot",
+    "githubSource",
+    "paneLayout"
+  ],
+  "characterizationSha256": "60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f"
+}

@@ -361,6 +361,7 @@ export class EnvironmentPersistence {
                     supportedRoadGeometryVersions: [1, 2],
                     supportedAssetMetricVersions: [1],
                     supportedEditorSourceVersions: [1],
+                    supportedScenePrimitiveVersions: [1],
                 },
                 { keepalive },
             );

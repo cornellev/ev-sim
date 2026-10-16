@@ -150,6 +150,30 @@ export class RegistryAuthStore {
         return Object.freeze({ token, actor: publicActor(record), createdAt });
     }
 
+    async grantNamespaces(publisherId, namespaces) {
+        assertMarketplaceId(publisherId, "publisherId");
+        if (!Array.isArray(namespaces) || namespaces.length < 1) throw invalid("Publisher namespace grant requires at least one namespace.");
+        const requested = [...new Set(namespaces)].sort();
+        requested.forEach((namespace) => assertMarketplaceId(namespace, "namespace"));
+        const current = await this.read();
+        const needsUpdate = current.tokens.some((record) => record.subject === "publisher"
+            && record.publisherId === publisherId
+            && record.revokedAt === null
+            && requested.some((namespace) => !record.namespaces.includes(namespace)));
+        if (!needsUpdate) return 0;
+        return this.#mutate((document) => {
+            let updated = 0;
+            for (const record of document.tokens) {
+                if (record.subject !== "publisher" || record.publisherId !== publisherId || record.revokedAt !== null) continue;
+                const next = [...new Set([...record.namespaces, ...requested])].sort();
+                if (next.length === record.namespaces.length && next.every((namespace, index) => namespace === record.namespaces[index])) continue;
+                record.namespaces = next;
+                updated += 1;
+            }
+            return updated;
+        });
+    }
+
     async revokeToken(tokenId) {
         assertCanonicalUuid(tokenId, "tokenId");
         return this.#mutate((document) => {

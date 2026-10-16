@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { register } from "node:module";
 import test from "node:test";
 
 import {
@@ -205,4 +206,41 @@ test("unknown sensor types survive normalization and fail validation explicitly"
     assert.equal(vehicle.sensors[0].type, "future-sensor");
     assert.equal(vehicle.sensors[0].config.custom, 2);
     assert.match(validateVehicleManifest(vehicle).issues.map((issue) => issue.message).join(" "), /Unsupported sensor type/);
+});
+
+test("state-sensor vehicle mounts survive parent pose updates", async () => {
+    register(new URL("./helpers/resolve-app-modules.js", import.meta.url));
+    // Vehicle.js imports VehicleDatabase, which imports ManifestVehicle before
+    // PhysicalVehicle is initialized. Loading the database first breaks that cycle.
+    await import("../app/3d/data/VehicleDatabase.js");
+    const { Vehicle } = await import("../app/3d/vehicles/Vehicle.js");
+    const { createVehicleSensorDevice } = await import("../app/3d/devices/SensorRuntimeRegistry.js");
+    const pose = () => ({
+        copy() { return this; },
+        add() { return this; },
+    });
+    const devices = ["imu", "gnss", "wheel-odometry"].map((type) => createVehicleSensorDevice({
+        id: type,
+        type,
+        config: {},
+        pose: {
+            position: { x: 1, y: 2, z: 3 },
+            rotation: { x: 0, y: 0, z: 0, order: "XYZ" },
+        },
+    }));
+    devices.push({ id: "unhooked" });
+    const vehicle = {
+        devices,
+        position: pose(),
+        rotation: pose(),
+        sceneObject: { position: pose(), rotation: pose() },
+    };
+
+    for (const device of devices.slice(0, 3)) {
+        assert.equal(device.name, device.id);
+        assert.equal(typeof device.onParentUpdate, "function");
+        assert.equal(device.getPosition().x, 1);
+    }
+    Vehicle.prototype.updatePosition.call(vehicle, vehicle.position);
+    Vehicle.prototype.updateRotation.call(vehicle, vehicle.rotation);
 });

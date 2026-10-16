@@ -164,3 +164,26 @@ test("plugin sensor catalog HTTP is revisioned and includes installed plugin typ
     assert.ok(catalog.sensors.some((entry) => entry.ownership === "builtin"));
 });
 
+test("plugin plant catalog HTTP lists installed plants", async (t) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "cev-plugin-plants-"));
+    t.after(() => fs.rm(root, { recursive: true, force: true }));
+    const storage = new StorageService(root);
+    const resource = await pluginFixtureResource({ fixture: "test.plant-fixture" });
+    await storage.plugins.putPackage(resource);
+    await storage.plugins.installFromHash(resource.packageHash);
+    const app = (await import("express")).default();
+    app.use("/api/storage/plugins", createPluginRouter(storage));
+    const { createServer } = await import("node:http");
+    const server = createServer(app);
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    t.after(() => new Promise((resolve) => server.close(resolve)));
+    const { port } = server.address();
+    const catalog = await (await fetch(`http://127.0.0.1:${port}/api/storage/plugins/plants`)).json();
+    assert.equal(catalog.ok, true);
+    assert.equal(catalog.plants.length, 1);
+    assert.equal(catalog.plants[0].id, "test.plant-fixture.bicycle");
+    assert.equal(catalog.plants[0].pluginId, "test.plant-fixture");
+    assert.equal(catalog.plants[0].packageHash, resource.packageHash);
+    assert.equal(catalog.plants[0].parameters[0].source, "kinematics.wheelbase");
+});
+

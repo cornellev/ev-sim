@@ -19,7 +19,7 @@ export class ManifestLidar3d extends LiDAR3d {
             calibration.elevation.stepDeg,
             [calibration.elevation.startDeg, calibration.elevation.endDeg],
         );
-        this.name = "Manifest LiDAR 3D";
+        this.name = config.id || "Manifest LiDAR 3D";
         this.telemetryId = config.id;
         this.settings.telemetryId = config.id;
         this.config = config;

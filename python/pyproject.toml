@@ -19,6 +19,7 @@ dependencies = [
 
 [project.optional-dependencies]
 sb3 = ["stable-baselines3>=2.9,<3"]
+viz = ["matplotlib>=3.8,<4"]
 test = [
     "build>=1.2,<2",
     "grpcio-tools==1.83.1",

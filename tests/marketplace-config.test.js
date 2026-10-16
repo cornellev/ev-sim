@@ -34,7 +34,7 @@ test("MKT-16 prerequisite enables Marketplace by default and preserves the expli
     });
 });
 
-function captureStartup(env) {
+async function captureStartup(env) {
     const logs = [];
     const errors = [];
     const originalLog = console.log;
@@ -44,7 +44,7 @@ function captureStartup(env) {
     console.error = (...args) => errors.push(args.join(" "));
     console.warn = () => {};
     try {
-        return { ready: startup("/repo", env), logs, errors };
+        return { ready: await startup("/repo", env), logs, errors };
     } finally {
         console.log = originalLog;
         console.error = originalError;
@@ -52,21 +52,21 @@ function captureStartup(env) {
     }
 }
 
-test("startup marketplace log matches the default-on kill switch", () => {
+test("startup marketplace log matches the default-on kill switch", async () => {
     for (const value of [undefined, "", "1", "true"]) {
         const env = value === undefined ? {} : { CEV_SIM_MARKETPLACE_ENABLED: value };
-        const result = captureStartup(env);
+        const result = await captureStartup(env);
         assert.equal(result.ready, true);
         assert.ok(result.logs.some((line) => line.includes("[MARKETPLACE] Marketplace is enabled.")));
         assert.equal(result.logs.some((line) => line.includes("Marketplace is disabled.")), false);
     }
     for (const value of ["0", "false"]) {
-        const result = captureStartup({ CEV_SIM_MARKETPLACE_ENABLED: value });
+        const result = await captureStartup({ CEV_SIM_MARKETPLACE_ENABLED: value });
         assert.equal(result.ready, true);
         assert.ok(result.logs.some((line) => line.includes("[MARKETPLACE] Marketplace is disabled.")));
         assert.equal(result.logs.some((line) => line.includes("Marketplace is enabled.")), false);
     }
-    const invalid = captureStartup({ CEV_SIM_MARKETPLACE_ENABLED: "yes" });
+    const invalid = await captureStartup({ CEV_SIM_MARKETPLACE_ENABLED: "yes" });
     assert.equal(invalid.ready, false);
     assert.match(invalid.errors.join("\n"), /CEV_SIM_MARKETPLACE_ENABLED must be one of: 0, 1, false, true/);
     assert.equal(invalid.logs.some((line) => line.includes("[MARKETPLACE]")), false);

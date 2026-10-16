@@ -418,7 +418,7 @@ function StatusBadge({ compileState, valid }) {
     const ok = compileState.valid || hasStaleArtifact;
 
     return (
-        <span aria-label={`Script status: ${label}`} className={`inline-flex items-center gap-1.5 rounded-[4px] border px-2 py-1 text-[11px] ${ok ? "border-white/10 bg-white/8 text-zinc-200" : "border-red-300/15 bg-red-400/8 text-red-200"}`}>
+        <span aria-label={`Script status: ${label}`} className={`inline-flex shrink-0 items-center gap-1.5 rounded-[4px] border px-2 py-1 text-[11px] ${ok ? "border-white/10 bg-white/8 text-zinc-200" : "border-red-300/15 bg-red-400/8 text-red-200"}`}>
             {ok ? <IconCircleCheck size={13} stroke={1.75} aria-hidden="true" /> : <IconCircleX size={13} stroke={1.75} aria-hidden="true" />}
             <span className="max-[899px]:sr-only">{label}</span>
         </span>
@@ -497,6 +497,7 @@ function EditorToolbar({
 }) {
     return (
         <div className="fixed left-18 right-[332px] top-3 z-50 flex min-w-0 items-center gap-2 rounded-[4px] border border-white/10 bg-[var(--slate-floating)] px-2.5 py-2 text-white shadow-[0_16px_40px_rgba(0,0,0,0.24)] backdrop-blur-sm max-[899px]:right-3">
+            <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">
             {/* <button type="button" onClick={onOpenWorkspace} className="toolbar-btn shrink-0" aria-label="Open workspace switcher">
                 <span className="font-semibold">cev-sim</span>
                 <span className="mx-1 text-zinc-600" aria-hidden="true">/</span>
@@ -506,7 +507,7 @@ function EditorToolbar({
                 <button
                     type="button"
                     onClick={onBack}
-                    className="rounded-sm border border-white/10 bg-white/8 px-2 py-1.5 text-xs text-zinc-200 transition-[transform,background-color,border-color] duration-150 hover:border-white/20 hover:bg-white/12 active:scale-[0.98]"
+                    className="shrink-0 rounded-sm border border-white/10 bg-white/8 px-2 py-1.5 text-xs text-zinc-200 transition-[transform,background-color,border-color] duration-150 hover:border-white/20 hover:bg-white/12 active:scale-[0.98]"
                 >
                     Back
                 </button>
@@ -516,19 +517,20 @@ function EditorToolbar({
                 aria-label="Script name"
                 value={currentDocument?.name || ""}
                 onChange={(event) => onRename(event.target.value)}
-                className="min-w-[180px] max-w-[280px] rounded-sm border border-transparent bg-transparent px-2 py-1.5 text-sm font-medium text-white outline-none transition-[border-color,background-color] duration-150 hover:bg-white/5 focus:border-white/15 focus:bg-[var(--slate-surface-2)] max-[899px]:min-w-[118px] max-[899px]:max-w-[160px] max-[899px]:flex-1"
+                className="min-w-[180px] max-w-[280px] shrink-0 rounded-sm border border-transparent bg-transparent px-2 py-1.5 text-sm font-medium text-white outline-none transition-[border-color,background-color] duration-150 hover:bg-white/5 focus:border-white/15 focus:bg-[var(--slate-surface-2)] max-[899px]:min-w-[118px] max-[899px]:max-w-[160px]"
             />
 
             <StatusBadge compileState={compileState} valid={valid} />
 
-            <div className="mx-1 h-5 w-px bg-white/10" />
+            <div className="mx-1 h-5 w-px shrink-0 bg-white/10" />
 
-            <button type="button" onClick={onNew} className="toolbar-btn">New</button>
-            <button type="button" onClick={onToggleScripts} className="toolbar-btn">Scripts</button>
-            <button type="button" onClick={onExecute} className="toolbar-btn">Execute</button>
+            <button type="button" onClick={onNew} className="toolbar-btn shrink-0">New</button>
+            <button type="button" onClick={onToggleScripts} className="toolbar-btn shrink-0">Scripts</button>
+            <button type="button" onClick={onExecute} className="toolbar-btn shrink-0">Execute</button>
+            </div>
 
-            <div className="relative">
-                <button type="button" onClick={onToggleDownload} className="toolbar-btn">Download</button>
+            <div className="relative shrink-0">
+                <button type="button" onClick={onToggleDownload} className="toolbar-btn shrink-0">Download</button>
                 {downloadOpen && (
                     <div className="absolute left-0 top-[calc(100%+8px)] w-56 rounded-[var(--radius)] border border-white/10 bg-[var(--slate-surface-1)] p-1 text-sm shadow-[0_16px_48px_rgba(0,0,0,0.32)]">
                         <button
@@ -549,7 +551,7 @@ function EditorToolbar({
                 )}
             </div>
 
-            <button type="button" onClick={onImport} className="toolbar-btn">Import</button>
+            <button type="button" onClick={onImport} className="toolbar-btn shrink-0">Import</button>
 
             {currentDocument?.id ? (
                 <span
@@ -749,7 +751,7 @@ function ScriptLibraryDrawer({
     if (!open) return null;
 
     return (
-        <aside className="fixed left-18 top-[72px] z-40 flex max-h-[calc(100vh-92px)] w-[360px] flex-col rounded-[var(--radius)] border border-white/10 bg-[var(--slate-floating)] text-white shadow-[0_18px_52px_rgba(0,0,0,0.34)] backdrop-blur">
+        <aside className="fixed left-18 top-[72px] z-[60] flex max-h-[calc(100vh-92px)] w-[360px] flex-col rounded-[var(--radius)] border border-white/10 bg-[var(--slate-floating)] text-white shadow-[0_18px_52px_rgba(0,0,0,0.34)] backdrop-blur">
             <div className="border-b border-white/10 px-3 py-3">
                 <div className="mb-3 flex items-center justify-between gap-3">
                     <div>
@@ -942,8 +944,10 @@ export const IMPORT_CODE = {
 
 export default function Scripting({ onOpenWorkspace }) {
     const headUUID = useRef("head-uuid");
-    const manager = useRef(new ScriptManager());
-    const authoringRef = useRef(new BrowserPluginAuthoringSession());
+    const manager = useRef(null);
+    if (!manager.current) manager.current = new ScriptManager();
+    const authoringRef = useRef(null);
+    if (!authoringRef.current) authoringRef.current = new BrowserPluginAuthoringSession();
     const pluginCatalogRef = useRef([]);
     const positionsRef = useRef({});
     const outputNodeConfigRef = useRef(OUTPUT_NODE_DEFAULT);
@@ -1507,6 +1511,12 @@ export default function Scripting({ onOpenWorkspace }) {
         }, () => loadSequenceRef.current === loadId);
     };
 
+    useEffect(() => () => {
+        loadSequenceRef.current += 1;
+        authoringRef.current?.dispose();
+        authoringRef.current = null;
+    }, []);
+
     useEffect(() => {
         let mounted = true;
 
@@ -2017,33 +2027,52 @@ export default function Scripting({ onOpenWorkspace }) {
         }
     };
 
+    const reportScriptActionError = (error) => {
+        setConfigurationError(error?.message || String(error));
+    };
+
     const createNewScript = async () => {
-        await saveCurrentScript();
-        const created = createScriptDocument({
-            name: "Untitled Script",
-            graph: createEmptyGraph(OUTPUT_NODE_DEFAULT)
-        });
-        await putScriptDocument(created);
-        setScriptsWithRef((previous) => upsertScript(previous, created));
-        loadDocumentIntoEditor(created, { pushCurrent: true });
+        try {
+            await saveCurrentScript();
+            const created = createScriptDocument({
+                name: "Untitled Script",
+                graph: createEmptyGraph(OUTPUT_NODE_DEFAULT)
+            });
+            await putScriptDocument(created);
+            setScriptsWithRef((previous) => upsertScript(previous, created));
+            setConfigurationError(null);
+            await loadDocumentIntoEditor(created, { pushCurrent: true });
+        } catch (error) {
+            reportScriptActionError(error);
+        }
     };
 
     const openScript = async (scriptId) => {
-        await saveCurrentScript();
-        const document = scriptsRef.current.find((item) => item.id === scriptId) || await getScriptDocument(scriptId);
-        if (!document?.editable) return;
-        loadDocumentIntoEditor(document, { pushCurrent: true });
+        try {
+            await saveCurrentScript();
+            const document = scriptsRef.current.find((item) => item.id === scriptId) || await getScriptDocument(scriptId);
+            if (!document?.editable) return;
+            setConfigurationError(null);
+            await loadDocumentIntoEditor(document, { pushCurrent: true });
+        } catch (error) {
+            reportScriptActionError(error);
+        }
     };
 
     const goBack = async () => {
         const targetScriptId = backStack[backStack.length - 1];
         if (!targetScriptId) return;
 
-        await saveCurrentScript();
-        const document = scriptsRef.current.find((item) => item.id === targetScriptId) || await getScriptDocument(targetScriptId);
-        setBackStack((previous) => previous.slice(0, -1));
-        if (document?.editable) {
-            loadDocumentIntoEditor(document);
+        try {
+            await saveCurrentScript();
+            const document = scriptsRef.current.find((item) => item.id === targetScriptId) || await getScriptDocument(targetScriptId);
+            setBackStack((previous) => previous.slice(0, -1));
+            if (document?.editable) {
+                setConfigurationError(null);
+                await loadDocumentIntoEditor(document);
+            }
+        } catch (error) {
+            reportScriptActionError(error);
         }
     };
 
@@ -2238,6 +2267,7 @@ export default function Scripting({ onOpenWorkspace }) {
         <>
             <style jsx global>{`
                 .toolbar-btn {
+                    flex-shrink: 0;
                     border: 1px solid rgba(255, 255, 255, 0.1);
                     border-radius: 4px;
                     background: rgba(255, 255, 255, 0.08);

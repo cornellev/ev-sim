@@ -77,7 +77,7 @@ export class PluginHost {
     }
 
     registerPackage(verifiedPackage, moduleNamespace, { capabilities = [] } = {}) {
-        const { document, resource } = verifiedPackage;
+        const { document, resource, fileBytes } = verifiedPackage;
         const fields = { pluginId: document.id, packageHash: resource.packageHash };
         if (this.sealed) throw pluginError(PLUGIN_ERROR_CODES.REGISTRATION, "Plugin host is sealed.", fields);
         if (this.packages.has(document.id)) {
@@ -115,17 +115,27 @@ export class PluginHost {
                 packageHash: resource.packageHash,
             }),
         });
-        const register = moduleNamespace?.default?.register;
-        if (typeof register !== "function") {
-            throw pluginError(PLUGIN_ERROR_CODES.REGISTRATION, `Plugin "${document.id}" must export default.register(api).`, fields);
-        }
-        try {
-            assertSynchronous(register(api), "register", fields);
-        } catch (error) {
-            if (error?.code) throw error;
-            throw pluginError(PLUGIN_ERROR_CODES.REGISTRATION, `Plugin registration failed: ${error.message}`, { ...fields, cause: error });
-        } finally {
+        const javascriptContributions = document.units.length > 0
+            || document.systems.length > 0
+            || (document.sensorTypes?.length ?? 0) > 0;
+        if (moduleNamespace == null) {
+            if (document.entry || javascriptContributions) {
+                throw pluginError(PLUGIN_ERROR_CODES.REGISTRATION, `Plugin "${document.id}" must export default.register(api).`, fields);
+            }
             active = false;
+        } else {
+            const register = moduleNamespace?.default?.register;
+            if (typeof register !== "function") {
+                throw pluginError(PLUGIN_ERROR_CODES.REGISTRATION, `Plugin "${document.id}" must export default.register(api).`, fields);
+            }
+            try {
+                assertSynchronous(register(api), "register", fields);
+            } catch (error) {
+                if (error?.code) throw error;
+                throw pluginError(PLUGIN_ERROR_CODES.REGISTRATION, `Plugin registration failed: ${error.message}`, { ...fields, cause: error });
+            } finally {
+                active = false;
+            }
         }
         const declared = new Map(document.units.map((definition) => [definition.type, definition]));
         if (units.length !== declared.size) {
@@ -335,6 +345,14 @@ export class PluginHost {
             systemFactories: Object.freeze(systemFactories),
             sensorTypes: Object.freeze(sensorFactories.map((entry) => entry.type).sort(comparePluginText)),
             sensorFactories: Object.freeze(sensorFactories),
+            plantDefinitions: Object.freeze((document.plants ?? []).map((plant) => Object.freeze({
+                id: plant.id,
+                abi: plant.abi,
+                module: plant.module,
+                parameters: plant.parameters,
+                moduleBytes: fileBytes?.get(plant.module) ?? null,
+                ownership,
+            }))),
         });
         this.blockRegistry = candidate;
         this.sensorRegistry = candidateSensors;

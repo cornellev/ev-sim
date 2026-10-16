@@ -1,0 +1,31 @@
+{
+  "kind": "cev-sim.plugin",
+  "api": 1,
+  "id": "test.plant-fixture",
+  "version": "1.0.0",
+  "engines": {
+    "cevSim": ">=0.1.0 <0.3.0"
+  },
+  "capabilities": [
+    "plant.step"
+  ],
+  "units": [],
+  "systems": [],
+  "plants": [
+    {
+      "id": "test.plant-fixture.bicycle",
+      "abi": 1,
+      "module": "plant.wasm",
+      "parameters": [
+        {
+          "key": "wheelbase",
+          "source": "kinematics.wheelbase"
+        },
+        {
+          "key": "maxSteeringAngle",
+          "source": "kinematics.maxSteeringAngle"
+        }
+      ]
+    }
+  ]
+}

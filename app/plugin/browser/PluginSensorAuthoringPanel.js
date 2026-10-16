@@ -92,6 +92,7 @@ export default function PluginSensorAuthoringPanel({
     Component = null,
     onCommit,
     disabled = false,
+    lockVehicleFields = false,
     unresolved = false,
     conflict = null,
     topics = [],
@@ -111,6 +112,7 @@ export default function PluginSensorAuthoringPanel({
                 Component={unresolved ? null : Component}
                 onCommit={onCommit}
                 disabled={disabled || unresolved}
+                lockVehicleFields={lockVehicleFields}
                 sensorRegistry={sensorRegistry}
             />
             {kind === "run" && onOutputChange && (

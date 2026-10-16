@@ -91,6 +91,8 @@ export class EnvironmentLoader {
                 tags: [...building.tags],
                 meshName: building.meshName,
             })),
+            primitives: manifest.document?.primitives ?? [],
+            floor: manifest.document?.floor ?? null,
             features: description.features.map((feature) => ({
                 id: feature.id,
                 type: feature.type,

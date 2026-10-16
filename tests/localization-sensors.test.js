@@ -113,6 +113,30 @@ test("WGS84 conversion returns datum at zero ENU offset", () => {
     assert.ok(Math.abs(converted.lng - datum.lng) < 1e-4);
 });
 
+test("GNSS outage ends after outageDurationSec and is permanent without it", () => {
+    const run = (faults) => {
+        const start = normalizeRunSensor({ type: "gnss", calibration: { faults: { ...faults, outageProbability: 1 } } });
+        const after = normalizeRunSensor({ type: "gnss", calibration: { faults: { ...faults, outageProbability: 0 } } });
+        const rng = new SeededRNG("gnss-outage-duration");
+        let state = createMeasurementSeedState(start, rng);
+        const noFix = [];
+        // 10 Hz fixes. The outage starts on the first fix only.
+        for (let index = 1; index <= 20; index += 1) {
+            const snapshot = captureVehicleSnapshot(mockVehicle(), index * 100_000_000);
+            const result = buildGnssMeasurement(snapshot, index === 1 ? start : after, rng, state);
+            state = { ...state, ...result.nextState };
+            noFix.push(result.measurement.noFix);
+        }
+        return noFix;
+    };
+    // Starts at 0.1 s and ends at 0.6 s: fixes at 0.1 through 0.5 s have no fix.
+    const timed = run({ outageDurationSec: 0.5 });
+    assert.deepEqual(timed.slice(0, 5), [true, true, true, true, true]);
+    assert.ok(timed.slice(5).every((value) => value === false));
+    assert.ok(run({}).every((value) => value === true));
+    assert.ok(run({ outageDurationSec: 0 }).every((value) => value === true));
+});
+
 test("GNSS dropout returns no sample and outage emits no-fix status", () => {
     const config = normalizeRunSensor({
         type: "gnss",
@@ -131,11 +155,77 @@ test("GNSS dropout returns no sample and outage emits no-fix status", () => {
     assert.equal(outage.measurement.noFix, true);
 });
 
+test("GNSS covariance includes multipath variance and matches the sampled error", () => {
+    const config = normalizeRunSensor({
+        type: "gnss",
+        calibration: {
+            positionNoiseEnu: { x: 0.05, y: 0.05, z: 0.05 },
+            faults: { multipathStdDev: { x: 0.1, y: 0.1, z: 0.1 }, multipathTauSec: 1 },
+        },
+    });
+    const rng = new SeededRNG("gnss-covariance");
+    let state = createMeasurementSeedState(config, rng);
+    const exactConfig = normalizeRunSensor({
+        type: "gnss",
+        calibration: {
+            positionNoiseEnu: { x: 0, y: 0, z: 0 },
+            faults: { multipathStdDev: { x: 0, y: 0, z: 0 } },
+        },
+    });
+    const exactSnapshot = captureVehicleSnapshot(mockVehicle(), 100_000_000);
+    const reference = buildGnssMeasurement(exactSnapshot, exactConfig, new SeededRNG("gnss-exact"), createMeasurementSeedState(exactConfig, rng)).measurement;
+    const metersPerDegree = 111_000;
+    let sumSquares = 0;
+    let covariance = null;
+    const samples = 20_000;
+    for (let index = 1; index <= samples; index += 1) {
+        const snapshot = captureVehicleSnapshot(mockVehicle(), index * 100_000_000);
+        const result = buildGnssMeasurement(snapshot, config, rng, state);
+        state = { ...state, ...result.nextState };
+        covariance = result.measurement.positionCovariance;
+        sumSquares += ((result.measurement.latitude - reference.latitude) * metersPerDegree) ** 2;
+    }
+    const expectedVariance = 0.05 ** 2 + 0.1 ** 2;
+    assert.ok(Math.abs(covariance[4] - expectedVariance) < 1e-12);
+    const sampledVariance = sumSquares / samples;
+    assert.ok(Math.abs(sampledVariance / expectedVariance - 1) < 0.15, `sampled variance ${sampledVariance}`);
+});
+
 test("encoder quantization is deterministic and slip reduces travel", () => {
     const q1 = quantizeTravel(0.123, 0.15, 1024);
     const q2 = quantizeTravel(0.123, 0.15, 1024);
     assert.equal(q1, q2);
     assert.ok(q1 > 0);
+});
+
+test("wheel odometry carries partial ticks so distance does not drift with speed", () => {
+    const config = normalizeRunSensor({
+        type: "wheel-odometry",
+        rateHz: 50,
+        calibration: { poseNoise: { x: 0, y: 0, z: 0 }, twistNoise: { x: 0, y: 0, z: 0 } },
+    });
+    const tickLength = (2 * Math.PI * config.calibration.wheelRadius) / config.calibration.ticksPerRevolution;
+    const stepNs = 20_000_000;
+    const captures = 1500;
+    // 0.01 m/s moves less than half a tick per sample, which rounded to zero
+    // when each sample was quantized on its own.
+    for (const speed of [0.01, 0.2, 1, 3]) {
+        const rng = new SeededRNG(`wheel-ticks-${speed}`);
+        const vehicle = mockVehicle({ velocity: { x: speed, y: 0, z: 0 } });
+        let measurementState = createMeasurementSeedState(config, rng);
+        let lastSnapshot = null;
+        let position = null;
+        for (let step = 1; step <= captures; step += 1) {
+            const snapshot = captureVehicleSnapshot(vehicle, step * stepNs, lastSnapshot, stepNs);
+            lastSnapshot = snapshot;
+            const result = buildWheelOdometryMeasurement(snapshot, config, rng.fork(`sample-${step}`), measurementState);
+            measurementState = { ...measurementState, ...result.nextState };
+            position = result.measurement.position;
+        }
+        const truth = speed * captures * (stepNs / 1e9);
+        const traveled = Math.hypot(position.x, position.y);
+        assert.ok(Math.abs(traveled - truth) <= tickLength, `${speed} m/s: traveled ${traveled} m, truth ${truth} m`);
+    }
 });
 
 test("wheel odometry integrates independently from truth pose", () => {
@@ -155,6 +245,30 @@ test("wheel odometry integrates independently from truth pose", () => {
             assert.ok(result.measurement.position.x > 0 || result.measurement.position.y > 0);
         }
     }
+});
+
+test("wheel odometry integrates over the real capture interval, not 1 / rateHz", () => {
+    // 50 Hz on a 60 Hz step: the schedule rounds the period to one step, so
+    // captures arrive every 16.67 ms instead of every 20 ms.
+    const config = normalizeRunSensor({ type: "wheel-odometry", rateHz: 50 });
+    const rng = new SeededRNG("wheel-interval");
+    const vehicle = mockVehicle({ velocity: { x: 3, y: 0, z: 0 } });
+    const stepNs = 16_666_667;
+    const captures = 180;
+    let measurementState = createMeasurementSeedState(config, rng);
+    let lastSnapshot = null;
+    let position = null;
+    for (let step = 1; step <= captures; step += 1) {
+        const snapshot = captureVehicleSnapshot(vehicle, step * stepNs, lastSnapshot, stepNs);
+        lastSnapshot = snapshot;
+        const result = buildWheelOdometryMeasurement(snapshot, config, rng.fork(`sample-${step}`), measurementState);
+        measurementState = { ...measurementState, ...result.nextState };
+        position = result.measurement.position;
+    }
+    // The first capture has no previous one and integrates over 1 / rateHz.
+    const truth = 3 * (1 / 50 + ((captures - 1) * stepNs) / 1e9);
+    const traveled = Math.hypot(position.x, position.y);
+    assert.ok(Math.abs(traveled / truth - 1) < 0.01, `traveled ${traveled} m, truth ${truth} m`);
 });
 
 test("measurement reset reproduces identical streams for the same seed", () => {

@@ -10,3 +10,11 @@ export function where(array, predicate, a, b) {
     }
     return result;
 }
+
+export function radToDegree(d) {
+    return (d / 180) * Math.PI;
+}
+
+export function degToRad(d) {
+    return (d / Math.PI) * 180;
+}

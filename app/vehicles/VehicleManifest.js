@@ -10,6 +10,7 @@ import {
     reconcileVehiclePluginLocks,
 } from "../plugin/PluginSensorAuthoring.js";
 import { assertAllowedBrowserResourceUrl } from "../security/BrowserResourcePolicy.js";
+import { canonicalFiniteNumber } from "../simulation/kernel/SimulationHashes.js";
 import {
     euler,
     finiteOr as finite,
@@ -19,10 +20,13 @@ import {
     positiveOr as positive,
     vec3,
 } from "../util/plainGeometry.js";
+import { validateStandardAxles } from "./axle/standardAxle.js";
 
 export const VEHICLE_MANIFEST_KIND = "cev-sim.vehicle";
 export const VEHICLE_MANIFEST_VERSION = 2;
+export const VEHICLE_MANIFEST_VERSION_V3 = 3;
 export const LEGACY_VEHICLE_MANIFEST_VERSION = 1;
+export const VEHICLE_MANIFEST_DOWNGRADE = "VEHICLE_MANIFEST_DOWNGRADE";
 export const VEHICLE_BUNDLE_KIND = "cev-sim.vehicle-bundle";
 export const VEHICLE_BUNDLE_VERSION = 1;
 
@@ -30,6 +34,11 @@ export const VEHICLE_SENSOR_TYPES = Object.freeze(listSensorTypes().map((definit
 
 /** Vehicle types implemented as hard-coded classes rather than manifests. */
 export const BUILT_IN_VEHICLE_TYPES = Object.freeze(["big-car", "igvc-car", "scenario-car"]);
+
+/** Storage ids are lowercase slugs. They are also filenames. */
+export function isValidVehicleId(value) {
+    return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(String(value ?? "").trim());
+}
 
 /** Default actuator limits for new v2 manifests (SI). */
 export const DEFAULT_ACTUATOR_LIMITS = Object.freeze({
@@ -42,6 +51,15 @@ export const DEFAULT_ACTUATOR_LIMITS = Object.freeze({
     responseDelayNs: 0,
 });
 
+function normalizeVehicleDynamics(value) {
+    if (value == null) return undefined;
+    const source = object(value);
+    const unknown = Object.keys(source).find((key) => key !== "plant");
+    if (unknown) throw new Error(`vehicle manifest.dynamics contains unknown field "${unknown}".`);
+    const plant = text(source.plant, "vehicle manifest.dynamics.plant");
+    return plant ? { plant } : undefined;
+}
+
 function wheel(value = {}, index = 0) {
     const source = object(value);
     return {
@@ -51,6 +69,131 @@ function wheel(value = {}, index = 0) {
         width: positive(source.width, 0.15),
         steerable: source.steerable === true,
     };
+}
+
+function geometricPositive(value, fallback) {
+    return canonicalFiniteNumber(positive(value, fallback));
+}
+
+function geometricVec3(value, fallback) {
+    const source = vec3(value, fallback);
+    return {
+        x: canonicalFiniteNumber(source.x),
+        y: canonicalFiniteNumber(source.y),
+        z: canonicalFiniteNumber(source.z),
+    };
+}
+
+function geometricEuler(value) {
+    const source = euler(value);
+    return {
+        x: canonicalFiniteNumber(source.x),
+        y: canonicalFiniteNumber(source.y),
+        z: canonicalFiniteNumber(source.z),
+        order: source.order,
+    };
+}
+
+/** Sibling filenames only: no directories, traversals, or empty names. */
+export function isCanonicalDependencyName(value) {
+    return typeof value === "string"
+        && value.length > 0
+        && value === value.trim()
+        && value !== "."
+        && value !== ".."
+        && !value.includes("/")
+        && !value.includes("\\")
+        && !value.includes("\0");
+}
+
+function canonicalDependencies(value) {
+    if (!Array.isArray(value)) return [];
+    const names = [];
+    for (const entry of value) {
+        if (isCanonicalDependencyName(entry) && !names.includes(entry)) names.push(entry);
+    }
+    names.sort();
+    return names;
+}
+
+function canonicalHiddenNodeIndices(value) {
+    if (!Array.isArray(value)) return [];
+    const indices = [];
+    for (const entry of value) {
+        if (typeof entry === "number" && Number.isInteger(entry) && entry >= 0 && !indices.includes(entry)) {
+            indices.push(entry);
+        }
+    }
+    indices.sort((left, right) => left - right);
+    return indices;
+}
+
+function wheelV3(value = {}, index = 0) {
+    const source = object(value);
+    const record = {
+        id: text(source.id, `wheel-${index + 1}`),
+        position: geometricVec3(source.position),
+        radius: geometricPositive(source.radius, 0.25),
+        width: geometricPositive(source.width, 0.15),
+        steerable: source.steerable === true,
+    };
+    if (Object.hasOwn(source, "axle")) record.axle = text(source.axle);
+    if (Object.hasOwn(source, "side")) record.side = text(source.side);
+    if (Object.hasOwn(source, "visual") && source.visual != null) {
+        const visual = object(source.visual);
+        const nodeIndex = Number(visual.nodeIndex);
+        record.visual = {
+            kind: text(visual.kind),
+            nodeIndex: Number.isInteger(nodeIndex) && nodeIndex >= 0 ? nodeIndex : -1,
+        };
+    }
+    return record;
+}
+
+function unsupportedVersion(version) {
+    return new Error(`Unsupported vehicle manifest version ${version}; expected version 1, 2, or 3.`);
+}
+
+function downgradeError() {
+    const error = new Error("Refusing to downgrade a version 3 vehicle manifest to version 2.");
+    error.code = VEHICLE_MANIFEST_DOWNGRADE;
+    return error;
+}
+
+/**
+ * Output version for a source document.
+ * Missing, v1, and v2 stay on the v2 writer. v3 stays v3.
+ * `{ version: 2 }` pins v2 and refuses to strip a v3 document.
+ * No option upgrades a document to v3.
+ */
+export function resolveVehicleManifestVersion(source, { version } = {}) {
+    const raw = source?.version;
+    const sourceVersion = raw === undefined || raw === null ? undefined : Number(raw);
+    if (version !== undefined && Number(version) !== VEHICLE_MANIFEST_VERSION && Number(version) !== VEHICLE_MANIFEST_VERSION_V3) {
+        throw unsupportedVersion(version);
+    }
+    if (Number(version) === VEHICLE_MANIFEST_VERSION && sourceVersion === VEHICLE_MANIFEST_VERSION_V3) {
+        throw downgradeError();
+    }
+    if (sourceVersion === undefined
+        || sourceVersion === LEGACY_VEHICLE_MANIFEST_VERSION
+        || sourceVersion === VEHICLE_MANIFEST_VERSION) {
+        return VEHICLE_MANIFEST_VERSION;
+    }
+    if (sourceVersion === VEHICLE_MANIFEST_VERSION_V3) return VEHICLE_MANIFEST_VERSION_V3;
+    throw unsupportedVersion(raw);
+}
+
+/**
+ * Reject a legacy writer that would replace a stored v3 document.
+ * Callers pass the stored record and the raw request body, before normalization.
+ */
+export function assertNoVehicleManifestDowngrade(current, incoming) {
+    if (Number(current?.version) !== VEHICLE_MANIFEST_VERSION_V3) return;
+    if (Number(incoming?.version) === VEHICLE_MANIFEST_VERSION_V3) return;
+    const error = new Error("Refusing to overwrite a version 3 vehicle manifest with a legacy writer.");
+    error.code = VEHICLE_MANIFEST_DOWNGRADE;
+    throw error;
 }
 
 function lidarZone(value = {}) {
@@ -141,66 +284,186 @@ export function createDefaultVehicleManifest(overrides = {}) {
         ],
         lidarZone: lidarZone(),
     };
-    return normalizeVehicleManifest({ ...base, ...overrides }, { allowMissingKind: true });
+    return normalizeVehicleManifest(
+        { ...base, ...overrides, version: VEHICLE_MANIFEST_VERSION },
+        { allowMissingKind: true, version: VEHICLE_MANIFEST_VERSION },
+    );
+}
+
+function withStandardAxleRoles(wheels) {
+    return wheels.map((wheel) => {
+        const match = /^(front|rear)-(left|right)$/.exec(wheel.id);
+        if (!match || wheel.axle || wheel.side) return wheel;
+        return {
+            ...wheel,
+            axle: match[1],
+            side: match[2],
+            steerable: match[1] === "front",
+        };
+    });
+}
+
+/**
+ * Version 3 blank used by transactional publication.
+ * `createDefaultVehicleManifest()` stays version 2 so its pinned hash does not move.
+ * The blank's named wheels are a standard front and rear axle. Dependencies and
+ * hidden nodes start empty.
+ */
+export function createBlankVehicleManifest(overrides = {}) {
+    const base = createDefaultVehicleManifest(overrides);
+    return normalizeVehicleManifest({
+        ...base,
+        version: VEHICLE_MANIFEST_VERSION_V3,
+        wheels: withStandardAxleRoles(base.wheels),
+        model: {
+            asset: null,
+            dependencies: [],
+            hiddenNodeIndices: [],
+            scale: base.model.scale,
+            rotation: base.model.rotation,
+            offset: base.model.offset,
+        },
+    });
 }
 
 export function normalizeVehicleManifest(value, {
     allowMissingKind = false,
     sensorRegistry = sensorTypeRegistry,
+    version,
 } = {}) {
     const source = object(value);
     if (!allowMissingKind && source.kind !== undefined && source.kind !== VEHICLE_MANIFEST_KIND) {
         throw new Error(`Unsupported vehicle manifest kind: ${JSON.stringify(source.kind)}.`);
     }
-    const sourceVersion = source.version === undefined ? VEHICLE_MANIFEST_VERSION : Number(source.version);
-    if (![LEGACY_VEHICLE_MANIFEST_VERSION, VEHICLE_MANIFEST_VERSION].includes(sourceVersion)) {
-        throw new Error(`Unsupported vehicle manifest version ${source.version}; expected version 1 or ${VEHICLE_MANIFEST_VERSION}.`);
-    }
+    const outputVersion = resolveVehicleManifestVersion(source, { version });
+    const declaredVersion = source.version === undefined ? VEHICLE_MANIFEST_VERSION : Number(source.version);
     const model = object(source.model);
     const boundingBox = object(source.boundingBox);
-    const wheels = (Array.isArray(source.wheels) ? source.wheels : []).map(wheel);
-    const size = {
-        x: positive(object(boundingBox.size).x, 2.7),
-        y: positive(object(boundingBox.size).y, 1.4),
-        z: positive(object(boundingBox.size).z, 1.25),
-    };
-    const kinematics = normalizeActuatorKinematics({
+    const v3 = outputVersion === VEHICLE_MANIFEST_VERSION_V3;
+    const wheels = (Array.isArray(source.wheels) ? source.wheels : [])
+        .map((entry, index) => (v3 ? wheelV3(entry, index) : wheel(entry, index)));
+    const size = v3
+        ? {
+            x: geometricPositive(object(boundingBox.size).x, 2.7),
+            y: geometricPositive(object(boundingBox.size).y, 1.4),
+            z: geometricPositive(object(boundingBox.size).z, 1.25),
+        }
+        : {
+            x: positive(object(boundingBox.size).x, 2.7),
+            y: positive(object(boundingBox.size).y, 1.4),
+            z: positive(object(boundingBox.size).z, 1.25),
+        };
+    const kinematicsSource = normalizeActuatorKinematics({
         ...object(source.kinematics),
         wheelbase: object(source.kinematics).wheelbase ?? (deriveWheelbase(wheels) ?? 1.5),
-    }, { migrateFromV1: sourceVersion < VEHICLE_MANIFEST_VERSION });
+    }, { migrateFromV1: declaredVersion < VEHICLE_MANIFEST_VERSION });
+    const kinematics = v3
+        ? {
+            ...kinematicsSource,
+            wheelbase: canonicalFiniteNumber(kinematicsSource.wheelbase),
+            maxSteeringAngle: canonicalFiniteNumber(kinematicsSource.maxSteeringAngle),
+        }
+        : kinematicsSource;
     const sensors = (Array.isArray(source.sensors) ? source.sensors : [])
         .map((entry, index) => normalizeVehicleSensor(entry, index, sensorRegistry));
+    const dynamics = normalizeVehicleDynamics(source.dynamics);
     const pluginLocks = source.pluginLocks === undefined || source.pluginLocks === null
         ? undefined
-        : reconcileVehiclePluginLocks(source.pluginLocks, sensors, { sensorRegistry });
-    return {
-        kind: VEHICLE_MANIFEST_KIND,
-        version: VEHICLE_MANIFEST_VERSION,
-        id: text(source.id, "untitled-vehicle"),
-        name: text(source.name, "Untitled Vehicle"),
-        description: text(source.description),
-        model: {
-            asset: text(model.asset) || null,
+        : reconcileVehiclePluginLocks(source.pluginLocks, sensors, { sensorRegistry, dynamics });
+    const asset = text(model.asset) || null;
+    const normalizedModel = v3
+        ? {
+            asset,
+            dependencies: asset ? canonicalDependencies(model.dependencies) : [],
+            hiddenNodeIndices: asset ? canonicalHiddenNodeIndices(model.hiddenNodeIndices) : [],
+            scale: geometricPositive(model.scale, 1),
+            rotation: geometricEuler(model.rotation),
+            offset: geometricVec3(model.offset),
+        }
+        : {
+            asset,
             scale: positive(model.scale, 1),
             rotation: euler(model.rotation),
             offset: vec3(model.offset),
-        },
+        };
+    return {
+        kind: VEHICLE_MANIFEST_KIND,
+        version: outputVersion,
+        id: text(source.id, "untitled-vehicle"),
+        name: text(source.name, "Untitled Vehicle"),
+        description: text(source.description),
+        model: normalizedModel,
         boundingBox: {
             size,
-            center: vec3(boundingBox.center, { x: 0, y: size.y / 2, z: 0 }),
+            center: v3
+                ? geometricVec3(boundingBox.center, { x: 0, y: size.y / 2, z: 0 })
+                : vec3(boundingBox.center, { x: 0, y: size.y / 2, z: 0 }),
         },
-        egoCenter: vec3(source.egoCenter, { x: 0, y: size.y / 2, z: 0 }),
+        egoCenter: v3
+            ? geometricVec3(source.egoCenter, { x: 0, y: size.y / 2, z: 0 })
+            : vec3(source.egoCenter, { x: 0, y: size.y / 2, z: 0 }),
         wheels,
         kinematics,
         sensors,
         ...(pluginLocks ? { pluginLocks } : {}),
+        ...(dynamics ? { dynamics } : {}),
         lidarZone: lidarZone(source.lidarZone),
     };
+}
+
+function modelListIssues(value) {
+    const source = object(value);
+    let outputVersion;
+    try {
+        outputVersion = resolveVehicleManifestVersion(source);
+    } catch {
+        return [];
+    }
+    if (outputVersion !== VEHICLE_MANIFEST_VERSION_V3) return [];
+    const model = object(source.model);
+    const issues = [];
+    const asset = text(model.asset) || null;
+    if (model.dependencies !== undefined && !Array.isArray(model.dependencies)) {
+        issues.push({ code: "vehicle.model.dependencies", path: "model.dependencies", message: "dependencies must be an array of filenames." });
+    } else if (Array.isArray(model.dependencies)) {
+        const seen = new Set();
+        model.dependencies.forEach((entry, index) => {
+            if (!isCanonicalDependencyName(entry)) {
+                issues.push({ code: "vehicle.model.dependencies", path: `model.dependencies.${index}`, message: "Dependency names must be canonical sibling filenames." });
+            } else if (seen.has(entry)) {
+                issues.push({ code: "vehicle.model.dependencies", path: `model.dependencies.${index}`, message: `Duplicate dependency "${entry}".` });
+            } else {
+                seen.add(entry);
+            }
+        });
+        if (!asset && model.dependencies.length > 0) {
+            issues.push({ code: "vehicle.model.dependencies", path: "model.dependencies", message: "A model-free vehicle cannot declare dependencies." });
+        }
+    }
+    if (model.hiddenNodeIndices !== undefined && !Array.isArray(model.hiddenNodeIndices)) {
+        issues.push({ code: "vehicle.model.hidden-nodes", path: "model.hiddenNodeIndices", message: "hiddenNodeIndices must be an array of node indices." });
+    } else if (Array.isArray(model.hiddenNodeIndices)) {
+        const seen = new Set();
+        model.hiddenNodeIndices.forEach((entry, index) => {
+            if (typeof entry !== "number" || !Number.isInteger(entry) || entry < 0) {
+                issues.push({ code: "vehicle.model.hidden-nodes", path: `model.hiddenNodeIndices.${index}`, message: "Hidden node indices must be non-negative integers." });
+            } else if (seen.has(entry)) {
+                issues.push({ code: "vehicle.model.hidden-nodes", path: `model.hiddenNodeIndices.${index}`, message: `Duplicate hidden node index ${entry}.` });
+            } else {
+                seen.add(entry);
+            }
+        });
+        if (!asset && model.hiddenNodeIndices.length > 0) {
+            issues.push({ code: "vehicle.model.hidden-nodes", path: "model.hiddenNodeIndices", message: "A model-free vehicle cannot hide model nodes." });
+        }
+    }
+    return issues;
 }
 
 export function validateVehicleManifest(value, {
     sensorRegistry = sensorTypeRegistry,
     allowUnknownSensors = false,
+    plants = null,
 } = {}) {
     let manifest;
     try {
@@ -231,6 +494,17 @@ export function validateVehicleManifest(value, {
         }
     }
     issues.push(...collectVehiclePluginLockIssues(manifest, { sensorRegistry }));
+    if (manifest.dynamics?.plant && plants) {
+        const known = typeof plants.has === "function"
+            ? plants.has(manifest.dynamics.plant)
+            : Boolean(plants[manifest.dynamics.plant]);
+        if (!known) {
+            issues.push({
+                path: "dynamics.plant",
+                message: `Plant "${manifest.dynamics.plant}" is not declared by the resolved plugins.`,
+            });
+        }
+    }
     const vertexCount = manifest.lidarZone.vertices.length;
     for (const [index, triangle] of manifest.lidarZone.triangles.entries()) {
         if (triangle.some((vertexIndex) => vertexIndex < 0 || vertexIndex >= vertexCount)) {
@@ -244,6 +518,10 @@ export function validateVehicleManifest(value, {
     if (!(k.maxJerk > 0)) issues.push({ path: "kinematics.maxJerk", message: "maxJerk must be positive." });
     if (!(k.maxSteeringRate > 0)) issues.push({ path: "kinematics.maxSteeringRate", message: "maxSteeringRate must be positive." });
     if (k.responseDelayNs < 0) issues.push({ path: "kinematics.responseDelayNs", message: "responseDelayNs must be non-negative." });
+    if (manifest.version === VEHICLE_MANIFEST_VERSION_V3) {
+        issues.push(...modelListIssues(value));
+        issues.push(...validateStandardAxles(manifest));
+    }
     return { ok: issues.length === 0, manifest, issues };
 }
 

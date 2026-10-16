@@ -13,6 +13,8 @@ import { VisualAssetStore } from "./VisualAssetStore.js";
 import { EditorAssetStore } from "./EditorAssetStore.js";
 import { PluginStore } from "./PluginStore.js";
 import { BakePromotionController, parseBakeOutputSourceIds } from "./BakePromotionController.js";
+import { VehiclePublicationService } from "./VehiclePublicationService.js";
+import { VehicleStageStore } from "./VehicleStageStore.js";
 import {
     RUN_PACKAGE_ERROR_CODES,
     VISUAL_ASSET_ERROR_CODES,
@@ -26,6 +28,7 @@ import {
     ENVIRONMENT_SCHEMA_VERSION,
     ENVIRONMENT_UNGUARDED_WRITE,
     assertNoAssetMetricsDowngrade,
+    assertNoPrimitiveDowngrade,
     assertNoObjectGraphDowngrade,
     assertNoRoadGeometryDowngrade,
     assertNoEditorSourceDowngrade,
@@ -84,6 +87,11 @@ import {
 import { assertArtifactPluginRequirements } from "../../app/plugin/PluginRequirements.js";
 import { NodePluginModuleSource } from "../plugins/NodePluginModuleSource.js";
 import { createSensorDefinitionRegistry } from "../../app/simulation/sensors/SensorTypeRegistry.js";
+import {
+    applySensorInheritance,
+    clearSensorInheritanceMarkers,
+    resolveInheritedVehicleSelection,
+} from "../../app/simulation/sensors/SensorInheritance.js";
 import { planSensorAdmission } from "../../app/simulation/sensors/SensorAdmission.js";
 import { createPluginSensorsResource } from "../../app/plugin/PluginSensorIdentity.js";
 import {
@@ -130,8 +138,11 @@ import {
     sortBackendSelections,
 } from "../../app/physics/PhysicsBackend.js";
 import {
+    BUILT_IN_VEHICLE_TYPES,
     VEHICLE_BUNDLE_KIND,
     VEHICLE_BUNDLE_VERSION,
+    assertNoVehicleManifestDowngrade,
+    isValidVehicleId,
     normalizeVehicleManifest,
     validateVehicleManifest,
 } from "../../app/vehicles/VehicleManifest.js";
@@ -301,6 +312,11 @@ async function hashPublicVehicleAssets(manifest) {
  *   experiment-baselines/<baselineId>.json immutable copied comparison values
  *   vehicles/<vehicleId>.json          authored vehicle manifests
  *   vehicle-assets/<vehicleId>/<file>  binary model assets (glb/gltf)
+ *   vehicle-stages/<stageId>/          unpublished model bytes and leases
+ *   vehicle-publications/              in-flight publication journals
+ *   vehicle-publication-receipts/      idempotent publication results
+ *   vehicle-publication-intake/        marketplace bytes held off the hashed asset directory
+ *   vehicle-migrations/<id>.pre-v3.json  write-once pre-migration snapshot
  *   bindings.json                      the binding manifest
  *   settings.json                      flat key/value settings map
  *   headless-experiment-queue.v1.json  durable FIFO index for headless suites
@@ -324,6 +340,20 @@ export class StorageService {
         this.experimentBaselinesDir = path.join(dataDir, "experiment-baselines");
         this.vehiclesDir = path.join(dataDir, "vehicles");
         this.vehicleAssetsDir = path.join(dataDir, "vehicle-assets");
+        this.vehiclePublicationsDir = path.join(dataDir, "vehicle-publications");
+        this.vehiclePublicationReceiptsDir = path.join(dataDir, "vehicle-publication-receipts");
+        this.vehiclePublicationIntakeDir = path.join(dataDir, "vehicle-publication-intake");
+        this.vehicleMigrationsDir = path.join(dataDir, "vehicle-migrations");
+        const vehicleNow = options.vehiclePublication?.now ?? options.vehicleStages?.now ?? (() => new Date());
+        this.vehicleStages = new VehicleStageStore(dataDir, {
+            now: options.vehicleStages?.now ?? vehicleNow,
+            limits: options.vehicleStages?.limits ?? {},
+            faults: options.vehicleStages?.faults ?? {},
+        });
+        this.vehiclePublications = new VehiclePublicationService(this, {
+            faults: options.vehiclePublication?.faults ?? {},
+            now: vehicleNow,
+        });
         // Cache of one JsonFileStore per file path.
         this._stores = new Map();
         this._settingsWriteChain = Promise.resolve();
@@ -552,6 +582,7 @@ export class StorageService {
                 supportedRoadGeometryVersions: [1, 2],
                 supportedAssetMetricVersions: [1],
                 supportedEditorSourceVersions: [1],
+                supportedScenePrimitiveVersions: [1],
             });
             const committedHash = marketplaceEnvironmentContentHash(committed);
             if (committedHash !== contentHash) throw new Error("Committed marketplace environment content changed during serialization.");
@@ -968,6 +999,7 @@ export class StorageService {
                     supportedRoadGeometryVersions: [1, 2],
                     supportedAssetMetricVersions: [1],
                     supportedEditorSourceVersions: options.supportedEditorSourceVersions ?? [1],
+                    supportedScenePrimitiveVersions: [1],
                 }
                 : parseEnvironmentWriteInput(input);
             return this._commitEnvironment(environmentId, parsed.manifest, {
@@ -977,6 +1009,7 @@ export class StorageService {
                 supportedRoadGeometryVersions: parsed.supportedRoadGeometryVersions,
                 supportedAssetMetricVersions: parsed.supportedAssetMetricVersions,
                 supportedEditorSourceVersions: parsed.supportedEditorSourceVersions,
+                supportedScenePrimitiveVersions: parsed.supportedScenePrimitiveVersions,
             });
         });
     }
@@ -2114,6 +2147,21 @@ export class StorageService {
                 ? existing
                 : this._resolveVehicleDependency(vehicle.id, vehicle.type);
         }));
+        let definitionManifest = manifest;
+        if (manifest.sensorRig?.inheritance?.mode === "vehicle") {
+            const { actorId, vehicleId } = resolveInheritedVehicleSelection(manifest);
+            const owning = resolvedVehicles.find((entry) => entry.actorId === actorId) ?? null;
+            const vehicleManifest = owning && owning.vehicleId === vehicleId ? owning.manifest : null;
+            const applied = applySensorInheritance(manifest, {
+                vehicleManifest,
+                registry: sensorRegistry,
+            });
+            if (applied.issues.length > 0) {
+                throw new Error(applied.issues.map((issue) => `${issue.path}: ${issue.message}`).join("\n"));
+            }
+            definitionManifest = manifest;
+            manifest = clearSensorInheritanceMarkers(applied.manifest);
+        }
         const vehicleIds = new Set(manifest.initialState.vehicles.map((entry) => entry.id));
         for (const sensor of manifest.sensorRig.sensors) {
             if (sensor.type === "camera" && sensor.poseReference === "map") continue;
@@ -2249,7 +2297,7 @@ export class StorageService {
             renderScene = createRenderSceneResource(world, resolvedVehicles, renderSelection);
         }
 
-        const definitionHash = semanticHash(manifest);
+        const definitionHash = semanticHash(definitionManifest);
         const calibration = buildCalibrationBundle(manifest);
         const resolved = resolvedRunJsonSnapshot({
             kind: RUN_MANIFEST_KIND,
@@ -2809,44 +2857,170 @@ export class StorageService {
     }
 
     async createVehicleManifest(input = {}) {
-        const validation = await this._validateVehicleManifestWithPluginSensors(input.manifest ?? input);
+        const manifest = input.manifest ?? input;
+        const validation = await this._validateVehicleManifestWithPluginSensors(manifest);
         if (!validation.ok) throw vehicleValidationError(validation.issues);
-        const id = safeSegment(validation.manifest.id);
-        if (await this.getVehicleManifest(id)) throw new Error(`Vehicle "${id}" already exists.`);
-        return this._writeVehicleManifest(id, validation.manifest, { expectedRevision: 0, create: true });
+        const id = validation.manifest.id;
+        safeSegment(id);
+        return this._withVehicleWrite(id, async () => {
+            await this.vehiclePublications.recover(id);
+            return this.vehiclePublications.publishLocked({
+                mode: "create",
+                vehicleId: id,
+                manifest: validation.manifest,
+                expectedRevision: 0,
+                create: true,
+                operationId: input.operationId,
+                stageId: input.stageId ?? null,
+            });
+        });
     }
 
     async putVehicleManifest(vehicleId, input = {}) {
         const manifest = input.manifest ?? input;
         const expectedRevision = input.expectedRevision ?? manifest.revision;
+        safeSegment(vehicleId);
         const validation = await this._validateVehicleManifestWithPluginSensors({ ...manifest, id: vehicleId });
         if (!validation.ok) throw vehicleValidationError(validation.issues);
-        return this._writeVehicleManifest(vehicleId, validation.manifest, { expectedRevision });
+        return this._withVehicleWrite(vehicleId, async () => {
+            await this.vehiclePublications.recover(vehicleId);
+            return this.vehiclePublications.publishLocked({
+                mode: "save",
+                vehicleId,
+                manifest: validation.manifest,
+                expectedRevision,
+                create: false,
+                operationId: input.operationId,
+                stageId: input.stageId ?? null,
+            });
+        });
+    }
+
+    async publishVehicleMigration({ vehicleId, expectedRevision, operationId, stageId = null, manifest } = {}) {
+        safeSegment(vehicleId);
+        return this._withVehicleWrite(vehicleId, async () => {
+            await this.vehiclePublications.recover(vehicleId);
+            return this.vehiclePublications.publishLocked({
+                mode: "migrate",
+                vehicleId,
+                manifest,
+                expectedRevision,
+                create: false,
+                operationId,
+                stageId,
+                migration: true,
+            });
+        });
     }
 
     async duplicateVehicleManifest(sourceId, input = {}) {
-        const source = await this.getVehicleManifest(sourceId);
-        if (!source) throw new Error(`Vehicle "${sourceId}" does not exist.`);
-        const { registry } = await this._sensorRegistryForVehicle(source);
-        const duplicate = normalizeVehicleManifest({
-            ...source,
-            id: input.id,
-            name: input.name || `${source.name} Copy`,
-        }, { sensorRegistry: registry });
-        const created = await this.createVehicleManifest(duplicate);
-        for (const fileName of await this.listVehicleAssets(sourceId)) {
-            await this.putVehicleAsset(created.id, fileName, await this.readVehicleAsset(sourceId, fileName));
-        }
-        return created;
+        const sourceKey = sourceId;
+        const destinationKey = input.id || "untitled-vehicle";
+        safeSegment(sourceKey);
+        safeSegment(destinationKey);
+        return this._withVehicleWrites([sourceKey, destinationKey], async () => {
+            await this.vehiclePublications.recover(sourceKey);
+            if (destinationKey !== sourceKey) await this.vehiclePublications.recover(destinationKey);
+            const source = await this._readVehicleSnapshotUnlocked(sourceKey);
+            if (!source.manifest) throw new Error(`Vehicle "${sourceId}" does not exist.`);
+            if (input.expectedRevision !== undefined && Number(input.expectedRevision) !== Number(source.manifest.revision || 0)) {
+                throw new Error(`Vehicle manifest revision conflict: expected ${input.expectedRevision}, current revision is ${source.manifest.revision}.`);
+            }
+            const { registry } = await this._sensorRegistryForVehicle(source.manifest);
+            const duplicate = normalizeVehicleManifest({
+                ...source.manifest,
+                id: input.id,
+                name: input.name || `${source.manifest.name} Copy`,
+            }, { sensorRegistry: registry });
+            const destinationId = duplicate.id;
+            safeSegment(destinationId);
+            if (destinationId !== destinationKey && destinationId !== sourceKey) {
+                throw new Error(`Vehicle duplicate id "${duplicate.id}" changed while the publication locks were held.`);
+            }
+            return this.vehiclePublications.publishLocked({
+                mode: "duplicate",
+                vehicleId: destinationId,
+                sourceVehicleId: sourceKey,
+                manifest: duplicate,
+                expectedRevision: 0,
+                create: true,
+                operationId: input.operationId,
+                files: source.files.map((file) => ({
+                    name: file.name,
+                    bytes: file.bytes,
+                    source: { type: "vehicle", vehicleId: sourceKey, name: file.name },
+                })),
+            });
+        });
     }
 
-    async deleteVehicleManifest(vehicleId) {
+    async deleteVehicleManifest(vehicleId, expectedRevision) {
+        const id = safeSegment(vehicleId);
+        return this._withVehicleWrite(id, async () => {
+            await this.vehiclePublications.recover(id);
+            const current = await this.getVehicleManifest(id);
+            if (!current) {
+                if (expectedRevision === undefined || Number(expectedRevision) === 0) return true;
+                throw new Error(`Vehicle manifest revision conflict: expected ${expectedRevision}, current revision is 0.`);
+            }
+            if (expectedRevision !== undefined && Number(expectedRevision) !== Number(current.revision || 0)) {
+                throw new Error(`Vehicle manifest revision conflict: expected ${expectedRevision}, current revision is ${current.revision}.`);
+            }
+            await this._deleteVehicleRecordUnlocked(id);
+            return true;
+        });
+    }
+
+    async renameVehicleManifest(vehicleId, { name, expectedRevision, operationId } = {}) {
+        const id = safeSegment(vehicleId);
+        const nextName = String(name ?? "").trim();
+        if (!nextName) throw new Error("Vehicle name is required.");
+        return this._withVehicleWrite(id, async () => {
+            await this.vehiclePublications.recover(id);
+            const current = await this.getVehicleManifest(id);
+            if (!current) throw new Error(`Vehicle "${id}" does not exist.`);
+            const { registry } = await this._sensorRegistryForVehicle(current);
+            const manifest = normalizeVehicleManifest({ ...current, name: nextName }, { sensorRegistry: registry });
+            return this.vehiclePublications.publishLocked({
+                mode: "save",
+                vehicleId: id,
+                manifest,
+                expectedRevision,
+                create: false,
+                operationId,
+                stageId: null,
+            });
+        });
+    }
+
+    async changeVehicleId(vehicleId, { id: nextId, expectedRevision, operationId } = {}) {
+        const sourceId = safeSegment(vehicleId);
+        const destinationId = String(nextId ?? "").trim();
+        if (!isValidVehicleId(destinationId)) {
+            throw new Error("Vehicle id must use lowercase letters, numbers, and single hyphens.");
+        }
+        safeSegment(destinationId);
+        if (BUILT_IN_VEHICLE_TYPES.includes(sourceId) || BUILT_IN_VEHICLE_TYPES.includes(destinationId)) {
+            throw new Error(`Built-in vehicle "${BUILT_IN_VEHICLE_TYPES.includes(sourceId) ? sourceId : destinationId}" cannot change its id.`);
+        }
+        return this._withVehicleWrites([sourceId, destinationId], async () => {
+            await this.vehiclePublications.recover(sourceId);
+            if (destinationId !== sourceId) await this.vehiclePublications.recover(destinationId);
+            return this.vehiclePublications.changeIdLocked({
+                sourceVehicleId: sourceId,
+                destinationVehicleId: destinationId,
+                expectedRevision,
+                operationId,
+            });
+        });
+    }
+
+    async _deleteVehicleRecordUnlocked(vehicleId) {
         const filePath = this._vehiclePath(vehicleId);
         this._stores.get(filePath)?.invalidate();
         this._stores.delete(filePath);
         await fs.rm(filePath, { force: true });
         await fs.rm(this._vehicleAssetDir(vehicleId), { recursive: true, force: true });
-        return true;
     }
 
     async validateVehicleManifest(vehicleId, input = null) {
@@ -2856,13 +3030,14 @@ export class StorageService {
     }
 
     async exportVehicleBundle(vehicleId) {
-        const stored = await this.getVehicleManifest(vehicleId);
-        if (!stored) throw new Error(`Vehicle "${vehicleId}" does not exist.`);
+        const snapshot = await this.readVehicleSnapshot(vehicleId);
+        if (!snapshot.manifest) throw new Error(`Vehicle "${vehicleId}" does not exist.`);
+        const stored = snapshot.manifest;
         const { registry } = await this._sensorRegistryForVehicle(stored);
         const manifest = normalizeVehicleManifest(stored, { sensorRegistry: registry });
         const assets = {};
-        for (const fileName of await this.listVehicleAssets(vehicleId)) {
-            assets[fileName] = (await this.readVehicleAsset(vehicleId, fileName)).toString("base64");
+        for (const file of snapshot.files) {
+            assets[file.name] = Buffer.from(file.bytes).toString("base64");
         }
         const pluginPackages = [];
         for (const lock of normalizeVehiclePluginLocks(manifest.pluginLocks) ?? []) {
@@ -2894,40 +3069,62 @@ export class StorageService {
         for (const verified of verifiedBundle.verifiedPluginPackages) {
             await this.plugins.putPackage(verified.resource);
         }
-        if (await this.getVehicleManifest(incoming.id)) {
-            const encodedAssets = Object.fromEntries(Object.entries(assets).map(([name, bytes]) => [name, bytes.toString("base64")]));
-            const suffix = semanticHash({ manifest: incoming, assets: encodedAssets }).slice(0, 8);
-            incoming.id = `${incoming.id}-${suffix}`;
-        }
-        let created = null;
+        const encodedAssets = Object.fromEntries(Object.entries(assets).map(([name, bytes]) => [name, bytes.toString("base64")]));
+        const suffix = semanticHash({ manifest: incoming, assets: encodedAssets }).slice(0, 8);
+        const stage = await this.vehicleStages.createStage();
         try {
-            created = await this.createVehicleManifest(incoming);
             for (const [fileName, bytes] of Object.entries(assets)) {
-                await this.putVehicleAsset(created.id, fileName, bytes);
+                await this.vehicleStages.putMember(stage.stageId, fileName, bytes);
             }
-            return created;
-        } catch (error) {
-            if (created) await this.deleteVehicleManifest(created.id);
-            throw error;
+            const preferredId = incoming.id;
+            const alternateId = `${incoming.id}-${suffix}`;
+            safeSegment(preferredId);
+            safeSegment(alternateId);
+            return await this._withVehicleWrites([preferredId, alternateId], async () => {
+                await this.vehiclePublications.recover(preferredId);
+                if (alternateId !== preferredId) await this.vehiclePublications.recover(alternateId);
+                if (bundle.operationId) {
+                    const receipt = await this.vehiclePublications._readReceipt(bundle.operationId);
+                    if (receipt?.manifest) return receipt.manifest;
+                }
+                const vehicleId = await this.getVehicleManifest(preferredId) ? alternateId : preferredId;
+                const manifest = { ...incoming, id: vehicleId };
+                return this.vehiclePublications.publishLocked({
+                    mode: "import",
+                    vehicleId,
+                    manifest,
+                    expectedRevision: 0,
+                    create: true,
+                    operationId: bundle.operationId,
+                    stageId: stage.stageId,
+                });
+            });
+        } finally {
+            try {
+                await this.vehicleStages.abandonStage(stage.stageId);
+            } catch (error) {
+                if (error.code !== "VEHICLE_STAGE_CONFLICT") throw error;
+            }
         }
     }
 
     // --- Vehicle model assets (binary files next to the manifest) -----------
 
     async listVehicleAssets(vehicleId) {
-        try {
-            return await fs.readdir(this._vehicleAssetDir(vehicleId));
-        } catch (error) {
-            if (error.code === "ENOENT") return [];
-            throw error;
-        }
+        const id = safeSegment(vehicleId);
+        return this._withVehicleWrite(id, async () => {
+            await this.vehiclePublications.recover(id);
+            return this._listVisibleVehicleAssetNames(id);
+        });
     }
 
     async putVehicleAsset(vehicleId, fileName, buffer) {
-        const filePath = this._vehicleAssetPath(vehicleId, fileName);
-        await fs.mkdir(path.dirname(filePath), { recursive: true });
-        await fs.writeFile(filePath, buffer);
-        return { vehicleId, fileName, size: buffer.length };
+        const id = safeSegment(vehicleId);
+        const name = safeSegment(fileName);
+        return this._withVehicleWrite(id, async () => {
+            await this.vehiclePublications.recover(id);
+            return this._putVehicleAssetUnlocked(id, name, buffer);
+        });
     }
 
     async commitMarketplaceVehicleAsset({
@@ -2935,13 +3132,14 @@ export class StorageService {
         expectedVehicleRevision = 0, expectedVehicleContentHash = null,
         publishedVehicleContentHash = null,
     } = {}) {
-        safeSegment(vehicleId);
+        const id = safeSegment(vehicleId);
+        const name = safeSegment(fileName);
         const buffer = Buffer.from(bytes);
         const incomingHash = createHash("sha256").update(buffer).digest("hex");
         if (incomingHash !== sha256) throw new Error("Prepared marketplace vehicle asset hash changed.");
-        const previous = this._vehicleWriteChains.get(vehicleId) ?? Promise.resolve();
-        const operation = previous.catch(() => {}).then(async () => {
-            const manifest = await this.getVehicleManifest(vehicleId);
+        return this._withVehicleWrite(id, async () => {
+            await this.vehiclePublications.recover(id);
+            const manifest = await this.getVehicleManifest(id);
             const manifestRevision = Number(manifest?.revision ?? 0);
             const manifestHash = manifest?.definitionHash ?? null;
             const plannedState = manifestRevision === Number(expectedVehicleRevision)
@@ -2956,16 +3154,16 @@ export class StorageService {
                 error.statusCode = 409;
                 throw error;
             }
-            try {
-                const current = await this.readVehicleAsset(vehicleId, fileName);
+            const current = await this._readVehicleAssetIfPresent(id, name);
+            if (current) {
                 const currentHash = createHash("sha256").update(current).digest("hex");
-                if (currentHash === sha256) return Object.freeze({ vehicleId, fileName, sha256, sizeBytes: current.length, reused: true });
+                if (currentHash === sha256) {
+                    return Object.freeze({ vehicleId: id, fileName: name, sha256, sizeBytes: current.length, reused: true });
+                }
                 const error = new Error(`Vehicle asset "${vehicleId}/${fileName}" changed after marketplace planning.`);
                 error.code = "CONFLICT";
                 error.statusCode = 409;
                 throw error;
-            } catch (error) {
-                if (error.code !== "ENOENT") throw error;
             }
             if (publishedState) {
                 const error = new Error(`Published marketplace vehicle "${vehicleId}" is missing asset "${fileName}".`);
@@ -2973,85 +3171,204 @@ export class StorageService {
                 error.statusCode = 409;
                 throw error;
             }
-            await this.putVehicleAsset(vehicleId, fileName, buffer);
-            return Object.freeze({ vehicleId, fileName, sha256, sizeBytes: buffer.length, reused: false });
+            const stored = await this.vehiclePublications.putIntake({
+                vehicleId: id,
+                name,
+                bytes: buffer,
+                sha256,
+            });
+            return Object.freeze(stored);
         });
-        this._vehicleWriteChains.set(vehicleId, operation);
-        operation.finally(() => {
-            if (this._vehicleWriteChains.get(vehicleId) === operation) this._vehicleWriteChains.delete(vehicleId);
-        }).catch(() => {});
-        return operation;
     }
 
     async commitMarketplaceVehicle({ vehicleId, manifest, expectedRevision, contentHash } = {}) {
-        const { registry } = await this._sensorRegistryForVehicle({ ...manifest, id: vehicleId });
-        const candidate = normalizeVehicleManifest({ ...manifest, id: vehicleId }, { sensorRegistry: registry });
-        if (semanticHash(candidate) !== contentHash) throw new Error("Prepared marketplace vehicle content hash changed.");
-        const current = await this.getVehicleManifest(vehicleId);
-        if (current) {
-            const currentHash = semanticHash(normalizeVehicleManifest(current, { sensorRegistry: registry }));
-            if (currentHash === contentHash) {
-                return Object.freeze({ vehicleId, revision: current.revision, contentHash, reused: true });
+        const id = safeSegment(vehicleId);
+        return this._withVehicleWrite(id, async () => {
+            await this.vehiclePublications.recover(id);
+            const { registry } = await this._sensorRegistryForVehicle({ ...manifest, id });
+            const candidate = normalizeVehicleManifest({ ...manifest, id }, { sensorRegistry: registry });
+            if (semanticHash(candidate) !== contentHash) throw new Error("Prepared marketplace vehicle content hash changed.");
+            const current = await this.getVehicleManifest(id);
+            if (current) {
+                const currentHash = semanticHash(normalizeVehicleManifest(current, { sensorRegistry: registry }));
+                if (currentHash === contentHash) {
+                    await this.vehiclePublications.assertIntakePublished(id);
+                    await this.vehiclePublications.removeIntake(id);
+                    return Object.freeze({ vehicleId: id, revision: current.revision, contentHash, reused: true });
+                }
+                const error = new Error(`Vehicle "${vehicleId}" changed after marketplace planning.`);
+                error.code = "CONFLICT";
+                error.statusCode = 409;
+                throw error;
             }
-            const error = new Error(`Vehicle "${vehicleId}" changed after marketplace planning.`);
-            error.code = "CONFLICT";
-            error.statusCode = 409;
-            throw error;
-        }
-        if (expectedRevision !== 0) {
-            const error = new Error(`Vehicle "${vehicleId}" was removed after marketplace planning.`);
-            error.code = "CONFLICT";
-            error.statusCode = 409;
-            throw error;
-        }
-        let committed;
-        try {
-            committed = await this.createVehicleManifest(candidate);
-        } catch (error) {
-            if (!/already exists/u.test(String(error.message))) throw error;
-            error.code = "CONFLICT";
-            error.statusCode = 409;
-            throw error;
-        }
-        return Object.freeze({ vehicleId, revision: committed.revision, contentHash, reused: false });
+            if (expectedRevision !== 0) {
+                const error = new Error(`Vehicle "${vehicleId}" was removed after marketplace planning.`);
+                error.code = "CONFLICT";
+                error.statusCode = 409;
+                throw error;
+            }
+            try {
+                const committed = await this.vehiclePublications.publishLocked({
+                    mode: "marketplace",
+                    vehicleId: id,
+                    manifest: candidate,
+                    expectedRevision: 0,
+                    create: true,
+                    useIntake: true,
+                });
+                return Object.freeze({ vehicleId: id, revision: committed.revision, contentHash, reused: false });
+            } catch (error) {
+                if (!/already exists/u.test(String(error.message))) throw error;
+                error.code = "CONFLICT";
+                error.statusCode = 409;
+                throw error;
+            }
+        });
     }
 
     async readVehicleAsset(vehicleId, fileName) {
-        return fs.readFile(this._vehicleAssetPath(vehicleId, fileName));
+        const id = safeSegment(vehicleId);
+        const name = safeSegment(fileName);
+        return this._withVehicleWrite(id, async () => {
+            await this.vehiclePublications.recover(id);
+            const hidden = await this.vehiclePublications.hiddenNames(id);
+            if (hidden.has(name)) {
+                const error = new Error(`Asset "${fileName}" does not exist.`);
+                error.code = "ENOENT";
+                throw error;
+            }
+            return this._readVehicleAssetUnlocked(id, name);
+        });
     }
 
     async deleteVehicleAsset(vehicleId, fileName) {
-        await fs.rm(this._vehicleAssetPath(vehicleId, fileName), { force: true });
-        return true;
+        const id = safeSegment(vehicleId);
+        const name = safeSegment(fileName);
+        return this._withVehicleWrite(id, async () => {
+            await this.vehiclePublications.recover(id);
+            const manifest = await this.getVehicleManifest(id);
+            if (Number(manifest?.version) === 3) {
+                const referenced = new Set([
+                    manifest.model?.asset,
+                    ...(manifest.model?.dependencies ?? []),
+                ].filter(Boolean));
+                if (referenced.has(name)) {
+                    throw new Error(`Vehicle asset "${name}" is part of the published version 3 model closure.`);
+                }
+            }
+            await fs.rm(this._vehicleAssetPath(id, name), { force: true });
+            return true;
+        });
     }
 
-    async _writeVehicleManifest(vehicleId, manifest, { expectedRevision, create = false } = {}) {
+    async readVehicleSnapshot(vehicleId) {
+        const id = safeSegment(vehicleId);
+        return this._withVehicleWrite(id, async () => {
+            await this.vehiclePublications.recover(id);
+            return this._readVehicleSnapshotUnlocked(id);
+        });
+    }
+
+    async _readVehicleSnapshotUnlocked(vehicleId) {
+        const manifest = await this.getVehicleManifest(vehicleId);
+        const names = await this._listVisibleVehicleAssetNames(vehicleId);
+        const files = [];
+        for (const name of names) {
+            const bytes = await this._readVehicleAssetUnlocked(vehicleId, name);
+            files.push({
+                name,
+                bytes,
+                sha256: createHash("sha256").update(bytes).digest("hex"),
+            });
+        }
+        return { manifest, files };
+    }
+
+    async _listVisibleVehicleAssetNames(vehicleId) {
+        const hidden = await this.vehiclePublications.hiddenNames(vehicleId);
+        const names = await this._listVehicleAssetNamesUnlocked(vehicleId);
+        return names.filter((name) => !hidden.has(name));
+    }
+
+    async _listVehicleAssetNamesUnlocked(vehicleId) {
+        try {
+            return (await fs.readdir(this._vehicleAssetDir(vehicleId))).sort();
+        } catch (error) {
+            if (error.code === "ENOENT") return [];
+            throw error;
+        }
+    }
+
+    async _readVehicleAssetUnlocked(vehicleId, fileName) {
+        return fs.readFile(this._vehicleAssetPath(vehicleId, fileName));
+    }
+
+    async _readVehicleAssetIfPresent(vehicleId, fileName) {
+        try {
+            return await this._readVehicleAssetUnlocked(vehicleId, fileName);
+        } catch (error) {
+            if (error.code === "ENOENT") return null;
+            throw error;
+        }
+    }
+
+    async _putVehicleAssetUnlocked(vehicleId, fileName, buffer) {
+        const filePath = this._vehicleAssetPath(vehicleId, fileName);
+        const body = Buffer.from(buffer);
+        if (/^[a-f0-9]{64}\.(glb|png|jpg|ktx2)$/.test(fileName)) {
+            const existing = await this._readVehicleAssetIfPresent(vehicleId, fileName);
+            if (existing && !existing.equals(body)) {
+                const error = new Error(`Vehicle asset "${fileName}" is an immutable content-addressed member.`);
+                error.code = "VEHICLE_PUBLICATION_IMMUTABLE";
+                error.statusCode = 409;
+                throw error;
+            }
+        }
+        await fs.mkdir(path.dirname(filePath), { recursive: true });
+        await fs.writeFile(filePath, body);
+        return { vehicleId, fileName, size: body.length };
+    }
+
+    async _commitPreparedVehicleManifest(vehicleId, stored, { expectedRevision, create = false } = {}) {
+        const current = await this.getVehicleManifest(vehicleId);
+        const currentRevision = Number(current?.revision || 0);
+        if (create && current) throw new Error(`Vehicle "${vehicleId}" already exists.`);
+        if (!create && expectedRevision !== undefined && Number(expectedRevision) !== currentRevision) {
+            throw new Error(`Vehicle manifest revision conflict: expected ${expectedRevision}, current revision is ${currentRevision}.`);
+        }
+        if (Number(stored.revision) !== currentRevision + 1) {
+            throw new Error(`Vehicle publication revision ${stored.revision} does not follow ${currentRevision}.`);
+        }
+        assertNoVehicleManifestDowngrade(current, stored);
+        return this._fileStore(this._vehiclePath(vehicleId), null).write(stored);
+    }
+
+    _withVehicleWrite(vehicleId, operation) {
         safeSegment(vehicleId);
         const previous = this._vehicleWriteChains.get(vehicleId) ?? Promise.resolve();
-        const operation = previous.catch(() => {}).then(async () => {
-            const current = await this.getVehicleManifest(vehicleId);
-            const currentRevision = Number(current?.revision || 0);
-            if (create && current) throw new Error(`Vehicle "${vehicleId}" already exists.`);
-            if (!create && expectedRevision !== undefined && Number(expectedRevision) !== currentRevision) {
-                throw new Error(`Vehicle manifest revision conflict: expected ${expectedRevision}, current revision is ${currentRevision}.`);
-            }
-            const now = new Date().toISOString();
-            const { registry } = await this._sensorRegistryForVehicle({ ...manifest, id: vehicleId });
-            const normalized = normalizeVehicleManifest({ ...manifest, id: vehicleId }, { sensorRegistry: registry });
-            const stored = {
-                ...normalized,
-                revision: currentRevision + 1,
-                definitionHash: semanticHash(normalized),
-                createdAt: current?.createdAt ?? now,
-                updatedAt: now,
-            };
-            return this._fileStore(this._vehiclePath(vehicleId), null).write(stored);
-        });
-        this._vehicleWriteChains.set(vehicleId, operation);
-        operation.finally(() => {
-            if (this._vehicleWriteChains.get(vehicleId) === operation) this._vehicleWriteChains.delete(vehicleId);
+        const current = previous.catch(() => {}).then(operation);
+        this._vehicleWriteChains.set(vehicleId, current);
+        current.finally(() => {
+            if (this._vehicleWriteChains.get(vehicleId) === current) this._vehicleWriteChains.delete(vehicleId);
         }).catch(() => {});
-        return operation;
+        return current;
+    }
+
+    _withVehicleWrites(ids, operation) {
+        const ordered = [...new Set(ids.map((id) => safeSegment(id)))].sort();
+        const nest = (index) => {
+            if (index >= ordered.length) return operation();
+            return this._withVehicleWrite(ordered[index], () => nest(index + 1));
+        };
+        return nest(0);
+    }
+
+    _vehicleIntakeDir(vehicleId) {
+        return path.join(this.vehiclePublicationIntakeDir, safeSegment(vehicleId));
+    }
+
+    _vehicleMigrationPath(vehicleId) {
+        return path.join(this.vehicleMigrationsDir, `${safeSegment(vehicleId)}.pre-v3.json`);
     }
 
     async _sensorRegistryForVehicle(manifest) {
@@ -3366,14 +3683,13 @@ export class StorageService {
 
     async _resolveVehicleDependency(actorId, vehicleId) {
         const builtIn = getBuiltInVehicleManifest(vehicleId);
-        const manifest = builtIn ?? await this.getVehicleManifest(vehicleId);
-        if (!manifest) throw new Error(`Vehicle "${vehicleId}" does not exist.`);
+        let manifest = builtIn;
         const assetHashes = {};
         if (!builtIn) {
-            for (const fileName of (await this.listVehicleAssets(vehicleId)).sort()) {
-                const bytes = await this.readVehicleAsset(vehicleId, fileName);
-                assetHashes[fileName] = createHash("sha256").update(bytes).digest("hex");
-            }
+            const snapshot = await this.readVehicleSnapshot(vehicleId);
+            manifest = snapshot.manifest;
+            if (!manifest) throw new Error(`Vehicle "${vehicleId}" does not exist.`);
+            for (const file of snapshot.files) assetHashes[file.name] = file.sha256;
             const modelAsset = String(manifest.model?.asset ?? "").trim();
             if (modelAsset && !modelAsset.startsWith("/") && !/^https?:\/\//i.test(modelAsset)
                 && !Object.hasOwn(assetHashes, modelAsset)) {
@@ -3581,6 +3897,7 @@ export class StorageService {
         supportedRoadGeometryVersions = [1, 2],
         supportedAssetMetricVersions = [1],
         supportedEditorSourceVersions = [1],
+        supportedScenePrimitiveVersions = [1],
     } = {}) {
         const current = await this._readEnvironment(environmentId);
         const stored = await this._fileStore(this._environmentPath(environmentId), null).read();
@@ -3593,6 +3910,7 @@ export class StorageService {
                 assertNoObjectGraphDowngrade(manifest, current, environmentId);
                 assertNoRoadGeometryDowngrade(manifest, current, supportedRoadGeometryVersions);
                 assertNoAssetMetricsDowngrade(manifest, current, supportedAssetMetricVersions);
+                assertNoPrimitiveDowngrade(manifest, current, supportedScenePrimitiveVersions);
             } catch (error) {
                 throw environmentPolicyError(error);
             }
@@ -4133,6 +4451,8 @@ function vehicleManifestSummary(manifest) {
         definitionHash: manifest.definitionHash,
         modelAsset: manifest.model?.asset ?? null,
         updatedAt: manifest.updatedAt,
+        ...(manifest.pluginLocks ? { pluginLocks: manifest.pluginLocks } : {}),
+        ...(manifest.dynamics ? { dynamics: manifest.dynamics } : {}),
     };
 }
 

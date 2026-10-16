@@ -121,8 +121,8 @@ import {
 import { Mask } from "./units/math/tex/Mask";
 import { IfUnit } from "./units/statements/If";
 import { Conjugation, Equality } from "./units/statements/Equality";
-import { IgnoreUnit, NopUnit, PassthroughUnit, SequenceUnit } from "./units/statements/Unit";
-import { RepeatProgramUnit } from "./units/statements/RepeatProgram";
+import { IgnoreUnit, NopUnit, PassthroughUnit, PassUnit, SequenceUnit } from "./units/statements/Unit";
+import { RepeatIndexUnit, RepeatUnit } from "./units/statements/Repeat";
 import { StringUnit } from "./units/objects/String";
 import { TextureImportUnit } from "./units/objects/TextureImport";
 import {
@@ -198,10 +198,22 @@ import {
 import {
     FrameAlongPathUnit,
     GetNearestRoadUnit,
+    RoadCrossSectionUnit,
     SampleRoadUnit,
     ScatterFeaturesUnit,
     SpawnPropUnit,
 } from "./units/world/WorldBlocks";
+import {
+    AssetAttachmentUnit,
+    BuildingAttachmentUnit,
+    DeriveFromAttachmentUnit,
+    GeneralAttachmentUnit,
+    GroupAttachmentUnit,
+    IntersectionAttachmentUnit,
+    PropAttachmentUnit,
+    RoadAttachmentUnit,
+} from "./units/world/DeriveFromAttachment";
+import { CloneObjectUnit, CreateGroupUnit, PlaceFeatureUnit } from "./units/world/AuthoringBlocks";
 import { MakeActorCommandUnit, SplitActorCommandUnit } from "./units/mission/ActorCommand";
 import {
     DistanceToRouteEndUnit,
@@ -433,7 +445,9 @@ const COMPONENT_BY_TYPE = new Map([
     ["IgnoreBlock", IgnoreUnit],
     ["SequenceBlock", SequenceUnit],
     ["PassthroughBlock", PassthroughUnit],
-    ["RepeatProgramBlock", RepeatProgramUnit],
+    ["PassBlock", PassUnit],
+    ["RepeatBlock", RepeatUnit],
+    ["RepeatIndexBlock", RepeatIndexUnit],
     ["ProgramInputBlock", ProgramInputUnit],
     ["OutputNodeBlock", OutputNodeUnit],
     ["ReadSignalBlock", ReadSignalUnit],
@@ -463,9 +477,21 @@ const COMPONENT_BY_TYPE = new Map([
     ["SimulationClockBlock", SimulationClockUnit],
     ["ScenarioStatusBlock", ScenarioStatusUnit],
     ["SampleRoadBlock", SampleRoadUnit],
+    ["RoadCrossSectionBlock", RoadCrossSectionUnit],
     ["GetNearestRoadBlock", GetNearestRoadUnit],
     ["SpawnPropBlock", SpawnPropUnit],
     ["ScatterFeaturesBlock", ScatterFeaturesUnit],
+    ["DeriveFromAttachmentBlock", DeriveFromAttachmentUnit],
+    ["GeneralAttachmentBlock", GeneralAttachmentUnit],
+    ["RoadAttachmentBlock", RoadAttachmentUnit],
+    ["GroupAttachmentBlock", GroupAttachmentUnit],
+    ["BuildingAttachmentBlock", BuildingAttachmentUnit],
+    ["IntersectionAttachmentBlock", IntersectionAttachmentUnit],
+    ["PropAttachmentBlock", PropAttachmentUnit],
+    ["AssetAttachmentBlock", AssetAttachmentUnit],
+    ["PlaceFeatureBlock", PlaceFeatureUnit],
+    ["CloneObjectBlock", CloneObjectUnit],
+    ["CreateGroupBlock", CreateGroupUnit],
     ["WaypointListBlock", WaypointListUnit],
     ["CurrentWaypointBlock", CurrentWaypointUnit],
     ["AdvanceWaypointBlock", AdvanceWaypointUnit],

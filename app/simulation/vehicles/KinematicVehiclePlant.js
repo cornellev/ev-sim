@@ -1,3 +1,5 @@
+import { PLUGIN_ERROR_CODES, pluginError } from "../../plugin/PluginErrors.js";
+import { PLANT_STATE_LENGTH } from "../../plugin/PlantModule.js";
 import { getBuiltInVehicleManifest } from "../../vehicles/BuiltInVehicleManifests.js";
 import { normalizeVehicleManifest } from "../../vehicles/VehicleManifest.js";
 import { euler, finiteOr as finite, pose, vec3 } from "../../util/plainGeometry.js";
@@ -28,10 +30,14 @@ export function createVehiclePlantDefinition(entry = {}, dependency = null, opti
     const type = String(entry.type || dependency?.vehicleId || options.type || "big-car");
     const manifest = normalizeManifest(dependency?.manifest ?? options.manifest, type);
     const keyframes = normalizeKeyframes(entry.keyframes ?? options.keyframes ?? []);
+    const pluginPlantId = manifest.dynamics?.plant || "";
     let motionModel = options.motionModel;
-    if (!motionModel) motionModel = type === "scenario-car" ? "scenario-keyframes" : "bicycle";
-    if (!new Set(["bicycle", "scenario-keyframes", "linear"]).has(motionModel)) {
+    if (!motionModel) motionModel = pluginPlantId ? "plugin" : type === "scenario-car" ? "scenario-keyframes" : "bicycle";
+    if (!new Set(["bicycle", "scenario-keyframes", "linear", "plugin"]).has(motionModel)) {
         throw new TypeError(`Unknown vehicle motion model "${motionModel}".`);
+    }
+    if (motionModel === "plugin" && !pluginPlantId) {
+        throw new TypeError("Plugin vehicle motion requires manifest.dynamics.plant.");
     }
     return {
         kind: VEHICLE_PLANT_KIND,
@@ -53,6 +59,13 @@ export function createVehiclePlantDefinition(entry = {}, dependency = null, opti
             playbackRate: finite(options.playbackRate, 1),
             autoplay: options.autoplay !== false,
         },
+        ...(motionModel === "plugin" ? {
+            plant: {
+                id: pluginPlantId,
+                pluginId: String(options.plantPluginId || ""),
+                runtimeHash: String(options.plantRuntimeHash || ""),
+            },
+        } : {}),
     };
 }
 
@@ -66,18 +79,63 @@ function lerpAngle(left, right, alpha) {
     return left + delta * alpha;
 }
 
+function packPlantState(plant, target) {
+    target[0] = plant.position.x;
+    target[1] = plant.position.y;
+    target[2] = plant.position.z;
+    target[3] = plant.rotation.x;
+    target[4] = plant.rotation.y;
+    target[5] = plant.rotation.z;
+    target[6] = plant.velocity.x;
+    target[7] = plant.velocity.y;
+    target[8] = plant.velocity.z;
+    target[9] = plant.acceleration.x;
+    target[10] = plant.acceleration.y;
+    target[11] = plant.acceleration.z;
+    target[12] = plant.steeringAngle;
+    return target;
+}
+
+function unpackPlantState(plant, state) {
+    plant.position.x = state[0];
+    plant.position.y = state[1];
+    plant.position.z = state[2];
+    plant.rotation.x = state[3];
+    plant.rotation.y = state[4];
+    plant.rotation.z = state[5];
+    plant.velocity.x = state[6];
+    plant.velocity.y = state[7];
+    plant.velocity.z = state[8];
+    plant.acceleration.x = state[9];
+    plant.acceleration.y = state[10];
+    plant.acceleration.z = state[11];
+    plant.steeringAngle = state[12];
+}
+
 export class KinematicVehiclePlant {
-    constructor(definition) {
+    constructor(definition, { stepper = null, unresolved = false } = {}) {
         if (definition?.kind !== VEHICLE_PLANT_KIND || definition?.version !== VEHICLE_PLANT_VERSION) {
             throw new TypeError(`KinematicVehiclePlant requires ${VEHICLE_PLANT_KIND} v${VEHICLE_PLANT_VERSION}.`);
         }
+        if (definition.motionModel === "plugin" && !stepper && !unresolved) {
+            throw pluginError(
+                PLUGIN_ERROR_CODES.UNAVAILABLE,
+                `Plant "${definition.plant?.id ?? "unknown"}" is not available in this run.`,
+                { pluginId: definition.plant?.pluginId || null, contributionId: definition.plant?.id ?? null },
+            );
+        }
         this.definition = structuredClone(definition);
+        this.stepper = stepper;
+        this.unresolvedPluginPlant = unresolved === true;
+        this.dynamicsStatus = this.unresolvedPluginPlant ? "Plugin dynamics run only in a resolved run." : "";
+        this.stateBuffer = new Float64Array(PLANT_STATE_LENGTH);
         this.id = definition.id;
         this.telemetryId = definition.id;
         this.vehicleManifestId = definition.vehicleManifestId;
         this.manifestId = definition.vehicleManifestId;
         this.motionModel = definition.motionModel;
         this.collisionDimensions = { ...definition.dimensions };
+        this.collisionCenter = { ...vec3(definition.boundingBoxCenter) };
         this.dimensions = this.collisionDimensions;
         this.kinematics = { ...definition.kinematics };
         this.keyframes = definition.keyframes.map((frame) => ({ ...frame }));
@@ -106,7 +164,7 @@ export class KinematicVehiclePlant {
     }
 
     drapeToGround() {
-        if (this.motionModel !== "bicycle" || typeof this.groundSampler !== "function") return;
+        if ((this.motionModel !== "bicycle" && this.motionModel !== "plugin") || typeof this.groundSampler !== "function") return;
         const hit = this.groundSampler(this.position.x, this.position.z, this.rotation.y);
         if (!hit) return;
         this.position.y = finite(hit.y);
@@ -137,6 +195,7 @@ export class KinematicVehiclePlant {
         if (this.motionModel === "scenario-keyframes" && this.keyframes.length > 0) {
             this.applyScenarioState(this.keyframes[0]);
         }
+        this.stepper?.reset?.();
         this.drapeToGround();
         return this.getDeterministicState();
     }
@@ -176,6 +235,13 @@ export class KinematicVehiclePlant {
     update(deltaTime) {
         const dt = finite(deltaTime);
         if (dt < 0) throw new RangeError("Vehicle plant delta time cannot be negative.");
+        if (this.motionModel === "plugin") {
+            if (this.unresolvedPluginPlant || !this.stepper) return;
+            const next = this.stepper.step(packPlantState(this, this.stateBuffer), dt);
+            unpackPlantState(this, next);
+            this.drapeToGround();
+            return;
+        }
         if (this.motionModel === "linear") {
             this.velocity.x += this.acceleration.x * dt;
             this.velocity.y += this.acceleration.y * dt;

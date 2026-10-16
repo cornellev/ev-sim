@@ -297,8 +297,42 @@ class BackendSelection(_message.Message):
     config_hash: str
     def __init__(self, kind: _Optional[_Union[BackendKind, str]] = ..., capability_id: _Optional[str] = ..., version: _Optional[str] = ..., config_hash: _Optional[str] = ...) -> None: ...
 
+class Pose2D(_message.Message):
+    __slots__ = ("x", "z", "yaw", "speed_mps")
+    X_FIELD_NUMBER: _ClassVar[int]
+    Z_FIELD_NUMBER: _ClassVar[int]
+    YAW_FIELD_NUMBER: _ClassVar[int]
+    SPEED_MPS_FIELD_NUMBER: _ClassVar[int]
+    x: float
+    z: float
+    yaw: float
+    speed_mps: float
+    def __init__(self, x: _Optional[float] = ..., z: _Optional[float] = ..., yaw: _Optional[float] = ..., speed_mps: _Optional[float] = ...) -> None: ...
+
+class Goal2D(_message.Message):
+    __slots__ = ("x", "z", "yaw", "position_tolerance_m", "yaw_tolerance_rad")
+    X_FIELD_NUMBER: _ClassVar[int]
+    Z_FIELD_NUMBER: _ClassVar[int]
+    YAW_FIELD_NUMBER: _ClassVar[int]
+    POSITION_TOLERANCE_M_FIELD_NUMBER: _ClassVar[int]
+    YAW_TOLERANCE_RAD_FIELD_NUMBER: _ClassVar[int]
+    x: float
+    z: float
+    yaw: float
+    position_tolerance_m: float
+    yaw_tolerance_rad: float
+    def __init__(self, x: _Optional[float] = ..., z: _Optional[float] = ..., yaw: _Optional[float] = ..., position_tolerance_m: _Optional[float] = ..., yaw_tolerance_rad: _Optional[float] = ...) -> None: ...
+
+class EpisodeOverrides(_message.Message):
+    __slots__ = ("start_pose", "goal")
+    START_POSE_FIELD_NUMBER: _ClassVar[int]
+    GOAL_FIELD_NUMBER: _ClassVar[int]
+    start_pose: Pose2D
+    goal: Goal2D
+    def __init__(self, start_pose: _Optional[_Union[Pose2D, _Mapping]] = ..., goal: _Optional[_Union[Goal2D, _Mapping]] = ...) -> None: ...
+
 class EpisodeSpec(_message.Message):
-    __slots__ = ("environment_index", "environment_id", "run_bundle_id", "reset_seed", "action_repeat", "max_episode_steps", "observation_profile", "reward_profile", "backend_selections")
+    __slots__ = ("environment_index", "environment_id", "run_bundle_id", "reset_seed", "action_repeat", "max_episode_steps", "observation_profile", "reward_profile", "backend_selections", "overrides")
     ENVIRONMENT_INDEX_FIELD_NUMBER: _ClassVar[int]
     ENVIRONMENT_ID_FIELD_NUMBER: _ClassVar[int]
     RUN_BUNDLE_ID_FIELD_NUMBER: _ClassVar[int]
@@ -308,6 +342,7 @@ class EpisodeSpec(_message.Message):
     OBSERVATION_PROFILE_FIELD_NUMBER: _ClassVar[int]
     REWARD_PROFILE_FIELD_NUMBER: _ClassVar[int]
     BACKEND_SELECTIONS_FIELD_NUMBER: _ClassVar[int]
+    OVERRIDES_FIELD_NUMBER: _ClassVar[int]
     environment_index: int
     environment_id: str
     run_bundle_id: str
@@ -317,7 +352,8 @@ class EpisodeSpec(_message.Message):
     observation_profile: ProfileRef
     reward_profile: ProfileRef
     backend_selections: _containers.RepeatedCompositeFieldContainer[BackendSelection]
-    def __init__(self, environment_index: _Optional[int] = ..., environment_id: _Optional[str] = ..., run_bundle_id: _Optional[str] = ..., reset_seed: _Optional[int] = ..., action_repeat: _Optional[int] = ..., max_episode_steps: _Optional[int] = ..., observation_profile: _Optional[_Union[ProfileRef, _Mapping]] = ..., reward_profile: _Optional[_Union[ProfileRef, _Mapping]] = ..., backend_selections: _Optional[_Iterable[_Union[BackendSelection, _Mapping]]] = ...) -> None: ...
+    overrides: EpisodeOverrides
+    def __init__(self, environment_index: _Optional[int] = ..., environment_id: _Optional[str] = ..., run_bundle_id: _Optional[str] = ..., reset_seed: _Optional[int] = ..., action_repeat: _Optional[int] = ..., max_episode_steps: _Optional[int] = ..., observation_profile: _Optional[_Union[ProfileRef, _Mapping]] = ..., reward_profile: _Optional[_Union[ProfileRef, _Mapping]] = ..., backend_selections: _Optional[_Iterable[_Union[BackendSelection, _Mapping]]] = ..., overrides: _Optional[_Union[EpisodeOverrides, _Mapping]] = ...) -> None: ...
 
 class ResourceLimits(_message.Message):
     __slots__ = ("max_rss_bytes_per_environment", "max_heap_bytes_per_environment", "max_actors_per_environment", "max_sensors_per_environment", "max_observation_bytes", "max_queue_bytes", "max_artifact_bytes", "step_wall_timeout_ms", "episode_wall_timeout_ms", "restart_budget", "max_shared_memory_bytes_per_environment", "max_gpu_bytes_per_environment")

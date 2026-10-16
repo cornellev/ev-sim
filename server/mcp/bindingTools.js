@@ -8,6 +8,7 @@ import {
     suggestTriggerFromArtifact,
     validateBinding,
 } from "../../app/scripting/bindings/BindingDocument.js";
+import { authoringBindingWarnings } from "../../app/scripting/units/world/AuthoringBlocks.block.js";
 import { storageEvents } from "./events.js";
 import { fail, ok } from "./toolResult.js";
 
@@ -132,7 +133,13 @@ export function registerBindingTools(server, storage) {
                 manifest.bindings.push(binding);
                 await putManifest(storage, manifest);
                 storageEvents.publish({ domain: "bindings", id: binding.id, action: "created" });
-                return ok({ ok: true, binding, issues: [] });
+                const warnings = authoringBindingWarnings((await storage.getScript(scriptId))?.latestValidArtifact);
+                return ok({
+                    ok: true,
+                    binding,
+                    issues: [],
+                    ...(warnings.length > 0 ? { warnings } : {}),
+                });
             } catch (error) {
                 return fail(error);
             }

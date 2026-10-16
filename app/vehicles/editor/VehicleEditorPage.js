@@ -1,29 +1,20 @@
 'use client';
 
-import { cloneElement, isValidElement, useEffect, useMemo, useRef, useState } from "react";
+import { cloneElement, isValidElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     IconArrowsMove,
-    IconCheck,
-    IconCopy,
     IconCube,
-    IconDeviceFloppy,
-    IconDownload,
-    IconFileImport,
-    IconLayoutGrid,
-    IconLayoutSidebarLeftCollapse,
-    IconLayoutSidebarRightCollapse,
     IconPlus,
     IconRefresh,
-    IconTrash,
     IconUpload,
 } from "@tabler/icons-react";
 
+import { deriveCompleteWheelbase } from "../axle/standardAxle.js";
 import {
-    createDefaultVehicleManifest,
+    createBlankVehicleManifest,
     deriveWheelbase,
-    normalizeVehicleManifest,
+    isValidVehicleId,
     resolveVehicleModelUrl,
-    validateVehicleManifest,
 } from "../VehicleManifest.js";
 import {
     changeVehicleSensorType,
@@ -33,12 +24,15 @@ import {
     sensorTypeRegistry,
 } from "../../3d/devices/SensorTypeRegistry.js";
 import { createAuthoringSensorRuntimeRegistry } from "../../3d/devices/SensorRuntimeRegistry.js";
-import { fetchSensorCatalog } from "../../plugin/PluginClient.js";
+import { fetchPlantCatalog, fetchSensorCatalog } from "../../plugin/PluginClient.js";
 import { BrowserSensorAuthoringSession } from "../../plugin/browser/BrowserSensorAuthoringSession.js";
 import PluginSensorAuthoringPanel from "../../plugin/browser/PluginSensorAuthoringPanel.js";
 import {
     pluginSensorCatalogEntryForType,
     sensorCatalogEntries,
+    sensorCatalogEntryChoiceLabel,
+    sensorCatalogEntryKey,
+    stampVehiclePluginPlantLock,
     stampVehiclePluginSensorLock,
 } from "../../plugin/PluginSensorAuthoring.js";
 import SensorTypeAdder from "../../ui/SensorTypeAdder.js";
@@ -49,27 +43,65 @@ import {
     listBuiltInVehicleManifests,
 } from "../BuiltInVehicleManifests.js";
 import {
+    abandonVehicleStage,
+    changeVehicleId,
     createVehicleManifest,
+    createVehicleOperationId,
+    createVehicleStage,
     deleteVehicleManifest,
     duplicateVehicleManifest,
     exportVehicleBundle,
     getVehicleManifest,
     importVehicleBundle,
     listVehicleManifests,
+    readVehicleStageMember,
+    renameVehicleManifest,
     saveVehicleManifest,
-    uploadVehicleAsset,
+    uploadVehicleStageMember,
     validateVehicleManifestOnServer,
 } from "../VehicleManifestClient.js";
+import { revealSelectedSensor, setSensorDisclosureOpen } from "./sensorDisclosure.js";
+import { VehicleEditorController } from "./VehicleEditorController.js";
+import { editManifestFields, applyModelReplacement, applyPlacementChange, adoptStandardAxles, assignModelWheels, classifyWheel, copyWheelFromPartner, detachWheel, suppressSourceWheels } from "../document/vehicleCommands.js";
+import { highlightedLinkIds, isBoundWheel, linkedPartnerId, resolveMotionLink, standardPartner } from "../document/wheelLink.js";
+import { measurePlacedVehicleModel } from "../model/measurePlacedVehicle.js";
+import { stageVehicleClosure, stageVehiclePlan } from "./stageVehicleClosure.js";
+import { exportVehicleUrdf } from "../urdf/exportVehicleUrdf.js";
+import { AxleFields, axleSummary, standardAxleCards } from "./AxleInspector.js";
 import { DragNumber } from "./DragNumber.js";
-import { VehicleStudio } from "./VehicleStudio.js";
+import { VehiclePlanView } from "./VehiclePlanView.js";
+import { PlacementAcceptanceDialog, WheelAssignmentDialog } from "./WheelAssignmentDialog.js";
+import { canonicalVehicleGlb, rolesFromManifest } from "./wheelAssignmentState.js";
+import { AxisAlignGizmo } from "./AxisAlignGizmo.js";
+import { VehicleStudio, applyCoverageLayerVisibility } from "./VehicleStudio.js";
+import { CoverageReadout } from "./coverage/CoverageReadout.js";
+import { VehicleWorkspace } from "./workspace/VehicleWorkspace.js";
+import { VehicleTopBar } from "./workspace/VehicleTopBar.js";
+import { VehicleToolbar } from "./workspace/VehicleToolbar.js";
+import { VehicleHierarchy } from "./workspace/VehicleHierarchy.js";
 import {
+    clearModelNodeVisibility,
+    hierarchyNodesFromLease,
+    hierarchyVisibilityKey,
+    MODEL_VISIBILITY_KEY,
+    retainModelAndZoneVisibility,
+    setVisibilityKey,
+    toggleVisibilityKey,
+    ZONE_VISIBILITY_KEY,
+} from "./workspace/vehicleHierarchyModel.js";
+import { VehiclePickerDialog, copyIdFor } from "./workspace/VehiclePickerDialog.js";
+import { VehicleUrdfReviewDialog } from "./workspace/VehicleUrdfReviewDialog.js";
+import { normalizeVehiclePaneLayout } from "./workspace/vehiclePaneLayout.js";
+import { readVehicleEditorPreference, VEHICLE_EDITOR_PREFERENCE_KEYS, writeVehicleEditorPreference } from "../../ui/vehicleEditorPreferences.js";
+import {
+    AccordionItem,
+    AccordionRoot,
     AdvancedFields,
-    AdvancedSwitch,
     AuthoringModeProvider,
     AsyncState,
     Button,
+    Disclosure,
     Field as SharedField,
-    IconButton,
     SegmentedControl,
     StatusMessage,
     Switch as SharedSwitch,
@@ -78,12 +110,29 @@ import {
     TabsRoot,
     TabsTrigger,
     useAuthoringMode,
+    useShortcut,
     useWorkspaceGuard,
 } from "../../ui";
+import { degToRad, radToDeg } from "three/src/math/MathUtils.js";
 
-const TABS = ["Model", "LiDAR Zone", "Sensors", "Wheels", "Body", "JSON"];
-const HISTORY_LIMIT = 100;
-const EDIT_COALESCE_MS = 750;
+const TABS = ["Model", "Body", "Wheels", "Sensors", "LiDAR Zone", "JSON"];
+const WHEEL_ROLES = [
+    { value: "", label: "Unclassified" },
+    { value: "front:left", label: "Front left" },
+    { value: "front:right", label: "Front right" },
+    { value: "rear:left", label: "Rear left" },
+    { value: "rear:right", label: "Rear right" },
+];
+
+function wheelPartner(wheels, wheel, mode) {
+    if (!wheel?.axle || !wheel?.side) return null;
+    if (mode === "mirror") {
+        const side = wheel.side === "left" ? "right" : "left";
+        return wheels.find((entry) => entry.id !== wheel.id && entry.axle === wheel.axle && entry.side === side) ?? null;
+    }
+    const axle = wheel.axle === "front" ? "rear" : "front";
+    return wheels.find((entry) => entry.id !== wheel.id && entry.axle === axle && entry.side === wheel.side) ?? null;
+}
 const FaArrowsAlt = (props) => <IconArrowsMove size={14} stroke={1.75} {...props} />;
 const FaCube = (props) => <IconCube size={14} stroke={1.75} {...props} />;
 const FaPlus = (props) => <IconPlus size={14} stroke={1.75} {...props} />;
@@ -98,8 +147,8 @@ function vehicleIdFromName(name) {
         .replace(/^-+|-+$/g, "") || `vehicle-${Date.now().toString(36)}`;
 }
 
-function downloadJson(name, value) {
-    const blob = new Blob([`${JSON.stringify(value, null, 2)}\n`], { type: "application/json" });
+function downloadBytes(name, bytes, mediaType) {
+    const blob = new Blob([bytes], { type: mediaType || "application/octet-stream" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
@@ -108,12 +157,17 @@ function downloadJson(name, value) {
     URL.revokeObjectURL(url);
 }
 
-function differenceCount(left, right) {
-    if (Object.is(left, right)) return 0;
-    if (!left || !right || typeof left !== "object" || typeof right !== "object") return 1;
-    const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
-    return [...keys].reduce((sum, key) => sum + differenceCount(left[key], right[key]), 0);
+function downloadJson(name, value) {
+    downloadBytes(name, `${JSON.stringify(value, null, 2)}\n`, "application/json");
 }
+
+const stageClient = {
+    createVehicleStage,
+    uploadVehicleStageMember,
+    readVehicleStageMember,
+    abandonVehicleStage,
+    saveVehicleManifest,
+};
 
 function round3(value) {
     return Math.round(value * 1000) / 1000;
@@ -126,38 +180,60 @@ function roundVec(vector) {
 export default function VehicleEditorPage({ onOpenWorkspace }) {
     const importRef = useRef(null);
     const modelFileRef = useRef(null);
+    const assignButtonRef = useRef(null);
+    const catalogButtonRef = useRef(null);
+    const urdfButtonRef = useRef(null);
     const viewportRef = useRef(null);
     const studioRef = useRef(null);
+    const axisGizmoRef = useRef(null);
     const studioHandlers = useRef({});
     const loadRequest = useRef(0);
-    const undoStack = useRef([]);
-    const redoStack = useRef([]);
-    const lastEdit = useRef(null);
+    const sensorSessionRef = useRef(null);
+    if (!sensorSessionRef.current) sensorSessionRef.current = new BrowserSensorAuthoringSession();
+    const controllerRef = useRef(null);
+    if (!controllerRef.current) {
+        controllerRef.current = new VehicleEditorController({
+            client: stageClient,
+            resolveNormalizeOptions: () => ({ sensorRegistry: sensorSessionRef.current?.registry ?? sensorTypeRegistry }),
+        });
+    }
 
     const [catalog, setCatalog] = useState([]);
     const [loadState, setLoadState] = useState("loading");
     const [selectedId, setSelectedId] = useState(null);
-    const [saved, setSaved] = useState(null);
-    const [draft, setDraft] = useState(null);
-    const [raw, setRaw] = useState("");
-    const [rawError, setRawError] = useState(null);
+    const [snapshot, setSnapshot] = useState(() => controllerRef.current.snapshot);
     const [tab, setTab] = useState("Model");
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState(null);
-    const [validation, setValidation] = useState(null);
-    const [selection, setSelection] = useState(null);
     const [gizmoMode, setGizmoMode] = useState("translate");
     const [assetVersion, setAssetVersion] = useState(0);
-    const [zoneVisible, setZoneVisible] = useState(true);
-    const [modelVisible, setModelVisible] = useState(true);
+    const [hiddenIds, setHiddenIds] = useState(() => new Set());
     const [voxelSize, setVoxelSize] = useState(0.2);
     const [fitTarget, setFitTarget] = useState({ length: 2.7, width: 1.25 });
-    const [catalogOpen, setCatalogOpen] = useState(false);
-    const [inspectorOpen, setInspectorOpen] = useState(false);
-    const sensorSessionRef = useRef(null);
-    if (!sensorSessionRef.current) sensorSessionRef.current = new BrowserSensorAuthoringSession();
+    const [placementRevision, setPlacementRevision] = useState(0);
+    const [pickerOpen, setPickerOpen] = useState(false);
+    const [urdfMode, setUrdfMode] = useState(null);
+    const [urdfReport, setUrdfReport] = useState(null);
+    const [serverValidation, setServerValidation] = useState(null);
+    const [validatedStamp, setValidatedStamp] = useState(null);
+    const [modelNodes, setModelNodes] = useState([]);
+    const [layout, setLayout] = useState(() => normalizeVehiclePaneLayout(readVehicleEditorPreference(VEHICLE_EDITOR_PREFERENCE_KEYS.PANE_LAYOUT)));
+    const [coverageEnabled, setCoverageEnabled] = useState(() => readVehicleEditorPreference(VEHICLE_EDITOR_PREFERENCE_KEYS.COVERAGE, null)?.enabled === true);
+    const [shellRadiusM, setShellRadiusM] = useState(() => {
+        const radius = Number(readVehicleEditorPreference(VEHICLE_EDITOR_PREFERENCE_KEYS.COVERAGE, null)?.shellRadiusM);
+        return Number.isFinite(radius) && radius > 0 ? radius : 5;
+    });
+    const [shellVisible, setShellVisible] = useState(() => readVehicleEditorPreference(VEHICLE_EDITOR_PREFERENCE_KEYS.COVERAGE, null)?.shellVisible !== false);
+    const [floorVisible, setFloorVisible] = useState(() => readVehicleEditorPreference(VEHICLE_EDITOR_PREFERENCE_KEYS.COVERAGE, null)?.floorVisible !== false);
+    const [coverageReport, setCoverageReport] = useState(null);
     const [sensorCatalog, setSensorCatalog] = useState({ revision: 0, sensors: [] });
+    const [plantCatalog, setPlantCatalog] = useState([]);
     const [sensorRegistryTick, setSensorRegistryTick] = useState(0);
+    const [sensorVehicleGeneration, setSensorVehicleGeneration] = useState(0);
+    const [assignment, setAssignment] = useState(null);
+    const [dismissedNotices, setDismissedNotices] = useState({});
+    const [placementPrompt, setPlacementPrompt] = useState(null);
+    const [steeringPreview, setSteeringPreview] = useState(0);
     const authoringOptions = () => ({
         sensorRegistry: sensorSessionRef.current?.registry ?? sensorTypeRegistry,
     });
@@ -167,28 +243,52 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
         return createAuthoringSensorRuntimeRegistry({ definitions: authoringOptions().sensorRegistry });
     }, [sensorRegistryTick]);
 
-    const dirty = Boolean(saved && draft && differenceCount(
-        normalizeVehicleManifest(saved, authoringOptions()),
-        normalizeVehicleManifest(draft, authoringOptions()),
-    ) > 0);
-    const readOnly = isBuiltInVehicleManifest(selectedId);
-
-    const resetHistory = () => {
-        undoStack.current = [];
-        redoStack.current = [];
-        lastEdit.current = null;
+    const draft = snapshot.manifest;
+    const modelAsset = draft?.model?.asset ?? null;
+    const [visibilityScope, setVisibilityScope] = useState({ vehicleId: selectedId, asset: modelAsset });
+    if (visibilityScope.vehicleId !== selectedId || visibilityScope.asset !== modelAsset) {
+        const vehicleChanged = visibilityScope.vehicleId !== selectedId;
+        setVisibilityScope({ vehicleId: selectedId, asset: modelAsset });
+        setHiddenIds((current) => (
+            vehicleChanged ? retainModelAndZoneVisibility(current) : clearModelNodeVisibility(current)
+        ));
+    }
+    const modelVisible = !hiddenIds.has(MODEL_VISIBILITY_KEY);
+    const zoneVisible = !hiddenIds.has(ZONE_VISIBILITY_KEY);
+    const setModelVisible = (visible) => {
+        setHiddenIds((current) => setVisibilityKey(current, MODEL_VISIBILITY_KEY, visible === false));
     };
+    const setZoneVisible = (visible) => {
+        setHiddenIds((current) => setVisibilityKey(current, ZONE_VISIBILITY_KEY, visible === false));
+    };
+    const toggleRowHidden = (row) => {
+        setHiddenIds((current) => toggleVisibilityKey(current, hierarchyVisibilityKey(row.kind, row.id)));
+    };
+    const pluginLockKey = JSON.stringify(draft?.pluginLocks ?? null);
+    const draftStamp = useMemo(() => (draft ? JSON.stringify(draft) : ""), [draft]);
+    const raw = snapshot.raw;
+    const rawError = snapshot.rawError;
+    const dirty = snapshot.dirty;
+    const readOnly = snapshot.readOnly;
+    const selection = snapshot.selection?.kind ? snapshot.selection : null;
+    const validation = snapshot.validation;
+
+    useEffect(() => controllerRef.current.subscribe(setSnapshot), []);
+    useEffect(() => {
+        writeVehicleEditorPreference(VEHICLE_EDITOR_PREFERENCE_KEYS.PANE_LAYOUT, layout);
+    }, [layout]);
+    const onLayoutChange = useCallback((producer) => {
+        setLayout((current) => (typeof producer === "function" ? producer(current) : producer));
+    }, []);
 
     const applyDocument = (id, document) => {
-        const normalized = normalizeVehicleManifest(document, authoringOptions());
-        resetHistory();
+        const generation = sensorSessionRef.current?.beginVehicle() ?? 0;
+        controllerRef.current.open(document, { readOnly: isBuiltInVehicleManifest(id) });
         setSelectedId(id);
-        setSaved(document);
-        setDraft(normalized);
-        setRaw(JSON.stringify(normalized, null, 2));
-        setRawError(null);
-        setValidation(null);
-        setSelection(null);
+        setSensorVehicleGeneration(generation);
+        setError(null);
+        setSteeringPreview(0);
+        setModelNodes([]);
     };
 
     const loadCatalog = async (preferredId = null) => {
@@ -205,11 +305,8 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                 ? preferredId
                 : storedItems[0]?.id ?? builtInItems[0]?.id;
             if (!nextId) {
-                resetHistory();
+                controllerRef.current.close();
                 setSelectedId(null);
-                setSaved(null);
-                setDraft(null);
-                setRaw("");
                 setLoadState("empty");
                 return;
             }
@@ -249,13 +346,25 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
         if (!hasDraft || !viewportRef.current || studioRef.current) return undefined;
         const studio = new VehicleStudio(viewportRef.current, {
             onTransform: (pick, transform) => studioHandlers.current.onTransform?.(pick, transform),
+            onPlacementCommit: (pick, transform) => studioHandlers.current.onPlacementCommit?.(pick, transform),
             onSelect: (pick) => studioHandlers.current.onSelect?.(pick),
+            onModelLease: (lease) => studioHandlers.current.onModelLease?.(lease),
+            onWheelDragStart: (pick) => studioHandlers.current.onWheelDragStart?.(pick),
+            onWheelDragEnd: (pick) => studioHandlers.current.onWheelDragEnd?.(pick),
+            onWheelDragCancel: () => studioHandlers.current.onWheelDragCancel?.(),
             sensorRuntime: authoringRuntime,
         });
+        studio.onCoverageReport = (report) => setCoverageReport(report);
         studioRef.current = studio;
+        const detachCamera = studio.onCameraFrame((quaternion) => {
+            axisGizmoRef.current?.sync(quaternion);
+        });
         return () => {
+            detachCamera();
+            studio.onCoverageReport = null;
             studio.dispose();
             studioRef.current = null;
+            setCoverageReport(null);
         };
         // Recreate only when a draft appears; runtime updates go through setSensorRuntime.
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -264,12 +373,50 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     useEffect(() => {
         if (!studioRef.current || !draft) return;
         const url = resolveVehicleModelUrl(selectedId, draft.model.asset, { cacheBust: assetVersion });
-        studioRef.current.setManifest(draft, url);
-    }, [draft, selectedId, assetVersion]);
+        studioRef.current.setManifest(draft, url, controllerRef.current.snapshot.stagedResources);
+    }, [draft, selectedId, assetVersion, snapshot.stagedResources]);
+
+    useEffect(() => {
+        studioRef.current?.setSteeringPreview(steeringPreview);
+    }, [steeringPreview, draft]);
 
     useEffect(() => {
         studioRef.current?.setSensorRuntime(authoringRuntime);
     }, [authoringRuntime]);
+
+    useEffect(() => {
+        writeVehicleEditorPreference(VEHICLE_EDITOR_PREFERENCE_KEYS.COVERAGE, {
+            enabled: coverageEnabled,
+            shellRadiusM,
+            shellVisible,
+            floorVisible,
+        });
+    }, [coverageEnabled, shellRadiusM, shellVisible, floorVisible]);
+
+    useEffect(() => {
+        const studio = studioRef.current;
+        if (!studio) return;
+        studio.setCoverage({
+            enabled: coverageEnabled && Boolean(draft),
+            manifest: draft,
+            definitions: sensorSessionRef.current?.registry ?? sensorTypeRegistry,
+            shellRadiusM,
+            shellVisible,
+            floorVisible,
+            revision: sensorRegistryTick,
+        });
+        // The studio instance can outlive a hot reload of its class. Apply the
+        // layer flags to the objects directly, and again after every later publish.
+        applyCoverageLayerVisibility(studio, shellVisible, floorVisible);
+        if (!studio._coverageLayerEnforced) {
+            const step = studio._stepCoverage?.bind(studio);
+            studio._stepCoverage = () => {
+                step?.();
+                applyCoverageLayerVisibility(studio);
+            };
+            studio._coverageLayerEnforced = true;
+        }
+    }, [coverageEnabled, draft, shellRadiusM, shellVisible, floorVisible, sensorRegistryTick]);
 
     useEffect(() => () => {
         sensorSessionRef.current?.dispose();
@@ -280,122 +427,152 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
         let mounted = true;
         const refresh = async () => {
             try {
-                const snapshot = await fetchSensorCatalog();
+                const [snapshot, plants] = await Promise.all([
+                    fetchSensorCatalog(),
+                    fetchPlantCatalog().catch(() => ({ plants: [] })),
+                ]);
                 if (!mounted) return;
-                sensorSessionRef.current?.registerCatalog(snapshot);
                 setSensorCatalog(snapshot);
-                bumpSensorRegistry();
+                setPlantCatalog(Array.isArray(plants?.plants) ? plants.plants : []);
             } catch (caught) {
                 if (mounted) setError(caught.message);
             }
         };
         refresh();
-        return subscribeStorageEvents((event) => {
+        const unsubscribe = subscribeStorageEvents((event) => {
             if (event.domain === "plugin") refresh();
         });
+        return () => {
+            mounted = false;
+            unsubscribe();
+        };
     }, []);
 
     useEffect(() => {
         const session = sensorSessionRef.current;
+        const controller = controllerRef.current;
         if (!session || !draft) return undefined;
+        const generation = session.generation;
+        const locks = draft.pluginLocks ?? [];
         let cancelled = false;
         (async () => {
-            for (const lock of draft.pluginLocks ?? []) {
+            for (const lock of locks) {
                 try {
-                    await session.loadLock(lock);
+                    await session.loadLock(lock, { generation });
                 } catch {
-                    // Missing packages remain visible as unresolved authoring state.
+                    // A replaced vehicle or a missing package stays on the draft.
                 }
-                if (cancelled) return;
+                if (cancelled || generation !== session.generation) return;
             }
-            if (!cancelled) bumpSensorRegistry();
+            if (cancelled || generation !== session.generation) return;
+            const result = controller.reapplyNormalization();
+            if (cancelled || generation !== session.generation) return;
+            const gesture = result?.issues?.[0]?.code === "vehicle.session.gesture-active";
+            if (result?.ok === false && !gesture) setError(result.issues?.[0]?.message || "Could not apply the plugin sensor lock.");
+            bumpSensorRegistry();
         })();
         return () => { cancelled = true; };
-        // Locks are derived from pluginLocks, not the whole draft.
+        // Reload only when the open vehicle or its lock records change.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [draft?.pluginLocks, sensorCatalog.revision]);
-    useEffect(() => { studioRef.current?.setSelection(readOnly ? null : selection); }, [selection, readOnly]);
+    }, [sensorVehicleGeneration, pluginLockKey]);
+    useEffect(() => {
+        studioRef.current?.setSelection(readOnly ? null : selection);
+        // A preview emits a new selection object with the same kind and id.
+        // Rebinding on that object detaches the gizmo mid-drag.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selection?.kind, selection?.id, readOnly]);
     useEffect(() => { studioRef.current?.setGizmoMode(gizmoMode); }, [gizmoMode]);
-    useEffect(() => { studioRef.current?.setZoneVisible(zoneVisible); }, [zoneVisible]);
-    useEffect(() => { studioRef.current?.setModelVisible(modelVisible); }, [modelVisible]);
-
-    const recordHistory = (current, key, { coalesce = false } = {}) => {
-        const now = performance.now();
-        const previous = lastEdit.current;
-        const joinsPrevious = coalesce
-            && previous?.key === key
-            && now - previous.at <= EDIT_COALESCE_MS;
-
-        if (!joinsPrevious) {
-            undoStack.current.push(structuredClone(current));
-            if (undoStack.current.length > HISTORY_LIMIT) undoStack.current.shift();
-        }
-        redoStack.current = [];
-        lastEdit.current = coalesce ? { key, at: now } : null;
-    };
+    useEffect(() => {
+        const partnerId = selection?.kind === "wheel" && draft
+            ? linkedPartnerId(draft.wheels, selection.id, snapshot.wheelLink)
+            : null;
+        studioRef.current?.setLinkedWheel(partnerId);
+    }, [draft, selection, snapshot.wheelLink]);
+    useEffect(() => {
+        const onKey = (event) => {
+            if (event.key !== "Escape") return;
+            if (!studioHandlers.current.cancelWheelGesture?.()) return;
+            event.preventDefault();
+        };
+        window.addEventListener("keydown", onKey, true);
+        return () => window.removeEventListener("keydown", onKey, true);
+    }, []);
+    useEffect(() => { studioRef.current?.setEditorVisibility(hiddenIds); }, [hiddenIds, draft]);
 
     const update = (path, value, options = {}) => {
-        if (readOnly) return;
-        setDraft((current) => {
-            if (!current) return current;
-            recordHistory(current, path.join("."), {
-                coalesce: options.coalesce ?? ["number", "string"].includes(typeof value),
-            });
-            const next = path.length === 0 ? structuredClone(value) : structuredClone(current);
-            if (path.length > 0) {
-                let cursor = next;
-                path.slice(0, -1).forEach((part) => { cursor = cursor[part]; });
-                cursor[path.at(-1)] = value;
-            }
-            const normalized = normalizeVehicleManifest(next, authoringOptions());
-            // Keep the active string field verbatim while the user is typing;
-            // normalization would trim a trailing space mid-keystroke.
-            if (path.length > 0 && typeof value === "string") {
-                let normalizedCursor = normalized;
-                path.slice(0, -1).forEach((part) => { normalizedCursor = normalizedCursor[part]; });
-                normalizedCursor[path.at(-1)] = value;
-            }
-            setRaw(JSON.stringify(normalized, null, 2));
-            setValidation(null);
-            return normalized;
+        const controller = controllerRef.current;
+        if (!path.length) {
+            return controller.execute(editManifestFields(value, options.historyKey || "document"), options.coalesce ? { coalesceKey: options.historyKey || "document" } : {});
+        }
+        return controller.editField(path, value, {
+            coalesce: options.coalesce ?? ["number", "string"].includes(typeof value),
+            coalesceKey: options.historyKey || path.join("."),
         });
     };
 
-    useEffect(() => {
-        const restore = (source, destination) => {
-            if (source.current.length === 0) return false;
-            const snapshot = source.current.pop();
-            setDraft((current) => {
-                if (!current) return current;
-                destination.current.push(structuredClone(current));
-                if (destination.current.length > HISTORY_LIMIT) destination.current.shift();
-                const normalized = normalizeVehicleManifest(snapshot, authoringOptions());
-                setRaw(JSON.stringify(normalized, null, 2));
-                setRawError(null);
-                setValidation(null);
-                return normalized;
-            });
-            lastEdit.current = null;
-            return true;
+    const setSelection = (pick) => {
+        if (!pick?.kind) controllerRef.current.select(null);
+        else controllerRef.current.select(pick.kind, pick.id ?? null);
+    };
+
+    const beginAxleGesture = (axle) => controllerRef.current.beginAxle(axle);
+    const commitAxleGesture = () => controllerRef.current.commitAxle();
+    const cancelAxleGesture = () => {
+        controllerRef.current.cancelAxle();
+        setError(null);
+    };
+    const previewAxleGesture = (axle, patch) => {
+        const result = controllerRef.current.previewAxle(axle, patch);
+        setError(result?.ok === false ? (result.issues?.[0]?.message ?? "Axle edit was rejected.") : null);
+    };
+
+    const syncStudio = (manifest = draft) => {
+        if (!manifest) return;
+        const url = resolveVehicleModelUrl(selectedId, manifest.model?.asset, { cacheBust: assetVersion });
+        studioRef.current?.setManifest(manifest, url, controllerRef.current.snapshot.stagedResources);
+    };
+
+    const executeCommand = (command, { coalesceKey = null } = {}) => (
+        controllerRef.current.execute(command, coalesceKey ? { coalesceKey } : {})
+    );
+
+    const boundWheels = (manifest) => (manifest?.wheels ?? []).some((wheel) => wheel.visual?.kind === "model-node");
+
+    const commitPlacement = (patch, { coalesce = false, historyKey = "placement" } = {}) => {
+        if (!draft || readOnly) return;
+        const before = JSON.stringify(draft);
+        const result = executeCommand(applyPlacementChange({
+            ...patch,
+            glbBytes: boundWheels(draft) ? (studioRef.current?.getModelLease?.()?.glbBytes ?? null) : null,
+            acceptAdjustments: false,
+        }), { coalesceKey: coalesce ? historyKey : null });
+        if (result.ok) {
+            if (JSON.stringify(result.manifest) === before) syncStudio(draft);
+            return;
+        }
+        if (result.review?.withinTolerance && result.review?.needsAcceptance) {
+            setPlacementPrompt({ patch, review: result.review });
+            return;
+        }
+        setPlacementRevision((value) => value + 1);
+        setError(result.issues?.[0]?.message || "Placement was rejected.");
+        syncStudio(draft);
+    };
+
+    const placementFromTransform = (pick, transform) => {
+        if (pick?.kind === "body") return { boundingBox: { center: { ...transform.position } } };
+        const alignment = studioRef.current?.getModelAlignment?.() || { x: 0, y: 0, z: 0 };
+        return {
+            model: {
+                offset: {
+                    x: transform.position.x - alignment.x,
+                    y: transform.position.y - alignment.y,
+                    z: transform.position.z - alignment.z,
+                },
+                rotation: { ...transform.rotation, order: draft?.model?.rotation?.order || "XYZ" },
+            },
         };
-
-        const onHistoryShortcut = (event) => {
-            if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
-            const key = event.key.toLowerCase();
-            const wantsUndo = key === "z" && !event.shiftKey;
-            const wantsRedo = (key === "z" && event.shiftKey) || (key === "y" && event.ctrlKey);
-            if (!wantsUndo && !wantsRedo) return;
-
-            const changed = wantsUndo
-                ? restore(undoStack, redoStack)
-                : restore(redoStack, undoStack);
-            if (!changed) return;
-            event.preventDefault();
-        };
-
-        document.addEventListener("keydown", onHistoryShortcut);
-        return () => document.removeEventListener("keydown", onHistoryShortcut);
-    }, []);
+    };
 
     studioHandlers.current.onTransform = (pick, transform) => {
         const position = roundVec(transform.position);
@@ -405,25 +582,108 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
             if (index === undefined || index < 0) return;
             update(["sensors", index, "pose"], { position, rotation }, { coalesce: true });
         } else if (pick.kind === "wheel") {
-            const index = draft?.wheels.findIndex((entry) => entry.id === pick.id);
-            if (index === undefined || index < 0) return;
+            const live = controllerRef.current.snapshot;
+            const wheel = live.manifest?.wheels.find((entry) => entry.id === pick.id);
+            if (!wheel || wheel.visual?.kind === "model-node") return;
+            const translating = studioRef.current?.gizmo?.mode !== "rotate";
+            if (translating && resolveMotionLink(live.manifest.wheels, pick.id, live.wheelLink)) {
+                const result = controllerRef.current.previewWheel(pick.id, position);
+                setError(result?.ok === false ? (result.issues?.[0]?.message ?? "Wheel move was rejected.") : null);
+                if (result?.ok === false) syncStudio(controllerRef.current.snapshot.manifest);
+                return;
+            }
+            const index = live.manifest.wheels.findIndex((entry) => entry.id === pick.id);
             update(["wheels", index, "position"], position, { coalesce: true });
         } else if (pick.kind === "body") {
-            update(["boundingBox", "center"], position, { coalesce: true });
+            commitPlacement(placementFromTransform(pick, transform), { coalesce: true, historyKey: "body-center" });
         } else if (pick.kind === "ego") {
             update(["egoCenter"], position, { coalesce: true });
         } else if (pick.kind === "model") {
-            const alignment = studioRef.current?.getModelAlignment?.() || { x: 0, y: 0, z: 0 };
-            update(["model"], {
-                ...draft.model,
-                offset: {
-                    x: position.x - alignment.x,
-                    y: position.y - alignment.y,
-                    z: position.z - alignment.z,
-                },
-                rotation,
-            }, { coalesce: true });
+            commitPlacement(placementFromTransform(pick, { ...transform, position: transform.position }), { coalesce: true, historyKey: "model-offset" });
         }
+    };
+
+    studioHandlers.current.onPlacementCommit = (pick, transform) => {
+        if (!draft || readOnly) {
+            syncStudio(draft);
+            return;
+        }
+        commitPlacement(placementFromTransform(pick, transform), { historyKey: `placement-${pick?.kind || "model"}` });
+    };
+
+    const previewWheelMotion = (drivenId, position) => {
+        const result = controllerRef.current.previewWheel(drivenId, position);
+        setError(result?.ok === false ? (result.issues?.[0]?.message ?? "Wheel move was rejected.") : null);
+        if (result?.ok === false) syncStudio(controllerRef.current.snapshot.manifest);
+        return result;
+    };
+    const beginWheelMotion = (drivenId) => {
+        const result = controllerRef.current.beginWheel(drivenId);
+        if (result?.ok === false) setError(result.issues?.[0]?.message ?? "Could not move those wheels.");
+        return result;
+    };
+    const commitWheelMotion = () => {
+        if (controllerRef.current.snapshot.gesture?.kind !== "wheel-link") return { ok: true, empty: true };
+        return controllerRef.current.commitWheel();
+    };
+    const cancelWheelMotion = () => {
+        const result = controllerRef.current.cancelWheel();
+        setError(null);
+        syncStudio(controllerRef.current.snapshot.manifest);
+        return result;
+    };
+    const setWheelLink = (link) => {
+        const result = controllerRef.current.setWheelLink(link);
+        setError(result?.ok === false ? (result.issues?.[0]?.message ?? "Could not link those wheels.") : null);
+        return result;
+    };
+
+    studioHandlers.current.onWheelDragStart = (pick) => {
+        if (readOnly || studioRef.current?.gizmo?.mode === "rotate") return;
+        const live = controllerRef.current.snapshot;
+        if (!resolveMotionLink(live.manifest?.wheels, pick.id, live.wheelLink)) return;
+        beginWheelMotion(pick.id);
+    };
+    studioHandlers.current.onWheelDragEnd = () => {
+        commitWheelMotion();
+    };
+    studioHandlers.current.onWheelDragCancel = () => {
+        cancelWheelMotion();
+    };
+    studioHandlers.current.cancelWheelGesture = () => {
+        if (controllerRef.current.snapshot.gesture?.kind !== "wheel-link") return false;
+        if (studioRef.current?.gizmo?.dragging || studioRef.current?._wheelDrag) {
+            studioRef.current.cancelDrag();
+            return true;
+        }
+        cancelWheelMotion();
+        return true;
+    };
+
+    const acceptPlacement = () => {
+        const prompt = placementPrompt;
+        if (!prompt || !draft) return;
+        const result = executeCommand(applyPlacementChange({
+            ...prompt.patch,
+            glbBytes: boundWheels(draft) ? (studioRef.current?.getModelLease?.()?.glbBytes ?? null) : null,
+            acceptAdjustments: true,
+        }));
+        setPlacementPrompt(null);
+        if (!result.ok) {
+            setError(result.issues?.[0]?.message || "Placement was rejected.");
+            syncStudio(draft);
+        }
+    };
+
+    const rejectPlacement = () => {
+        setPlacementRevision((revision) => revision + 1);
+        setPlacementPrompt(null);
+        syncStudio(draft);
+    };
+
+    studioHandlers.current.onModelLease = (lease) => {
+        const hidden = controllerRef.current.snapshot.manifest?.model?.hiddenNodeIndices ?? [];
+        setModelNodes(hierarchyNodesFromLease(lease).map((node) => ({ ...node, hidden: hidden.includes(node.index) })));
     };
 
     studioHandlers.current.onSelect = (pick) => {
@@ -457,107 +717,148 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
         }
     };
 
+    const confirmDiscard = () => !controllerRef.current.snapshot.dirty || window.confirm("Discard unsaved vehicle changes?");
+
     const select = async (id) => {
-        if (dirty && !window.confirm("Discard unsaved vehicle changes?")) return;
+        if (!confirmDiscard()) return;
         await perform(async () => {
             const document = getBuiltInVehicleManifest(id) ?? await getVehicleManifest(id);
             if (!document) throw new Error(`Vehicle "${id}" no longer exists.`);
             applyDocument(id, document);
             setLoadState("ready");
+            setPickerOpen(false);
         });
     };
 
     const createNew = async () => {
+        if (!confirmDiscard()) return;
         const baseName = "Untitled Vehicle";
         let id = vehicleIdFromName(baseName);
         const existing = new Set(catalog.map((entry) => entry.id));
         let suffix = 2;
         while (existing.has(id)) id = `${vehicleIdFromName(baseName)}-${suffix++}`;
         await perform(async () => {
-            const created = await createVehicleManifest(createDefaultVehicleManifest({ id, name: baseName }));
+            const created = await createVehicleManifest(
+                createBlankVehicleManifest({ id, name: baseName }),
+                { operationId: createVehicleOperationId() },
+            );
             await loadCatalog(created.id);
+            setPickerOpen(false);
         });
     };
 
-    const save = async () => perform(async () => {
-        const local = validateVehicleManifest(draft, authoringOptions());
-        if (!local.ok) {
-            setValidation(local);
-            throw new Error("Fix validation errors before saving.");
-        }
-        const stored = await saveVehicleManifest(selectedId, local.manifest, saved.revision);
-        setSaved(stored);
-        setDraft(normalizeVehicleManifest(stored, authoringOptions()));
-        setRaw(JSON.stringify(normalizeVehicleManifest(stored, authoringOptions()), null, 2));
-        lastEdit.current = null;
+    const rememberStored = (stored) => {
+        if (!stored) return;
         setCatalog((items) => items.map((entry) => entry.id === stored.id
             ? { ...entry, name: stored.name, revision: stored.revision, definitionHash: stored.definitionHash, modelAsset: stored.model?.asset ?? null }
             : entry));
-        return stored;
+        setAssetVersion((version) => version + 1);
+    };
+
+    const save = async () => perform(async () => {
+        const result = await controllerRef.current.save();
+        rememberStored(result.stored);
+        return result.stored;
     });
 
     const validate = async () => perform(async () => {
-        const result = await validateVehicleManifestOnServer(selectedId, draft);
-        setValidation(result);
+        const result = await validateVehicleManifestOnServer(selectedId, controllerRef.current.snapshot.manifest);
+        setServerValidation(result);
+        setValidatedStamp(JSON.stringify(controllerRef.current.snapshot.manifest ?? ""));
         if (!result.ok) throw new Error("Vehicle validation found issues.");
         return result;
     });
 
-    const duplicate = () => perform(async () => {
-        const builtIn = getBuiltInVehicleManifest(selectedId);
-        const baseId = builtIn ? `${selectedId}-custom` : `${selectedId}-copy-${Date.now().toString(36)}`;
-        let id = baseId;
-        const existing = new Set(catalog.map((entry) => entry.id));
-        let suffix = 2;
-        while (existing.has(id)) id = `${baseId}-${suffix++}`;
-        const created = builtIn
-            ? await createVehicleManifest({ ...builtIn, id, name: `${builtIn.name} Copy` })
-            : await duplicateVehicleManifest(selectedId, { id, name: `${draft.name} Copy` });
+    const acknowledgedRevision = (entry) => (
+        entry.id === selectedId && Number.isFinite(controllerRef.current.snapshot.revision)
+            ? controllerRef.current.snapshot.revision
+            : entry.revision
+    );
+
+    const duplicateEntry = (entry) => perform(async () => {
+        if (entry.id === selectedId && !confirmDiscard()) return;
+        const existing = new Set(catalog.map((item) => item.id));
+        const id = copyIdFor(entry, existing);
+        const created = entry.builtIn
+            ? await createVehicleManifest({ ...getBuiltInVehicleManifest(entry.id), id, name: `${entry.name} Copy` }, { operationId: createVehicleOperationId() })
+            : await duplicateVehicleManifest(entry.id, { id, name: `${entry.name} Copy`, expectedRevision: acknowledgedRevision(entry) });
         await loadCatalog(created.id);
+        setPickerOpen(false);
     });
 
-    const remove = () => perform(async () => {
-        if (!window.confirm(`Delete “${draft.name}”?`)) return;
-        await deleteVehicleManifest(selectedId);
-        setSelectedId(null);
-        setSaved(null);
-        setDraft(null);
-        resetHistory();
-        await loadCatalog();
+    const renameEntry = (entry, name) => perform(async () => {
+        if (entry.id === selectedId && controllerRef.current.snapshot.dirty) throw new Error("Save or discard the open draft before renaming it.");
+        const stored = await renameVehicleManifest(entry.id, { name, expectedRevision: acknowledgedRevision(entry), operationId: createVehicleOperationId() });
+        if (selectedId === entry.id) applyDocument(entry.id, stored);
+        else setCatalog((items) => items.map((item) => item.id === stored.id ? { ...item, name: stored.name, revision: stored.revision, definitionHash: stored.definitionHash } : item));
     });
 
-    const exportBundle = () => perform(async () => {
-        if (dirty) await save();
-        const bundle = await exportVehicleBundle(selectedId);
-        downloadJson(`${selectedId}.vehicle-bundle.json`, bundle);
+    const deleteEntry = (entry) => perform(async () => {
+        if (entry.id === selectedId && controllerRef.current.snapshot.dirty) throw new Error("Save or discard the open draft before deleting it.");
+        await deleteVehicleManifest(entry.id, acknowledgedRevision(entry));
+        if (selectedId === entry.id) {
+            controllerRef.current.close();
+            setSelectedId(null);
+        }
+        await loadCatalog(selectedId === entry.id ? null : selectedId);
+    });
+
+    const changeEntryId = (entry, nextId) => perform(async () => {
+        if (!isValidVehicleId(nextId)) throw new Error("Vehicle id must use lowercase letters, numbers, and single hyphens.");
+        if (entry.id === selectedId && controllerRef.current.snapshot.dirty) throw new Error("Save or discard the open draft before changing its id.");
+        const stored = await changeVehicleId(entry.id, { id: nextId, expectedRevision: acknowledgedRevision(entry), operationId: createVehicleOperationId() });
+        await loadCatalog(stored.id);
+        setPickerOpen(false);
+    });
+
+    const exportBundle = (entry = null) => perform(async () => {
+        const id = entry?.id ?? selectedId;
+        if (id === selectedId && controllerRef.current.snapshot.dirty) throw new Error("Save the vehicle before exporting a bundle.");
+        const bundle = await exportVehicleBundle(id);
+        downloadJson(`${id}.vehicle-bundle.json`, bundle);
     });
 
     const importBundleFile = (event) => perform(async () => {
         const file = event.target.files?.[0];
         event.target.value = "";
         if (!file) return;
+        if (!confirmDiscard()) return;
         const created = await importVehicleBundle(JSON.parse(await file.text()));
         await loadCatalog(created.id);
+        setPickerOpen(false);
     });
 
     useWorkspaceGuard("vehicle-editor", {
         dirty,
         label: "Vehicle editor",
         save,
-        discard: () => saved && applyDocument(selectedId, saved),
+        discard: () => controllerRef.current.discard(),
     });
 
     // --- Model tab operations -------------------------------------------------
 
     const uploadModelFile = (event) => perform(async () => {
-        const file = event.target.files?.[0];
+        const selected = [...(event.target.files ?? [])];
         event.target.value = "";
-        if (!file || !selectedId) return;
-        const extension = file.name.toLowerCase().endsWith(".gltf") ? "gltf" : "glb";
-        const fileName = `model.${extension}`;
-        await uploadVehicleAsset(selectedId, fileName, file);
-        setAssetVersion((version) => version + 1);
-        update(["model", "asset"], fileName);
+        if (selected.length === 0 || !selectedId || readOnly) return;
+        const files = await Promise.all(selected.map(async (file) => ({
+            path: file.webkitRelativePath || file.name,
+            bytes: new Uint8Array(await file.arrayBuffer()),
+        })));
+        const entry = files.find((file) => /\.(glb|gltf|obj|stl)$/i.test(file.path));
+        if (!entry) throw new Error("Choose a .glb, .gltf, .obj, or .stl model.");
+        const staged = await stageVehiclePlan(files, { entryPath: entry.path, client: stageClient });
+        const result = controllerRef.current.replaceStagedModel({
+            model: {
+                asset: staged.plan.asset.name,
+                dependencies: staged.plan.dependencies.map((file) => file.name),
+            },
+            stagedResources: staged.staged,
+        });
+        if (!result.ok) {
+            await abandonVehicleStage(staged.staged.stageId);
+            throw new Error(result.issues?.[0]?.message || "Could not replace the model.");
+        }
     });
 
     const fitModelToSize = () => {
@@ -570,7 +871,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
         const currentWidth = bounds.size.z / (draft.model.scale || 1);
         if (currentLength <= 0 || currentWidth <= 0) return;
         const scale = Math.min(fitTarget.length / currentLength, fitTarget.width / currentWidth);
-        update(["model", "scale"], round3(scale) || draft.model.scale);
+        commitPlacement({ model: { scale: round3(scale) || draft.model.scale } }, { historyKey: "model-scale" });
     };
 
     const generateZone = () => {
@@ -589,101 +890,244 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
             setError("Import a model before fitting the bounding box.");
             return;
         }
-        update(["boundingBox"], {
-            size: roundVec(bounds.size),
-            center: roundVec(bounds.center),
-        });
+        commitPlacement({
+            boundingBox: {
+                size: roundVec(bounds.size),
+                center: roundVec(bounds.center),
+            },
+        }, { historyKey: "body-fit" });
     };
 
-    // --- JSON tab --------------------------------------------------------------
+    const replaceOrDetachModel = (asset) => {
+        const result = executeCommand(applyModelReplacement({
+            model: { asset, dependencies: asset ? draft.model.dependencies : [] },
+        }));
+        if (!result.ok) setError(result.issues?.[0]?.message || "Could not update the model.");
+    };
 
-    const applyRaw = (value) => {
-        if (readOnly) return;
-        setRaw(value);
+    const openAssignment = () => {
+        const lease = studioRef.current?.getModelLease?.();
+        if (!lease?.glbBytes) {
+            setError("The canonical model is still loading.");
+            return;
+        }
         try {
-            const parsed = JSON.parse(value);
-            const local = validateVehicleManifest(parsed, authoringOptions());
-            if (!local.ok) {
-                setRawError(local.issues.map((issue) => `${issue.path || "manifest"}: ${issue.message}`).join("\n"));
-                return;
-            }
-            setRawError(null);
-            setDraft((current) => {
-                if (current) recordHistory(current, "raw-json", { coalesce: true });
-                return local.manifest;
+            const measurement = measurePlacedVehicleModel({
+                glbBytes: lease.glbBytes,
+                model: draft.model,
+                boundingBox: draft.boundingBox,
+                hiddenNodeIndices: draft.model.hiddenNodeIndices ?? [],
             });
-            setValidation(null);
+            setAssignment({ measurement, catalog: measurement.catalog, token: Date.now() });
+            setError(null);
         } catch (caught) {
-            setRawError(caught.message);
+            setError(caught.message);
         }
     };
 
+    const acceptAssignment = (pairs) => {
+        const lease = studioRef.current?.getModelLease?.();
+        const result = executeCommand(assignModelWheels({
+            pairs,
+            glbBytes: lease?.glbBytes ?? null,
+            acceptAdjustments: true,
+        }));
+        if (!result.ok) {
+            setError(result.issues?.[0]?.message || "Could not assign those wheels.");
+            return;
+        }
+        setAssignment((current) => (current ? { ...current, open: false } : null));
+    };
+
+    const suppressAssignment = (nodeIndices) => {
+        const lease = studioRef.current?.getModelLease?.();
+        const result = executeCommand(suppressSourceWheels({
+            nodeIndices,
+            glbBytes: lease?.glbBytes ?? null,
+        }));
+        if (!result.ok) {
+            setError(result.issues?.[0]?.message || "Could not hide those parts.");
+            return;
+        }
+        setAssignment((current) => (current ? { ...current, open: false } : null));
+    };
+
+    const detachBoundWheel = (wheelId) => {
+        const result = executeCommand(detachWheel({ wheelId }));
+        if (!result.ok) setError(result.issues?.[0]?.message || "Could not detach that wheel.");
+    };
+
+    const groupAxles = () => {
+        const result = executeCommand(adoptStandardAxles());
+        if (!result.ok) setError(result.issues?.[0]?.message || "Could not group those axles.");
+    };
+
+    const classifyWheelRole = (wheelId, role) => {
+        const [axle, side] = role ? role.split(":") : [null, null];
+        const result = executeCommand(classifyWheel({ wheelId, axle, side }));
+        if (!result.ok) setError(result.issues?.[0]?.message || "Could not classify that wheel.");
+    };
+
+    const copyWheelPartner = (wheelId, mode) => {
+        const result = executeCommand(copyWheelFromPartner({ wheelId, mode }));
+        if (!result.ok) setError(result.issues?.[0]?.message || "Could not copy that wheel.");
+    };
+
+    const applyRaw = (value) => {
+        controllerRef.current.applyRaw(value);
+    };
+
+    const stageClosure = async (closure) => {
+        const staged = await stageVehicleClosure([closure.asset, ...closure.dependencies], stageClient);
+        return staged;
+    };
+
+    const createFromUrdf = ({ manifest, closure }) => perform(async () => {
+        if (!confirmDiscard()) return;
+        const staged = await stageClosure(closure);
+        try {
+            const created = await createVehicleManifest(manifest, { operationId: createVehicleOperationId(), stageId: staged.stageId });
+            await loadCatalog(created.id);
+            setUrdfMode(null);
+        } catch (error) {
+            await abandonVehicleStage(staged.stageId);
+            throw error;
+        }
+    });
+
+    const applyReviewedUrdf = ({ patch, closure }) => perform(async () => {
+        const staged = await stageClosure(closure);
+        const result = controllerRef.current.applyUrdf({ patch, stagedResources: staged });
+        if (!result.ok) {
+            await abandonVehicleStage(staged.stageId);
+            throw new Error(result.issues?.[0]?.message || "Could not apply the URDF.");
+        }
+        setUrdfMode(null);
+    });
+
+    const exportUrdf = () => perform(async () => {
+        const manifest = controllerRef.current.snapshot.manifest;
+        if (!manifest) return;
+        const assets = {};
+        const assetName = manifest.model?.asset;
+        if (assetName) {
+            const staged = controllerRef.current.snapshot.stagedResources;
+            const stagedMember = staged?.members?.find((member) => member.name === assetName);
+            if (stagedMember) {
+                assets[assetName] = (await readVehicleStageMember(staged.stageId, assetName)).bytes;
+            } else {
+                const response = await fetch(resolveVehicleModelUrl(selectedId, assetName, { cacheBust: assetVersion }));
+                if (!response.ok) throw new Error(`Could not read vehicle model "${assetName}".`);
+                assets[assetName] = new Uint8Array(await response.arrayBuffer());
+            }
+        }
+        const exported = exportVehicleUrdf(manifest, { assets });
+        downloadBytes(exported.filename, exported.bytes, exported.mediaType);
+        setUrdfReport(exported.report);
+    });
+
+    useShortcut({
+        id: "vehicle-editor-save",
+        keys: "Mod+s",
+        priority: 30,
+        allowInEditable: true,
+        enabled: Boolean(draft) && !readOnly,
+        handler: () => {
+            save();
+            return true;
+        },
+    });
+    useShortcut({
+        id: "vehicle-editor-undo",
+        keys: "Mod+z",
+        priority: 30,
+        allowInEditable: true,
+        enabled: Boolean(draft) && !readOnly,
+        handler: () => {
+            controllerRef.current.undo();
+            return true;
+        },
+    });
+    useShortcut({
+        id: "vehicle-editor-redo",
+        keys: ["Shift+Mod+z", "Ctrl+y"],
+        priority: 30,
+        allowInEditable: true,
+        enabled: Boolean(draft) && !readOnly,
+        handler: () => {
+            controllerRef.current.redo();
+            return true;
+        },
+    });
+
     const derivedWheelbase = draft ? deriveWheelbase(draft.wheels) : null;
+    const shownValidation = (validatedStamp === draftStamp ? serverValidation : null) ?? validation;
+    const nameValue = controllerRef.current.fieldValue(["name"]) ?? draft?.name ?? "";
 
     return (
         <AuthoringModeProvider>
         <main className="fixed inset-0 z-[1] overflow-hidden bg-[var(--slate-bg)] text-[var(--slate-fg)]">
-            <header className="flex h-10 items-center justify-between border-b border-[var(--slate-border)] bg-[var(--slate-surface-1)] px-3">
-                <button type="button" className="flex min-w-0 items-center gap-2 text-left" onClick={onOpenWorkspace} aria-label="Open workspace switcher">
-                    <span className="text-[11px] font-medium text-[var(--slate-muted)]">cev-sim</span>
-                    <span aria-hidden="true" className="h-3 w-px bg-[var(--slate-border)]" />
-                    <IconLayoutGrid size={15} stroke={1.75} aria-hidden="true" />
-                    <span className="truncate text-[13px] font-semibold">Vehicle Editor</span>
-                </button>
-                <div className="flex flex-wrap items-center gap-2">
-                    <AdvancedSwitch />
-                    {readOnly && <span className="text-[11px] font-medium text-[var(--slate-muted)]">Built-in · read only</span>}
-                    {dirty && <span className="text-[11px] font-medium text-[var(--slate-warning)]">Unsaved</span>}
-                    <span className="hidden max-[899px]:inline-flex"><IconButton label="Open vehicle catalog" onClick={() => setCatalogOpen((open) => !open)}><IconLayoutSidebarLeftCollapse size={15} stroke={1.75} /></IconButton></span>
-                    <span className="hidden max-[1199px]:inline-flex"><IconButton label="Open vehicle inspector" onClick={() => setInspectorOpen((open) => !open)}><IconLayoutSidebarRightCollapse size={15} stroke={1.75} /></IconButton></span>
-                    <Action icon={<IconCheck size={14} stroke={1.75} />} label="Validate" onClick={validate} disabled={!draft || busy || readOnly} />
-                    <Action primary icon={<IconDeviceFloppy size={14} stroke={1.75} />} label="Save" onClick={save} disabled={!draft || !dirty || busy || readOnly} />
-                </div>
-            </header>
-
-            <div className="grid h-[calc(100dvh-2.5rem)] grid-cols-[260px_minmax(0,1fr)_360px] max-[1199px]:grid-cols-[240px_minmax(0,1fr)] max-[899px]:grid-cols-[minmax(0,1fr)]">
-                <aside className={`flex min-h-0 flex-col border-r border-[var(--slate-border)] bg-[var(--slate-surface-1)] max-[899px]:fixed max-[899px]:bottom-3 max-[899px]:left-3 max-[899px]:top-[52px] max-[899px]:z-[var(--layer-drawer)] max-[899px]:w-[min(320px,calc(100vw-24px))] max-[899px]:border max-[899px]:shadow-[var(--slate-shadow-overlay)] ${catalogOpen ? "max-[899px]:flex" : "max-[899px]:hidden"}`}>
-                    <div className="flex items-center gap-2 border-b border-[var(--slate-border)] p-3">
-                        <Action icon={<FaPlus />} label="New" onClick={createNew} disabled={busy} compact />
-                        <Action icon={<IconFileImport size={14} stroke={1.75} />} label="Import" onClick={() => importRef.current?.click()} disabled={busy} compact />
-                        <input ref={importRef} hidden type="file" accept=".json,application/json" onChange={importBundleFile} />
-                    </div>
-                    <div className="mod-scrollbar min-h-0 flex-1 overflow-y-auto p-2">
-                        {catalog.map((entry, index) => (
-                            <div key={entry.id}>
-                                {(index === 0 || catalog[index - 1]?.builtIn !== entry.builtIn) && (
-                                    <p className="px-2 pb-1 pt-2 text-[11px] font-medium text-[var(--slate-muted)]">
-                                        {entry.builtIn ? "Built-in vehicles" : "Custom vehicles"}
-                                    </p>
-                                )}
-                                <button type="button" onClick={() => select(entry.id).finally(() => setCatalogOpen(false))} aria-current={entry.id === selectedId ? "page" : undefined} className={`mb-1 w-full rounded-[var(--radius)] border px-3 py-2.5 text-left transition-[background-color,border-color,color] duration-150 ${entry.id === selectedId ? "border-[var(--slate-border)] bg-[var(--slate-surface-3)]" : "border-transparent text-[var(--slate-fg-2)] hover:bg-[var(--slate-surface-2)]"}`}>
-                                    <span className="flex items-center justify-between gap-2">
-                                        <span className="block min-w-0 truncate text-xs font-semibold">{entry.name}</span>
-                                        {entry.builtIn && <span className="shrink-0 text-[11px] text-[var(--slate-muted)]">Built-in</span>}
-                                    </span>
-                                    <span className="mt-1 block truncate font-mono text-[11px] text-[var(--slate-muted)]">
-                                        {entry.builtIn ? `${entry.id} · read only` : `${entry.id} · r${entry.revision}${entry.modelAsset ? "" : " · no model"}`}
-                                    </span>
-                                </button>
-                            </div>
-                        ))}
-                        {loadState === "empty" && (
-                            <p className="px-2 py-6 text-center text-[11px] leading-relaxed text-zinc-600">No vehicles yet. Create one to start authoring.</p>
-                        )}
-                    </div>
-                    {draft && (
-                        <div className="space-y-2 border-t border-[var(--slate-border)] p-3">
-                            <div className="flex gap-1.5">
-                                <Action compact icon={<IconCopy size={14} stroke={1.75} />} label="Duplicate" onClick={duplicate} disabled={busy} />
-                                {!readOnly && <Action compact icon={<IconDownload size={14} stroke={1.75} />} label="Export" onClick={exportBundle} disabled={busy} />}
-                                {!readOnly && <IconButton label="Delete vehicle" onClick={remove} disabled={busy} className="text-[var(--slate-danger)]"><IconTrash size={14} stroke={1.75} /></IconButton>}
-                            </div>
-                            <p className="truncate font-mono text-[11px] text-[var(--slate-muted)]">{readOnly ? "Duplicate to create an editable copy" : saved?.definitionHash || "Unsaved"}</p>
-                        </div>
-                    )}
-                </aside>
-
-                <section className="relative min-w-0 overflow-hidden bg-[var(--slate-bg)]">
+            <input ref={importRef} hidden type="file" accept=".json,application/json" onChange={importBundleFile} />
+            <VehicleWorkspace
+                layout={layout}
+                onLayoutChange={onLayoutChange}
+                topBar={(
+                    <VehicleTopBar
+                        name={draft?.name}
+                        readOnly={readOnly}
+                        dirty={dirty}
+                        saveState={snapshot.saveState}
+                        saveMessage={snapshot.saveMessage || error}
+                        catalogRef={catalogButtonRef}
+                        onOpenWorkspace={onOpenWorkspace}
+                        onOpenCatalog={() => setPickerOpen(true)}
+                        onValidate={validate}
+                        onSave={save}
+                        validateDisabled={!draft || busy || readOnly}
+                        saveDisabled={!draft || busy || readOnly || (!dirty && !snapshot.stagedResources)}
+                    />
+                )}
+                toolbar={(
+                    <VehicleToolbar
+                        gizmoMode={gizmoMode}
+                        onGizmoMode={setGizmoMode}
+                        canUndo={snapshot.canUndo}
+                        canRedo={snapshot.canRedo}
+                        onUndo={() => controllerRef.current.undo()}
+                        onRedo={() => controllerRef.current.redo()}
+                        readOnly={readOnly}
+                        modelVisible={modelVisible}
+                        zoneVisible={zoneVisible}
+                        onModelVisible={setModelVisible}
+                        onZoneVisible={setZoneVisible}
+                        urdfButtonRef={urdfButtonRef}
+                        onCreateUrdf={() => setUrdfMode("create")}
+                        onApplyUrdf={() => setUrdfMode("apply")}
+                        createUrdfDisabled={busy}
+                        applyUrdfDisabled={busy || !draft || readOnly}
+                        coverageEnabled={coverageEnabled}
+                        coverageDisabled={!draft}
+                        onCoverageEnabled={setCoverageEnabled}
+                    />
+                )}
+                hierarchy={(
+                    <VehicleHierarchy
+                        manifest={draft}
+                        nodes={modelNodes}
+                        hiddenIds={hiddenIds}
+                        selection={selection}
+                        linkedIds={draft ? highlightedLinkIds(draft.wheels, selection, snapshot.wheelLink) : []}
+                        onToggleHidden={toggleRowHidden}
+                        onSelect={(row, nextTab) => {
+                            if (row.kind === "wheel" || row.kind === "sensor") setSelection({ kind: row.kind, id: row.id });
+                            else if (row.kind === "axle") setSelection({ kind: "axle", id: row.id.replace(/^axle-/, "") });
+                            else setSelection({ kind: row.kind === "model-node" ? "model" : row.kind, id: null });
+                            setTab(nextTab);
+                        }}
+                    />
+                )}
+                center={(
+                <section className="absolute inset-0 min-w-0 overflow-hidden bg-[var(--slate-bg)]">
                     {loadState === "loading" && <CenterState title="Loading vehicles…" detail="Reading the server-backed vehicle catalog." />}
                     {loadState === "error" && (
                         <CenterState error title="Could not load vehicles" detail={error || "The vehicle catalog is unavailable."} action={<Action icon={<IconRefresh size={14} stroke={1.75} />} label="Retry" onClick={() => loadCatalog(selectedId)} />} />
@@ -694,33 +1138,39 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                     {draft && (
                         <>
                             <div ref={viewportRef} className="absolute inset-0" />
-                            <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between p-3">
-                                {readOnly ? (
-                                    <div className="rounded-[var(--radius)] border border-[var(--slate-border)] bg-[var(--slate-floating)] px-2.5 py-1.5 text-[11px] font-medium text-[var(--slate-fg-2)]">Read-only preview</div>
-                                ) : (
-                                    <div className="pointer-events-auto rounded-[var(--radius)] border border-[var(--slate-border)] bg-[var(--slate-floating)] p-1">
-                                        <SegmentedControl value={gizmoMode} onValueChange={setGizmoMode} label="Gizmo mode" items={[{ value: "translate", label: "Move" }, { value: "rotate", label: "Rotate" }]} />
-                                    </div>
-                                )}
+                            {coverageEnabled && (
+                                <CoverageReadout
+                                    report={coverageReport}
+                                    shellRadiusM={shellRadiusM}
+                                    onShellRadius={setShellRadiusM}
+                                    shellVisible={shellVisible}
+                                    floorVisible={floorVisible}
+                                    onShellVisible={setShellVisible}
+                                    onFloorVisible={setFloorVisible}
+                                />
+                            )}
+                            <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-end gap-2 p-3">
                                 {selection && (
                                     <div className="pointer-events-auto flex items-center gap-2 rounded-[var(--radius)] border border-[var(--slate-border)] bg-[var(--slate-floating)] px-2.5 py-1.5">
-                                        <span className="text-[14px] font-medium text-[var(--slate-fg-2)]">{selection.kind}{selection.id ? ` · ${selection.id}` : ""}</span>
+                                        <span className="text-[14px] font-medium text-[var(--slate-fg-2)]">{selectionLabel(selection)}</span>
                                         <button type="button" onClick={() => setSelection(null)} className="text-[12px] text-[var(--slate-muted)] hover:text-[var(--slate-fg)]">Deselect</button>
                                     </div>
                                 )}
+                                <AxisAlignGizmo ref={axisGizmoRef} studioRef={studioRef} />
                             </div>
                             {/* <p className="pointer-events-none absolute bottom-3 left-3 rounded-[var(--radius)] border border-[var(--slate-border)] bg-[var(--slate-floating)] px-2 py-1 text-[11px] text-[var(--slate-muted)]">
-                                {readOnly ? "Orbit to inspect · duplicate to edit" : "Click a marker to select · drag gizmo to place"}
+                                {readOnly ? "Orbit to inspect. Duplicate this vehicle to edit it." : "Click a marker to select it. Drag the gizmo to place it."}
                             </p> */}
                         </>
                     )}
                 </section>
-
-                <aside className={`flex min-h-0 flex-col border-l border-[var(--slate-border)] bg-[var(--slate-surface-1)] max-[1199px]:fixed max-[1199px]:bottom-3 max-[1199px]:right-3 max-[1199px]:top-[52px] max-[1199px]:z-[var(--layer-drawer)] max-[1199px]:w-[min(380px,calc(100vw-24px))] max-[1199px]:border max-[1199px]:shadow-[var(--slate-shadow-overlay)] ${inspectorOpen ? "max-[1199px]:flex" : "max-[1199px]:hidden"}`}>
+                )}
+                inspector={(
+                <div className="flex min-h-0 flex-1 flex-col">
                     {draft && (
                         <TabsRoot value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
                             <div className="border-b border-[var(--slate-border)] p-3">
-                                <input className="sf-input mb-2" aria-label="Vehicle name" value={draft.name} disabled={readOnly} onChange={(event) => update(["name"], event.target.value)} />
+                                <input className="sf-input mb-2" aria-label="Vehicle name" value={nameValue} disabled={readOnly} onChange={(event) => update(["name"], event.target.value)} onBlur={() => controllerRef.current.commitField(["name"])} />
                                 <p className="truncate font-mono text-[11px] text-[var(--slate-muted)]">{draft.id}</p>
                             </div>
                             {readOnly && (
@@ -728,14 +1178,19 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                                     This built-in vehicle is defined in code. Inspect its projected values here, or duplicate it to make an editable manifest.
                                 </div>
                             )}
-                            <TabsList aria-label="Vehicle editor sections" className="overflow-x-auto border-b border-[var(--slate-border)] p-1.5 hide-scrollbar">
+                            <TabsList aria-label="Vehicle editor sections" className="w-full flex-wrap border-b border-[var(--slate-border)] p-1.5">
                                 {TABS.map((item) => <TabsTrigger key={item} value={item} className="whitespace-nowrap">{item}</TabsTrigger>)}
                             </TabsList>
 
-                            {(error || rawError || validation?.issues?.length > 0) && (
-                                <StatusMessage className="m-3" tone="danger" title="Vehicle needs attention"><pre className="whitespace-pre-wrap font-sans">{error || rawError || validation.issues.map((issue) => `${issue.path || "manifest"}: ${issue.message}`).join("\n")}</pre></StatusMessage>
-                            )}
-                            {validation?.ok && <StatusMessage className="m-3" tone="success" title="Vehicle manifest is valid." />}
+                            <EditorNotices
+                                error={error}
+                                rawError={rawError}
+                                validation={shownValidation}
+                                urdfReport={urdfReport}
+                                dismissed={dismissedNotices}
+                                onDismiss={(key, token) => setDismissedNotices((current) => ({ ...current, [key]: token }))}
+                                onDismissUrdf={() => setUrdfReport(null)}
+                            />
 
                             <div className="mod-scrollbar min-h-0 flex-1 overflow-y-auto" tabIndex={0} aria-label="Vehicle editor fields">
                                 <fieldset disabled={readOnly}>
@@ -744,10 +1199,11 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                                             {item === "Model" && (
                                                 <ModelTab
                                                     draft={draft}
-                                                    update={update}
+                                                    commitPlacement={commitPlacement}
                                                     busy={busy}
                                                     modelFileRef={modelFileRef}
                                                     uploadModelFile={uploadModelFile}
+                                                    detachModel={() => replaceOrDetachModel("")}
                                                     selection={selection}
                                                     setSelection={setSelection}
                                                     modelVisible={modelVisible}
@@ -755,6 +1211,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                                                     fitTarget={fitTarget}
                                                     setFitTarget={setFitTarget}
                                                     fitModelToSize={fitModelToSize}
+                                                    fieldReset={`${selectedId}:${placementRevision}`}
                                                 />
                                             )}
                                             {item === "LiDAR Zone" && (
@@ -771,6 +1228,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                                             {item === "Sensors" && (
                                                 <SensorsTab
                                                     draft={draft}
+                                                    readManifest={() => controllerRef.current.snapshot.manifest}
                                                     update={update}
                                                     selection={selection}
                                                     setSelection={setSelection}
@@ -780,8 +1238,38 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                                                     bumpRegistry={bumpSensorRegistry}
                                                 />
                                             )}
-                                            {item === "Wheels" && <WheelsTab draft={draft} update={update} selection={selection} setSelection={setSelection} derivedWheelbase={derivedWheelbase} />}
-                                            {item === "Body" && <BodyTab draft={draft} update={update} selection={selection} setSelection={setSelection} fitBodyToModel={fitBodyToModel} />}
+                                            {item === "Wheels" && (
+                                                <WheelsTab
+                                                    draft={draft}
+                                                    update={update}
+                                                    selection={selection}
+                                                    setSelection={setSelection}
+                                                    derivedWheelbase={derivedWheelbase}
+                                                    plantCatalog={plantCatalog}
+                                                    onError={setError}
+                                                    assignButtonRef={assignButtonRef}
+                                                    assignmentReady={draft.version === 3 && canonicalVehicleGlb(draft.model.asset)}
+                                                    onAssign={openAssignment}
+                                                    onDetach={detachBoundWheel}
+                                                    readOnly={readOnly}
+                                                    steeringPreview={steeringPreview}
+                                                    onSteeringPreview={setSteeringPreview}
+                                                    onBeginGesture={beginAxleGesture}
+                                                    onPreviewGesture={previewAxleGesture}
+                                                    onCommitGesture={commitAxleGesture}
+                                                    onCancelGesture={cancelAxleGesture}
+                                                    onGroupAxles={groupAxles}
+                                                    onClassify={classifyWheelRole}
+                                                    onCopyFromPartner={copyWheelPartner}
+                                                    wheelLink={snapshot.wheelLink}
+                                                    onSetWheelLink={setWheelLink}
+                                                    onBeginWheel={beginWheelMotion}
+                                                    onPreviewWheel={previewWheelMotion}
+                                                    onCommitWheel={commitWheelMotion}
+                                                    onCancelWheel={cancelWheelMotion}
+                                                />
+                                            )}
+                                            {item === "Body" && <BodyTab draft={draft} update={update} commitPlacement={commitPlacement} selection={selection} setSelection={setSelection} fitBodyToModel={fitBodyToModel} fieldReset={`${selectedId}:${placementRevision}`} />}
                                             {item === "JSON" && (
                                                 <div className="space-y-2">
                                                     <textarea aria-label="Raw vehicle manifest JSON" spellCheck={false} value={raw} onChange={(event) => applyRaw(event.target.value)} className="sf-input min-h-[480px] resize-y font-mono text-[12px] leading-relaxed" />
@@ -794,22 +1282,76 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                             </div>
                         </TabsRoot>
                     )}
-                </aside>
-            </div>
+                </div>
+                )}
+            />
         </main>
+        {assignment && (
+            <WheelAssignmentDialog
+                key={assignment.token}
+                open={assignment.open !== false}
+                catalog={assignment.catalog}
+                measurement={assignment.measurement}
+                initialRoles={rolesFromManifest(draft)}
+                onOpenChange={(open) => {
+                    if (!open) setAssignment((current) => (current ? { ...current, open: false } : null));
+                }}
+                onAccept={acceptAssignment}
+                onSuppress={suppressAssignment}
+                onCloseAutoFocus={(event) => {
+                    event.preventDefault();
+                    assignButtonRef.current?.focus();
+                }}
+            />
+        )}
+        <PlacementAcceptanceDialog
+            open={Boolean(placementPrompt)}
+            review={placementPrompt?.review}
+            onAccept={acceptPlacement}
+            onReject={rejectPlacement}
+        />
+        <VehiclePickerDialog
+            open={pickerOpen}
+            onOpenChange={setPickerOpen}
+            vehicles={catalog}
+            selectedId={selectedId}
+            dirty={dirty}
+            busy={busy}
+            returnFocusRef={catalogButtonRef}
+            onOpenVehicle={(id) => select(id)}
+            onCreateBlank={createNew}
+            onImportBundle={() => importRef.current?.click()}
+            onDuplicate={duplicateEntry}
+            onRename={renameEntry}
+            onDelete={deleteEntry}
+            onChangeId={changeEntryId}
+            onExportBundle={exportBundle}
+            onExportUrdf={() => exportUrdf()}
+        />
+        <VehicleUrdfReviewDialog
+            open={urdfMode != null}
+            mode={urdfMode === "apply" ? "apply" : "create"}
+            onOpenChange={(open) => { if (!open) setUrdfMode(null); }}
+            busy={busy}
+            defaultId={vehicleIdFromName(draft?.name || "urdf-vehicle")}
+            defaultName={draft?.name || "URDF vehicle"}
+            onCreate={createFromUrdf}
+            onApply={applyReviewedUrdf}
+            returnFocusRef={urdfButtonRef}
+        />
         </AuthoringModeProvider>
     );
 }
 
-function ModelTab({ draft, update, busy, modelFileRef, uploadModelFile, selection, setSelection, modelVisible, setModelVisible, fitTarget, setFitTarget, fitModelToSize }) {
+function ModelTab({ draft, commitPlacement, busy, modelFileRef, uploadModelFile, detachModel, selection, setSelection, modelVisible, setModelVisible, fitTarget, setFitTarget, fitModelToSize, fieldReset = 0 }) {    
     return (
         <div className="space-y-4">
             <Section title="Source model">
                 <div className="flex items-center gap-2">
                     <Action compact icon={<FaUpload />} label={draft.model.asset ? "Replace model" : "Import GLB / GLTF"} onClick={() => modelFileRef.current?.click()} disabled={busy} />
-                    <input ref={modelFileRef} hidden type="file" accept=".glb,.gltf,model/gltf-binary,model/gltf+json" onChange={uploadModelFile} />
+                    <input ref={modelFileRef} hidden type="file" accept=".glb,.gltf,.obj,.stl,.mtl,.png,.jpg,.jpeg,.ktx2,model/gltf-binary,model/gltf+json" multiple onChange={uploadModelFile} />
                     {draft.model.asset && (
-                        <button type="button" onClick={() => update(["model", "asset"], "")} className="text-[11px] text-[var(--slate-danger)]">Detach</button>
+                        <button type="button" onClick={detachModel} className="text-[11px] text-[var(--slate-danger)]">Detach</button>
                     )}
                 </div>
                 <p className="mt-2 font-mono text-[11px] text-[var(--slate-muted)]">{draft.model.asset || "No model; a placeholder body is shown."}</p>
@@ -828,10 +1370,10 @@ function ModelTab({ draft, update, busy, modelFileRef, uploadModelFile, selectio
                     />
                 </div>
                 <Field label="Scale">
-                    <input type="number" min="0.0001" step="0.0001" value={draft.model.scale} onChange={(event) => update(["model", "scale"], Number(event.target.value))} />
+                    <DragNumber min={0.0001} step={0.0001} precision={4} commitOnBlur value={draft.model.scale} onChange={(next) => commitPlacement({ model: { scale: next } }, { coalesce: true, historyKey: "model-scale" })} aria-label="Scale" />
                 </Field>
-                <VectorFields label="Rotation (rad)" value={draft.model.rotation} onChange={(axis, value) => update(["model", "rotation", axis], value)} />
-                <VectorFields label="Offset (m)" value={draft.model.offset} onChange={(axis, value) => update(["model", "offset", axis], value)} scrub />
+                <VectorFields label="Rotation (deg)" degrees commitOnBlur value={draft.model.rotation} onChange={(axis, value) => commitPlacement({ model: { rotation: { [axis]: value } } }, { coalesce: true, historyKey: `model-rotation-${axis}` })} resetToken={fieldReset} />
+                <VectorFields label="Offset (m)" value={draft.model.offset} onChange={(axis, value) => commitPlacement({ model: { offset: { [axis]: value } } }, { coalesce: true, historyKey: `model-offset-${axis}` })} scrub step={0.0001} resetToken={fieldReset} />
             </Section>
 
             <Section title="Fit to real size">
@@ -883,8 +1425,17 @@ function LidarZoneTab({ draft, update, voxelSize, setVoxelSize, generateZone, zo
     );
 }
 
+function isPluginCatalogEntry(entry) {
+    return Boolean(entry?.ownership && entry.ownership !== "builtin" && typeof entry.ownership === "object");
+}
+
+function pluginLockForType(locks, type) {
+    return (locks ?? []).find((entry) => (entry.sensorTypes ?? []).includes(type)) ?? null;
+}
+
 function SensorsTab({
     draft,
+    readManifest = () => draft,
     update,
     selection,
     setSelection,
@@ -893,32 +1444,56 @@ function SensorsTab({
     onError = () => {},
     bumpRegistry = () => {},
 }) {
+    const selectedSensorId = selection?.kind === "sensor" ? selection.id : null;
+    const [openSensorIds, setOpenSensorIds] = useState(() => (selectedSensorId ? [selectedSensorId] : []));
+    const [revealedSensorId, setRevealedSensorId] = useState(selectedSensorId);
+    if (selectedSensorId !== revealedSensorId) {
+        const revealed = revealSelectedSensor(openSensorIds, selectedSensorId, revealedSensorId);
+        setRevealedSensorId(revealed.revealedSensorId);
+        if (revealed.openSensorIds !== openSensorIds) setOpenSensorIds(revealed.openSensorIds);
+    }
     const registry = session?.registry ?? sensorTypeRegistry;
     const catalogEntries = sensorCatalogEntries(catalog, registry);
+    const preparePluginEntry = async (entry) => {
+        if (!isPluginCatalogEntry(entry)) return true;
+        const generation = session?.generation;
+        await session.loadLock({
+            pluginId: entry.ownership.pluginId,
+            version: entry.ownership.version,
+            packageHash: entry.ownership.packageHash,
+            runtimeHash: entry.ownership.runtimeHash,
+            sensorTypes: [entry.type],
+        }, { generation });
+        if (session.generation !== generation) return false;
+        bumpRegistry();
+        return true;
+    };
+    const commitSensors = (next, failure) => {
+        const result = update([], next);
+        if (!result?.ok) {
+            onError(result?.issues?.[0]?.message || failure);
+            return false;
+        }
+        return true;
+    };
     const addEntry = async (entry) => {
+        const generation = session?.generation;
         try {
-            const next = structuredClone(draft);
-            if (entry.ownership && entry.ownership !== "builtin") {
-                await session.loadLock({
-                    pluginId: entry.ownership.pluginId,
-                    version: entry.ownership.version,
-                    packageHash: entry.ownership.packageHash,
-                    runtimeHash: entry.ownership.runtimeHash,
-                    sensorTypes: [entry.type],
-                });
-                bumpRegistry();
-                next.pluginLocks = stampVehiclePluginSensorLock(next.pluginLocks, entry);
-            }
-            const definition = session?.registry.get(entry.type) || getSensorType(entry.type);
+            if (!await preparePluginEntry(entry)) return;
+            const next = structuredClone(readManifest() ?? draft);
+            if (isPluginCatalogEntry(entry)) next.pluginLocks = stampVehiclePluginSensorLock(next.pluginLocks, entry);
+            const activeRegistry = session?.registry ?? registry;
+            const definition = activeRegistry.get(entry.type) || getSensorType(entry.type);
             const id = nextId(next.sensors, definition?.idPrefix || "sensor");
             const sensor = createVehicleSensor(entry.type, {
                 id,
                 pose: { position: { x: 0.3, y: 0.8, z: 0 }, rotation: { x: 0, y: 0, z: 0, order: "XYZ" } },
-            }, next.sensors.length, session?.registry ?? registry);
+            }, next.sensors.length, activeRegistry);
             next.sensors = [...next.sensors, sensor];
-            update([], next);
+            if (!commitSensors(next, "Could not add that sensor.")) return;
             setSelection({ kind: "sensor", id });
         } catch (caught) {
+            if (session?.generation !== generation) return;
             onError(caught.message);
         }
     };
@@ -931,34 +1506,42 @@ function SensorsTab({
                 const change = (parts, value) => update(["sensors", index, ...parts], value);
                 const definition = registry.get(sensor.type) || getSensorType(sensor.type);
                 const plugin = definition?.pluginSensor;
-                const unresolved = Boolean(plugin && session?.unresolvedLocks?.includes(plugin.ownership?.packageHash));
-                const changeType = async (type) => {
+                const lock = pluginLockForType(draft.pluginLocks, sensor.type);
+                const unresolved = Boolean(lock && session?.unresolvedLocks?.includes(lock.packageHash));
+                const selectedEntry = pluginSensorCatalogEntryForType(catalog, sensor.type, lock?.packageHash)
+                    ?? catalogEntries.find((entry) => entry.type === sensor.type)
+                    ?? null;
+                const typeValue = selectedEntry ? sensorCatalogEntryKey(selectedEntry) : sensor.type;
+                const changeType = async (key) => {
+                    const generation = session?.generation;
                     try {
-                        const entry = pluginSensorCatalogEntryForType(catalog, type);
-                        const next = structuredClone(draft);
-                        if (entry?.ownership && entry.ownership !== "builtin") {
-                            await session.loadLock({
-                                pluginId: entry.ownership.pluginId,
-                                version: entry.ownership.version,
-                                packageHash: entry.ownership.packageHash,
-                                runtimeHash: entry.ownership.runtimeHash,
-                                sensorTypes: [entry.type],
-                            });
-                            bumpRegistry();
-                            next.pluginLocks = stampVehiclePluginSensorLock(next.pluginLocks, entry);
-                        }
-                        next.sensors[index] = changeVehicleSensorType(sensor, type, session?.registry ?? registry);
-                        update([], next);
+                        const entry = catalogEntries.find((item) => sensorCatalogEntryKey(item) === key) ?? null;
+                        const type = entry?.type ?? key;
+                        if (!await preparePluginEntry(entry)) return;
+                        const source = readManifest() ?? draft;
+                        const current = source.sensors[index];
+                        if (!current) return;
+                        const next = structuredClone(source);
+                        if (isPluginCatalogEntry(entry)) next.pluginLocks = stampVehiclePluginSensorLock(next.pluginLocks, entry);
+                        next.sensors[index] = changeVehicleSensorType(current, type, session?.registry ?? registry);
+                        commitSensors(next, "Could not change that sensor.");
                     } catch (caught) {
+                        if (session?.generation !== generation) return;
                         onError(caught.message);
                     }
                 };
                 return (
-                    <div key={`sensor-${index}`} className={`rounded-[var(--radius)] border p-3 transition-[background-color,border-color] ${selected ? "border-[var(--slate-border)] bg-[var(--slate-surface-3)]" : "border-[var(--slate-border-60)] bg-[var(--slate-surface-1)]"}`}>
-                        <button type="button" onClick={() => setSelection(selected ? null : { kind: "sensor", id: sensor.id })} className="mb-2 flex w-full items-center justify-between text-left">
-                            <span className="text-[11px] font-semibold">{sensor.id}</span>
-                            <span className="text-[11px] font-medium text-[var(--slate-muted)]">{definition?.label || sensor.type}</span>
-                        </button>
+                    <Disclosure
+                        key={sensor.id}
+                        className={selected ? "rounded-[var(--radius)] bg-[var(--slate-surface-3)]" : undefined}
+                        label={sensor.id}
+                        detail={definition?.label || sensor.type}
+                        open={openSensorIds.includes(sensor.id)}
+                        onOpenChange={(open) => {
+                            setOpenSensorIds((current) => setSensorDisclosureOpen(current, sensor.id, open));
+                            if (open) setSelection({ kind: "sensor", id: sensor.id });
+                        }}
+                    >
                         <div className="grid grid-cols-2 gap-2">
                             <Field label="Stable ID">
                                 <input
@@ -971,13 +1554,16 @@ function SensorsTab({
                                 />
                             </Field>
                             <Field label="Type">
-                                <select value={sensor.type} onChange={(event) => changeType(event.target.value)}>
-                                    {catalogEntries.map((entry) => (
-                                        <option key={`${entry.type}:${entry.ownership?.packageHash || "builtin"}`} value={entry.type}>
-                                            {entry.label || entry.type}
-                                        </option>
-                                    ))}
-                                    {!definition && <option value={sensor.type}>{sensor.type} (unsupported)</option>}
+                                <select value={typeValue} onChange={(event) => changeType(event.target.value)}>
+                                    {catalogEntries.map((entry) => {
+                                        const key = sensorCatalogEntryKey(entry);
+                                        return (
+                                            <option key={key} value={key}>
+                                                {sensorCatalogEntryChoiceLabel(entry, catalogEntries)}
+                                            </option>
+                                        );
+                                    })}
+                                    {!selectedEntry && <option value={sensor.type}>{sensor.type} (unsupported)</option>}
                                 </select>
                             </Field>
                         </div>
@@ -988,7 +1574,7 @@ function SensorsTab({
                             ))}
                         </div>
                         <AdvancedFields label="Sensor orientation and calibration">
-                            <VectorFields label="Rotation (rad)" value={sensor.pose.rotation} onChange={(axis, value) => change(["pose", "rotation", axis], value)} />
+                            <VectorFields label="Rotation (deg)" degrees value={sensor.pose.rotation} onChange={(axis, value) => change(["pose", "rotation", axis], value)} />
                             <div className="mt-3 grid grid-cols-2 gap-2">
                                 {definition?.vehicle.fields.filter((field) => field.advanced).map((field) => (
                                     <VehicleSensorDefinitionField key={field.path.join(".")} field={field} sensor={sensor} change={change} />
@@ -1007,9 +1593,17 @@ function SensorsTab({
                                 onCommit={(next) => update(["sensors", index], next)}
                             />
                         )}
+                        {unresolved && !plugin && (
+                            <p className="mt-3 text-[11px] text-[var(--slate-warning)]" role="status">
+                                Locked package is missing from CAS. Restore the exact package to edit or save.
+                            </p>
+                        )}
                         {!definition && <p className="mt-3 text-[11px] text-[var(--slate-warning)]">This sensor type is not registered. Its data is preserved, but this vehicle cannot run until a supported type is selected.</p>}
-                        <button type="button" onClick={() => update(["sensors"], draft.sensors.filter((_, candidate) => candidate !== index))} className="mt-3 text-[11px] text-[var(--slate-danger)]">Remove sensor</button>
-                    </div>
+                        <button type="button" onClick={() => {
+                            const result = update(["sensors"], draft.sensors.filter((_, candidate) => candidate !== index));
+                            if (result?.ok === false) onError(result.issues?.[0]?.message || "Could not remove that sensor.");
+                        }} className="mt-3 text-[11px] text-[var(--slate-danger)]">Remove sensor</button>
+                    </Disclosure>
                 );
             })}
         </div>
@@ -1035,9 +1629,109 @@ function VehicleSensorDefinitionField({ field, sensor, change }) {
     );
 }
 
-function WheelsTab({ draft, update, selection, setSelection, derivedWheelbase }) {
+function WheelsTab({
+    draft,
+    update,
+    selection,
+    setSelection,
+    derivedWheelbase,
+    plantCatalog = [],
+    onError = () => {},
+    assignButtonRef,
+    assignmentReady = false,
+    onAssign,
+    onDetach,
+    readOnly = false,
+    steeringPreview = 0,
+    onSteeringPreview,
+    onBeginGesture,
+    onPreviewGesture,
+    onCommitGesture,
+    onCancelGesture,
+    onGroupAxles,
+    onClassify,
+    onCopyFromPartner,
+    wheelLink = null,
+    onSetWheelLink,
+    onBeginWheel,
+    onPreviewWheel,
+    onCommitWheel,
+    onCancelWheel,
+}) {
+    const [wheelsOpen, setWheelsOpen] = useState(() => readVehicleEditorPreference(VEHICLE_EDITOR_PREFERENCE_KEYS.WHEELS_PANEL, null)?.open === true);
+    const [openRows, setOpenRows] = useState(() => {
+        const stored = readVehicleEditorPreference(VEHICLE_EDITOR_PREFERENCE_KEYS.WHEELS_PANEL, null);
+        return Array.isArray(stored?.rows) ? stored.rows : [];
+    });
+    useEffect(() => {
+        writeVehicleEditorPreference(VEHICLE_EDITOR_PREFERENCE_KEYS.WHEELS_PANEL, { open: wheelsOpen, rows: openRows });
+    }, [wheelsOpen, openRows]);
+    const pairComplete = (axle) => {
+        const members = draft.wheels.filter((wheel) => wheel.axle === axle);
+        return members.length === 2
+            && members.some((wheel) => wheel.side === "left")
+            && members.some((wheel) => wheel.side === "right");
+    };
+    let selectedRowId = null;
+    if (selection?.kind === "axle" && pairComplete(selection.id)) selectedRowId = `axle-${selection.id}`;
+    if (selection?.kind === "wheel" && selection.id) {
+        const wheel = draft.wheels.find((entry) => entry.id === selection.id);
+        if (wheel) selectedRowId = pairComplete(wheel.axle) ? `axle-${wheel.axle}` : `wheel-${wheel.id}`;
+    }
+    const shownWheelsOpen = wheelsOpen || Boolean(selectedRowId);
+    const shownRows = selectedRowId && !openRows.includes(selectedRowId) ? [...openRows, selectedRowId] : openRows;
+    useEffect(() => {
+        if (!selectedRowId) return undefined;
+        let cancelled = false;
+        const handle = requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                if (!cancelled) document.querySelector(`[data-wheel-row="${selectedRowId}"]`)?.scrollIntoView({ block: "nearest" });
+            });
+        });
+        return () => {
+            cancelled = true;
+            cancelAnimationFrame(handle);
+        };
+    }, [selectedRowId]);
+    const selectDynamics = (value) => {
+        const next = structuredClone(draft);
+        try {
+        if (!value) {
+            const currentPlant = draft.dynamics?.plant;
+            delete next.dynamics;
+            next.pluginLocks = (next.pluginLocks ?? []).flatMap((lock) => {
+                const plants = (lock.plants ?? []).filter((plantId) => plantId !== currentPlant);
+                const record = { ...lock };
+                if (plants.length > 0) record.plants = plants;
+                else delete record.plants;
+                if ((record.sensorTypes?.length ?? 0) === 0 && plants.length === 0) return [];
+                return [record];
+            });
+            if (next.pluginLocks.length === 0) delete next.pluginLocks;
+        } else {
+            const entry = plantCatalog.find((plant) => `${plant.packageHash}:${plant.id}` === value);
+            if (!entry) return;
+            next.dynamics = { plant: entry.id };
+            next.pluginLocks = stampVehiclePluginPlantLock(next.pluginLocks, entry);
+        }
+            update([], next);
+        } catch (caught) {
+            onError(caught.message);
+        }
+    };
+    const dynamicsValue = draft.dynamics?.plant
+        ? (plantCatalog.find((plant) => plant.id === draft.dynamics.plant)?.packageHash
+            ? `${plantCatalog.find((plant) => plant.id === draft.dynamics.plant).packageHash}:${draft.dynamics.plant}`
+            : "")
+        : "";
     const add = (mirrored) => {
-        const base = { position: { x: 0.75, y: 0.25, z: 0.55 }, radius: 0.25, width: 0.15, steerable: false };
+        const count = draft.wheels.length;
+        const base = {
+            position: { x: round3(0.75 - count * 0.2), y: 0.25, z: round3(0.55 + (count % 4) * 0.08) },
+            radius: 0.25,
+            width: 0.15,
+            steerable: false,
+        };
         const added = mirrored
             ? [
                 { ...base, id: nextId(draft.wheels, "wheel"), position: { ...base.position } },
@@ -1046,57 +1740,133 @@ function WheelsTab({ draft, update, selection, setSelection, derivedWheelbase })
             : [{ ...base, id: nextId(draft.wheels, "wheel") }];
         update(["wheels"], [...draft.wheels, ...added]);
         setSelection({ kind: "wheel", id: added[0].id });
+        if (mirrored) onSetWheelLink?.({ ids: [added[0].id, added[1].id], mode: "mirror" });
+    };
+    const axles = draft.version === 3 ? standardAxleCards(draft.wheels) : [];
+    const listedWheels = draft.wheels.map((wheel, index) => ({ wheel, index }));
+    const completeWheelbase = draft.version === 3 ? deriveCompleteWheelbase(draft.wheels) : null;
+    const groupable = ["front", "rear"].filter((axle) => {
+        const left = draft.wheels.find((wheel) => wheel.id === `${axle}-left` && !wheel.axle);
+        const right = draft.wheels.find((wheel) => wheel.id === `${axle}-right` && !wheel.axle);
+        return Boolean(left && right);
+    });
+    const wheelSummary = (wheel) => {
+        const tags = [wheel.steerable ? "steers" : "fixed"];
+        if (!wheel.axle) tags.unshift("unclassified");
+        if (wheel.visual?.kind === "model-node") tags.push("bound");
+        return `r ${Number(wheel.radius).toFixed(2)} · ${tags.join(" · ")}`;
     };
     return (
-        <div className="space-y-3">
-            <div className="flex gap-1.5">
+        <div className="space-y-3" data-vehicle-wheels>
+            <VehiclePlanView
+                draft={draft}
+                steeringPreview={steeringPreview}
+                onSteeringPreview={onSteeringPreview}
+                readOnly={readOnly}
+                onBeginGesture={onBeginGesture}
+                onPreviewGesture={onPreviewGesture}
+                onCommitGesture={onCommitGesture}
+                onCancelGesture={onCancelGesture}
+            />
+            {groupable.length > 0 && !readOnly && (
+                <p className="text-[11px] leading-relaxed text-[var(--slate-muted)]">
+                    Wheels are not grouped into axles.{" "}
+                    <button type="button" className="text-[var(--slate-fg-2)]" onClick={onGroupAxles}>Group as standard axles</button>
+                </p>
+            )}
+            <div className="flex flex-wrap gap-1.5">
                 <Action compact icon={<FaPlus />} label="Add wheel" onClick={() => add(false)} />
                 <Action compact icon={<FaPlus />} label="Add mirrored pair" onClick={() => add(true)} />
+                <Button
+                    ref={assignButtonRef}
+                    size="compact"
+                    disabled={!assignmentReady}
+                    tooltip={assignmentReady ? undefined : "Needs a version 3 vehicle and a canonical model."}
+                    onClick={onAssign}
+                >
+                    Assign wheels
+                </Button>
             </div>
-            {draft.wheels.map((wheel, index) => {
-                const selected = selection?.kind === "wheel" && selection.id === wheel.id;
-                const change = (parts, value) => update(["wheels", index, ...parts], value);
-                return (
-                    <div key={`wheel-${index}`} className={`rounded-[var(--radius)] border p-3 transition-[background-color,border-color] ${selected ? "border-[var(--slate-border)] bg-[var(--slate-surface-3)]" : "border-[var(--slate-border-60)] bg-[var(--slate-surface-1)]"}`}>
-                        <button type="button" onClick={() => setSelection(selected ? null : { kind: "wheel", id: wheel.id })} className="mb-2 flex w-full items-center justify-between text-left">
-                            <span className="text-[11px] font-semibold">{wheel.id}</span>
-                            {wheel.steerable && <span className="text-[11px] font-medium text-[var(--slate-muted)]">Steerable</span>}
-                        </button>
-                        <div className="grid grid-cols-2 gap-2">
-                            <Field label="Stable ID">
-                                <input
-                                    value={wheel.id}
-                                    onChange={(event) => {
-                                        const nextId = event.target.value;
-                                        change(["id"], nextId);
-                                        if (selected) setSelection({ kind: "wheel", id: nextId });
-                                    }}
+            {selection?.kind === "wheel" && (
+                <WheelLinkControls
+                    draft={draft}
+                    wheelId={selection.id}
+                    wheelLink={wheelLink}
+                    onSetWheelLink={onSetWheelLink}
+                />
+            )}
+            <Disclosure
+                label="Wheels and axles"
+                detail={`${draft.wheels.length} ${draft.wheels.length === 1 ? "wheel" : "wheels"}${axles.length ? ` · ${axles.length} ${axles.length === 1 ? "axle" : "axles"}` : ""}`}
+                open={shownWheelsOpen}
+                onOpenChange={setWheelsOpen}
+            >
+                <AccordionRoot value={shownRows} onValueChange={setOpenRows}>
+                    {axles.map((axle) => {
+                        const summary = axleSummary(axle);
+                        return (
+                            <AccordionItem key={axle.id} value={`axle-${axle.id}`} label={summary.title} detail={summary.detail}>
+                                <AxleFields
+                                    axle={axle}
+                                    onBeginGesture={onBeginGesture}
+                                    onPreviewGesture={onPreviewGesture}
+                                    onCommitGesture={onCommitGesture}
+                                    onCancelGesture={onCancelGesture}
+                                    onDetach={onDetach}
                                 />
-                            </Field>
-                            <Toggle label="Steerable" value={wheel.steerable} onChange={(value) => change(["steerable"], value)} />
-                            <Field label="Radius (m)"><input type="number" min="0.01" step="0.01" value={wheel.radius} onChange={(event) => change(["radius"], Number(event.target.value))} /></Field>
-                        </div>
-                        <VectorFields label="Position (m)" value={wheel.position} onChange={(axis, value) => change(["position", axis], value)} scrub />
-                        <AdvancedFields label="Wheel geometry">
-                            <div className="grid grid-cols-2 gap-2">
-                                <Field label="Width (m)"><input type="number" min="0.01" step="0.01" value={wheel.width} onChange={(event) => change(["width"], Number(event.target.value))} /></Field>
-                            </div>
-                        </AdvancedFields>
-                        <div className="mt-3 flex items-center justify-between">
-                            <button type="button" onClick={() => update(["wheels", index, "position", "z"], -wheel.position.z)} className="text-[11px] text-[var(--slate-fg-2)]">Mirror across X</button>
-                            <button type="button" onClick={() => update(["wheels"], draft.wheels.filter((_, candidate) => candidate !== index))} className="text-[11px] text-[var(--slate-danger)]">Remove</button>
-                        </div>
-                    </div>
-                );
-            })}
-            <Section title="Actuator limits">
+                            </AccordionItem>
+                        );
+                    })}
+                    {listedWheels.map(({ wheel, index }) => (
+                        <AccordionItem key={wheel.id} value={`wheel-${wheel.id}`} label={wheel.id} detail={wheelSummary(wheel)}>
+                            <WheelCard
+                                draft={draft}
+                                wheel={wheel}
+                                index={index}
+                                wheelLink={wheelLink}
+                                selected={selection?.kind === "wheel" && selection.id === wheel.id}
+                                update={update}
+                                setSelection={setSelection}
+                                onDetach={onDetach}
+                                onClassify={onClassify}
+                                onCopyFromPartner={onCopyFromPartner}
+                                onBeginWheel={onBeginWheel}
+                                onPreviewWheel={onPreviewWheel}
+                                onCommitWheel={onCommitWheel}
+                                onCancelWheel={onCancelWheel}
+                            />
+                        </AccordionItem>
+                    ))}
+                </AccordionRoot>
+            </Disclosure>
+            <Section title="Dynamics">
+                <Field label="Plant">
+                    <select aria-label="Dynamics" value={dynamicsValue} onChange={(event) => selectDynamics(event.target.value)}>
+                        <option value="">Built-in bicycle</option>
+                        {plantCatalog.map((plant) => (
+                            <option key={`${plant.packageHash}:${plant.id}`} value={`${plant.packageHash}:${plant.id}`}>{plant.id}</option>
+                        ))}
+                    </select>
+                </Field>
+                {draft.dynamics?.plant ? <p className="mt-2 text-[11px] text-[var(--slate-muted)]">Plugin dynamics run only in a resolved run.</p> : null}
+            </Section>
+            <Section title="Drive and steering">
                 <div className="grid grid-cols-2 gap-2">
-                    <Field label="Wheelbase (m)"><input type="number" min="0.01" step="0.01" value={draft.kinematics.wheelbase} onChange={(event) => update(["kinematics", "wheelbase"], Number(event.target.value))} /></Field>
-                    <Field label="Max steering (rad)"><input type="number" min="0.01" step="0.01" value={draft.kinematics.maxSteeringAngle} onChange={(event) => update(["kinematics", "maxSteeringAngle"], Number(event.target.value))} /></Field>
-                    <Field label="Max speed (m/s)"><input type="number" min="0.01" step="0.1" value={draft.kinematics.maxSpeed ?? 15} onChange={(event) => update(["kinematics", "maxSpeed"], Number(event.target.value))} /></Field>
-                    <Field label="Max steer rate (rad/s)"><input type="number" min="0.01" step="0.1" value={draft.kinematics.maxSteeringRate ?? 1.2} onChange={(event) => update(["kinematics", "maxSteeringRate"], Number(event.target.value))} /></Field>
+                    {completeWheelbase != null ? (
+                        <Field label="Wheelbase (m)">
+                            <input readOnly aria-label="Wheelbase (m)" value={draft.kinematics.wheelbase} />
+                        </Field>
+                    ) : (
+                        <LimitNumber label="Wheelbase (m)" min={0.01} step={0.01} value={draft.kinematics.wheelbase} onChange={(next) => update(["kinematics", "wheelbase"], next)} />
+                    )}
+                    <LimitNumber label="Max steering (deg)" min={0.5} step={0.5} precision={2} value={radToDeg(draft.kinematics.maxSteeringAngle)} onChange={(degrees) => update(["kinematics", "maxSteeringAngle"], degToRad(degrees))} />
+                    <LimitNumber label="Max speed (m/s)" min={0.01} step={0.1} value={draft.kinematics.maxSpeed ?? 15} onChange={(next) => update(["kinematics", "maxSpeed"], next)} />
+                    <LimitNumber label="Max steer rate (rad/s)" min={0.01} step={0.1} value={draft.kinematics.maxSteeringRate ?? 1.2} onChange={(next) => update(["kinematics", "maxSteeringRate"], next)} />
                 </div>
-                {derivedWheelbase !== null && (
+                {completeWheelbase != null && (
+                    <p className="mt-2 text-[11px] text-[var(--slate-muted)]">Derived from the standard axles.</p>
+                )}
+                {completeWheelbase == null && derivedWheelbase !== null && (
                     <div className="mt-2 flex items-center justify-between">
                         <p className="text-[11px] text-[var(--slate-muted)]">Derived from wheel placement: <span className="font-mono text-[var(--slate-fg-2)]">{derivedWheelbase.toFixed(3)} m</span></p>
                         <button type="button" onClick={() => update(["kinematics", "wheelbase"], round3(derivedWheelbase))} className="text-[11px] text-[var(--slate-fg-2)]">Use derived</button>
@@ -1105,17 +1875,150 @@ function WheelsTab({ draft, update, selection, setSelection, derivedWheelbase })
             </Section>
             <AdvancedFields label="Acceleration, jerk, and delay">
                 <div className="grid grid-cols-2 gap-2">
-                    <Field label="Max accel (m/s²)"><input type="number" min="0.01" step="0.1" value={draft.kinematics.maxAcceleration ?? 3} onChange={(event) => update(["kinematics", "maxAcceleration"], Number(event.target.value))} /></Field>
-                    <Field label="Max decel (m/s²)"><input type="number" min="0.01" step="0.1" value={draft.kinematics.maxDeceleration ?? 5} onChange={(event) => update(["kinematics", "maxDeceleration"], Number(event.target.value))} /></Field>
-                    <Field label="Max jerk (m/s³)"><input type="number" min="0.01" step="0.1" value={draft.kinematics.maxJerk ?? 10} onChange={(event) => update(["kinematics", "maxJerk"], Number(event.target.value))} /></Field>
-                    <Field label="Response delay (ns)"><input type="number" min="0" step="1000000" value={draft.kinematics.responseDelayNs ?? 0} onChange={(event) => update(["kinematics", "responseDelayNs"], Number(event.target.value))} /></Field>
+                    <LimitNumber label="Max accel (m/s²)" min={0.01} step={0.1} value={draft.kinematics.maxAcceleration ?? 3} onChange={(next) => update(["kinematics", "maxAcceleration"], next)} />
+                    <LimitNumber label="Max decel (m/s²)" min={0.01} step={0.1} value={draft.kinematics.maxDeceleration ?? 5} onChange={(next) => update(["kinematics", "maxDeceleration"], next)} />
+                    <LimitNumber label="Max jerk (m/s³)" min={0.01} step={0.1} value={draft.kinematics.maxJerk ?? 10} onChange={(next) => update(["kinematics", "maxJerk"], next)} />
+                    <LimitNumber label="Response delay (ns)" min={0} step={1000000} precision={0} value={draft.kinematics.responseDelayNs ?? 0} onChange={(next) => update(["kinematics", "responseDelayNs"], next)} />
                 </div>
             </AdvancedFields>
         </div>
     );
 }
 
-function BodyTab({ draft, update, selection, setSelection, fitBodyToModel }) {
+function WheelLinkControls({ draft, wheelId, wheelLink, onSetWheelLink }) {
+    const wheel = draft.wheels.find((entry) => entry.id === wheelId);
+    if (!wheel) return null;
+    const partner = standardPartner(draft.wheels, wheel.id);
+    if (partner) {
+        const locked = isBoundWheel(wheel) || isBoundWheel(partner);
+        return (
+            <p data-wheel-link className="text-[11px] leading-relaxed text-[var(--slate-muted)]">
+                {`Mirrored with ${partner.id}.`}
+                {locked ? " Detach the model-bound wheels before moving them." : ""}
+            </p>
+        );
+    }
+    if (isBoundWheel(wheel) || wheel.axle || wheel.side) return null;
+    const candidates = draft.wheels.filter((entry) => entry.id !== wheel.id && !isBoundWheel(entry) && !entry.axle && !entry.side);
+    const active = wheelLink?.ids?.includes(wheel.id) ? wheelLink : null;
+    const partnerId = active?.ids.find((id) => id !== wheel.id) ?? "";
+    const choose = (nextId) => {
+        if (!nextId) {
+            onSetWheelLink?.(null);
+            return;
+        }
+        onSetWheelLink?.({ ids: [wheel.id, nextId], mode: active?.mode ?? "mirror" });
+    };
+    return (
+        <div data-wheel-link className="space-y-2">
+            <Field label="Link with">
+                <select aria-label="Link with" value={partnerId} onChange={(event) => choose(event.target.value)}>
+                    <option value="">Choose a wheel</option>
+                    {candidates.map((entry) => <option key={entry.id} value={entry.id}>{entry.id}</option>)}
+                </select>
+            </Field>
+            {active && (
+                <>
+                    <SegmentedControl
+                        label="Wheel link motion"
+                        value={active.mode}
+                        onValueChange={(mode) => onSetWheelLink?.({ ids: [...active.ids], mode })}
+                        items={[
+                            { value: "together", label: "Together" },
+                            { value: "mirror", label: "Mirror" },
+                        ]}
+                    />
+                    <button type="button" onClick={() => onSetWheelLink?.(null)} className="text-[11px] text-[var(--slate-fg-2)]">Unlink</button>
+                </>
+            )}
+        </div>
+    );
+}
+
+function WheelCard({
+    draft,
+    wheel,
+    index,
+    wheelLink = null,
+    selected,
+    update,
+    setSelection,
+    onDetach,
+    onClassify,
+    onCopyFromPartner,
+    onBeginWheel,
+    onPreviewWheel,
+    onCommitWheel,
+    onCancelWheel,
+}) {
+    const bound = wheel.visual?.kind === "model-node";
+    const linked = Boolean(resolveMotionLink(draft.wheels, wheel.id, wheelLink));
+    const change = (parts, value) => update(["wheels", index, ...parts], value);
+    const role = wheel.axle && wheel.side ? `${wheel.axle}:${wheel.side}` : "";
+    const mirrorSource = wheelPartner(draft.wheels, wheel, "mirror");
+    const alignSource = wheelPartner(draft.wheels, wheel, "align");
+    return (
+        <div className={selected ? "rounded-[var(--radius)] bg-[var(--slate-surface-3)] p-1" : "p-1"}>
+            <div className="grid grid-cols-2 gap-2">
+                <Field label="Stable ID">
+                    <input
+                        value={wheel.id}
+                        onChange={(event) => {
+                            const nextWheelId = event.target.value;
+                            change(["id"], nextWheelId);
+                            if (selected) setSelection({ kind: "wheel", id: nextWheelId });
+                        }}
+                    />
+                </Field>
+                <Field label="Axle role">
+                    <select aria-label={`${wheel.id} axle role`} value={role} disabled={bound} onChange={(event) => onClassify?.(wheel.id, event.target.value)}>
+                        {WHEEL_ROLES.map((entry) => <option key={entry.value || "none"} value={entry.value}>{entry.label}</option>)}
+                    </select>
+                </Field>
+                <Toggle label="Steerable" value={wheel.steerable} disabled={bound} onChange={(value) => change(["steerable"], value)} />
+                <Field label="Radius (m)">
+                    <DragNumber aria-label={`${wheel.id} radius (m)`} min={0.01} step={0.01} value={wheel.radius} disabled={bound} onChange={(next) => change(["radius"], next)} />
+                </Field>
+                <Field label="Width (m)">
+                    <DragNumber aria-label={`${wheel.id} width (m)`} min={0.01} step={0.01} value={wheel.width} disabled={bound} onChange={(next) => change(["width"], next)} />
+                </Field>
+            </div>
+            {bound && <p className="mt-2 text-[11px] text-[var(--slate-muted)]">Bound to model node {wheel.visual.nodeIndex}. Detach it before editing this geometry.</p>}
+            {role && !mirrorSource && <p className="mt-2 text-[11px] text-[var(--slate-muted)]">Assign the other side to complete this axle.</p>}
+            <VectorFields
+                label="Position (m)"
+                value={wheel.position}
+                disabled={bound}
+                onChange={(axis, value) => {
+                    if (!linked) {
+                        change(["position", axis], value);
+                        return;
+                    }
+                    onPreviewWheel?.(wheel.id, { ...wheel.position, [axis]: value });
+                }}
+                onGestureStart={linked ? () => onBeginWheel?.(wheel.id) : undefined}
+                onGestureEnd={linked ? () => onCommitWheel?.() : undefined}
+                onGestureCancel={linked ? () => onCancelWheel?.() : undefined}
+            />
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap gap-3">
+                    {bound && <button type="button" onClick={() => onDetach(wheel.id)} className="text-[11px] text-[var(--slate-fg-2)]">Detach</button>}
+                    {mirrorSource && (
+                        <button type="button" disabled={bound} onClick={() => onCopyFromPartner?.(wheel.id, "mirror")} className="text-[11px] text-[var(--slate-fg-2)] disabled:opacity-40">Mirror complementary</button>
+                    )}
+                    {alignSource && (
+                        <button type="button" disabled={bound} onClick={() => onCopyFromPartner?.(wheel.id, "align")} className="text-[11px] text-[var(--slate-fg-2)] disabled:opacity-40">
+                            {alignSource.axle === "front" ? "Align with front" : "Align with rear"}
+                        </button>
+                    )}
+                </div>
+                {!bound && <button type="button" onClick={() => update(["wheels"], draft.wheels.filter((_, candidate) => candidate !== index))} className="text-[11px] text-[var(--slate-danger)]">Remove</button>}
+            </div>
+        </div>
+    );
+}
+
+function BodyTab({ draft, update, commitPlacement, selection, setSelection, fitBodyToModel, fieldReset = 0 }) {
     const bodySelected = selection?.kind === "body";
     const egoSelected = selection?.kind === "ego";
     return (
@@ -1126,15 +2029,15 @@ function BodyTab({ draft, update, selection, setSelection, fitBodyToModel }) {
                     <Action compact icon={<FaArrowsAlt />} label={bodySelected ? "Gizmo active" : "Move center with gizmo"} onClick={() => setSelection(bodySelected ? null : { kind: "body", id: null })} />
                     <Action compact icon={<FaCube />} label="Fit to model" onClick={fitBodyToModel} disabled={!draft.model.asset} />
                 </div>
-                <VectorFields label="Size (m)" value={draft.boundingBox.size} onChange={(axis, value) => update(["boundingBox", "size", axis], value)} scrub min={0.01} />
-                <VectorFields label="Center (m)" value={draft.boundingBox.center} onChange={(axis, value) => update(["boundingBox", "center", axis], value)} scrub />
+                <VectorFields label="Size (m)" value={draft.boundingBox.size} onChange={(axis, value) => commitPlacement({ boundingBox: { size: { [axis]: value } } }, { coalesce: true, historyKey: `body-size-${axis}` })} scrub min={0.01} resetToken={fieldReset} />
+                <VectorFields label="Center (m)" value={draft.boundingBox.center} onChange={(axis, value) => commitPlacement({ boundingBox: { center: { [axis]: value } } }, { coalesce: true, historyKey: `body-center-${axis}` })} scrub resetToken={fieldReset} />
             </Section>
             <Section title="Ego center">
                 <p className="text-[11px] leading-relaxed text-[var(--slate-muted)]">The reference point cameras follow and tooling focuses on, marked by the green axes.</p>
                 <div className="mt-2">
                     <Action compact icon={<FaArrowsAlt />} label={egoSelected ? "Gizmo active" : "Move with gizmo"} onClick={() => setSelection(egoSelected ? null : { kind: "ego", id: null })} />
                 </div>
-                <VectorFields label="Position (m)" value={draft.egoCenter} onChange={(axis, value) => update(["egoCenter", axis], value)} scrub />
+                <VectorFields label="Position (m)" value={draft.egoCenter} onChange={(axis, value) => update(["egoCenter", axis], value)} scrub resetToken={fieldReset} />
             </Section>
         </div>
     );
@@ -1159,24 +2062,53 @@ function Stat({ label, value }) {
     return <div className="border-l border-[var(--slate-border)] px-3 py-2 first:border-l-0"><p className="text-[11px] text-[var(--slate-muted)]">{label}</p><p className="mt-0.5 font-mono text-sm font-semibold text-[var(--slate-fg)]">{value.toLocaleString()}</p></div>;
 }
 
-function VectorFields({ label, value, onChange, scrub = false, min, step = 0.01 }) {
+function stepPrecision(step) {
+    const text = String(step);
+    const index = text.indexOf(".");
+    const places = index < 0 ? 0 : text.length - index - 1;
+    return Math.max(3, places);
+}
+
+function VectorFields({
+    label,
+    value,
+    onChange,
+    min,
+    step = 0.01,
+    resetToken = 0,
+    degrees = false,
+    commitOnBlur = false,
+    disabled = false,
+    onGestureStart,
+    onGestureEnd,
+    onGestureCancel,
+}) {
+    const shown = (axis) => {
+        const raw = value?.[axis] ?? 0;
+        return degrees ? radToDeg(raw) : raw;
+    };
+    const emit = (axis, next) => onChange(axis, degrees ? degToRad(next) : next);
+    const displayStep = degrees ? 0.1 : step;
     return (
         <div className="mt-3">
             <p className="mb-1.5 text-[13px] font-medium text-[var(--slate-fg-2)]">{label}</p>
             <div className="grid grid-cols-3 gap-2">
                 {["x", "y", "z"].map((axis) => (
                     <Field key={axis} label={axis.toUpperCase()}>
-                        {scrub ? (
-                            <DragNumber
-                                value={value?.[axis] ?? 0}
-                                onChange={(next) => onChange(axis, next)}
-                                min={min}
-                                step={step}
-                                aria-label={`${label} ${axis.toUpperCase()}`}
-                            />
-                        ) : (
-                            <input type="number" step={step} min={min} value={value?.[axis] ?? 0} onChange={(event) => onChange(axis, Number(event.target.value))} />
-                        )}
+                        <DragNumber
+                            key={resetToken}
+                            value={shown(axis)}
+                            onChange={(next) => emit(axis, next)}
+                            onGestureStart={onGestureStart}
+                            onGestureEnd={onGestureEnd}
+                            onGestureCancel={onGestureCancel}
+                            min={min}
+                            step={displayStep}
+                            precision={degrees ? 2 : stepPrecision(step)}
+                            commitOnBlur={commitOnBlur}
+                            disabled={disabled}
+                            aria-label={`${label} ${axis.toUpperCase()}`}
+                        />
                     </Field>
                 ))}
             </div>
@@ -1191,8 +2123,64 @@ function Field({ label, children }) {
     return <SharedField label={label}>{control}</SharedField>;
 }
 
-function Toggle({ label, value, onChange }) {
-    return <SharedSwitch label={label} checked={value} onCheckedChange={onChange} />;
+function Toggle({ label, value, onChange, disabled = false }) {
+    return <SharedSwitch label={label} checked={value} disabled={disabled} onCheckedChange={onChange} />;
+}
+
+function LimitNumber({ label, value, min, step, precision = 3, onChange }) {
+    return (
+        <Field label={label}>
+            <DragNumber aria-label={label} commitOnBlur min={min} step={step} precision={precision} value={value} onChange={onChange} />
+        </Field>
+    );
+}
+
+function selectionLabel(selection) {
+    if (!selection?.kind) return "";
+    if (selection.kind === "wheel") return `Wheel ${selection.id}`;
+    if (selection.kind === "sensor") return `Sensor ${selection.id}`;
+    if (selection.kind === "axle") {
+        if (selection.id === "rear") return "Rear axle";
+        if (selection.id === "front") return "Front axle";
+        return "Wheels";
+    }
+    if (selection.kind === "body") return "Body";
+    if (selection.kind === "ego") return "Ego center";
+    if (selection.kind === "model") return "Model";
+    return selection.kind;
+}
+
+function EditorNotices({ error, rawError, validation, urdfReport, dismissed, onDismiss, onDismissUrdf }) {
+    const issueText = validation?.issues?.length
+        ? validation.issues.map((issue) => `${issue.path || "manifest"}: ${issue.message}`).join("\n")
+        : "";
+    const errorText = error || rawError || (!validation?.ok ? issueText : "");
+    return (
+        <>
+            {errorText && dismissed.error !== errorText && (
+                <div className="m-3 flex items-start gap-2">
+                    <StatusMessage className="min-w-0 flex-1" tone="danger" title="Vehicle needs attention">
+                        <pre className="whitespace-pre-wrap font-sans">{errorText}</pre>
+                    </StatusMessage>
+                    <button type="button" className="text-[11px] text-[var(--slate-muted)]" onClick={() => onDismiss("error", errorText)}>Dismiss</button>
+                </div>
+            )}
+            {validation?.ok && dismissed.validation !== validation && (
+                <div className="m-3 flex items-start gap-2">
+                    <StatusMessage className="min-w-0 flex-1" tone="success" title="Vehicle manifest is valid." />
+                    <button type="button" className="text-[11px] text-[var(--slate-muted)]" onClick={() => onDismiss("validation", validation)}>Dismiss</button>
+                </div>
+            )}
+            {urdfReport && (
+                <div className="m-3 flex items-start gap-2">
+                    <StatusMessage className="min-w-0 flex-1" title="URDF export">
+                        <pre className="whitespace-pre-wrap font-sans">{(urdfReport.omissions ?? []).map((entry) => entry.message || entry.code).join("\n") || "No omissions."}</pre>
+                    </StatusMessage>
+                    <button type="button" className="text-[11px] text-[var(--slate-muted)]" onClick={onDismissUrdf}>Dismiss</button>
+                </div>
+            )}
+        </>
+    );
 }
 
 function Action({ icon, label, onClick, disabled = false, primary = false, compact = false }) {

@@ -8,6 +8,12 @@ import { vehicleAssetUrl } from "./VehicleManifest.js";
 
 const collection = "vehicles";
 
+export function createVehicleOperationId() {
+    const bytes = new Uint8Array(32);
+    crypto.getRandomValues(bytes);
+    return [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
+}
+
 export function listVehicleManifests() {
     return storageGet(collection);
 }
@@ -16,20 +22,90 @@ export function getVehicleManifest(id) {
     return storageGet(`${collection}/${encodeURIComponent(id)}`);
 }
 
-export function createVehicleManifest(manifest) {
+export function createVehicleManifest(manifest, { stageId, operationId } = {}) {
+    if (stageId || operationId) return storagePost(collection, { manifest, stageId, operationId });
     return storagePost(collection, manifest);
 }
 
-export function saveVehicleManifest(id, manifest, expectedRevision) {
-    return storagePut(`${collection}/${encodeURIComponent(id)}`, { manifest, expectedRevision });
+export function saveVehicleManifest(id, manifest, expectedRevision, { stageId, operationId } = {}) {
+    return storagePut(`${collection}/${encodeURIComponent(id)}`, {
+        manifest,
+        expectedRevision,
+        ...(stageId ? { stageId } : {}),
+        ...(operationId ? { operationId } : {}),
+    });
+}
+
+export function publishVehicleMigration(id, { manifest, expectedRevision, stageId, operationId }) {
+    return storagePost(`${collection}/${encodeURIComponent(id)}/migrate`, {
+        manifest,
+        expectedRevision,
+        stageId,
+        operationId,
+    });
+}
+
+export function createVehicleStage() {
+    return storagePost("vehicle-stages", {});
+}
+
+export function renewVehicleStage(stageId) {
+    return storagePost(`vehicle-stages/${encodeURIComponent(stageId)}/renew`, {});
+}
+
+export function abandonVehicleStage(stageId) {
+    return storageDelete(`vehicle-stages/${encodeURIComponent(stageId)}`);
+}
+
+export async function uploadVehicleStageMember(stageId, name, data) {
+    const response = await fetch(`/api/storage/vehicle-stages/${encodeURIComponent(stageId)}/members/${encodeURIComponent(name)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/octet-stream" },
+        body: data,
+    });
+    if (!response.ok) throw new Error(await storageError(response, "Stage upload failed"));
+    return response.json();
+}
+
+export async function readVehicleStageMember(stageId, name) {
+    const response = await fetch(`/api/storage/vehicle-stages/${encodeURIComponent(stageId)}/members/${encodeURIComponent(name)}`);
+    if (!response.ok) throw new Error(await storageError(response, "Stage read failed"));
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    return {
+        name,
+        bytes,
+        sha256: response.headers.get("X-Content-SHA256"),
+        size: Number(response.headers.get("Content-Length")),
+        mediaType: response.headers.get("Content-Type"),
+    };
+}
+
+async function storageError(response, label) {
+    let detail = "";
+    try {
+        const payload = await response.json();
+        detail = payload?.error ? `: ${payload.error}` : "";
+    } catch {
+        // The status text is enough when the body is not JSON.
+    }
+    return `${label} (${response.status} ${response.statusText})${detail}`;
 }
 
 export function duplicateVehicleManifest(id, input) {
     return storagePost(`${collection}/${encodeURIComponent(id)}/duplicate`, input);
 }
 
-export function deleteVehicleManifest(id) {
-    return storageDelete(`${collection}/${encodeURIComponent(id)}`);
+export function renameVehicleManifest(id, { name, expectedRevision, operationId } = {}) {
+    return storagePost(`${collection}/${encodeURIComponent(id)}/rename`, { name, expectedRevision, operationId });
+}
+
+export function changeVehicleId(id, { id: nextId, expectedRevision, operationId } = {}) {
+    return storagePost(`${collection}/${encodeURIComponent(id)}/change-id`, { id: nextId, expectedRevision, operationId });
+}
+
+export function deleteVehicleManifest(id, expectedRevision) {
+    const query = expectedRevision === undefined ? "" : `?expectedRevision=${encodeURIComponent(expectedRevision)}`;
+    return storageDelete(`${collection}/${encodeURIComponent(id)}${query}`);
 }
 
 export function validateVehicleManifestOnServer(id, manifest) {

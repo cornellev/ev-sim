@@ -29,5 +29,7 @@ export { ROAD_TYPE_ID } from "./types/road.js";
 export { INTERSECTION_TYPE_ID, isJunctionNode } from "./types/intersection.js";
 export { BUILDING_TYPE_ID } from "./types/building.js";
 export { ASSET_INSTANCE_TYPE_ID } from "./types/assetInstance.js";
+export { PRIMITIVE_TYPE_ID } from "./types/primitive.js";
+export { FLOOR_TYPE_ID } from "./types/floor.js";
 
 registerBuiltinObjectTypes();

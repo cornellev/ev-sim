@@ -216,7 +216,8 @@ async function collectVehicles(storageService, manifest, scenario) {
             });
             continue;
         }
-        const stored = await storageService.getVehicleManifest(vehicleId);
+        const snapshot = await storageService.readVehicleSnapshot(vehicleId);
+        const stored = snapshot.manifest;
         if (!stored) invalid(`Vehicle "${vehicleId}" does not exist.`, "vehicles");
         const vehicle = structuredClone(stored);
         const modelAsset = String(vehicle.model?.asset ?? "").trim();
@@ -224,9 +225,9 @@ async function collectVehicles(storageService, manifest, scenario) {
             invalid(`Vehicle "${vehicleId}" uses nonportable model URL "${modelAsset}".`, `vehicles.${vehicleId}.model.asset`);
         }
         const assets = [];
-        for (const name of (await storageService.listVehicleAssets(vehicleId)).sort(compareUtf8)) {
-            const bytes = await storageService.readVehicleAsset(vehicleId, name);
-            assets.push({ name, bytes, sizeBytes: bytes.length, sha256: sha256(bytes) });
+        for (const file of snapshot.files) {
+            const bytes = Buffer.from(file.bytes);
+            assets.push({ name: file.name, bytes, sizeBytes: bytes.length, sha256: file.sha256 });
         }
         if (modelAsset && !assets.some((entry) => entry.name === modelAsset)) {
             invalid(`Vehicle "${vehicleId}" is missing model asset "${modelAsset}".`, `vehicles.${vehicleId}.model.asset`);

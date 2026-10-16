@@ -130,20 +130,34 @@ import {
 import {
     FrameAlongPathBlock,
     GetNearestRoadBlock,
+    RoadCrossSectionBlock,
     SampleRoadBlock,
     ScatterFeaturesBlock,
     SpawnPropBlock,
 } from "./units/world/WorldBlocks.block.js";
+import {
+    AssetAttachmentBlock,
+    BuildingAttachmentBlock,
+    DeriveFromAttachmentBlock,
+    GeneralAttachmentBlock,
+    GroupAttachmentBlock,
+    IntersectionAttachmentBlock,
+    PropAttachmentBlock,
+    RoadAttachmentBlock,
+} from "./units/world/DeriveFromAttachment.block.js";
+import { CloneObjectBlock, CreateGroupBlock, PlaceFeatureBlock } from "./units/world/AuthoringBlocks.block.js";
+import { ATTACHMENT_HOST_TYPE_IDS } from "./units/world/attachmentHosts.js";
 import { MaskBlock } from "./units/math/tex/Mask.block.js";
 import { IfBlock } from "./units/statements/If.block.js";
 import { ConjugationBlock, EqualityBlock } from "./units/statements/Equality.block.js";
 import {
     IgnoreBlock,
     NopBlock,
+    PassBlock,
     PassthroughBlock,
     SequenceBlock,
 } from "./units/statements/Unit.block.js";
-import { RepeatProgramBlock } from "./units/statements/RepeatProgram.block.js";
+import { RepeatBlock, RepeatIndexBlock } from "./units/statements/Repeat.block.js";
 import { StringBlock } from "./units/objects/String.block.js";
 import { TextureImportBlock } from "./units/objects/TextureImport.block.js";
 import {
@@ -310,6 +324,16 @@ const PROGRAM_INPUT_SETTINGS = Object.freeze([
     Object.freeze({ target: "storedData", key: "label", valueType: "string", default: "input" }),
     Object.freeze({ target: "storedData", key: "type", valueType: "port_type", default: "float64" }),
     Object.freeze({ target: "storedData", key: "defaultValue", valueType: "string", default: "0" }),
+    Object.freeze({ target: "storedData", key: "sceneType", valueType: "string", default: "" }),
+]);
+const DERIVE_ATTACHMENT_SETTINGS = Object.freeze([
+    Object.freeze({
+        target: "state",
+        key: "hostType",
+        valueType: "enum",
+        default: "road",
+        options: ATTACHMENT_HOST_TYPE_IDS,
+    }),
 ]);
 const OUTPUT_NODE_SETTINGS = Object.freeze([
     Object.freeze({ target: "state", key: "outputs", valueType: "json", default: [] }),
@@ -327,9 +351,6 @@ const ITEM_TYPE_SETTINGS = Object.freeze([
 const ARRAY_LITERAL_SETTINGS = Object.freeze([
     ...ITEM_TYPE_SETTINGS,
     Object.freeze({ target: "storedData", key: null, valueType: "json", default: [] }),
-]);
-const COMPILED_PROGRAM_SETTINGS = Object.freeze([
-    Object.freeze({ target: "state", key: "compiledProgram", valueType: "json", default: null }),
 ]);
 const ARRAY_GET_SETTINGS = Object.freeze([
     ...ITEM_TYPE_SETTINGS,
@@ -371,6 +392,7 @@ function entry(type, name, category, blockClass, keywords, options = {}) {
         requiresSignals: options.requiresSignals === true,
         blockClass,
         notes: options.notes || null,
+        ...(options.authoring === true ? { authoring: true } : {}),
     };
 }
 
@@ -566,9 +588,12 @@ export const UNIT_CATALOG_META = [
     entry("IgnoreBlock", "Ignore", "statements", IgnoreBlock, ["ignore", "discard", "unit"]),
     entry("SequenceBlock", "Sequence", "statements", SequenceBlock, ["sequence", "then", "control"]),
     entry("PassthroughBlock", "Passthrough", "statements", PassthroughBlock, ["passthrough", "identity", "unit"]),
-    entry("RepeatProgramBlock", "Repeat Program", "statements", RepeatProgramBlock, ["repeat", "loop", "program"], {
-        settings: COMPILED_PROGRAM_SETTINGS,
-        notes: "Loops a compiled child artifact. Reserved program inputs index and item are supplied per iteration. Count is clamped to 256.",
+    entry("PassBlock", "Pass", "statements", PassBlock, ["pass", "identity", "reroute", "organize"]),
+    entry("RepeatBlock", "Repeat", "statements", RepeatBlock, ["repeat", "loop", "for"], {
+        notes: "Pulls body once per pass, up to 256 passes. Wire repeat into an Index block inside the body to read the current pass.",
+    }),
+    entry("RepeatIndexBlock", "Index", "statements", RepeatIndexBlock, ["index", "loop", "repeat", "iteration"], {
+        notes: "Reads the current pass of the Repeat wired to it, without running that Repeat. t runs from 0 to 1 across the passes.",
     }),
     entry("ProgramInputBlock", "Program Input", "program", ProgramInputBlock, ["program", "input", "parameter"], { settings: PROGRAM_INPUT_SETTINGS }),
     entry("OutputNodeBlock", "OutputNode", "program", OutputNodeBlock, ["program", "output", "head"], {
@@ -603,12 +628,54 @@ export const UNIT_CATALOG_META = [
     entry("SimulationClockBlock", "Simulation Clock", "simulator", SimulationClockBlock, ["simulation", "clock", "dt", "adapter"], { requiresSignals: true }),
     entry("ScenarioStatusBlock", "Scenario Status", "simulator", ScenarioStatusBlock, ["scenario", "status", "terminal", "adapter"], { requiresSignals: true }),
     entry("SampleRoadBlock", "Sample Road", "simulator", SampleRoadBlock, ["road", "sample", "pose", "edge"]),
+    entry("RoadCrossSectionBlock", "Road Cross Section", "simulator", RoadCrossSectionBlock, ["road", "width", "shoulder", "cross-section"], {
+        notes: "Carriageway width and shoulder of a road edge, in metres. Missing edge emits zeros and found:false.",
+    }),
     entry("GetNearestRoadBlock", "Get Nearest Road", "simulator", GetNearestRoadBlock, ["nearest", "road", "pose", "edge"]),
     entry("SpawnPropBlock", "Spawn Prop", "simulator", SpawnPropBlock, ["spawn", "prop", "barrel", "episode"], {
         notes: "Episode overlay upsert. Bind the graph to episode-reset. Ids are episode:{scriptId}:{n} when omitted. Does not mutate the environment document.",
     }),
     entry("ScatterFeaturesBlock", "Scatter Features", "simulator", ScatterFeaturesBlock, ["scatter", "barrel", "shoulder", "route"], {
         notes: "One-node shoulder+lane scatter. Requires exactly one of route or edgeId. Spawn is upsert-by-id onto the episode overlay.",
+    }),
+    entry("DeriveFromAttachmentBlock", "Derive From Attachment", "simulator", DeriveFromAttachmentBlock, ["attachment", "host", "road", "derive"], {
+        placeable: false,
+        deprecated: true,
+        settings: DERIVE_ATTACHMENT_SETTINGS,
+        notes: "Legacy host dropdown. New scripts use a specific attachment block. One host type per script.",
+    }),
+    entry("GeneralAttachmentBlock", "General Attachment", "simulator", GeneralAttachmentBlock, ["attachment", "host", "object", "general"], {
+        notes: "Reads objectId and name from any selected object. A script with only this block can attach to every object.",
+    }),
+    entry("RoadAttachmentBlock", "Road Attachment", "simulator", RoadAttachmentBlock, ["attachment", "host", "road", "edge"], {
+        notes: "Declares a road host and reads edgeId and name. The script attaches only to roads.",
+    }),
+    entry("GroupAttachmentBlock", "Group Attachment", "simulator", GroupAttachmentBlock, ["attachment", "host", "group"], {
+        notes: "Declares a group host and reads objectId and name.",
+    }),
+    entry("BuildingAttachmentBlock", "Building Attachment", "simulator", BuildingAttachmentBlock, ["attachment", "host", "building"], {
+        notes: "Declares a building host and reads buildingId and name.",
+    }),
+    entry("IntersectionAttachmentBlock", "Intersection Attachment", "simulator", IntersectionAttachmentBlock, ["attachment", "host", "intersection", "node"], {
+        notes: "Declares an intersection host and reads nodeId and name.",
+    }),
+    entry("PropAttachmentBlock", "Prop Attachment", "simulator", PropAttachmentBlock, ["attachment", "host", "prop", "feature"], {
+        notes: "Declares a builtin prop host and reads objectId, assetId, and name.",
+    }),
+    entry("AssetAttachmentBlock", "Asset Attachment", "simulator", AssetAttachmentBlock, ["attachment", "host", "asset"], {
+        notes: "Declares an asset instance host and reads objectId, assetId, and name.",
+    }),
+    entry("PlaceFeatureBlock", "Place Feature", "simulator", PlaceFeatureBlock, ["place", "feature", "prop", "barrel", "permanent"], {
+        authoring: true,
+        notes: "Writes a permanent builtin prop through the editor script host. Throws if runtimeContext.author is missing. Does not use the episode overlay.",
+    }),
+    entry("CloneObjectBlock", "Clone Object", "simulator", CloneObjectBlock, ["clone", "obstacle", "copy", "prop", "asset", "permanent"], {
+        authoring: true,
+        notes: "Copies a prop or asset instance to a pose through the editor script host. Yaw and position come from the pose. Scale, asset pin, and prop type come from the source. Throws if runtimeContext.author or lookupObject is missing.",
+    }),
+    entry("CreateGroupBlock", "Create Group", "simulator", CreateGroupBlock, ["group", "subgroup", "create", "permanent"], {
+        authoring: true,
+        notes: "Creates an empty group through the editor script host and returns its id. Throws if runtimeContext.author is missing.",
     }),
     entry("WaypointListBlock", "Waypoint List", "mission", WaypointListBlock, ["waypoint", "route", "list"]),
     entry("CurrentWaypointBlock", "Current Waypoint", "mission", CurrentWaypointBlock, ["waypoint", "current", "mission"]),

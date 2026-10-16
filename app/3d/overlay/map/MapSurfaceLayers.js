@@ -28,7 +28,7 @@ import {
     roadLanes,
 } from "../../../roads/RoadLaneModel.js";
 import { compiledMapRoadPlan } from "../../editor/map/mapDocument.js";
-import { assetMapFootprint, mapVisibleAssetRecords } from "../../editor/map/mapHitTest.js";
+import { assetMapShapes, mapVisibleAssetRecords } from "../../editor/map/mapHitTest.js";
 
 function screenPoints(points, viewport, size) {
     return points.map((point) => {
@@ -448,7 +448,26 @@ function Buildings({ documentSnapshot, viewport, size, layers, mapSelection }) {
 function Features({ documentSnapshot, viewport, size, layers, showDetail, mapSelection }) {
     if (!showDetail || !layers.props) return null;
 
-    return documentSnapshot.features.map((feature) => {
+    const primitives = (documentSnapshot.primitives ?? []).map((primitive) => {
+        const screen = worldToScreen(primitive.position, viewport, size);
+        const selected = mapSelection?.type === MAP_SELECTION_TYPES.PRIMITIVE && mapSelection.id === primitive.id;
+        const radius = Math.max(4, Math.max(primitive.size?.x ?? 1, primitive.size?.z ?? 1) * (viewport.zoom ?? 1) * 0.5);
+        return (
+            <g key={`primitive:${primitive.id}`}>
+                <rect
+                    x={screen.x - radius}
+                    y={screen.y - radius}
+                    width={radius * 2}
+                    height={radius * 2}
+                    fill={primitive.color ?? "#a3a3a3"}
+                    fillOpacity={0.85}
+                    stroke={selected ? "#38bdf8" : "#52525b"}
+                    strokeWidth={selected ? 2 : 1}
+                />
+            </g>
+        );
+    });
+    return [...primitives, ...documentSnapshot.features.map((feature) => {
         const screen = worldToScreen(feature, viewport, size);
         const color = getMapColorForAsset(feature.type);
         const selected = mapSelection?.type === MAP_SELECTION_TYPES.FEATURE
@@ -475,20 +494,22 @@ function Features({ documentSnapshot, viewport, size, layers, showDetail, mapSel
                 />
             </g>
         );
-    });
+    })];
 }
 
 function Assets({ documentSnapshot, runtimeAssetBounds, viewport, size, layers, showDetail, mapSelection }) {
     if (!layers.props) return null;
     return mapVisibleAssetRecords(documentSnapshot).map((record) => {
-        const footprint = assetMapFootprint(record, runtimeAssetBounds?.get?.(String(record.id)) ?? null);
+        const shapes = assetMapShapes(record, documentSnapshot, runtimeAssetBounds?.get?.(String(record.id)) ?? null);
         const selected = mapSelection?.type === MAP_SELECTION_TYPES.ASSET && mapSelection.id === String(record.id);
-        if (!shouldShowMapAssetFootprint(footprint, viewport, size, { showDetail, selected })) return null;
-        const points = footprint.map((point) => worldToScreen(point, viewport, size)).map((point) => `${point.x},${point.y}`).join(" ");
+        if (!shapes.footprints.some((footprint) => shouldShowMapAssetFootprint(footprint, viewport, size, { showDetail, selected }))) return null;
         return (
             <g key={record.id} data-map-asset-id={record.id}>
-                <polygon points={points} fill={selected ? "rgba(56,189,248,0.22)" : "rgba(167,139,250,0.2)"} stroke={selected ? "#38bdf8" : "#a78bfa"} strokeWidth={selected ? 2 : 1} />
-                {!runtimeAssetBounds?.has?.(String(record.id)) && (() => {
+                {shapes.footprints.map((footprint, index) => {
+                    const points = footprint.map((point) => worldToScreen(point, viewport, size)).map((point) => `${point.x},${point.y}`).join(" ");
+                    return <polygon key={index} points={points} fill={selected ? "rgba(56,189,248,0.22)" : "rgba(167,139,250,0.2)"} stroke={selected ? "#38bdf8" : "#a78bfa"} strokeWidth={selected ? 2 : 1} />;
+                })}
+                {shapes.source === "placeholder" && (() => {
                     const point = worldToScreen(record.components.asset.position, viewport, size);
                     return <circle cx={point.x} cy={point.y} r={3} fill="#a78bfa" />;
                 })()}
@@ -572,17 +593,6 @@ export function MapSurfaceLayers({
         <>
             <rect width={size.width} height={size.height} fill={satelliteVisible ? "none" : "#09090b"} />
             <GridLines viewport={viewport} size={size} visible={viewport.gridVisible} />
-            <g data-map-layer="assets">
-                <Assets
-                    documentSnapshot={documentSnapshot}
-                    runtimeAssetBounds={runtimeAssetBounds}
-                    viewport={viewport}
-                    size={size}
-                    layers={layers}
-                    showDetail={showDetail}
-                    mapSelection={mapSelection}
-                />
-            </g>
             <g data-map-layer="roads">
                 <RoadEdges
                     documentSnapshot={documentSnapshot}
@@ -617,6 +627,17 @@ export function MapSurfaceLayers({
                 layers={layers}
                 showDetail={showDetail}
             />
+            <g data-map-layer="assets">
+                <Assets
+                    documentSnapshot={documentSnapshot}
+                    runtimeAssetBounds={runtimeAssetBounds}
+                    viewport={viewport}
+                    size={size}
+                    layers={layers}
+                    showDetail={showDetail}
+                    mapSelection={mapSelection}
+                />
+            </g>
             <g data-map-layer="buildings">
                 <Buildings
                     documentSnapshot={documentSnapshot}

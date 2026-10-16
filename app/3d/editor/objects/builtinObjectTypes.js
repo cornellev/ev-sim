@@ -7,9 +7,11 @@ import { ObjectTypeRegistry, objectTypeRegistry } from "./ObjectTypeRegistry.js"
 import { createAssetInstanceType, ASSET_INSTANCE_TYPE_ID } from "./types/assetInstance.js";
 import { createBuildingType, BUILDING_TYPE_ID } from "./types/building.js";
 import { createBuiltinPropType, BUILTIN_PROP_TYPE_ID } from "./types/builtinProp.js";
+import { createFloorType, FLOOR_TYPE_ID } from "./types/floor.js";
 import { createGroupType, GROUP_TYPE_ID } from "./types/group.js";
 import { createIntersectionType, INTERSECTION_TYPE_ID } from "./types/intersection.js";
 import { createRoadType, ROAD_TYPE_ID } from "./types/road.js";
+import { createPrimitiveType, PRIMITIVE_TYPE_ID } from "./types/primitive.js";
 import { createSkyboxType, SKYBOX_TYPE_ID } from "./types/skybox.js";
 import { createTileType, TILE_TYPE_ID } from "./types/tile.js";
 
@@ -22,6 +24,8 @@ export const BUILTIN_OBJECT_TYPE_IDS = Object.freeze([
     BUILDING_TYPE_ID,
     BUILTIN_PROP_TYPE_ID,
     ASSET_INSTANCE_TYPE_ID,
+    PRIMITIVE_TYPE_ID,
+    FLOOR_TYPE_ID,
 ]);
 
 const FACTORIES = Object.freeze([
@@ -35,6 +39,8 @@ const FACTORIES = Object.freeze([
     createBuiltinPropType,
     createAssetInstanceType,
     () => createAssetInstanceType(2),
+    createPrimitiveType,
+    createFloorType,
 ]);
 
 /** @param {ObjectTypeRegistry} [registry] */

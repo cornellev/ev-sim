@@ -1,4 +1,4 @@
-import { isConcreteType, isGeneric } from "./PortTypes.js";
+import { REPEAT_REF_TYPE, isConcreteType, isGeneric } from "./PortTypes.js";
 import {
     getTypeScheme,
     getTypeVariable,
@@ -177,6 +177,17 @@ export function planUnify(manager, candidate = null) {
                 hardConflict: true,
                 bindings: new Map(),
                 error: `Type mismatch from ${outputPort.unit.uuid}.${outputPort.label} (${outputPort.type}) to ${inputPort.unit.uuid}.${inputPort.label} (${inputPort.type}).`
+            };
+        }
+
+        const outputRef = outputPort.kind === "concrete" && outputPort.type === REPEAT_REF_TYPE;
+        const inputRef = inputPort.kind === "concrete" && inputPort.type === REPEAT_REF_TYPE;
+        if (outputRef !== inputRef) {
+            return {
+                ok: false,
+                hardConflict: true,
+                bindings: new Map(),
+                error: `${REPEAT_REF_TYPE} connects only to ${REPEAT_REF_TYPE} (${outputPort.unit.uuid}.${outputPort.label} to ${inputPort.unit.uuid}.${inputPort.label}).`
             };
         }
 

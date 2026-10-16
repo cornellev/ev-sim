@@ -3,6 +3,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { PLUGIN_ERROR_CODES, pluginError } from "../../app/plugin/PluginErrors.js";
+import {
+    buildLocalPlantPackage,
+    plantSourceFingerprint,
+    recordLocalBuild,
+} from "./plantBuild.js";
 
 const LOCAL_PLUGINS_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "plugins");
 
@@ -62,12 +67,16 @@ export async function listLocalPlugins(root = LOCAL_PLUGINS_ROOT) {
                 });
                 continue;
             }
-            rows.push({
+            const row = {
                 id: typeof document.id === "string" && document.id ? document.id : entry.name,
                 version: typeof document.version === "string" ? document.version : "",
                 directory,
                 document,
-            });
+            };
+            if (Array.isArray(document.plants) && document.plants.length > 0) {
+                row.sourceFingerprint = await plantSourceFingerprint(path.dirname(documentPath));
+            }
+            rows.push(row);
         } catch (error) {
             rows.push({
                 id: entry.name,
@@ -125,13 +134,50 @@ export function resolveLocalPluginDirectory(directory, root = LOCAL_PLUGINS_ROOT
  * @param {string} directory
  * @param {string} [root]
  */
-export async function installDetectedPlugin(storage, directory, root = LOCAL_PLUGINS_ROOT) {
+async function fileExists(candidate) {
+    try {
+        const stat = await fs.lstat(candidate);
+        return stat.isFile() && !stat.isSymbolicLink();
+    } catch (error) {
+        if (error.code === "ENOENT") return false;
+        throw error;
+    }
+}
+
+export async function installDetectedPlugin(storage, directory, root = LOCAL_PLUGINS_ROOT, options = {}) {
     const resolved = resolveLocalPluginDirectory(directory, root);
     const key = path.relative(root, resolved).split(path.sep).join("/");
     const rows = await listLocalPlugins(root);
     const match = rows.find((row) => row.directory === key && row.document && !row.error);
     if (!match) {
         throw pluginError(PLUGIN_ERROR_CODES.DOCUMENT_INVALID, "That folder is not a detected plugin package.");
+    }
+    const plants = Array.isArray(match.document.plants) ? match.document.plants : [];
+    const cargoToml = path.join(resolved, "Cargo.toml");
+    if (plants.length > 0 && await fileExists(cargoToml)) {
+        const storeRoot = options.storeRoot || storage.plugins?.root;
+        const built = await buildLocalPlantPackage({
+            sourceDirectory: resolved,
+            directoryKey: key,
+            storeRoot,
+            document: match.document,
+            runCargo: options.runCargo,
+        });
+        try {
+            const metadata = await storage.installPluginFromDirectory(built.packageDirectory);
+            if (storeRoot) {
+                await recordLocalBuild(storeRoot, {
+                    directoryKey: key,
+                    sourceFingerprint: built.fingerprint,
+                    pluginId: metadata.pluginId,
+                    version: metadata.version,
+                    packageHash: metadata.packageHash,
+                });
+            }
+            return metadata;
+        } finally {
+            await fs.rm(built.packageDirectory, { recursive: true, force: true });
+        }
     }
     return storage.installPluginFromDirectory(resolved);
 }

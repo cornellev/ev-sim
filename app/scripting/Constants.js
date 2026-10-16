@@ -18,6 +18,7 @@ const TYPES = {
     "waypoint": "oklch(82% 0.14 68)",
     "lane_ref": "oklch(74% 0.12 110)",
     "road_id": "oklch(70% 0.14 125)",
+    "scene_object": "oklch(68% 0.12 145)",
     "sim_event": "oklch(72% 0.16 10)",
     "array": "oklch(62.3% 0.214 259.815)",
     "custom": "oklch(71.4% 0.203 305.504)",
@@ -25,6 +26,7 @@ const TYPES = {
     "texture_id": "oklch(58% 0.18 290)",
     "generic": "oklch(78% 0.02 250)",
     "unit": "oklch(68% 0.09 280)",
+    "repeat_ref": "oklch(72% 0.13 230)",
     "actor_command": "oklch(66% 0.16 345)",
 }
 

@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { EDITOR_TOOLS } from "../EditorState.js";
-import { addFeature } from "../commands/legacyCommands.js";
+import { addFeature, addPrimitive } from "../commands/legacyCommands.js";
 import { getPlacementAsset } from "../placement/placementCatalogData.js";
 import { getGroundPointFromEvent, isOverlayEvent } from "../editorPointerUtils.js";
 
@@ -93,6 +93,20 @@ export class PlaceTool {
                 obstacle: asset.obstacle === true,
                 semantic: asset.semantic ?? "unknown",
             });
+            return;
+        }
+
+        if (asset.kind === "primitive") {
+            const result = this.bus.execute(addPrimitive({
+                shape: asset.id,
+                x: point.x,
+                z: point.z,
+                name: asset.label,
+                label: `Place ${asset.label ?? asset.id}`,
+            }));
+            if (result.ok && result.result?.objectId) this.selection?.select(result.result.objectId);
+            else if (!result.ok) console.warn("[environment] placement rejected:", result.issues.map((issue) => issue.message).join("; "));
+            this.data.simulation()?.render?.();
             return;
         }
 

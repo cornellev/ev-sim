@@ -23,7 +23,13 @@ test("Config Scripts tab locks an installed plugin and surfaces missing-package 
     await page.goto("/");
     await openWorkspace(page, "Run configuration");
     await page.getByRole("button", { name: "New" }).first().click();
-    await page.getByRole("switch", { name: "Advanced" }).click();
+    await page.getByRole("button", { name: "Open workspace switcher" }).first().click();
+    const dialog = page.getByRole("dialog", { name: "Workspaces" });
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("button", { name: "Settings", exact: true }).click();
+    await dialog.getByRole("switch", { name: "Advanced" }).click();
+    await dialog.getByRole("button", { name: "Close workspaces" }).click();
+    await expect(dialog).toBeHidden();
     await page.getByRole("tab", { name: "Scripts" }).click();
     await expect(page.getByText("Simulator plugins")).toBeVisible();
     await expect(page.getByRole("switch", { name: "Enable plugins" })).toBeVisible();

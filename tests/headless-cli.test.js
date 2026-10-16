@@ -594,3 +594,55 @@ test("catalog use: reference matches an exported bundle episode", async (t) => {
     assert.equal(validation.code, 0, validation.stderr);
     assert.equal(jsonLines(validation.stdout)[0].kind, "cev-sim.headless.validation");
 });
+
+test("catalog command lists built-ins and a stored environment", async (t) => {
+    const root = await temporaryRoot(t);
+    const dataDir = path.join(root, "data");
+    const storage = new StorageService(dataDir);
+    await storage.createEnvironment({ id: "pond", name: "Pond" });
+    const stdout = captureStream();
+    const stderr = captureStream();
+    const code = await main(["catalog", "--data-dir", dataDir], { stdout, stderr });
+    assert.equal(code, 0, stderr.text());
+    const catalog = JSON.parse(stdout.text());
+    assert.equal(catalog.kind, "cev-sim.headless.catalog");
+    assert.equal(catalog.version, 1);
+    assert.equal(catalog.environments.find((entry) => entry.id === "igvc").builtIn, true);
+    const stored = catalog.environments.find((entry) => entry.id === "pond");
+    assert.equal(stored.name, "Pond");
+    assert.equal(stored.builtIn, false);
+    assert.equal(catalog.vehicles.find((entry) => entry.id === "big-car").builtIn, true);
+    const extra = await main(["catalog", "--output", path.join(root, "nope.json")], {
+        stdout: captureStream(),
+        stderr: captureStream(),
+    });
+    assert.equal(extra, 2);
+});
+
+test("create-bundle parses vehicle and finish", async (t) => {
+    const root = await temporaryRoot(t);
+    const badFinish = await main([
+        "create-bundle", "--output", path.join(root, "bundle.json"), "--finish", "goal",
+    ], { stdout: captureStream(), stderr: captureStream() });
+    assert.equal(badFinish, 2);
+
+    const dataDir = path.join(root, "empty");
+    await fs.mkdir(dataDir);
+    const missingVehicle = await main([
+        "create-bundle", "--output", path.join(root, "missing.json"),
+        "--vehicle", "no-such-car", "--data-dir", dataDir,
+    ], { stdout: captureStream(), stderr: captureStream() });
+    assert.equal(missingVehicle, 3);
+
+    const output = path.join(root, "free.json");
+    const stdout = captureStream();
+    const stderr = captureStream();
+    const created = await main([
+        "create-bundle", "--output", output, "--finish", "none", "--data-dir", dataDir,
+    ], { stdout, stderr });
+    assert.equal(created, 0, stderr.text());
+    assert.equal(JSON.parse(stdout.text()).kind, "cev-sim.headless.planning-bundle");
+    const bundle = JSON.parse(await fs.readFile(output, "utf8"));
+    assert.equal(bundle.resolved.scenario.scenario.triggers[0].condition.flag, "cev-sim.free-drive.stop");
+    assert.equal(bundle.resolved.scenario.scenario.zones.length, 0);
+});

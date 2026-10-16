@@ -200,8 +200,17 @@ function publicationId({ context, release, sourceAssetId, sourceRevision, localA
     })}`;
 }
 
-export function assetImportOperationId(operation) {
-    return sha256({ kind: "cev-sim.marketplace-adapter-operation", version: 1, operation });
+export function assetImportOperationId(operation, release) {
+    return sha256({
+        kind: "cev-sim.marketplace-adapter-operation",
+        version: 1,
+        release: {
+            itemId: release.itemId,
+            releaseVersion: release.releaseVersion,
+            artifactSha256: release.artifact.sha256,
+        },
+        operation,
+    });
 }
 
 function childGeometry(decoded) {
@@ -520,7 +529,7 @@ export async function planAssetPackageImport({
             recordSha256: entry.descriptor.recordSha256,
             blobSha256: entry.use.asset.sha256,
         };
-        adapterOperations.push({ ...operation, operationId: assetImportOperationId(operation) });
+        adapterOperations.push({ ...operation, operationId: assetImportOperationId(operation, release) });
     }
     for (const key of verified.assetOrder) {
         const source = verified.revisions.get(key);
@@ -537,7 +546,7 @@ export async function planAssetPackageImport({
             preparedRevisionHash: preparedRevision.preparedRevisionHash,
             localContentHash: preparedRevision.hashes.localContent,
         };
-        adapterOperations.push({ ...operation, operationId: assetImportOperationId(operation) });
+        adapterOperations.push({ ...operation, operationId: assetImportOperationId(operation, release) });
     }
     return {
         preparationHash,

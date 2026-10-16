@@ -173,6 +173,7 @@ function legacySimulationSemanticProjection(resolved = {}) {
     if (projection.manifest) {
         delete projection.manifest.logging;
         delete projection.manifest.sensorTransports;
+        omitSensorInheritance(projection.manifest.sensorRig);
         // Candidate-model declarations are evidence provenance only. Project v10
         // back to the prior semantic shape so otherwise-identical runs keep the
         // same simulationSemanticHash / episodeHash / trajectoryHash.
@@ -210,9 +211,23 @@ function omitIdentityMetadata(document) {
     for (const key of VOLATILE_KEYS) delete document[key];
 }
 
+function inheritedSensorRigForIdentity(rig) {
+    const projected = structuredClone(rig ?? null);
+    omitSensorInheritance(projected);
+    return projected;
+}
+
+function omitSensorInheritance(rig) {
+    if (!rig) return;
+    delete rig.inheritance;
+    for (const sensor of rig.sensors ?? []) delete sensor.inheritedFrom;
+}
+
 function projectSensorRig(rig, pluginSensorIds = new Set()) {
     const projected = structuredClone(rig ?? null);
-    for (const sensor of projected?.sensors ?? []) {
+    if (!projected) return projected;
+    omitSensorInheritance(projected);
+    for (const sensor of projected.sensors ?? []) {
         if (sensor.enabled === false) delete sensor.render;
         if (pluginSensorIds.has(sensor.id)) {
             delete sensor.maxQueueFrames;
@@ -250,6 +265,7 @@ function projectLockedVehicleRecord(record) {
         version: lock.version,
         runtimeHash: lock.runtimeHash,
         sensorTypes: [...(lock.sensorTypes ?? [])],
+        ...(lock.plants?.length ? { plants: [...lock.plants] } : {}),
     }));
     return {
         ...record,
@@ -367,6 +383,53 @@ function normalizeBackend(entry = {}) {
     };
 }
 
+function finiteOverride(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+}
+
+export function canonicalEpisodeOverrides(value) {
+    if (!value || typeof value !== "object") return null;
+    const start = value.startPose || value.start_pose;
+    const goal = value.goal;
+    const overrides = {};
+    if (start && finiteOverride(start.x) != null && finiteOverride(start.z) != null && finiteOverride(start.yaw) != null) {
+        overrides.startPose = {
+            x: finiteOverride(start.x),
+            z: finiteOverride(start.z),
+            yaw: finiteOverride(start.yaw),
+            speedMps: finiteOverride(start.speedMps ?? start.speed_mps) ?? 0,
+        };
+    }
+    if (goal && finiteOverride(goal.x) != null && finiteOverride(goal.z) != null) {
+        const yawValue = goal.yaw;
+        overrides.goal = {
+            x: finiteOverride(goal.x),
+            z: finiteOverride(goal.z),
+            yaw: yawValue == null ? null : finiteOverride(yawValue),
+            positionToleranceM: finiteOverride(goal.positionToleranceM ?? goal.position_tolerance_m) || 1,
+            yawToleranceRad: finiteOverride(goal.yawToleranceRad ?? goal.yaw_tolerance_rad) || Math.PI,
+        };
+    }
+    return overrides.startPose || overrides.goal ? overrides : null;
+}
+
+export function initialStateWithStartPose(initialState, startPose, targetId = "ego") {
+    const cloned = structuredClone(initialState || { vehicles: [], signals: {} });
+    if (!startPose) return cloned;
+    const vehicle = (cloned.vehicles || []).find((entry) => entry.id === targetId) ?? cloned.vehicles?.[0];
+    if (!vehicle) return cloned;
+    const yaw = startPose.yaw;
+    const speed = startPose.speedMps || 0;
+    vehicle.pose = {
+        position: { x: startPose.x, y: vehicle.pose?.position?.y ?? 0, z: startPose.z },
+        rotation: { x: 0, y: yaw, z: 0, order: vehicle.pose?.rotation?.order || "XYZ" },
+    };
+    vehicle.linearVelocity = { x: speed * Math.cos(yaw), y: 0, z: -speed * Math.sin(yaw) };
+    vehicle.steeringAngle = 0;
+    return cloned;
+}
+
 export function canonicalEpisodeIdentity(input = {}) {
     const version = input.identityVersion
         ?? (input.kind === "cev-sim.episode-identity" ? input.version : 1);
@@ -377,7 +440,7 @@ export function canonicalEpisodeIdentity(input = {}) {
             || compareUtf8(left.capabilityId, right.capabilityId)
             || compareUtf8(left.version, right.version)
             || compareUtf8(left.configHash, right.configHash));
-    return {
+    const identity = {
         kind: "cev-sim.episode-identity",
         version,
         protocolMajor: Math.max(0, Math.floor(Number(input.protocolMajor ?? input.protocol_major) || 0)),
@@ -393,6 +456,9 @@ export function canonicalEpisodeIdentity(input = {}) {
         rewardProfile: normalizeProfile(input.rewardProfile || input.reward_profile),
         backendSelections: backends,
     };
+    const overrides = canonicalEpisodeOverrides(input.overrides);
+    if (overrides) identity.overrides = overrides;
+    return identity;
 }
 
 export function computeEpisodeHash(input) {
@@ -415,7 +481,7 @@ export function defaultEpisodeIdentity(resolved, overrides = {}) {
             version: 1,
             configHash: simulationSha256(identityVersion === 2
                 ? projectSensorRig(resolved?.manifest?.sensorRig, resolvedPluginSensorIds(resolved))
-                : resolved?.manifest?.sensorRig ?? null),
+                : inheritedSensorRigForIdentity(resolved?.manifest?.sensorRig)),
         },
         rewardProfile: {
             id: "browser-scenario-outcomes",

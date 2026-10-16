@@ -3,7 +3,8 @@ import { screenRadiusToWorld, shouldShowMapAssetFootprint } from "./mapCoords.js
 import { projectPointToRoad } from "../../../roads/RoadGeometry.js";
 import { planRoadNetworkGeometry } from "../../../roads/RoadNetworkGeometry.js";
 import { nearestLaneIndexForOffset, roadLaneId, roadWidth } from "../../../roads/RoadLaneModel.js";
-import { isAssetBackedObject } from "../../../editor-assets/AssetBackedObject.js";
+import { assetBindingRevisionVersion, isAssetBackedObject, readAssetBinding } from "../../../editor-assets/AssetBackedObject.js";
+import { assetMetricKey } from "../../../editor-assets/AssetMetricSnapshot.js";
 import { indexObjectsById } from "../commands/objectMutations.js";
 import { isObjectHidden } from "../projection/projectors/objectsProjector.js";
 
@@ -80,6 +81,114 @@ export function assetMapFootprint(record, bounds = null) {
     });
 }
 
+function crossXZ(origin, left, right) {
+    return (left.x - origin.x) * (right.z - origin.z) - (left.z - origin.z) * (right.x - origin.x);
+}
+
+/** Monotone-chain convex hull. Collinear points stay off the boundary. */
+function convexHullXZ(points) {
+    const unique = [];
+    const seen = new Set();
+    for (const point of points) {
+        const x = Number(point?.x);
+        const z = Number(point?.z);
+        if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
+        const key = `${x}:${z}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        unique.push({ x, z });
+    }
+    unique.sort((left, right) => left.x - right.x || left.z - right.z);
+    if (unique.length < 3) return [];
+    const lower = [];
+    for (const point of unique) {
+        while (lower.length >= 2 && crossXZ(lower[lower.length - 2], lower[lower.length - 1], point) <= 0) lower.pop();
+        lower.push(point);
+    }
+    const upper = [];
+    for (let index = unique.length - 1; index >= 0; index -= 1) {
+        const point = unique[index];
+        while (upper.length >= 2 && crossXZ(upper[upper.length - 2], upper[upper.length - 1], point) <= 0) upper.pop();
+        upper.push(point);
+    }
+    lower.pop();
+    upper.pop();
+    const hull = lower.concat(upper);
+    return hull.length >= 3 ? hull : [];
+}
+
+function projectCollisionPoint(point, asset) {
+    if (!Array.isArray(point) || point.length < 3) return null;
+    const localX = Number(point[0]);
+    const localZ = Number(point[2]);
+    if (!Number.isFinite(localX) || !Number.isFinite(localZ)) return null;
+    const yaw = Number(asset.rotationY) || 0;
+    const cosine = Math.cos(yaw);
+    const sine = Math.sin(yaw);
+    const scaleX = Number(asset.scale?.x);
+    const scaleZ = Number(asset.scale?.z);
+    const scaledX = (Number.isFinite(scaleX) ? scaleX : 1) * localX;
+    const scaledZ = (Number.isFinite(scaleZ) ? scaleZ : 1) * localZ;
+    const positionX = Number(asset.position?.x);
+    const positionZ = Number(asset.position?.z);
+    if (!Number.isFinite(positionX) || !Number.isFinite(positionZ)) return null;
+    return {
+        x: positionX + cosine * scaledX + sine * scaledZ,
+        z: positionZ - sine * scaledX + cosine * scaledZ,
+    };
+}
+
+function collisionMetric(record, document) {
+    if (assetBindingRevisionVersion(record) !== 2) return null;
+    const binding = readAssetBinding(record);
+    if (!binding || String(binding.assetId ?? "").trim() === "") return null;
+    const definitions = document?.assetMetrics?.definitions;
+    if (!Array.isArray(definitions)) return null;
+    const key = assetMetricKey(binding.assetId, binding.revision);
+    return definitions.find((entry) => entry && assetMetricKey(entry.assetId, entry.revision) === key) ?? null;
+}
+
+/**
+ * One XZ convex hull per published collision proxy, in the instance frame
+ * used by world compile: yaw about Y, scale, then position.
+ * @param {object} record
+ * @param {object | null | undefined} document
+ * @returns {{ x: number, z: number }[][]}
+ */
+export function assetCollisionFootprints(record, document) {
+    const asset = readAssetBinding(record);
+    const metric = collisionMetric(record, document);
+    if (!asset || !Array.isArray(metric?.collision)) return [];
+    const footprints = [];
+    for (const proxy of metric.collision) {
+        if (!proxy || proxy.enabled === false || !Array.isArray(proxy.vertices)) continue;
+        const projected = [];
+        for (const vertex of proxy.vertices) {
+            const point = projectCollisionPoint(vertex, asset);
+            if (point) projected.push(point);
+        }
+        const hull = convexHullXZ(projected);
+        if (hull.length >= 3) footprints.push(hull);
+    }
+    return footprints;
+}
+
+/**
+ * Map polygons for an asset. Published collision hulls win; otherwise the
+ * visual-mesh quad; otherwise the ±0.5 m placeholder.
+ * @param {object} record
+ * @param {object | null | undefined} [document]
+ * @param {{ min?: { x?: number, z?: number }, max?: { x?: number, z?: number } } | null} [visualBounds]
+ * @returns {{ footprints: { x: number, z: number }[][], source: "collision" | "visual" | "placeholder" }}
+ */
+export function assetMapShapes(record, document = null, visualBounds = null) {
+    const collision = assetCollisionFootprints(record, document);
+    if (collision.length > 0) return { footprints: collision, source: "collision" };
+    const visual = assetMapFootprint(record, visualBounds);
+    if (visual.length === 0) return { footprints: [], source: "placeholder" };
+    return { footprints: [visual], source: visualBounds == null ? "placeholder" : "visual" };
+}
+
 /** Asset-backed map records that are not editor-hidden (including inherited hide). */
 export function mapVisibleAssetRecords(documentSnapshot) {
     const objects = documentSnapshot?.objects ?? [];
@@ -91,9 +200,11 @@ function pickAssetTarget(worldPoint, documentSnapshot, viewport, layers, radiusW
     if (!layers.props) return null;
     const showDetail = layers.detail !== false;
     for (const record of mapVisibleAssetRecords(documentSnapshot)) {
-        const footprint = assetMapFootprint(record, runtimeAssetBounds?.get?.(String(record.id)) ?? null);
-        if (!shouldShowMapAssetFootprint(footprint, viewport, size, { showDetail })) continue;
-        if (pointInPolygonXZ(worldPoint, footprint)) return { type: "asset", id: String(record.id) };
+        const shapes = assetMapShapes(record, documentSnapshot, runtimeAssetBounds?.get?.(String(record.id)) ?? null);
+        if (!shapes.footprints.some((footprint) => shouldShowMapAssetFootprint(footprint, viewport, size, { showDetail }))) continue;
+        if (shapes.footprints.some((footprint) => pointInPolygonXZ(worldPoint, footprint))) {
+            return { type: "asset", id: String(record.id) };
+        }
         const position = record.components?.asset?.position;
         if (position && Math.hypot(position.x - worldPoint.x, position.z - worldPoint.z) <= radiusWorld) {
             return { type: "asset", id: String(record.id) };
@@ -126,6 +237,20 @@ export function pickMapTarget(worldPoint, documentSnapshot, viewport, layers, sc
                 nearestFeatureDistance = distance;
                 nearestFeature = feature;
             }
+        }
+
+        let nearestPrimitive = null;
+        let nearestPrimitiveDistance = radiusWorld;
+        for (const primitive of documentSnapshot.primitives ?? []) {
+            const radius = Math.max(Number(primitive.size?.x) || 1, Number(primitive.size?.z) || 1) * 0.5;
+            const distance = Math.hypot(primitive.position.x - worldPoint.x, primitive.position.z - worldPoint.z);
+            if (distance <= Math.max(nearestPrimitiveDistance, radius) && distance <= nearestPrimitiveDistance + radius) {
+                nearestPrimitiveDistance = distance;
+                nearestPrimitive = primitive;
+            }
+        }
+        if (nearestPrimitive && nearestPrimitiveDistance <= radiusWorld + Math.max(Number(nearestPrimitive.size?.x) || 1, Number(nearestPrimitive.size?.z) || 1) * 0.5) {
+            return { type: "primitive", id: nearestPrimitive.id };
         }
 
         if (nearestFeature) {

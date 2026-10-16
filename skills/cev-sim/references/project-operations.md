@@ -27,7 +27,7 @@ Env vars:
 | `PORT` | `3000` | HTTP port |
 | `CEV_SIM_DATA_DIR` | `server/data` | JSON persistence |
 | `CEV_SIM_LOGS_DIR` | `server/data/logs` | SFLog files |
-| `CEV_SIM_VISUAL_SOURCE_REGISTRY` | `$CEV_SIM_DATA_DIR/visual-source-registry.json` | Operator visual-source grants; no mutation API |
+| `CEV_SIM_VISUAL_SOURCE_REGISTRY` | `$CEV_SIM_DATA_DIR/visual-source-registry.json` | Operator visual-source grants; no mutation API. `install.sh` seeds the default file when it is absent. |
 | `CEV_SIM_NEXT_DIR` | `.next` | Next build dir |
 
 Installer one-liner (upstream name **ev-sim**): see root `README.md` /
@@ -107,7 +107,7 @@ Record in Simulation → SFLog on disk → Replay / Analysis. Codec:
 - `visual-layer-access/sha256/`
 - `visual-assets/sha256/`, `visual-assets/uses/sha256/`, `visual-assets/validation/sha256/`
 - `visual-assets/staging/`, `visual-assets/roots.json`, `visual-assets/pins.json`
-- `visual-source-registry.json` (operator-controlled; no mutation API)
+- `visual-source-registry.json` (operator-controlled; no mutation API; `install.sh` seeds it when absent)
 - `vehicles/<id>.json`, `vehicle-assets/<id>/`
 - `bindings.json`, `settings.json`
 - Logs: `CEV_SIM_LOGS_DIR` (default `logs/`)

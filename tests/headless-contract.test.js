@@ -62,9 +62,11 @@ test("episode semantics stay separate from operational and artifact policy", asy
         "observation_profile",
         "reward_profile",
         "backend_selections",
+        "overrides",
     ]) {
         assert.match(episode, new RegExp(`\\b${field}\\b`));
     }
+    assert.match(episode, /EpisodeOverrides overrides = 10;/);
     assert.doesNotMatch(episode, /\bResourceLimits\b|\bArtifactPolicy\b/);
 
     const create = declarationBody(proto, "message", "CreateBatchRequest");

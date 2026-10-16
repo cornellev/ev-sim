@@ -1,3 +1,4 @@
+import { Vector3 } from "three";
 import {
     composeRep103Poses,
     eulerToQuaternion,
@@ -58,6 +59,11 @@ export function advanceCorrelatedDrift(state, tauSeconds, sigma, dtSeconds, rng)
         next[axis] = alpha * Number(state[axis] || 0) + processNoise * gaussianSample(rng);
     }
     return next;
+}
+
+export function combinedStdDev(left, right) {
+    const combine = (axis) => Math.hypot(Number(left[axis] || 0), Number(right[axis] || 0));
+    return { x: combine("x"), y: combine("y"), z: combine("z") };
 }
 
 export function diagonalCovariance(values) {
@@ -138,6 +144,7 @@ export function captureVehicleSnapshot(vehicle, captureTimeNs, previous = null, 
     const bodyAngularVelocity = { x: 0, y: 0, z: yawRate };
 
     let bodyAcceleration = { x: 0, y: 0, z: 0 };
+    let bodyAngularAcceleration = { x: 0, y: 0, z: 0 };
     if (previous?.captureTimeNs != null && captureTimeNs > previous.captureTimeNs) {
         const dt = (captureTimeNs - previous.captureTimeNs) / 1e9;
         if (dt > 0) {
@@ -145,6 +152,11 @@ export function captureVehicleSnapshot(vehicle, captureTimeNs, previous = null, 
                 x: (bodyVelocity.x - previous.bodyVelocity.x) / dt,
                 y: (bodyVelocity.y - previous.bodyVelocity.y) / dt,
                 z: (bodyVelocity.z - previous.bodyVelocity.z) / dt,
+            };
+            bodyAngularAcceleration = {
+                x: 0,
+                y: 0,
+                z: (yawRate - Number(previous.bodyAngularVelocity?.z || 0)) / dt,
             };
         }
     }
@@ -160,11 +172,26 @@ export function captureVehicleSnapshot(vehicle, captureTimeNs, previous = null, 
         orientation,
         bodyVelocity,
         bodyAngularVelocity,
+        bodyAngularAcceleration,
         bodyAcceleration,
         wheelbase,
         steeringAngle,
         speed,
     };
+}
+
+/**
+ * Body-frame acceleration of a point at `offset` from base_link on a rigid body:
+ * a + alpha x r + omega x (omega x r).
+ */
+export function accelerationAtOffset(snapshot, offset) {
+    const r = new Vector3().copy(vec3(offset));
+    const omega = new Vector3().copy(snapshot.bodyAngularVelocity || { x: 0, y: 0, z: 0 });
+    const alpha = new Vector3().copy(snapshot.bodyAngularAcceleration || { x: 0, y: 0, z: 0 });
+    const tangential = new Vector3().crossVectors(alpha, r);
+    const centripetal = new Vector3().crossVectors(omega, new Vector3().crossVectors(omega, r));
+    const total = new Vector3().copy(snapshot.bodyAcceleration).add(tangential).add(centripetal);
+    return { x: total.x, y: total.y, z: total.z };
 }
 
 export function sensorFrameRotation(sensorPose = {}) {
@@ -207,7 +234,7 @@ export function buildImuMeasurement(snapshot, sensorConfig, rng, state = {}) {
     const sensorRotation = sensorFrameRotation(sensorConfig.pose);
     const angularVelocity = vectorToSensorFrame(snapshot.bodyAngularVelocity, sensorRotation);
     const specificForce = specificForceRep103(
-        snapshot.bodyAcceleration,
+        accelerationAtOffset(snapshot, sensorConfig.pose?.position),
         sensorRotation,
         sensorConfig.calibration.gravity,
         snapshot.orientation,
@@ -291,19 +318,23 @@ export function buildImuMeasurement(snapshot, sensorConfig, rng, state = {}) {
 export function buildGnssMeasurement(snapshot, sensorConfig, rng, state = {}) {
     const faults = sensorConfig.calibration.faults || {};
     const datum = sensorConfig.calibration.datum || { latitude: 42.4430, longitude: -76.4840, altitude: 200 };
+    // The fix is the antenna position: base_link plus the mount offset rotated into the map frame.
+    const antennaOffset = rotateVectorByQuaternion(vec3(sensorConfig.pose?.position), snapshot.orientation);
     const positionEnu = {
-        east: snapshot.pose.position.x,
-        north: snapshot.pose.position.y,
-        up: snapshot.pose.position.z,
+        east: snapshot.pose.position.x + antennaOffset.x,
+        north: snapshot.pose.position.y + antennaOffset.y,
+        up: snapshot.pose.position.z + antennaOffset.z,
     };
     const dt = state.lastCaptureTimeNs != null && snapshot.captureTimeNs > state.lastCaptureTimeNs
         ? (snapshot.captureTimeNs - state.lastCaptureTimeNs) / 1e9
         : 1 / Math.max(1, sensorConfig.rateHz);
 
+    const whiteStdDev = sensorConfig.calibration.positionNoiseEnu || { x: 0, y: 0, z: 0 };
+    const multipathStdDev = faults.multipathStdDev || whiteStdDev;
     const nextMultipath = advanceCorrelatedDrift(
         state.multipath || { x: 0, y: 0, z: 0 },
         faults.multipathTauSec || 30,
-        faults.multipathStdDev || sensorConfig.calibration.positionNoiseEnu || { x: 0, y: 0, z: 0 },
+        multipathStdDev,
         dt,
         rng,
     );
@@ -317,8 +348,17 @@ export function buildGnssMeasurement(snapshot, sensorConfig, rng, state = {}) {
     }
 
     const outageProbability = Number(faults.outageProbability ?? 0);
-    const inOutage = state.inOutage || (outageProbability > 0 && rng.next() < outageProbability);
-    if (inOutage) {
+    // A missing or zero duration means the outage lasts to the end of the run.
+    const outageDurationNs = Math.max(0, Number(faults.outageDurationSec || 0)) * 1e9;
+    const outageEnded = state.inOutage
+        && state.outageEndNs != null
+        && snapshot.captureTimeNs >= state.outageEndNs;
+    const continuing = state.inOutage && !outageEnded;
+    const starting = !continuing && outageProbability > 0 && rng.next() < outageProbability;
+    if (continuing || starting) {
+        const outageEndNs = starting
+            ? (outageDurationNs > 0 ? snapshot.captureTimeNs + outageDurationNs : null)
+            : state.outageEndNs ?? null;
         return {
             measurement: {
                 status: -1,
@@ -330,13 +370,13 @@ export function buildGnssMeasurement(snapshot, sensorConfig, rng, state = {}) {
                 positionCovarianceType: 0,
                 noFix: true,
             },
-            nextState: { ...state, multipath: nextMultipath, inOutage: true, lastCaptureTimeNs: snapshot.captureTimeNs },
+            nextState: { ...state, multipath: nextMultipath, inOutage: true, outageEndNs, lastCaptureTimeNs: snapshot.captureTimeNs },
         };
     }
 
     const positionNoise = sampleAxisNoise(
         rng,
-        sensorConfig.calibration.positionNoiseEnu || { x: 0, y: 0, z: 0 },
+        whiteStdDev,
         { x: 0, y: 0, z: 0 },
         nextMultipath,
     );
@@ -346,7 +386,8 @@ export function buildGnssMeasurement(snapshot, sensorConfig, rng, state = {}) {
         up: positionEnu.up + positionNoise.z,
     };
     const wgs84 = enuOffsetToWgs84(noisyEnu.east, noisyEnu.north, noisyEnu.up, datum);
-    const positionCovariance = diagonalCovariance(sensorConfig.calibration.positionNoiseEnu || { x: 0, y: 0, z: 0 });
+    // The fix carries white noise plus multipath drift, so report both variances.
+    const positionCovariance = diagonalCovariance(combinedStdDev(whiteStdDev, multipathStdDev));
 
     return {
         measurement: {
@@ -359,7 +400,7 @@ export function buildGnssMeasurement(snapshot, sensorConfig, rng, state = {}) {
             positionCovarianceType: 2,
             noFix: false,
         },
-        nextState: { ...state, multipath: nextMultipath, inOutage: false, lastCaptureTimeNs: snapshot.captureTimeNs, dropped: false },
+        nextState: { ...state, multipath: nextMultipath, inOutage: false, outageEndNs: null, lastCaptureTimeNs: snapshot.captureTimeNs, dropped: false },
     };
 }
 
@@ -374,10 +415,9 @@ export function quantizeTravel(distanceMeters, wheelRadius, ticksPerRevolution) 
     return (ticks / ticksPerRevolution) * circumference;
 }
 
-export function wheelTravelFromBicycle(snapshot, trackWidth, slipFactor = 0) {
+export function wheelTravelFromBicycle(snapshot, trackWidth, slipFactor = 0, dt = 1 / 50) {
     const speed = snapshot.speed;
     const yawRate = snapshot.bodyAngularVelocity.z;
-    const dt = 1 / Math.max(1, snapshot.rateHz || 50);
     const centerTravel = speed * dt;
     const leftTravel = centerTravel * (1 - slipFactor) - (yawRate * trackWidth * dt) / 2;
     const rightTravel = centerTravel * (1 - slipFactor) + (yawRate * trackWidth * dt) / 2;
@@ -409,14 +449,26 @@ export function integrateWheelOdometry(state, leftTravel, rightTravel, trackWidt
 
 export function buildWheelOdometryMeasurement(snapshot, sensorConfig, rng, state = {}) {
     const calibration = sensorConfig.calibration;
-    snapshot.rateHz = sensorConfig.rateHz;
-    const { leftTravel, rightTravel, dt } = wheelTravelFromBicycle(
+    // The fixed-step schedule rounds the sensor period to whole steps, so the
+    // real capture interval can differ from 1 / rateHz.
+    const dt = state.lastCaptureTimeNs != null && snapshot.captureTimeNs > state.lastCaptureTimeNs
+        ? (snapshot.captureTimeNs - state.lastCaptureTimeNs) / 1e9
+        : 1 / Math.max(1, sensorConfig.rateHz);
+    const { leftTravel, rightTravel } = wheelTravelFromBicycle(
         snapshot,
         calibration.trackWidth,
         calibration.slipFactor,
+        dt,
     );
-    const leftQuantized = quantizeTravel(leftTravel, calibration.wheelRadius, calibration.ticksPerRevolution);
-    const rightQuantized = quantizeTravel(rightTravel, calibration.wheelRadius, calibration.ticksPerRevolution);
+    // An encoder counts ticks of the total wheel rotation. Quantize the
+    // running total so fractions of a tick carry over to the next sample.
+    const tickLength = (2 * Math.PI * Math.max(Number.EPSILON, calibration.wheelRadius)) / calibration.ticksPerRevolution;
+    const leftTravelM = Number(state.leftTravelM || 0) + leftTravel;
+    const rightTravelM = Number(state.rightTravelM || 0) + rightTravel;
+    const leftTicks = Math.round(leftTravelM / tickLength);
+    const rightTicks = Math.round(rightTravelM / tickLength);
+    const leftQuantized = (leftTicks - Number(state.leftTicks || 0)) * tickLength;
+    const rightQuantized = (rightTicks - Number(state.rightTicks || 0)) * tickLength;
     const integrated = integrateWheelOdometry(
         { ...state.odometry, dt },
         leftQuantized,
@@ -453,8 +505,10 @@ export function buildWheelOdometryMeasurement(snapshot, sensorConfig, rng, state
         },
         nextState: {
             odometry: integrated,
-            leftTicks: Number(state.leftTicks || 0) + Math.round((leftQuantized / (2 * Math.PI * calibration.wheelRadius)) * calibration.ticksPerRevolution),
-            rightTicks: Number(state.rightTicks || 0) + Math.round((rightQuantized / (2 * Math.PI * calibration.wheelRadius)) * calibration.ticksPerRevolution),
+            leftTravelM,
+            rightTravelM,
+            leftTicks,
+            rightTicks,
             lastCaptureTimeNs: snapshot.captureTimeNs,
         },
     };
@@ -501,6 +555,8 @@ export function createMeasurementSeedState(sensorConfig, seed) {
         drift: { angular: { x: 0, y: 0, z: 0 }, acceleration: { x: 0, y: 0, z: 0 } },
         multipath: { x: 0, y: 0, z: 0 },
         odometry: { position: { x: 0, y: 0, z: 0 }, heading: 0 },
+        leftTravelM: 0,
+        rightTravelM: 0,
         leftTicks: 0,
         rightTicks: 0,
         inOutage: false,

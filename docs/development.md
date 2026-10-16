@@ -110,11 +110,11 @@ For environment editor or earth import changes, also verify:
 | Variable | Required for | Notes |
 |----------|--------------|-------|
 | `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` | Earth Import tile preview | Map Tiles API (Photorealistic 3D Tiles). Set in `.env.local`, not committed. |
-| `CEV_SIM_VISUAL_SOURCE_REGISTRY` | Editor asset Import | Operator grants file; defaults to `$CEV_SIM_DATA_DIR/visual-source-registry.json`. There is no mutation API. Missing files fail closed (empty sources). |
+| `CEV_SIM_VISUAL_SOURCE_REGISTRY` | Editor asset Import | Operator grants file; defaults to `$CEV_SIM_DATA_DIR/visual-source-registry.json`. There is no mutation API. Missing files fail closed (empty sources). `install.sh` seeds the local owned-lab grant when the file is absent. |
 
 See [Earth Import](earth-import.md) for setup and troubleshooting.
 
-Editor **Import** (Assets pane) uses sources that are `active` and grant `persistent-cache`, `machine-interpretation`, and `retention`. A missing registry fails closed and the pane explains that. With one eligible grant, Import uses it and does not show the grant id. With two or more, **Upload grant** chooses which id is stamped on the import; that choice does not filter the catalog. Copy an owned-lab grant into the registry path above, then restart the server. Built-in props still place without a grant.
+Editor **Import** (Assets pane) uses sources that are `active` and grant `persistent-cache`, `machine-interpretation`, and `retention`. A missing registry fails closed and the pane explains that. With one eligible grant, Import uses it and does not show the grant id. With two or more, **Upload grant** chooses which id is stamped on the import; that choice does not filter the catalog. `install.sh` writes the owned-lab grant below to `server/data/visual-source-registry.json` when the file is absent and leaves an existing registry unchanged. A manual `git clone` plus `npm ci` still needs that file, or a re-run of the installer. Restart the server after changing the file. Built-in props still place without a grant.
 
 ```json
 {

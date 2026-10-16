@@ -138,8 +138,9 @@ function fallbackCameraPose(job) {
 export function prepareAnalyticGpuFrame({ scene, jobs }) {
     return jobs.map((job) => {
         const triangles = worldTriangles(scene, job);
-        const next = { ...job, triangles };
-        if (triangles.length === 0) return next;
+        const planes = Array.isArray(scene?.planes) ? scene.planes : [];
+        const next = { ...job, triangles, planes };
+        if (triangles.length === 0 && planes.length === 0) return next;
         if (job.type === "camera") {
             if (job.captureMode === "calibrated-projection@1" && job.products?.depth !== true) return next;
             if (!job.sensor) throw new Error(`GPU camera ${job.id} is missing its sensor.`);

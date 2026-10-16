@@ -89,6 +89,30 @@ function texturePath(args) {
     return tokens.slice(index).join(" ");
 }
 
+/** MTL library paths named by an OBJ file. Uses the same statement rules as the parser. */
+export function listObjLibraryPaths(text, entryPath) {
+    const paths = [];
+    for (const line of linesOf(text)) {
+        const parsed = statement(line);
+        if (!parsed || parsed.keyword.toLowerCase() !== "mtllib") continue;
+        for (const name of parsed.args.split(/\s+/u).filter(Boolean)) {
+            paths.push(resolveDependency(entryPath, name));
+        }
+    }
+    return paths;
+}
+
+/** Texture paths named by `map_Kd` in an MTL file. */
+export function listMtlTexturePaths(text, mtlPath) {
+    const paths = [];
+    for (const line of linesOf(text)) {
+        const parsed = statement(line);
+        if (!parsed || parsed.keyword.toLowerCase() !== "map_kd") continue;
+        paths.push(resolveDependency(mtlPath, texturePath(parsed.args)));
+    }
+    return paths;
+}
+
 function selectedFile(selected, path) {
     const bytes = selected.get(path);
     if (!bytes) throw new Error(`GLTF dependency "${path}" was not selected.`);
@@ -223,7 +247,8 @@ function loadLibraries(statements, entry, selected) {
     return { materials, images, materialNames };
 }
 
-export function parseObjPackage(files, entryPath) {
+export function parseObjPackage(files, entryPath, options = {}) {
+    const fallbackName = options?.fallbackName ?? null;
     const selected = new Map();
     for (const file of files ?? []) {
         const path = normalizedSelectedPath(file?.path);
@@ -241,9 +266,17 @@ export function parseObjPackage(files, entryPath) {
     const nodes = [];
     let current = null;
     let activeMaterial = null;
+    let unnamed = 0;
+    const unnamedName = () => {
+        const name = `${fallbackName}-${unnamed}`;
+        unnamed += 1;
+        return name;
+    };
 
     const startNode = (name) => {
-        current = { id: uniqueId(name, usedNodeIds, "object"), name: String(name ?? "").trim() || stem, runs: new Map() };
+        const trimmed = String(name ?? "").trim();
+        const resolved = trimmed || (fallbackName == null ? stem : unnamedName());
+        current = { id: uniqueId(resolved, usedNodeIds, "object"), name: resolved, runs: new Map() };
         nodes.push(current);
     };
 
@@ -260,13 +293,13 @@ export function parseObjPackage(files, entryPath) {
             const channels = parsed.args.split(/\s+/u);
             geometry.normals.push([0, 1, 2].map((index) => finite(channels[index], "OBJ normal")));
         } else if (keyword === "o" || keyword === "g") {
-            startNode(parsed.args || stem);
+            startNode(fallbackName == null ? (parsed.args || stem) : parsed.args);
         } else if (keyword === "usemtl") {
             const name = parsed.args.trim();
             if (!materialNames.has(name)) throw new Error(`MTL material "${name}" was not declared.`);
             activeMaterial = materialNames.get(name);
         } else if (keyword === "f") {
-            if (!current) startNode(stem);
+            if (!current) startNode(fallbackName == null ? stem : "");
             const counts = { positions: geometry.positions.length, uvs: geometry.uvs.length, normals: geometry.normals.length };
             const corners = parsed.args.split(/\s+/u).filter(Boolean).map((token) => parseCorner(token, counts));
             for (const triangle of triangulatePolygon(corners)) addTriangle(current, activeMaterial, triangle, geometry);

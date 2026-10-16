@@ -1,3 +1,4 @@
+import { authoringBindingWarnings } from "../../app/scripting/units/world/AuthoringBlocks.block.js";
 import { z } from "zod";
 import {
     createDocumentId,
@@ -643,11 +644,13 @@ export function registerScriptingTools(server, storage) {
                 document.updatedAt = nowIso();
                 await storage.putScript(document);
                 storageEvents.publish({ domain: "script", id: scriptId, action: "compiled" });
+                const warnings = authoringBindingWarnings(result.artifact);
                 return ok({
                     ok: true,
                     valid: true,
                     interface: result.artifact?.interface ?? null,
                     compileStatus: document.compileStatus,
+                    ...(warnings.length > 0 ? { warnings } : {}),
                 });
             } catch (error) {
                 return fail(error);

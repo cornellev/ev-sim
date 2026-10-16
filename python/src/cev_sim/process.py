@@ -16,6 +16,88 @@ from typing import TextIO
 from .config import MIN_PROTOCOL_MINOR, PROTOCOL_MAJOR, SupervisorLaunch
 from .errors import CevSimLaunchError
 
+_NODE_MIN = (22, 22, 2)
+_NODE_MAX = (23, 0, 0)
+
+
+def _parse_node_version(text: str) -> tuple[int, int, int]:
+    cleaned = text.strip().lstrip("vV")
+    parts = cleaned.split(".")
+    if len(parts) < 3:
+        raise CevSimLaunchError(f"Could not read the Node.js version from {text!r}")
+    try:
+        return int(parts[0]), int(parts[1]), int(parts[2])
+    except ValueError as error:
+        raise CevSimLaunchError(f"Could not read the Node.js version from {text!r}") from error
+
+
+def node_version_supported(version: tuple[int, int, int]) -> bool:
+    return _NODE_MIN <= version < _NODE_MAX
+
+
+def require_supported_node() -> str:
+    """Return the `node` executable after checking the supported 22.x range."""
+    node = shutil.which("node")
+    if node is None:
+        raise CevSimLaunchError(
+            "node was not found on PATH. Install Node.js >=22.22.2 and <23, then run npm install "
+            "in the cev-sim checkout."
+        )
+    result = subprocess.run([node, "--version"], capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        raise CevSimLaunchError(f"node --version failed ({result.returncode}): {detail}")
+    version = _parse_node_version(result.stdout or "")
+    if not node_version_supported(version):
+        found = ".".join(str(part) for part in version)
+        raise CevSimLaunchError(
+            f"Node.js >=22.22.2 and <23 is required (found {found}). "
+            "Install a Node.js 22 release before launching cev-sim."
+        )
+    return node
+
+
+def _checkout_root() -> Path | None:
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "bin" / "cev-sim.js").is_file() and (parent / "node_modules").is_dir():
+            return parent
+    return None
+
+
+def resolve_supervisor_command(executable: str | Path | None = None) -> list[str]:
+    """Resolve the supervisor argv prefix.
+
+    An explicit path is used as given. A bare name is looked up on PATH. The
+    default name `cev-sim`, when it is not on PATH, launches `bin/cev-sim.js`
+    from a checkout with the supported Node.js binary.
+    """
+    configured = "cev-sim" if executable is None else str(executable)
+    if os.sep in configured or (os.altsep and os.altsep in configured):
+        path = Path(configured).expanduser().resolve()
+        if not path.is_file():
+            raise CevSimLaunchError(f"Configured cev-sim executable does not exist: {path}")
+        if path.suffix == ".js":
+            return [require_supported_node(), str(path)]
+        if not os.access(path, os.X_OK):
+            raise CevSimLaunchError(f"Configured cev-sim executable is not executable: {path}")
+        return [str(path)]
+    resolved = shutil.which(configured)
+    if resolved is not None:
+        return [resolved]
+    if configured == "cev-sim":
+        checkout = _checkout_root()
+        if checkout is not None:
+            return [require_supported_node(), str(checkout / "bin" / "cev-sim.js")]
+        raise CevSimLaunchError(
+            "Configured cev-sim executable 'cev-sim' was not found on PATH, and this package "
+            "is not inside a checkout that contains bin/cev-sim.js and node_modules. Install the "
+            "cev-sim supervisor, or pass an explicit executable path."
+        )
+    raise CevSimLaunchError(
+        f"Configured cev-sim executable {configured!r} was not found on PATH. "
+        "Install the cev-sim supervisor, or pass an explicit executable path."
+    )
+
 
 class OwnedSupervisor:
     """Own a local `cev-sim supervisor` process and its private Unix socket."""
@@ -39,12 +121,12 @@ class OwnedSupervisor:
             if self.target is None:
                 raise CevSimLaunchError("Supervisor process exists without a target")
             return self.target
-        executable = self._resolve_executable()
+        executable = resolve_supervisor_command(self.configuration.executable)
         socket_root = Path("/tmp") if os.name == "posix" and Path("/tmp").is_dir() else None
         self.directory = Path(tempfile.mkdtemp(prefix="cev-sim-python-", dir=socket_root))
         self.socket_path = self.directory / "supervisor.sock"
         self.package_inbox = Path(f"{self.socket_path}.run-package-inbox")
-        command = [executable, "supervisor", "--socket", str(self.socket_path)]
+        command = [*executable, "supervisor", "--socket", str(self.socket_path)]
         if self.configuration.config_path is not None:
             command.extend(("--config", str(self.configuration.config_path)))
         if self.configuration.preset is not None:
@@ -118,21 +200,6 @@ class OwnedSupervisor:
         self.socket_path = None
         self.package_inbox = None
         self.target = None
-
-    def _resolve_executable(self) -> str:
-        configured = str(self.configuration.executable)
-        if os.sep in configured or (os.altsep and os.altsep in configured):
-            path = Path(configured).expanduser().resolve()
-            if not path.is_file() or not os.access(path, os.X_OK):
-                raise CevSimLaunchError(f"Configured cev-sim executable is not executable: {path}")
-            return str(path)
-        resolved = shutil.which(configured)
-        if resolved is None:
-            raise CevSimLaunchError(
-                f"Configured cev-sim executable {configured!r} was not found on PATH; "
-                "install it or provide an explicit path"
-            )
-        return resolved
 
     def _drain_stderr(self, stream: TextIO) -> None:
         for line in stream:

@@ -3,10 +3,10 @@
 import { useState } from "react";
 
 import { AsyncState, Button } from "../../ui";
-import { installLocalPlugin } from "../PluginClient.js";
+import { installLocalPlugin, reimportLocalPlugin } from "../PluginClient.js";
 import { PluginPackageDetail } from "./PluginPackageDetail.js";
 import { PluginPackageList } from "./PluginPackageList.js";
-import { localPackageInstallState, selectLocalPackage } from "./pluginSelection.js";
+import { formatReimportResult, localPackageImported, localPackageInstallState, selectLocalPackage } from "./pluginSelection.js";
 import { usePluginLibrary } from "./usePluginLibrary.js";
 import styles from "./PluginsPage.module.css";
 
@@ -15,17 +15,27 @@ export function PluginLibraryPanel({ onOpenMarketplace = null }) {
     const [preferredDirectory, setPreferredDirectory] = useState(null);
     const [installingDirectory, setInstallingDirectory] = useState(null);
     const [installFailure, setInstallFailure] = useState(null);
+    const [installNotice, setInstallNotice] = useState(null);
     const selectedDirectory = selectLocalPackage(library.packages, preferredDirectory);
     const entry = library.packages.find((item) => item.directory === selectedDirectory) ?? null;
-    const installState = localPackageInstallState(entry, library.installed);
+    const installState = localPackageInstallState(entry, library.installed, library.builds);
+    const imported = localPackageImported(entry, library.installed);
     const installError = installFailure?.directory === selectedDirectory ? installFailure.message : null;
+    const installMessage = installNotice?.directory === selectedDirectory ? installNotice.message : null;
 
     const install = async () => {
-        if (!entry || installState !== "detected" || installingDirectory) return;
+        if (!entry?.document || installingDirectory) return;
+        if (!imported && installState !== "detected" && installState !== "update-available") return;
         setInstallingDirectory(entry.directory);
         setInstallFailure(null);
+        setInstallNotice(null);
         try {
-            await installLocalPlugin(entry.directory);
+            if (imported) {
+                const result = await reimportLocalPlugin(entry.directory);
+                setInstallNotice({ directory: entry.directory, message: formatReimportResult(result) });
+            } else {
+                await installLocalPlugin(entry.directory);
+            }
             await library.refresh();
         } catch (caught) {
             const message = caught instanceof Error ? caught.message : "Could not install the plugin.";
@@ -63,6 +73,7 @@ export function PluginLibraryPanel({ onOpenMarketplace = null }) {
             <PluginPackageList
                 packages={library.packages}
                 installed={library.installed}
+                builds={library.builds}
                 selectedDirectory={selectedDirectory}
                 onSelect={setPreferredDirectory}
             />
@@ -75,7 +86,9 @@ export function PluginLibraryPanel({ onOpenMarketplace = null }) {
                     onRetry={library.refresh}
                     installState={installState}
                     installing={installingDirectory === entry.directory}
+                    imported={imported}
                     installError={installError}
+                    installMessage={installMessage}
                     onInstall={install}
                 />
             ) : (

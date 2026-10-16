@@ -28,6 +28,7 @@ from [`docs/plugin-api.md`](plugin-api.md) rather than this roadmap.
 | PLG-06a: portable plugin files and classic PCAP artifacts | Complete | Verified | Merged |
 | PLG-06b: supervisor-owned live UDP transport | Complete | Verified | Merged |
 | PLG-07: custom sensor authoring and UI | Complete | Verified | Merged |
+| PLG-08: declarative dynamics plants | Complete | Verified | Unmerged |
 
 Only a merged change may be marked merged. A milestone is verified only when
 all of its acceptance commands and evidence entries are present in this
@@ -542,6 +543,62 @@ Acceptance requires catalog/lock/storage/hash Node tests, Config and Vehicle
 browser authoring, throwing-view fallback, portable/headless execution without
 evaluating `app/plugin/browser`, and unchanged action-tape characterization.
 
+### PLG-08 — Declarative dynamics plants
+
+A vehicle may name one plugin plant in optional `dynamics.plant`. The host
+loads that plant from `plugin.json` and `plant.wasm` during the existing
+`vehicles` phase. JavaScript remains the simulator. The built-in bicycle stays
+in `KinematicVehiclePlant`, so plugin-free characterization does not move.
+Python stays a client.
+
+Locked contracts:
+
+- Plant ABI 1 has zero WASM imports. Exports are `memory`, `cev_plant_abi`,
+  `cev_plant_buffer`, and `cev_plant_step`. The module-owned `f64[45]` buffer
+  carries 13 state values and up to 32 parameters. A nonzero code or a
+  non-finite output is `PLUGIN_EXECUTION` with `requiresReset`. There is no
+  bicycle fallback.
+- `entry` is optional only for a plant-only document. `plant.step` is required
+  when `plants` is non-empty. The capability is not added to the filtered
+  PLG-02 runtime set; it is part of `PLUGIN_CAPABILITIES`, so
+  `PLG03_RUNTIME_CAPABILITIES` advertises it.
+- The host compiles the module while preparing the vehicle, then steps it
+  synchronously. Reset replaces the instance. After the step, the host drapes
+  Y and pitch. Outside a resolved run the plant does not move.
+- Vehicle `pluginLocks` gain optional `plants`. Empty `plants` is omitted.
+  Sensor-only locks keep the PLG-07 projection
+  `{ pluginId, version, runtimeHash, sensorTypes }`. A plant-only lock does
+  not require `sensors.sample.range-image`. A lock with plants requires
+  `plant.step` on the run selection.
+- Local Install builds `cargo build --release --lib --locked --target
+  wasm32-unknown-unknown` when `plants` and `Cargo.toml` are present. The
+  target directory is under the plugin store. Marketplace install never runs
+  Cargo. `local-builds.json` is operational and stays out of `library.json`,
+  `worldHash`, `resolvedHash`, and run-package identity.
+- Local Reimport uses that same pack or build, then replaces other manual
+  library rows for the plugin id and rewrites saved vehicle locks, script
+  locks and compiled requirements, and run-manifest artifact hashes onto the
+  new package. Install stays add-only. Marketplace-owned rows, resolved runs,
+  and live sessions keep the previous hash.
+- The native entry point is `pub fn step` in the plant library. A Zenoh driver
+  is a sibling crate and is outside the source fingerprint.
+
+Acceptance requires plant package, load, build, lock, and headless parity
+tests, an unchanged action-tape characterization, and `npm run lint` / `npm test`.
+
+## PLG-08 evidence ledger
+
+Acceptance ran on 2026-10-08 on macOS arm64, Node 22.22.2. PLG-08 does not
+change the outstanding headless PR-12 hosted, soak, x64 NVIDIA, or Jetson
+evidence obligations and is not a headless PR 13.
+
+| Gate | Exact command / evidence | Result / limitation |
+| --- | --- | --- |
+| Plant package, load, build, locks, motion, and catalog route | `node --experimental-default-type=module --test tests/plugin-plant-package.test.js tests/plugin-plant-loading.test.js tests/plugin-plant-build.test.js tests/headless-plant-plugin.test.js tests/plugin-scaffold.test.js tests/plugin-selection.test.js tests/plugin-sensor-authoring.test.js tests/local-plugins.test.js tests/headless-vehicle.test.js tests/plugin-package.test.js tests/plugin-api-routes.test.js` | Passed. The encoder bicycle matches the JavaScript plant and the browser adapter within 1e-9 m and 1e-9 rad. Nonzero and non-finite steps require reset. A fresh instance drops hidden module state. Local Install with a fake Cargo leaves the source tree unchanged, records `local-builds.json`, and keeps the previous CAS object after Update. `GET /api/storage/plugins/plants` lists the installed fixture plant. |
+| Characterization | `npm run fixtures:headless`; `git diff --exit-code -- tests/fixtures/headless/characterization.v1.json` | Passed with no committed fixture delta |
+| Repository lint and full Node suite | `npm run lint`; `npm test`; `git diff --check` | Node 1,978 passed, 0 failed, 7 skipped, then the added plant catalog route test passed in `tests/plugin-api-routes.test.js` (4/4). The real Cargo verify is one of the skips unless `CEV_PLANT_CARGO=1` and the wasm32 target is installed. ESLint had zero errors and three pre-existing warnings in `MapSurface.js` and `MarketplaceWorkspace.js`. Whitespace check passed. |
+| Browser authoring | Vehicle Editor Wheels tab on the running dev server | The Dynamics control renders and defaults to Built-in bicycle when no plant is installed. The grant action is covered by the lock/stamp Node test. The already-running dev process predates the catalog route, so that process 404s until restart. A production Playwright install-and-run pass was not run. |
+
 ## PLG-01 evidence ledger
 
 | Gate | Evidence | Result / limitation |
@@ -701,6 +758,23 @@ change the outstanding PR-12 hosted, soak, NVIDIA x64, or Jetson ARM64 gates.
 
 ## Decision log
 
+- **2026-10-15 — Local Reimport adopts a new package into saved authoring documents.**
+  The plugin menu Reimport packs or rebuilds the selected `plugins/` directory,
+  replaces other manual library rows for that plugin id, and rewrites saved
+  vehicle `pluginLocks`, script graph locks and compiled `pluginRequirements`,
+  and run-manifest `plugins.artifacts` expected hashes onto the new package.
+  Install stays add-only. Marketplace-owned rows, resolved runs, live sessions,
+  and `worldHash` stay unchanged. A saved document that lost a locked sensor,
+  plant, unit, or granted capability blocks the replacement. This does not
+  renumber PLG-08.
+- **2026-10-08 — PLG-08 declarative plants.** The host mounts `plugin.json` and
+  `plant.wasm` with zero WASM imports. A JavaScript adapter is not part of
+  this milestone. Local Install is the only path that runs Cargo, and only
+  for a trusted directory that declares plants. Marketplace packages stay
+  signed bytes. The source fingerprint lives in `local-builds.json`, not
+  `library.json`. A plant update is a new package hash; adopting it is an
+  explicit vehicle and run selection. The native `step` function is shared
+  with a sibling Zenoh crate that Install does not build.
 - **2026-09-29 — MKT-13 adds nonsemantic executable admission.**
   `PluginLoader` accepts an async `authorizePackage(packageHash)` callback after
   package/capability verification and before module import. Node and browser

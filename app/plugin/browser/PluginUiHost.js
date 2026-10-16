@@ -81,6 +81,13 @@ export class PluginUiHost {
         return this.diagnostics.get(type) || null;
     }
 
+    noteDiagnostic(type, message) {
+        const text = String(message ?? "").trim();
+        if (!type || !text) return;
+        const current = this.diagnostics.get(type);
+        this.diagnostics.set(type, current ? `${current} ${text}` : text);
+    }
+
     async loadPackageUi(verified) {
         const plugin = {
             id: verified.document.id,

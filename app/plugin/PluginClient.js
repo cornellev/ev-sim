@@ -48,6 +48,16 @@ export async function installLocalPlugin(directory) {
     }
 }
 
+export async function reimportLocalPlugin(directory) {
+    try {
+        return await storagePost("plugins/local/reimport", { directory });
+    } catch (error) {
+        const message = error?.payload?.message;
+        if (typeof message === "string" && message) throw new Error(message);
+        throw error;
+    }
+}
+
 export async function installPluginFile(file) {
     const response = await fetch("/api/storage/plugins/install-file", {
         method: "POST",
@@ -73,6 +83,15 @@ export async function fetchSensorCatalog() {
     const payload = await response.json();
     if (!response.ok || payload?.ok === false) {
         throw new Error(payload?.error || payload?.message || "Could not load the sensor catalog.");
+    }
+    return payload;
+}
+
+export async function fetchPlantCatalog() {
+    const response = await fetch("/api/storage/plugins/plants", { headers: { Accept: "application/json" } });
+    const payload = await response.json();
+    if (!response.ok || payload?.ok === false) {
+        throw new Error(payload?.error || payload?.message || "Could not load the plant catalog.");
     }
     return payload;
 }

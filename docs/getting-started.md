@@ -10,8 +10,9 @@ cev-sim is a browser-based autonomous vehicle and cev-sim workbench. It uses Nex
 
 ## Install
 
-Fastest path — fetch and run the installer (requires git, Node.js
-`>=22.22.2 <23`, and npm):
+Fastest path — fetch and run the installer (requires git). When nvm already
+has Node.js 22.22.2, the installer switches to it. When that version is
+missing, it asks whether to install it with nvm and make it the default.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/cornellev/ev-sim/main/install.sh | bash
@@ -27,6 +28,9 @@ curl -fsSL https://raw.githubusercontent.com/cornellev/ev-sim/main/install.sh | 
 curl -fsSL https://raw.githubusercontent.com/cornellev/ev-sim/v0.2.0/install.sh \
   | bash -s -- --ref v0.2.0
 
+# clone + install + production build
+curl -fsSL https://raw.githubusercontent.com/cornellev/ev-sim/main/install.sh | bash -s -- --build
+
 # clone + install + start the dev server
 curl -fsSL https://raw.githubusercontent.com/cornellev/ev-sim/main/install.sh | bash -s -- --start
 ```
@@ -36,11 +40,15 @@ alias for `--ref`.
 
 The installer creates `.env.local` and asks whether to enable the marketplace. Enter, `y`, or `yes` writes `CEV_SIM_MARKETPLACE_ENABLED=1`. `n` or `no` writes `0`. An existing assignment is kept unless `--marketplace` or `--no-marketplace` is passed. A run with no terminal creates the file and leaves that setting unchanged, which leaves the marketplace enabled.
 
+When `visual-source-registry.json` is absent, the installer creates it with a local `owned-lab` grant so editor Import can upload models. The default path is `server/data/visual-source-registry.json`. `CEV_SIM_VISUAL_SOURCE_REGISTRY`, or `CEV_SIM_DATA_DIR` when that registry variable is unset, selects another path from the environment or `.env.local`. An existing registry is kept.
+
 If you already cloned the repo:
 
 ```bash
 npm ci
 ```
+
+A manual clone does not create `server/data/visual-source-registry.json`. Copy the owned-lab grant in [Development](development.md), or re-run the installer, before using editor Import.
 
 ## Run The App
 

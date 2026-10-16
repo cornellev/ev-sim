@@ -9,10 +9,12 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
 import { defaultCevSimEngineRange } from "../app/plugin/PluginEngineRange.js";
+import { assertPlantModuleBytes } from "../app/plugin/PlantModule.js";
 import { PluginHost } from "../app/plugin/PluginHost.js";
 import { PluginLoader } from "../app/plugin/PluginLoader.js";
 import { createPluginPackage } from "../app/plugin/PluginPackage.js";
 import { PLUGIN_ID_PATTERN } from "../app/plugin/PluginSelection.js";
+import { buildLocalPlantPackage } from "../server/plugins/plantBuild.js";
 import { BlockRegistry } from "../app/scripting/BlockRegistry.js";
 import { NodePluginModuleSource } from "../server/plugins/NodePluginModuleSource.js";
 import { PluginStore } from "../server/storage/PluginStore.js";
@@ -35,14 +37,18 @@ export function parseCreatePluginArgs(argv = process.argv.slice(2)) {
             "no-ui": { type: "boolean", default: false },
             verify: { type: "boolean", default: true },
             "no-verify": { type: "boolean", default: false },
+            kind: { type: "string", default: "unit" },
             help: { type: "boolean", default: false },
         },
         allowPositionals: false,
     });
+    const kind = values.kind || "unit";
+    if (kind !== "unit" && kind !== "plant") throw new Error("--kind must be unit or plant.");
     return {
         id: values.id,
         out: values.out,
         name: values.name,
+        kind,
         category: values.category,
         withUi: values["no-ui"] === true ? false : values["with-ui"] !== false,
         verify: values["no-verify"] === true ? false : values.verify !== false,
@@ -63,13 +69,163 @@ function titleFromId(id) {
     return leaf.replace(/(^|[-])(\w)/g, (_match, _sep, letter) => letter.toUpperCase());
 }
 
+function crateName(pluginId) {
+    return pluginId.replaceAll(".", "_").replaceAll("-", "_");
+}
+
+export function scaffoldPlantFiles({
+    id,
+    simulatorVersion = PACKAGE_JSON.version,
+} = {}) {
+    const pluginId = assertPluginScaffoldId(id);
+    const plantId = `${pluginId}.bicycle`;
+    const crate = crateName(pluginId);
+    const document = {
+        kind: "cev-sim.plugin",
+        api: 1,
+        id: pluginId,
+        version: "1.0.0",
+        engines: { cevSim: defaultCevSimEngineRange(simulatorVersion) },
+        capabilities: ["plant.step"],
+        units: [],
+        systems: [],
+        plants: [{
+            id: plantId,
+            abi: 1,
+            module: "plant.wasm",
+            parameters: [
+                { key: "wheelbase", source: "kinematics.wheelbase" },
+                { key: "maxSteeringAngle", source: "kinematics.maxSteeringAngle" },
+            ],
+        }],
+    };
+    const lib = `#![allow(static_mut_refs)]
+
+mod abi;
+
+pub struct PlantState {
+    pub position: [f64; 3],
+    pub rotation: [f64; 3],
+    pub velocity: [f64; 3],
+    pub acceleration: [f64; 3],
+    pub steering: f64,
+}
+
+fn parameter(params: &[f64], index: usize, fallback: f64) -> f64 {
+    params.get(index).copied().unwrap_or(fallback)
+}
+
+pub fn step(state: &mut PlantState, params: &[f64], dt: f64) -> i32 {
+    let wheelbase = parameter(params, 0, 1.5).max(1.0e-9);
+    let maximum = parameter(params, 1, 0.6).min(std::f64::consts::PI * 0.49);
+    state.velocity[0] += state.acceleration[0] * dt;
+    state.velocity[1] += state.acceleration[1] * dt;
+    state.velocity[2] += state.acceleration[2] * dt;
+    let speed = state.velocity[0];
+    let steering = state.steering.clamp(-maximum, maximum);
+    let yaw = state.rotation[1];
+    state.position[0] += yaw.cos() * speed * dt;
+    state.position[2] += -yaw.sin() * speed * dt;
+    state.rotation[1] += (speed / wheelbase) * steering.tan() * dt;
+    let _ = steering;
+    0
+}
+`;
+    const abi = `use crate::{step, PlantState};
+
+const STATE_LEN: usize = 13;
+const PARAM_CAP: usize = 32;
+
+static mut PLANT_BUFFER: [f64; STATE_LEN + PARAM_CAP] = [0.0; STATE_LEN + PARAM_CAP];
+
+#[no_mangle]
+pub extern "C" fn cev_plant_abi() -> i32 {
+    1
+}
+
+#[no_mangle]
+pub extern "C" fn cev_plant_buffer() -> *mut f64 {
+    unsafe { PLANT_BUFFER.as_mut_ptr() }
+}
+
+#[no_mangle]
+pub extern "C" fn cev_plant_step(params_len: i32, dt: f64) -> i32 {
+    unsafe {
+        let values = &mut PLANT_BUFFER;
+        let mut state = PlantState {
+            position: [values[0], values[1], values[2]],
+            rotation: [values[3], values[4], values[5]],
+            velocity: [values[6], values[7], values[8]],
+            acceleration: [values[9], values[10], values[11]],
+            steering: values[12],
+        };
+        let count = usize::try_from(params_len.max(0)).unwrap_or(0).min(PARAM_CAP);
+        let code = step(&mut state, &values[STATE_LEN..STATE_LEN + count], dt);
+        values[0] = state.position[0];
+        values[1] = state.position[1];
+        values[2] = state.position[2];
+        values[3] = state.rotation[0];
+        values[4] = state.rotation[1];
+        values[5] = state.rotation[2];
+        values[6] = state.velocity[0];
+        values[7] = state.velocity[1];
+        values[8] = state.velocity[2];
+        values[9] = state.acceleration[0];
+        values[10] = state.acceleration[1];
+        values[11] = state.acceleration[2];
+        values[12] = state.steering;
+        code
+    }
+}
+`;
+    return {
+        pluginId,
+        plantId,
+        document,
+        files: {
+            "plugin.json": `${JSON.stringify(document, null, 2)}\n`,
+            "Cargo.toml": `[package]
+name = "${crate}"
+version = "1.0.0"
+edition = "2021"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[profile.release]
+opt-level = "s"
+lto = true
+panic = "abort"
+strip = true
+`,
+            "Cargo.lock": `# This file is automatically @generated by Cargo.
+# It is not intended for manual editing.
+version = 3
+
+[[package]]
+name = "${crate}"
+version = "1.0.0"
+`,
+            "rust-toolchain.toml": `[toolchain]
+channel = "1.81.0"
+targets = ["wasm32-unknown-unknown"]
+`,
+            "src/lib.rs": lib,
+            "src/abi.rs": abi,
+            ".gitignore": "/target/\n*.wasm\n",
+        },
+    };
+}
+
 export function scaffoldPluginFiles({
     id,
     name,
+    kind = "unit",
     category = "math",
     withUi = true,
     simulatorVersion = PACKAGE_JSON.version,
 } = {}) {
+    if (kind === "plant") return scaffoldPlantFiles({ id, simulatorVersion });
     const pluginId = assertPluginScaffoldId(id);
     const catalogName = String(name || titleFromId(pluginId)).trim();
     const unitType = `${pluginId}.ScaleBlock`;
@@ -173,10 +329,11 @@ export async function writePluginScaffold(options) {
     }
     const verifyPath = `${out}.verify.mjs`;
     const helperUrl = pathToFileURL(path.join(REPO_ROOT, "scripts/create-cev-plugin.mjs")).href;
+    const verifySymbol = scaffold.document.plants ? "verifyPlantDirectory" : "verifyPluginDirectory";
     await fs.writeFile(verifyPath, `#!/usr/bin/env node
-import { verifyPluginDirectory } from ${JSON.stringify(helperUrl)};
+import { ${verifySymbol} } from ${JSON.stringify(helperUrl)};
 
-await verifyPluginDirectory(${JSON.stringify(out)});
+await ${verifySymbol}(${JSON.stringify(out)});
 process.stdout.write("plugin verify ok\\n");
 `);
     return { ...scaffold, out, verifyPath };
@@ -224,6 +381,38 @@ export async function verifyPluginDirectory(directory) {
     }
 }
 
+export async function verifyPlantDirectory(directory, { runCargo } = {}) {
+    const root = path.resolve(directory);
+    const document = JSON.parse(await fs.readFile(path.join(root, "plugin.json"), "utf8"));
+    if (!Array.isArray(document.plants) || document.plants.length === 0) {
+        throw new Error("Plant package must declare plants.");
+    }
+    const storeRoot = await fs.mkdtemp(path.join(os.tmpdir(), "cev-plant-verify-"));
+    try {
+        const built = await buildLocalPlantPackage({
+            sourceDirectory: root,
+            directoryKey: path.basename(root),
+            storeRoot,
+            document,
+            ...(runCargo ? { runCargo } : {}),
+        });
+        try {
+            const wasm = await fs.readFile(path.join(built.packageDirectory, document.plants[0].module));
+            assertPlantModuleBytes(wasm, document.plants[0].module);
+        } finally {
+            await fs.rm(built.packageDirectory, { recursive: true, force: true });
+        }
+        return { skipped: false };
+    } catch (error) {
+        if (String(error?.message || "").includes("Install rustup to build plant plugins.")) {
+            return { skipped: true, reason: error.message };
+        }
+        throw error;
+    } finally {
+        await fs.rm(storeRoot, { recursive: true, force: true });
+    }
+}
+
 function helpText() {
     return `Create a cev-sim simulator plugin package.
 
@@ -235,6 +424,7 @@ Options:
   --out         Package directory to write
   --name        Catalog display name
   --category    Catalog category (default: math)
+  --kind        unit (default) or plant
   --with-ui     Include a UI entry and generic SettingsForm view (default)
   --no-ui       Runtime-only package
   --verify      Load the package after writing (default)
@@ -252,8 +442,15 @@ async function main() {
     const written = await writePluginScaffold(options);
     process.stdout.write(`Wrote ${written.pluginId} to ${written.out}\n`);
     if (options.verify) {
-        await verifyPluginDirectory(written.out);
-        process.stdout.write("plugin verify ok\n");
+        if (options.kind === "plant") {
+            const result = await verifyPlantDirectory(written.out);
+            process.stdout.write(result.skipped
+                ? "plant verify skipped: cargo is not available\n"
+                : "plugin verify ok\n");
+        } else {
+            await verifyPluginDirectory(written.out);
+            process.stdout.write("plugin verify ok\n");
+        }
     }
 }
 

@@ -506,6 +506,14 @@ compared with the committed characterization.
 
 ## Decision log
 
+### 2026-10-13 — VEH-09 leaves the headless contract unchanged
+
+Vehicle-editor acceptance does not change protobuf v1, `KinematicVehiclePlant`,
+`tests/fixtures/headless/action-tape.v1.json`, or
+`tests/fixtures/headless/characterization.v1.json`. The characterization
+SHA-256 remains
+`60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`.
+
 ### 2026-09-28 — Admit explicit frozen binding sources for editable templates
 
 MKT-11 adds optional `scripts.bindingSource: "embedded"` within the existing
@@ -1316,3 +1324,13 @@ zero errors. Hosted macOS/Linux parity aggregation, the full 1/8/16/32 soak and
 benchmark, the manual internal-candidate workflow (including production
 Playwright), and dedicated x64 NVIDIA / Jetson ARM64 reports remain mandatory
 before tagging a GitHub prerelease. This is not headless PR 13.
+
+### 2026-10-13 — Protocol 1.5 planner overrides
+
+The planner toolkit adds optional `EpisodeSpec.overrides` as protobuf field
+10. A start pose or goal in that message is episode identity and changes
+`episodeHash`. Episodes that omit it keep the previous identity bytes. The
+default measured-state observation and its hashes are unchanged, and
+`planning-oracle@1` is opt-in. Characterization fixture bytes stay the same.
+This is not headless PR 13 and does not change the outstanding PR 12 evidence
+gates.

@@ -18,13 +18,18 @@ export class ProgramInputBlock extends UnitBlock {
     }
 
     getProgramPortDefinition() {
-        return {
+        const definition = {
             role: "input",
             uuid: this.uuid,
             portId: "input",
             label: this.state.label,
             type: this.state.type,
         };
+        if (this.state.sceneType) definition.sceneType = this.state.sceneType;
+        if (Array.isArray(this.state.sceneTypes) && this.state.sceneTypes.length > 0) {
+            definition.sceneTypes = [...this.state.sceneTypes];
+        }
+        return definition;
     }
 
     valid() {

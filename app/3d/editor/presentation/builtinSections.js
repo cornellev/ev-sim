@@ -26,6 +26,7 @@ export const SECTION_KINDS = Object.freeze({
     ROAD_DRAPE: "road-drape",
     SKY_PREVIEW: "sky-local-preview",
     ASSET_REVISION: "asset-revision",
+    SCRIPTS: "scripts",
 });
 
 /**

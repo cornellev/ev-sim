@@ -27,6 +27,9 @@ from .config import (
     MEASURED_STATE_PROFILE_VERSION,
     MEASURED_STATE_SCHEMA_HASH,
     MIN_PROTOCOL_MINOR,
+    PLANNING_ORACLE_PROFILE,
+    PLANNING_ORACLE_PROFILE_VERSION,
+    PLANNING_ORACLE_SCHEMA_HASH,
     PROTOCOL_MAJOR,
     PROTOCOL_MINOR,
     ROUTE_SAFETY_PROFILE,
@@ -52,6 +55,7 @@ from .errors import (
 )
 from .headless.v1 import headless_pb2 as pb
 from .headless.v1 import headless_pb2_grpc as pb_grpc
+from .overrides import episode_overrides_message
 from .process import OwnedSupervisor
 from .tensors import TensorMapCodec
 
@@ -224,7 +228,7 @@ class AssetAdmission:
 
 
 class SupervisorClient:
-    """Synchronous protocol 1.2-1.4 connection with optional process ownership."""
+    """Synchronous protocol 1.2–1.5 connection with optional process ownership."""
 
     def __init__(
         self,
@@ -535,6 +539,18 @@ class SupervisorClient:
                 MEASURED_PERCEPTION_SCHEMA_HASH,
                 capabilities.observation_profiles,
             ),
+            *(
+                [
+                    (
+                        PLANNING_ORACLE_PROFILE,
+                        PLANNING_ORACLE_PROFILE_VERSION,
+                        PLANNING_ORACLE_SCHEMA_HASH,
+                        capabilities.observation_profiles,
+                    )
+                ]
+                if protocol.minor >= 5
+                else []
+            ),
             (
                 ROUTE_SAFETY_PROFILE,
                 ROUTE_SAFETY_PROFILE_VERSION,
@@ -675,7 +691,7 @@ class CevSimBatch:
             or list(descriptor.action_space.box.high) != [1.0, 1.0]
         ):
             raise CevSimCompatibilityError(
-                "PR 8 requires the normalized-speed-steering v1 little-endian float32[2] action space"
+                "The action space must be normalized-speed-steering v1, little-endian float32[2], bounds [-1, 1]"
             )
         expected_observation = configuration.observation_profile
         if (
@@ -696,26 +712,50 @@ class CevSimBatch:
         self.states = ["prepared"] * self.count
         self.closed = False
 
-    def episode_spec(self, index: int, seed: int) -> pb.EpisodeSpec:
+    def episode_spec(
+        self,
+        index: int,
+        seed: int,
+        overrides: Mapping[str, Any] | None = None,
+    ) -> pb.EpisodeSpec:
         if not 0 <= index < self.count:
             raise CevSimConfigurationError(f"Unknown environment index {index}")
-        return SupervisorClient._episode_message(
+        message = SupervisorClient._episode_message(
             self.bundle,
             self.configuration,
             self.backends,
             index,
             seed,
         )
+        encoded = episode_overrides_message(overrides)
+        if encoded is not None:
+            if self.client.protocol_minor < 5:
+                raise CevSimCompatibilityError(
+                    "Episode start and goal overrides require a supervisor that negotiated headless protocol 1.5"
+                )
+            message.overrides.CopyFrom(encoded)
+        return message
 
-    def reset(self, indexes: Sequence[int], seeds: Sequence[int]) -> list[tuple[Any, dict[str, Any]]]:
+    def reset(
+        self,
+        indexes: Sequence[int],
+        seeds: Sequence[int],
+        overrides: Sequence[Mapping[str, Any] | None] | None = None,
+    ) -> list[tuple[Any, dict[str, Any]]]:
         normalized = list(indexes)
         if normalized != sorted(set(normalized)) or len(normalized) != len(seeds) or not normalized:
             raise CevSimConfigurationError("Reset indexes must be a non-empty sorted unique list matching seeds")
+        if overrides is not None and len(list(overrides)) != len(normalized):
+            raise CevSimConfigurationError("Reset overrides must match the reset indexes")
+        selected = [None] * len(normalized) if overrides is None else list(overrides)
         response = self.client.call(
             self.client.stub.ResetBatch,
             pb.ResetBatchRequest(
                 batch_id=self.batch_id,
-                episodes=[self.episode_spec(index, int(seed)) for index, seed in zip(normalized, seeds, strict=True)],
+                episodes=[
+                    self.episode_spec(index, int(seed), option)
+                    for index, seed, option in zip(normalized, seeds, selected, strict=True)
+                ],
             ),
         )
         _raise_status(response.error)

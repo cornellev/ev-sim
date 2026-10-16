@@ -7,6 +7,7 @@ import {
     IconFolder,
     IconMap,
     IconRoad,
+    IconLayoutBottombar,
     IconSun,
     IconTrafficCone,
     IconTrafficLights,
@@ -24,6 +25,8 @@ const ICONS = Object.freeze({
     building: IconBuilding,
     "builtin-prop": IconTrafficCone,
     "asset-instance": IconCube,
+    primitive: IconCube,
+    floor: IconLayoutBottombar,
 });
 
 export const UNSUPPORTED_ICON = IconQuestionMark;

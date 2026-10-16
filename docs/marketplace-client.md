@@ -150,7 +150,11 @@ Publish workspace selects it automatically; with several it shows a friendly
 destination selector.
 
 `POST /publisher/drafts/resolved` derives profile, stable local identity,
-bound item, new-item/update mode, SemVer, track, and license. Private
+bound item, new-item/update mode, SemVer, track, and license. A new collection
+uses `{namespace}.collection` while that item is free. When the item or another
+create-item draft already uses it, the next collection receives a distinct
+suffix from its publication project and does not become a new release of the
+existing collection. Private
 `cev-sim.marketplace-publication-bindings@1` state maps profile plus stable
 local identity to an exact verified item/release/artifact. A binding is written
 only after a completed job reports the exact triple and a verified refresh

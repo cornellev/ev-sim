@@ -1,3 +1,4 @@
+import { Euler, Quaternion, Vector3 } from "three";
 /**
  * Renderer-neutral primitives for candidate/oracle perception and localization overlays.
  * Capture-time metadata travels with each snapshot so replay does not need ROS re-decode.
@@ -468,6 +469,48 @@ export function localizationError(estimate, truth) {
         dz,
         horizontalM: Math.hypot(dx, dy),
         positionM: Math.hypot(dx, dy, dz),
+        // Yaw (the ZYX Euler angle about +Z) of the rotation from truth to estimate, in (-pi, pi].
+        headingRad: new Euler().setFromQuaternion(
+            new Quaternion().copy(truth.orientation).invert().multiply(new Quaternion().copy(estimate.orientation)),
+            "ZYX",
+        ).z,
+        truthCaptureTimeNs: truth.captureTimeNs ?? null,
+    };
+}
+
+/**
+ * Truth pose at `captureTimeNs`, interpolated between the two nearest samples.
+ * `history` holds normalized truth odometry sorted by ascending `captureTimeNs`.
+ * Returns null when the time is outside the history.
+ */
+export function truthAtCaptureTime(history, captureTimeNs) {
+    if (!Array.isArray(history) || history.length === 0 || !Number.isFinite(captureTimeNs)) return null;
+    let high = history.length - 1;
+    if (captureTimeNs > history[high].captureTimeNs || captureTimeNs < history[0].captureTimeNs) return null;
+    let low = 0;
+    while (high - low > 1) {
+        const middle = (low + high) >> 1;
+        if (history[middle].captureTimeNs <= captureTimeNs) low = middle;
+        else high = middle;
+    }
+    const before = history[low];
+    const after = history[high];
+    if (before.captureTimeNs === captureTimeNs) return before;
+    if (after.captureTimeNs === captureTimeNs) return after;
+    const alpha = (captureTimeNs - before.captureTimeNs) / (after.captureTimeNs - before.captureTimeNs);
+    const interpolated = new Vector3().lerpVectors(
+        new Vector3().copy(before.position),
+        new Vector3().copy(after.position),
+        alpha,
+    );
+    const position = { x: interpolated.x, y: interpolated.y, z: interpolated.z };
+    const rotation = new Quaternion().copy(before.orientation).slerp(new Quaternion().copy(after.orientation), alpha);
+    return {
+        ...before,
+        captureTimeNs,
+        position,
+        orientation: { x: rotation.x, y: rotation.y, z: rotation.z, w: rotation.w },
+        threePosition: rep103ToThreeVector(position),
     };
 }
 

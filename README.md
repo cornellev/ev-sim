@@ -28,9 +28,11 @@
 
 ### Prerequisites
 
-You need Node.js `>=22.22.2 <23`; development and CI use 22.22.2. Download it
-from [nodejs.org](https://nodejs.org/en/download/) or use the repository
-`.nvmrc`.
+You need Node.js `>=22.22.2 <23`; development and CI use 22.22.2. When nvm
+already has 22.22.2, the installer switches to it. When that version is
+missing, the installer asks to install it and make it the nvm default.
+You can also download it from [nodejs.org](https://nodejs.org/en/download/)
+or use the repository `.nvmrc`.
 
 ### Install
 
@@ -45,6 +47,7 @@ curl -fsSL https://raw.githubusercontent.com/cornellev/ev-sim/v0.2.0/install.sh 
 
 The installer writes the clone to `./ev-sim`, creates `.env.local`, and asks whether to enable the marketplace.
 Enter enables it. `n` writes `CEV_SIM_MARKETPLACE_ENABLED=0`. An existing value is kept.
+When `server/data/visual-source-registry.json` is absent, the installer creates it with a local `owned-lab` grant. An existing registry is kept.
 To start up the app, run these commands:
 
 ```bash
@@ -56,6 +59,7 @@ The app uses port 3000 when `PORT` is unset.
 Open `http://localhost:3000` in a browser.
 
 This command installs ev-sim into a chosen directory.
+The `--build` flag runs `npm run build` when that command finishes.
 The `--start` flag runs the app when that command finishes.
 
 ```bash

@@ -85,7 +85,9 @@ and browser execution reject UDP. See
 
 PLG-07 authors custom sensors from the revisioned catalog and exact CAS locks.
 Vehicle `pluginLocks` pin plugin provenance for templates and previews; only
-`manifest.sensorRig.sensors` execute. Vehicle-bundle v1 may embed sorted
+`manifest.sensorRig.sensors` execute. A run may opt in to inherit those mounts
+into `sensorRig`; the vehicle document still does not execute them.
+Vehicle-bundle v1 may embed sorted
 `pluginPackages` without changing the legacy hash projection. Simulation
 identity replaces locked vehicle `packageHash` with runtime identity and
 leaves unlocked vehicles unchanged.
@@ -203,7 +205,29 @@ version-scoped compatibility validation.
 
 Vehicle motion is owned by the Three.js-free `KinematicVehiclePlant`.
 Bicycle integration is planar (XZ + yaw); a cached road-ground sampler then
-sets pose Y and pitch from the paved surface. BigCar, IGVCCar, ScenarioCar, and
+sets pose Y and pitch from the paved surface. A manifest `dynamics.plant`
+asks a plugin WASM module to integrate that same planar state. The host
+still drapes Y and pitch, and the default bicycle stays in JavaScript.
+Version 3 vehicle manifests add authoring fields for model dependencies,
+hidden nodes, and standard axles. Built-in projections stay version 2.
+`createDefaultVehicleManifest()` stays version 2. Blanks created through
+vehicle publication are version 3. The plant still integrates the authored
+`kinematics.wheelbase`. Local URDF import bakes the rest pose into the same
+canonical GLB in the vehicle frame (+X forward, +Y up, +Z left). That basis
+is separate from the sensor REP-103 map, which sends left to −Z. Export
+writes articulated wheel joints and reports revolute effort and velocity as
+placeholders rather than dynamics. The import plan does not write a manifest,
+and neither path adds manifest fields or changes the plant. A public GitHub URL can be inspected and fetched into that same local package shape; the commit and license stay on the package source and are not written into the vehicle. The vehicle plan
+and per-wheel visual yaw are presentation: a version 3 standard layout draws
+an ideal inner and outer angle on the front wheels, and every other steerable
+wheel keeps the shared plant angle. A version 3 document changes resolved
+identity only because the existing hash covers those fields and, once
+publication commits, the asset directory. In-flight publication files are
+omitted from that hash until the manifest write is durable. A committed
+migration also keeps superseded asset files in the directory, so they remain
+part of the resolved hash. Stage ids, journals, receipts, and the
+pre-migration snapshot do not.
+BigCar, IGVCCar, ScenarioCar, and
 manifest-backed browser vehicles are
 presentation adapters over the same numeric state used by
 `HeadlessVehicleManager`; GLTF models, wheels, paths, cameras, lane visuals,
@@ -225,7 +249,9 @@ capabilities, while the sensor-disabled PR 4 kernel path remains valid.
 
 `HeadlessEpisode` is the policy-facing facade over `SimulationKernel`. It
 validates immutable episode prerequisites before kernel preparation, owns the
-`measured-state` observation and `route-safety` reward profiles, maps the
+`measured-state` observation and `route-safety` reward profiles, and can
+select the opt-in `planning-oracle@1` profile without changing measured-state
+hashes. It maps the
 `normalized-speed-steering` action through `ControlRuntime`, and implements
 policy-step limits, action repeat, rewards, and Gym termination/truncation
 semantics. Every repeated substep still passes through the authoritative
@@ -345,10 +371,12 @@ browser application root remains private. See [Headless release and CI gates](he
 
 Physics pins Rapier `0.19.3` under one of two world-derived capabilities.
 Legacy worlds retain `rapier3d-swept-prism-v1`: authoritative first impact uses
-continuous XZ prism SAT with a Y-slab test. A world with collision asset proxies
-selects `rapier3d-swept-compound-v2`, whose shared `SweptConvex` path performs
-continuous 3D SAT for a translating vehicle AABB against static convex faces,
-edges, and box axes after swept-AABB broad phase. Compound-part hits collapse
+continuous XZ prism SAT with a Y-slab test against a yaw-oriented vehicle box.
+A world with collision asset proxies selects `rapier3d-swept-compound-v2`,
+whose shared `SweptConvex` path performs continuous 3D SAT for that same box
+(local length along +X, width along +Z, offset by the bounding-box center)
+against static convex faces, edges, and the box axes after a swept
+world-aligned broad phase. Compound-part hits collapse
 to the environment instance id with deterministic earliest-contact ordering.
 Rapier still owns fixed and kinematic bodies; roads remain drivable surfaces.
 

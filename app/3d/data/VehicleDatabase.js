@@ -2,6 +2,7 @@ import { Vehicle } from "../vehicles/Vehicle";
 import { Database } from "./Database";
 import { isBuiltInVehicleType, matchesVehicleType } from "../../vehicles/vehicleTypeResolution.js";
 import { bindRoadGroundSampler } from "../../simulation/vehicles/roadGroundSampler.js";
+import { compilePlantModules, resolveVehiclePlantMount } from "../../simulation/vehicles/WasmPlantStepper.js";
 import { syncVehicleFromPlant } from "../vehicles/VehiclePlantAdapter.js";
 import { createBrowserVehicle } from "../vehicles/createBrowserVehicle.js";
 
@@ -48,6 +49,8 @@ export class VehicleDatabase extends Database {
     async configureFromManifest(entries = [], scene = this.parent?.scene, options = {}) {
         const resolvedVehicles = options.resolvedVehicles ?? [];
         const dependencies = new Map(resolvedVehicles.map((entry) => [entry.actorId, entry]));
+        const plants = options.plants;
+        const compiled = plants instanceof Map ? await compilePlantModules(plants) : null;
         const desired = [...entries].sort((left, right) => left.id.localeCompare(right.id));
         const desiredIds = new Set(desired.map((entry) => entry.id));
         for (const vehicle of [...this.vehicles]) {
@@ -63,19 +66,29 @@ export class VehicleDatabase extends Database {
                 this.removeVehicle(vehicle);
                 vehicle = null;
             }
-            if (vehicle) continue;
+            if (vehicle) {
+                if (options.skipManifestDevices === true) vehicle.releaseVehicleOwnedDevices?.();
+                continue;
+            }
             const position = entry.pose?.position || { x: 0, y: 0, z: 0 };
             const rotation = entry.pose?.rotation || { x: 0, y: 0, z: 0, order: "XYZ" };
             const manifest = dependency?.manifest
                 ?? (entry.type && !isBuiltInVehicleType(entry.type)
                     ? await this._loadVehicleManifest(entry.type)
                     : null);
+            const mount = resolveVehiclePlantMount(manifest, plants, compiled);
             vehicle = createBrowserVehicle(this, {
                 type: entry.type,
                 id: entry.id,
                 pose: { position, rotation },
                 manifest,
                 keyframes: entry.keyframes,
+                plantStepper: mount.plantStepper ?? null,
+                unresolvedPluginPlant: mount.unresolvedPluginPlant === true,
+                plantPluginId: mount.plantPluginId,
+                plantRuntimeHash: mount.plantRuntimeHash,
+                plants,
+                skipManifestDevices: options.skipManifestDevices === true,
             });
             vehicle.telemetryId = entry.id;
             if (vehicle.plant) {

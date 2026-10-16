@@ -14,6 +14,8 @@ verified bundle.
 ```bash
 cev-sim validate (--bundle bundle.json | --bundle use:manifestId | --package run.run-package) [--episode episode.json] [--config supervisor.json] [--sensor-transport-config host.json]
 cev-sim create-smoke-bundle --output bundle.json
+cev-sim create-bundle --output bundle.json [--manifest igvc-default] [--environment ID] [--vehicle ID] [--data-dir DIR] [--road EDGE | --start-node A --finish-node B] [--finish route|none] [--sensors state|all] [--max-steps N]
+cev-sim catalog [--data-dir DIR]
 cev-sim inspect bundle.json
 cev-sim inspect run.run-package
 cev-sim inspect output-directory
@@ -22,6 +24,23 @@ cev-sim run (--bundle bundle.json | --bundle use:manifestId | --package run.run-
 cev-sim replay (--bundle bundle.json | --bundle use:manifestId | --package run.run-package) --tape tape.json --output result-dir [--config supervisor.json] [--sensor-transport-config host.json]
 cev-sim gpu-preflight --config supervisor.json
 ```
+
+`create-bundle` writes a validated planning run bundle. It copies the selected
+environment into a temporary workspace, verifies a route, keeps state sensors
+unless `--sensors all` is set, and advances the start pose until the vehicle
+box is clear of obstacles. A source manifest with no IMU, GNSS, or wheel
+odometry receives those three sensors, so the bundle can still run. `--vehicle` selects a built-in or stored vehicle
+and uses that vehicle's box for the clearance check. A stored vehicle that names `dynamics.plant` must also carry a matching plugin lock. `create-bundle` copies those locks onto the run and embeds the packages installed in `--data-dir`. A missing package fails before export. A vehicle with no plugin locks keeps the plugin-free `world-bound@2` bundle. `--finish route`, the
+default, ends the episode in a zone at the far end of the route. `--finish none`
+keeps the verified route and replaces that zone with a trigger on the flag
+`cev-sim.free-drive.stop`, which nothing sets, so arriving does not end the
+episode. `--data-dir` is read-only. The command deletes its temporary workspace
+and writes only `--output`.
+
+`catalog` prints one JSON object, `cev-sim.headless.catalog` version 1, with
+`environments` and `vehicles`. Each entry is `{ id, name, builtIn }`. Built-in
+environments and vehicles are included. `--data-dir` is read-only. Without it,
+the command reads the default data directory beside the server package.
 
 `validate` checks bundle integrity, semantic identity, episode profiles,
 backend capabilities, world/vehicle/sensor prerequisites, and spaces without
@@ -206,7 +225,7 @@ Bundle inspection reports the exact `bundleBytesHash`, identity version, and
 required protocol minor. File ingestion preserves the original bytes and
 rejects invalid UTF-8, duplicate keys, and malformed exact JSON. v10 bundles
 remain executable with unchanged hashes; v11 uses `world-bound@2` and the
-local protocol 1.4 runtime. `run-bundle.json` artifacts preserve received bytes
+local protocol 1.5 runtime. `run-bundle.json` artifacts preserve received bytes
 for direct file execution; canonical supervisor wire serialization is a
 separate representation. Historical unsupported bundle versions require
 verified authoring import and re-resolution. Package artifacts preserve exact

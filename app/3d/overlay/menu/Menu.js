@@ -14,6 +14,7 @@ import {
     IconPlayerPlay,
     IconPuzzle,
     IconRoute,
+    IconSettings,
     IconShoppingBag,
     IconFlask2,
     IconTerminal2,
@@ -24,6 +25,7 @@ import { Dialog } from "radix-ui";
 
 import { PluginLibraryPanel } from "../../../plugin/ui/PluginLibraryPanel.js";
 import { IconButton } from "../../../ui";
+import { SettingsPane } from "./SettingsPane.js";
 import { APP_VIEWS, THREE_D_MODES } from "../../viewState";
 
 const ICON_PROPS = { size: 16, stroke: 1.75 };
@@ -31,7 +33,7 @@ const ICON_PROPS = { size: 16, stroke: 1.75 };
 const DIALOG_SECTIONS = [
     { id: "workspaces", label: "Workspaces", icon: IconLayoutGrid, disabled: false },
     { id: "plugins", label: "Plugins", icon: IconPuzzle, disabled: false },
-    { id: "settings", label: "Settings", icon: IconAdjustments, disabled: true },
+    { id: "settings", label: "Settings", icon: IconSettings, disabled: false },
 ];
 
 function railSections(marketplaceAvailable) {
@@ -177,7 +179,7 @@ export default function Menu({
                             {pane === "plugins" ? <PluginLibraryPanel onOpenMarketplace={marketplaceAvailable ? () => {
                                 onClose?.();
                                 onMarketplace?.();
-                            } : null} /> : (
+                            } : null} /> : pane === "settings" ? <SettingsPane /> : (
                                 <div className="sf-workspace-menu__body">
                                     {sections.map((section) => (
                                         <section className="sf-workspace-menu__section" key={section.label}>

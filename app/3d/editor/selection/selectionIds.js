@@ -11,12 +11,14 @@ const ENTITY_PREFIX_BY_TYPE = Object.freeze({
     "builtin-prop": "fusion",
     "asset-instance": "asset",
     tile: "asset",
+    primitive: "primitive",
 });
 
 const TYPE_BY_ENTITY_KIND = Object.freeze({
     road: "road",
     intersection: "intersection",
     building: "building",
+    primitive: "primitive",
     "asset-instance": "asset-instance",
     tile: "tile",
     "road-node": null,
@@ -103,6 +105,7 @@ const MAP_TYPE_BY_TYPE_ID = Object.freeze({
     intersection: "intersection",
     "asset-instance": "asset",
     tile: "asset",
+    primitive: "primitive",
 });
 
 /** Legacy map-selection shape `{ type, id }` for the primary selected record, or null. */

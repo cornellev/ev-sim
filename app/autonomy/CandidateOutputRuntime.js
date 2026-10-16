@@ -13,6 +13,7 @@ import {
     normalizeLegacyBoxes,
     normalizeOdometry,
     normalizeSemanticImage,
+    truthAtCaptureTime,
 } from "./AutonomyVisualizationModel.js";
 import {
     oracleTopicSignalPath,
@@ -31,6 +32,9 @@ const LOCALIZATION_CONTRACTS = new Set([
     "localization-estimate",
 ]);
 
+// Estimates older than this have no truth to compare against.
+const TRUTH_HISTORY_NS = 10_000_000_000;
+
 function byteLengthOf(data) {
     if (!data) return 0;
     if (typeof data.byteLength === "number") return data.byteLength;
@@ -47,6 +51,7 @@ export class CandidateOutputRuntime {
         this.lastLocalization = emptyLocalizationSnapshot();
         this.lastGoodPerception = null;
         this.lastGoodLocalization = null;
+        this.truthHistory = [];
         this._defineSignals();
     }
 
@@ -55,6 +60,7 @@ export class CandidateOutputRuntime {
         this.lastLocalization = emptyLocalizationSnapshot();
         this.lastGoodPerception = null;
         this.lastGoodLocalization = null;
+        this.truthHistory = [];
         this._publishPerception(this.lastPerception, 0, 0);
         this._publishLocalization(this.lastLocalization, 0, 0);
     }
@@ -103,11 +109,12 @@ export class CandidateOutputRuntime {
         this._publishPerception(nextPerception, applyStep, applyTimeNs);
 
         if (truth) {
-            const truthNorm = normalizeOdometry(truth, { source: "oracle" });
+            this._recordTruth(normalizeOdometry(truth, { source: "oracle" }));
+            const alignedTruth = this._truthFor(this.lastLocalization.estimate);
             const nextLoc = {
                 ...this.lastLocalization,
-                truth: truthNorm,
-                error: localizationError(this.lastLocalization.estimate, truthNorm),
+                truth: alignedTruth,
+                error: localizationError(this.lastLocalization.estimate, alignedTruth),
             };
             this.lastLocalization = nextLoc;
             this._publishLocalization(nextLoc, applyStep, applyTimeNs);
@@ -161,7 +168,7 @@ export class CandidateOutputRuntime {
                         : null,
                 }
                 : emptyLocalizationSnapshot(meta);
-            ghost.truth = this.lastLocalization.truth;
+            ghost.truth = this._truthFor(ghost.estimate);
             ghost.error = localizationError(ghost.estimate, ghost.truth);
             this.lastLocalization = ghost;
             this._publishLocalization(ghost, applyStep, applyTimeNs);
@@ -213,8 +220,8 @@ export class CandidateOutputRuntime {
     _ingestLocalization(envelope, { applyStep, applyTimeNs, status }) {
         const estimate = normalizeOdometry(envelope.value, { source: "candidate", status });
         const truthRaw = this.telemetry?.read?.(oracleTopicSignalPath("truth-odometry"))?.value;
-        const truth = this.lastLocalization.truth
-            || normalizeOdometry(truthRaw, { source: "oracle" });
+        if (truthRaw) this._recordTruth(normalizeOdometry(truthRaw, { source: "oracle" }));
+        const truth = this._truthFor(estimate);
         const next = {
             captureTimeNs: envelope.captureTimeNs ?? null,
             arrivalTimeNs: envelope.arrivalTimeNs ?? null,
@@ -230,6 +237,27 @@ export class CandidateOutputRuntime {
         this.lastGoodLocalization = structuredClone(next);
         this._publishLocalization(next, applyStep, applyTimeNs);
         return next;
+    }
+
+    _recordTruth(truth) {
+        if (!truth || !Number.isFinite(truth.captureTimeNs)) return;
+        const last = this.truthHistory[this.truthHistory.length - 1];
+        if (last && truth.captureTimeNs <= last.captureTimeNs) return;
+        this.truthHistory.push(truth);
+        const oldest = truth.captureTimeNs - TRUTH_HISTORY_NS;
+        let drop = 0;
+        while (drop < this.truthHistory.length && this.truthHistory[drop].captureTimeNs < oldest) drop += 1;
+        if (drop > 0) this.truthHistory.splice(0, drop);
+    }
+
+    // Score an estimate against truth at the estimate's own capture time, so
+    // transport latency does not count as position error.
+    _truthFor(estimate) {
+        if (!estimate) return null;
+        if (!Number.isFinite(estimate.captureTimeNs)) {
+            return this.truthHistory[this.truthHistory.length - 1] ?? null;
+        }
+        return truthAtCaptureTime(this.truthHistory, estimate.captureTimeNs);
     }
 
     _transformToMapBinder(captureTimeNs) {

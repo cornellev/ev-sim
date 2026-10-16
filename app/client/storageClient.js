@@ -39,8 +39,8 @@ export async function storagePut(path, body, { keepalive = false } = {}) {
 }
 
 /** Create a collection resource or invoke a server-side collection action. */
-export async function storagePost(path, body) {
-    return storageWrite("POST", path, body);
+export async function storagePost(path, body, options) {
+    return storageWrite("POST", path, body, options);
 }
 
 /** POST JSON and return the successful response body as a Blob. */
@@ -72,12 +72,13 @@ export async function storageDelete(path) {
     return response.json();
 }
 
-async function storageWrite(method, path, body, { keepalive = false } = {}) {
-    const response = await fetch(url(path), {
+async function storageWrite(method, path, body, { keepalive = false, signal, fetchImpl = fetch } = {}) {
+    const response = await fetchImpl(url(path), {
         method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
         keepalive,
+        signal,
     });
 
     await assertOk(response, "save");

@@ -200,6 +200,32 @@ message BackendSelection {
   string config_hash = 4;
 }
 
+// Ground-plane pose. yaw is the vehicle rotation about Y: forward is
+// (cos(yaw), -sin(yaw)) in (x, z). speed_mps is optional longitudinal speed.
+message Pose2D {
+  double x = 1;
+  double z = 2;
+  double yaw = 3;
+  double speed_mps = 4;
+}
+
+// Success region. yaw is unset when heading does not matter. Zero tolerances
+// mean the runtime defaults (1 m and pi radians).
+message Goal2D {
+  double x = 1;
+  double z = 2;
+  optional double yaw = 3;
+  double position_tolerance_m = 4;
+  double yaw_tolerance_rad = 5;
+}
+
+// Episode-semantic start and goal. Included in episodeHash only when present.
+// Requires negotiated protocol minor 5.
+message EpisodeOverrides {
+  Pose2D start_pose = 1;
+  Goal2D goal = 2;
+}
+
 // Immutable simulation-semantic input for one episode. A new reset seed
 // requires a new EpisodeSpec. Operational limits and artifact policy are
 // deliberately not part of this message and therefore not part of episodeHash.
@@ -216,6 +242,7 @@ message EpisodeSpec {
   ProfileRef observation_profile = 7;
   ProfileRef reward_profile = 8;
   repeated BackendSelection backend_selections = 9;
+  EpisodeOverrides overrides = 10;
 }
 
 // Operational safeguards. Triggering one is an infrastructure error, not an

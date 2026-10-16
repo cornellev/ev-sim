@@ -23,6 +23,7 @@ export const MENU_OPTION_IDS = Object.freeze({
     DUPLICATE: "duplicate",
     GROUP: "group",
     UNGROUP: "ungroup",
+    NEW_GROUP: "new-group",
     DELETE: "delete",
     HIDE: "hide",
     SHOW: "show",
@@ -36,6 +37,7 @@ export const SECTION_IDS = Object.freeze({
     OBJECT: "object",
     TRANSFORM: "transform",
     OPTIONS: "options",
+    SCRIPTS: "scripts",
     UNSUPPORTED: "unsupported",
 });
 
@@ -103,6 +105,21 @@ export function defaultMenuOptions(ctx, { objectRegistry = objectTypeRegistry } 
     if (commands.ungroupObjects && allGroups) {
         options.push({ id: MENU_OPTION_IDS.UNGROUP, label: "Ungroup", shortcut: "Shift+Mod+G", run: run(commands.ungroupObjects, { objectIds: ids }) });
     }
+    if (commands.createObject && records.length === 1 && record.typeId === GROUP_TYPE_ID) {
+        options.push({
+            id: MENU_OPTION_IDS.NEW_GROUP,
+            label: "New Subgroup",
+            run: () => {
+                const result = ctx.bus?.execute?.(commands.createObject({
+                    typeId: GROUP_TYPE_ID,
+                    parentId: record.id,
+                    name: "Group",
+                }));
+                if (result?.ok && result.result?.objectId) ctx.selection?.select?.(result.result.objectId);
+                return result;
+            },
+        });
+    }
     if (commands.setObjectsHidden) {
         options.push(anyHidden
             ? { id: MENU_OPTION_IDS.SHOW, label: "Show", run: run(commands.setObjectsHidden, { objectIds: ids, hidden: false }) }
@@ -117,6 +134,28 @@ export function defaultMenuOptions(ctx, { objectRegistry = objectTypeRegistry } 
         options.push({ id: MENU_OPTION_IDS.DELETE, label: "Delete", shortcut: "Delete", danger: true, disabled: !every("deletable") || anyLocked, run: run(commands.deleteObjects, { objectIds: ids }) });
     }
     return options;
+}
+
+/**
+ * Menu for the hierarchy background. Creates an empty root group.
+ * `ctx` supplies `{ commands, bus, selection }`.
+ */
+export function hierarchyRootMenuOptions(ctx = {}) {
+    const commands = ctx.commands ?? {};
+    if (!commands.createObject) return [];
+    return [{
+        id: MENU_OPTION_IDS.NEW_GROUP,
+        label: "New Group",
+        run: () => {
+            const result = ctx.bus?.execute?.(commands.createObject({
+                typeId: GROUP_TYPE_ID,
+                parentId: null,
+                name: "Group",
+            }));
+            if (result?.ok && result.result?.objectId) ctx.selection?.select?.(result.result.objectId);
+            return result;
+        },
+    }];
 }
 
 /**
@@ -155,6 +194,7 @@ export function defaultInspectorSections(ctx, { objectRegistry = objectTypeRegis
         const { fields, values } = readObjectFieldValues(record, ctx.document, { objectRegistry, sky: ctx.sky ?? null });
         if (fields.length > 0) sections.push({ id: SECTION_IDS.OPTIONS, title: "Options", kind: "options", fields, values });
     }
+    sections.push({ id: SECTION_IDS.SCRIPTS, title: "Scripts", kind: "scripts", record });
     return sections;
 }
 

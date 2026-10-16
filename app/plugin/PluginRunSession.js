@@ -114,6 +114,7 @@ export class PluginRunSession {
         this.registry = null;
         this.sensorRegistry = null;
         this.sensorFactories = new Map();
+        this.plants = new Map();
         this.services = Object.freeze({
             signalStore: null,
             world: null,
@@ -140,6 +141,7 @@ export class PluginRunSession {
 
     async prepareDefinitions(resources = []) {
         if (this.disposed) throw new Error("Plugin run session is disposed.");
+        this.plants = new Map();
         if (this.plugins.length === 0) {
             const registry = registerBuiltInBlocks(new BlockRegistry({ allowPlugins: true }));
             registry.seal();
@@ -213,6 +215,15 @@ export class PluginRunSession {
             }
             for (const factory of metadata?.sensorFactories ?? []) {
                 this.sensorFactories.set(factory.type, factory);
+            }
+            for (const plant of metadata?.plantDefinitions ?? []) {
+                if (this.plants.has(plant.id)) {
+                    throw pluginError(PLUGIN_ERROR_CODES.REGISTRATION, `Plant "${plant.id}" is declared by more than one plugin.`, {
+                        pluginId: selected.pluginId,
+                        contributionId: plant.id,
+                    });
+                }
+                this.plants.set(plant.id, plant);
             }
         }
         this.dispatcher.sort();

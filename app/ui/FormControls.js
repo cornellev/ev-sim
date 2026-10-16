@@ -2,7 +2,7 @@
 
 import { cloneElement, isValidElement, useId } from "react";
 import { IconCheck, IconChevronDown } from "@tabler/icons-react";
-import { Select as SelectPrimitive, Switch as SwitchPrimitive, Tabs, ToggleGroup } from "radix-ui";
+import { Accordion, Collapsible, Select as SelectPrimitive, Switch as SwitchPrimitive, Tabs, ToggleGroup } from "radix-ui";
 
 import { cx } from "./cx";
 
@@ -54,9 +54,19 @@ export function NativeSelect({ className, children, ...props }) {
 
 export function Switch({ checked, onCheckedChange, label, description, disabled, className, tone = "default", ...props }) {
     const id = useId();
+    const labeled = Boolean(label || description);
+    const activateFromRow = (event) => {
+        if (disabled) return;
+        const node = event.target instanceof Element ? event.target : event.target?.parentElement;
+        if (node?.closest("label, button")) return;
+        onCheckedChange?.(!checked);
+    };
     return (
-        <div className={cx("sf-switch-row", tone !== "default" && `sf-switch-row--${tone}`, className)}>
-            {(label || description) && (
+        <div
+            className={cx("sf-switch-row", tone !== "default" && `sf-switch-row--${tone}`, className)}
+            onClick={labeled ? activateFromRow : undefined}
+        >
+            {labeled && (
                 <label className="sf-switch-copy" htmlFor={id}>
                     {label && <span className="sf-switch-copy__label">{label}</span>}
                     {description && <span className="sf-switch-copy__description">{description}</span>}
@@ -106,6 +116,55 @@ export function TabsTrigger({ className, ...props }) {
 
 export function TabsContent({ className, ...props }) {
     return <Tabs.Content className={cx("sf-tabs__content", className)} {...props} />;
+}
+
+export function Disclosure({
+    label,
+    detail = null,
+    open,
+    defaultOpen = false,
+    onOpenChange,
+    children,
+    className,
+}) {
+    return (
+        <Collapsible.Root
+            className={cx("sf-disclosure", className)}
+            open={open}
+            defaultOpen={open === undefined ? defaultOpen : undefined}
+            onOpenChange={onOpenChange}
+        >
+            <Collapsible.Trigger className="sf-disclosure__trigger">
+                <IconChevronDown className="sf-disclosure__chevron" size={14} stroke={1.75} aria-hidden="true" />
+                <span className="min-w-0 flex-1 truncate">{label}</span>
+                {detail && <span className="sf-disclosure__detail">{detail}</span>}
+            </Collapsible.Trigger>
+            <Collapsible.Content className="sf-disclosure__content">{children}</Collapsible.Content>
+        </Collapsible.Root>
+    );
+}
+
+export function AccordionRoot({ value, onValueChange, children, className, type = "multiple" }) {
+    return (
+        <Accordion.Root className={cx("sf-accordion", className)} type={type} value={value} onValueChange={onValueChange}>
+            {children}
+        </Accordion.Root>
+    );
+}
+
+export function AccordionItem({ value, label, detail = null, children }) {
+    return (
+        <Accordion.Item className="sf-accordion__item" value={value} data-wheel-row={value}>
+            <Accordion.Header className="sf-accordion__header">
+                <Accordion.Trigger className="sf-accordion__trigger">
+                    <IconChevronDown className="sf-accordion__chevron" size={14} stroke={1.75} aria-hidden="true" />
+                    <span className="min-w-0 flex-1 truncate text-left">{label}</span>
+                    {detail && <span className="sf-accordion__detail">{detail}</span>}
+                </Accordion.Trigger>
+            </Accordion.Header>
+            <Accordion.Content className="sf-accordion__content">{children}</Accordion.Content>
+        </Accordion.Item>
+    );
 }
 
 export function Select({ value, onValueChange, items, placeholder, label, className, disabled }) {

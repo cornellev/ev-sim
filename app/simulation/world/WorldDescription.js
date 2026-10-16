@@ -15,12 +15,21 @@ import { compileRoadNetworkGeometry, planRoadNetworkGeometry } from "../../roads
 import { ROAD_GEOMETRY_POLICY_V1 } from "../../roads/RoadGeometryPolicy.js";
 import { validateAssetMetricsDomain } from "../../editor-assets/AssetMetricSnapshot.js";
 import { assetBindingRevisionVersion, readAssetBinding } from "../../editor-assets/AssetBackedObject.js";
+import { normalizePerceptionClassName } from "../../autonomy/PerceptionLabelCatalog.js";
+import { compilePrimitiveSolid, SCENE_PRIMITIVE_POLICY } from "./PrimitiveSolids.js";
+import { FLOOR_OBJECT_ID, FLOOR_PLANE_Y } from "./PrimitiveRecords.js";
 
 export const WORLD_DESCRIPTION_KIND = "cev-sim.world-description";
 export const WORLD_DESCRIPTION_VERSION = 1;
 export const WORLD_DESCRIPTION_V2 = 2;
 export const WORLD_DESCRIPTION_V3 = 3;
-export const SUPPORTED_WORLD_DESCRIPTION_VERSIONS = Object.freeze([WORLD_DESCRIPTION_VERSION, WORLD_DESCRIPTION_V2, WORLD_DESCRIPTION_V3]);
+export const WORLD_DESCRIPTION_V4 = 4;
+export const SUPPORTED_WORLD_DESCRIPTION_VERSIONS = Object.freeze([
+    WORLD_DESCRIPTION_VERSION,
+    WORLD_DESCRIPTION_V2,
+    WORLD_DESCRIPTION_V3,
+    WORLD_DESCRIPTION_V4,
+]);
 
 const DEFAULT_ROAD_WIDTH = 7;
 
@@ -567,6 +576,30 @@ function compileAssetProxies(document) {
         .sort((left, right) => compareUtf8(left.id, right.id));
 }
 
+function semanticTag(record, object) {
+    const tags = Array.isArray(object?.components?.tags) && object.components.tags.length > 0
+        ? object.components.tags
+        : record?.tags;
+    const first = (Array.isArray(tags) ? tags : []).map((tag) => String(tag).trim()).find(Boolean);
+    return normalizePerceptionClassName(first || "unknown");
+}
+
+function compileScenePrimitives(document) {
+    const objects = new Map((document.objects ?? []).map((record) => [String(record.id), record]));
+    return (Array.isArray(document.primitives) ? document.primitives : [])
+        .map((record) => compilePrimitiveSolid(record, semanticTag(record, objects.get(String(record.id)))))
+        .sort((left, right) => compareUtf8(left.id, right.id));
+}
+
+function boundsWithPoints(base, solids) {
+    const points = [base.min, base.max];
+    for (const solid of solids) points.push(solid.bounds.min, solid.bounds.max);
+    return {
+        min: { x: Math.min(...points.map((point) => point.x)), y: Math.min(...points.map((point) => point.y)), z: Math.min(...points.map((point) => point.z)) },
+        max: { x: Math.max(...points.map((point) => point.x)), y: Math.max(...points.map((point) => point.y)), z: Math.max(...points.map((point) => point.z)) },
+    };
+}
+
 function boundsWithAssetProxies(base, assetProxies) {
     const points = [base.min, base.max];
     for (const instance of assetProxies) for (const proxy of [...instance.collision, ...instance.lidar]) {
@@ -729,10 +762,25 @@ export function createWorldDescription(value = {}) {
     const hasAssetMetrics = (document.assetMetrics?.definitions ?? []).some((entry) => (
         (entry.collision?.length ?? 0) > 0 || (entry.lidar?.length ?? 0) > 0
     ));
-    if (hasAssetMetrics) return createWorldDescriptionV3(value);
-    if (geometryVersion === 2) return createWorldDescriptionV2(value);
-    if (geometryVersion === 1) return createWorldDescriptionV1(value);
-    throw new TypeError(`Unsupported road geometry version: ${String(geometryVersion)}.`);
+    const base = hasAssetMetrics
+        ? createWorldDescriptionV3(value)
+        : geometryVersion === 2
+            ? createWorldDescriptionV2(value)
+            : geometryVersion === 1
+                ? createWorldDescriptionV1(value)
+                : null;
+    if (!base) throw new TypeError(`Unsupported road geometry version: ${String(geometryVersion)}.`);
+    const solids = compileScenePrimitives(document);
+    const floorOn = document.floor?.enabled === true;
+    if (solids.length === 0 && !floorOn) return base;
+    return canonicalizeSimulationValue({
+        ...base,
+        version: WORLD_DESCRIPTION_V4,
+        primitivePolicy: { ...SCENE_PRIMITIVE_POLICY },
+        primitives: solids,
+        ...(floorOn ? { groundPlane: { id: FLOOR_OBJECT_ID, y: FLOOR_PLANE_Y } } : {}),
+        ...(solids.length > 0 ? { bounds: boundsWithPoints(base.bounds, solids) } : {}),
+    });
 }
 
 export function hashWorldDescription(description) {
@@ -751,7 +799,9 @@ export function assertWorldResource(resource) {
     if (!resource?.description || !resource?.hash) throw new TypeError("Resolved world resource is required.");
     const hash = hashWorldDescription(resource.description);
     if (hash !== resource.hash) throw new Error(`Resolved world hash mismatch: expected ${resource.hash}, computed ${hash}.`);
-    if (resource.description.version === WORLD_DESCRIPTION_V2 || (resource.description.version === WORLD_DESCRIPTION_V3 && resource.description.roadGeometryPolicy)) {
+    const describedVersion = resource.description.version;
+    if (describedVersion === WORLD_DESCRIPTION_V2
+        || ((describedVersion === WORLD_DESCRIPTION_V3 || describedVersion === WORLD_DESCRIPTION_V4) && resource.description.roadGeometryPolicy)) {
         if (resource.description.roadGeometryPolicy?.id !== ROAD_GEOMETRY_POLICY_V1.id
             || resource.description.roadGeometryPolicy?.version !== ROAD_GEOMETRY_POLICY_V1.version) {
             throw new Error("Resolved world uses an unsupported road geometry policy.");
@@ -762,7 +812,11 @@ export function assertWorldResource(resource) {
             throw new Error("Resolved world road surfaces do not match their canonical road inputs.");
         }
     }
-    if (resource.description.version === WORLD_DESCRIPTION_V3) assertAssetProxies(resource.description);
+    if (resource.description.version === WORLD_DESCRIPTION_V3
+        || (resource.description.version === WORLD_DESCRIPTION_V4 && Array.isArray(resource.description.assetProxies))) {
+        assertAssetProxies(resource.description);
+    }
+    if (resource.description.version === WORLD_DESCRIPTION_V4) assertScenePrimitives(resource.description);
     return resource.description;
 }
 
@@ -791,6 +845,48 @@ function assertAssetProxies(description) {
         for (const proxy of instance.collision ?? []) assertProxyMesh(proxy, { convex: true });
         for (const proxy of instance.lidar ?? []) assertProxyMesh(proxy);
     }
-    if (description.metricWorldHash !== simulationSha256(description.assetProxies)) throw new TypeError("World v3 metricWorldHash does not match asset proxies.");
+    if (description.metricWorldHash !== simulationSha256(description.assetProxies)) throw new TypeError("World metricWorldHash does not match asset proxies.");
+    if (description.version === WORLD_DESCRIPTION_V4) return;
     if (JSON.stringify(canonicalizeSimulationValue(boundsWithAssetProxies(aggregateBounds(description.roads, description.drivableSurfaces, description.obstacles), description.assetProxies))) !== JSON.stringify(description.bounds)) throw new TypeError("World v3 bounds do not include its asset proxies.");
+}
+
+function assertScenePrimitives(description) {
+    const policy = description.primitivePolicy;
+    if (!policy
+        || policy.id !== SCENE_PRIMITIVE_POLICY.id
+        || policy.version !== SCENE_PRIMITIVE_POLICY.version
+        || policy.sphereLongitude !== SCENE_PRIMITIVE_POLICY.sphereLongitude
+        || policy.sphereLatitude !== SCENE_PRIMITIVE_POLICY.sphereLatitude
+        || policy.cylinderRadial !== SCENE_PRIMITIVE_POLICY.cylinderRadial
+        || policy.coneRadial !== SCENE_PRIMITIVE_POLICY.coneRadial) {
+        throw new TypeError("World v4 uses an unsupported scene primitive policy.");
+    }
+    if (!Array.isArray(description.primitives)) throw new TypeError("World v4 requires a primitives array.");
+    const ids = new Set();
+    for (const solid of description.primitives) {
+        if (!solid?.id || ids.has(solid.id) || solid.sourceId === undefined) {
+            throw new TypeError(`Scene primitive "${solid?.id ?? ""}" is invalid or duplicated.`);
+        }
+        ids.add(solid.id);
+        assertProxyMesh(solid, { convex: true });
+        if (typeof solid.semantic !== "string" || !solid.semantic) throw new TypeError(`Scene primitive "${solid.id}" requires a semantic class.`);
+    }
+    if (description.groundPlane !== undefined) {
+        const plane = description.groundPlane;
+        if (plane?.id !== FLOOR_OBJECT_ID || plane?.y !== FLOOR_PLANE_Y || Object.keys(plane).length !== 2) {
+            throw new TypeError("World v4 groundPlane must be { id: \"floor\", y: 0 }.");
+        }
+    }
+    const expectedBounds = description.primitives.length > 0
+        ? boundsWithPoints(
+            aggregateBounds(description.roads, description.drivableSurfaces, description.obstacles),
+            description.primitives,
+        )
+        : aggregateBounds(description.roads, description.drivableSurfaces, description.obstacles);
+    const withProxies = Array.isArray(description.assetProxies)
+        ? boundsWithAssetProxies(expectedBounds, description.assetProxies)
+        : expectedBounds;
+    if (JSON.stringify(canonicalizeSimulationValue(withProxies)) !== JSON.stringify(description.bounds)) {
+        throw new TypeError("World v4 bounds do not include its primitives.");
+    }
 }

@@ -1485,6 +1485,20 @@ Local evidence on 2026-09-28:
 
 ## Decision log
 
+### 2026-10-15 — Install operation ids include the owning release
+
+A collection can schedule the same authoring operation from more than one member, such as an asset package and the run template that embeds it. Adapter operation ids now include the installing release's item id, version, and artifact digest, so those operations stay distinct in one transaction journal. Marketplace schemas, artifact bytes, and semantic simulator hashes are unchanged. An install plan created before this change has to be started again.
+
+### 2026-10-15 — Publishers can be granted additional namespaces
+
+`cev-mkt publisher grant-namespace` appends namespaces to an existing
+publisher and to that publisher's live write tokens. The token secret does
+not change. Granted namespaces still cannot overlap another publisher.
+Enrollment after a grant copies the publisher's current namespaces onto the
+new write token. Item IDs remain owned only by an equal namespace or a
+`{namespace}.` prefix. No marketplace schema, semantic hash, or milestone
+status changed.
+
 ### 2026-10-03 — Publisher uploads use a size-based deadline
 
 Publication item and release writes use a 30-second floor. Artifact and preview

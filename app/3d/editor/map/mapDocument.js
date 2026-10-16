@@ -1,6 +1,6 @@
 import { isAssetBackedObject } from "../../../editor-assets/AssetBackedObject.js";
 import { planRoadNetworkGeometry } from "../../../roads/RoadNetworkGeometry.js";
-import { assetMapFootprint } from "./mapHitTest.js";
+import { assetMapShapes } from "./mapHitTest.js";
 
 function finite(value, fallback = 0) {
     const numeric = Number(value);
@@ -74,8 +74,10 @@ export function collectMapFitPoints(document) {
         points.push({ x: finite(feature.x), z: finite(feature.z) });
     }
     for (const record of (document?.objects ?? []).filter(isAssetBackedObject)) {
-        for (const point of assetMapFootprint(record)) {
-            points.push({ x: finite(point.x), z: finite(point.z) });
+        for (const footprint of assetMapShapes(record, document).footprints) {
+            for (const point of footprint) {
+                points.push({ x: finite(point.x), z: finite(point.z) });
+            }
         }
     }
     return points;

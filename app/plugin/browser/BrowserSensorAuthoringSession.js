@@ -31,9 +31,17 @@ export class BrowserSensorAuthoringSession {
         this.unresolvedLocks = [];
         this.errors = [];
         this.disposed = false;
+        this.generation = 0;
         this.reloadRequired = false;
         this.reloadRequiredPackageHashes = [];
         this.unsubscribePolicy = subscribePolicy?.(() => { this.#policyChanged().catch(() => {}); }) ?? null;
+    }
+
+    beginVehicle() {
+        if (this.disposed) return this.generation;
+        this.generation += 1;
+        this.#resetPluginRegistry();
+        return this.generation;
     }
 
     get registry() {
@@ -73,8 +81,8 @@ export class BrowserSensorAuthoringSession {
         return response.json();
     }
 
-    async loadLock(lock) {
-        if (this.disposed) throw pluginError(PLUGIN_ERROR_CODES.INTEGRITY, "Sensor authoring session is disposed.");
+    async loadLock(lock, { generation = this.generation } = {}) {
+        this.#assertCurrent(generation);
         if (this.reloadRequired) throw pluginError(PLUGIN_ERROR_CODES.UNAVAILABLE, "Marketplace policy changed; reload this editor before activating plugin sensors.", { requiresReset: true });
         const packageHash = String(lock?.packageHash ?? "").trim();
         if (!packageHash) {
@@ -93,28 +101,43 @@ export class BrowserSensorAuthoringSession {
                 { pluginId: lock.pluginId, packageHash },
             );
         }
-        let verified;
         try {
             const resource = await this.fetchPackage(packageHash);
-            verified = verifyPluginPackage(resource);
+            this.#assertCurrent(generation);
+            const verified = verifyPluginPackage(resource);
             this.#assertLock(lock, verified);
             if (this.authorizePackage) await this.authorizePackage(verified.resource.packageHash, verified);
+            this.#assertCurrent(generation);
+            const registry = this.sensorRegistry;
+            const uiHost = this.uiHost;
             const ownership = {
                 pluginId: verified.document.id,
                 version: verified.document.version,
                 runtimeHash: verified.resource.runtimeHash,
             };
-            if (!this.loaded.has(packageHash)) {
-                for (const descriptor of verified.document.sensorTypes ?? []) {
-                    if (!this.sensorRegistry.has(descriptor.type)) {
-                        this.sensorRegistry.register(
-                            createPluginSensorTypeDefinition(descriptor, ownership),
-                            ownership,
-                        );
-                    }
+            for (const descriptor of verified.document.sensorTypes ?? []) {
+                const current = registry.ownership(descriptor.type);
+                if (current && current !== "builtin" && current.runtimeHash !== ownership.runtimeHash) {
+                    throw pluginError(
+                        PLUGIN_ERROR_CODES.REGISTRATION,
+                        `Sensor type "${descriptor.type}" is already registered from runtime ${current.runtimeHash}.`,
+                        { pluginId: verified.document.id, packageHash, contributionId: descriptor.type },
+                    );
                 }
-                await this.uiHost.loadPackageUi(verified);
+                if (!registry.has(descriptor.type)) {
+                    registry.register(createPluginSensorTypeDefinition(descriptor, ownership), ownership);
+                }
             }
+            try {
+                await uiHost.loadPackageUi(verified);
+            } catch (error) {
+                this.#assertCurrent(generation);
+                const message = error?.message || "Plugin sensor view failed to load.";
+                for (const descriptor of verified.document.sensorTypes ?? []) {
+                    uiHost.noteDiagnostic(descriptor.type, message);
+                }
+            }
+            this.#assertCurrent(generation);
             this.loaded.set(packageHash, {
                 pluginId: verified.document.id,
                 version: verified.document.version,
@@ -125,6 +148,7 @@ export class BrowserSensorAuthoringSession {
             this.verified.set(packageHash, verified);
             return verified;
         } catch (error) {
+            if (generation !== this.generation || this.disposed) throw error;
             const wrapped = error?.code
                 ? error
                 : pluginError(PLUGIN_ERROR_CODES.INTEGRITY, error.message, {
@@ -136,6 +160,25 @@ export class BrowserSensorAuthoringSession {
             this.unresolvedLocks = [...new Set([...this.unresolvedLocks, packageHash])];
             throw wrapped;
         }
+    }
+
+    #assertCurrent(generation) {
+        if (this.disposed || generation !== this.generation) {
+            throw pluginError(
+                PLUGIN_ERROR_CODES.UNAVAILABLE,
+                "Sensor authoring session moved to another vehicle.",
+                { requiresReset: false },
+            );
+        }
+    }
+
+    #resetPluginRegistry() {
+        this.sensorRegistry = registerBuiltInSensorTypes(new SensorTypeRegistry({ allowPlugins: true }));
+        this.uiHost = new PluginUiHost({ moduleSource: this.moduleSource });
+        this.loaded.clear();
+        this.verified.clear();
+        this.unresolvedLocks = [];
+        this.errors = [];
     }
 
     #assertLock(lock, verified) {
@@ -196,12 +239,10 @@ export class BrowserSensorAuthoringSession {
         this.unsubscribePolicy?.();
         this.unsubscribePolicy = null;
         this.disposed = true;
-        this.loaded.clear();
-        this.verified.clear();
-        this.unresolvedLocks = [];
-        this.errors = [];
-        this.sensorRegistry = registerBuiltInSensorTypes(new SensorTypeRegistry({ allowPlugins: true }));
-        this.uiHost = new PluginUiHost({ moduleSource: this.moduleSource });
+        this.generation += 1;
+        this.#resetPluginRegistry();
+        this.reloadRequired = false;
+        this.reloadRequiredPackageHashes = [];
     }
 }
 

@@ -437,10 +437,10 @@ export class MarketplaceInstallPlanner {
                 adapterPlan = { ...adapterPlan, operations: [], installationAction: "reuse" };
             }
             const rightsDenied = adapterPlan.rights.filter(deniedRight);
-            const blockingIssues = [
+            const blockingIssues = [...new Set([
                 ...adapterPlan.blockingIssues.map(String),
                 ...rightsDenied.map((right) => `Required right denied: ${String(right.id ?? right.right ?? "unknown")}`),
-            ];
+            ])];
             releases.push({
                 release,
                 releaseHash: entry.releaseHash,
@@ -458,7 +458,7 @@ export class MarketplaceInstallPlanner {
                 blockingIssues,
             });
         }
-        const blockingIssues = releases.flatMap((entry) => entry.blockingIssues);
+        const blockingIssues = [...new Set(releases.flatMap((entry) => entry.blockingIssues))].sort(compareUtf8);
         const warnings = [...new Set([
             ...preflight.warnings,
             ...releases.flatMap((entry) => entry.warnings),

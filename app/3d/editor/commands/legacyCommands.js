@@ -27,7 +27,10 @@ import {
 } from "../document/documentMutations.js";
 import { BUILDING_TYPE_ID } from "../objects/types/building.js";
 import { BUILTIN_PROP_TYPE_ID } from "../objects/types/builtinProp.js";
+import { FLOOR_TYPE_ID } from "../objects/types/floor.js";
+import { PRIMITIVE_TYPE_ID } from "../objects/types/primitive.js";
 import { ROAD_TYPE_ID } from "../objects/types/road.js";
+import { FLOOR_OBJECT_ID } from "../../../simulation/world/PrimitiveRecords.js";
 import { COMMAND_ISSUE_CODES, commandFailure, commandIssue, commandSuccess } from "./commandIssues.js";
 import { ensureObjectRecord, removeObjectRecords } from "./objectMutations.js";
 
@@ -64,6 +67,86 @@ export function addFeature({ id = null, type, x, z, rotationY = 0, dir = 0, tags
                 parentId,
             }, { notify: false });
             return commandSuccess({ feature: result.record, objectId: result.record.id, record: record.record });
+        },
+    };
+}
+
+export function addPrimitive({
+    id = null,
+    shape = "box",
+    x = 0,
+    y,
+    z = 0,
+    rotationY = 0,
+    size,
+    color,
+    tags,
+    name,
+    parentId = null,
+    label = "Add primitive",
+} = {}) {
+    return {
+        id: "add-primitive",
+        label,
+        run(ctx) {
+            const definition = ctx.registry.get(PRIMITIVE_TYPE_ID);
+            const primitiveId = id ?? createId("primitive");
+            if (primitiveId === FLOOR_OBJECT_ID) {
+                return commandFailure(commandIssue(COMMAND_ISSUE_CODES.ARGUMENT_INVALID, `Primitive id "${FLOOR_OBJECT_ID}" is reserved.`));
+            }
+            let created;
+            try {
+                created = definition.create({
+                    id: primitiveId,
+                    shape,
+                    x,
+                    y,
+                    z,
+                    rotationY,
+                    size,
+                    color,
+                    tags,
+                    name,
+                    position: y === undefined ? undefined : { x, y, z },
+                });
+            } catch (error) {
+                return commandFailure(error?.issues?.length
+                    ? error.issues.map((entry) => commandIssue(COMMAND_ISSUE_CODES.ARGUMENT_INVALID, entry.message, { path: ["command", ...(entry.path ?? [])] }))
+                    : commandIssue(COMMAND_ISSUE_CODES.ARGUMENT_INVALID, error?.message ?? String(error)));
+            }
+            const record = { ...created.legacy, id: primitiveId };
+            ctx.document.replaceDomainRecords("primitives", [[primitiveId, record]], { notify: false });
+            const object = ensureObjectRecord(ctx.document, {
+                id: primitiveId,
+                typeId: PRIMITIVE_TYPE_ID,
+                typeVersion: definition.version,
+                name: created.name,
+                parentId,
+            }, { notify: false });
+            return commandSuccess({ primitive: ctx.document.primitives.find((entry) => entry.id === primitiveId), objectId: primitiveId, record: object.record });
+        },
+    };
+}
+
+export function setFloor({ enabled = false, label = enabled ? "Enable floor" : "Disable floor" } = {}) {
+    return {
+        id: "set-floor",
+        label,
+        run(ctx) {
+            ctx.document.setScalar("floor", enabled === true ? { enabled: true } : null, { notify: false });
+            if (enabled !== true) {
+                removeObjectRecords(ctx.document, [FLOOR_OBJECT_ID], { notify: false });
+            } else {
+                const definition = ctx.registry.get(FLOOR_TYPE_ID);
+                ensureObjectRecord(ctx.document, {
+                    id: FLOOR_OBJECT_ID,
+                    typeId: FLOOR_TYPE_ID,
+                    typeVersion: definition?.version ?? 1,
+                    name: "Floor",
+                    parentId: null,
+                }, { notify: false });
+            }
+            return commandSuccess({ enabled: ctx.document.floor?.enabled === true });
         },
     };
 }

@@ -1193,7 +1193,7 @@ test("protocol 1.2 UDS returns large GPU observations through shared memory", {
     const capabilities = await grpcCall(client, "getCapabilities", {
         clientProtocol: { major: 1, minor: 3 },
     });
-    assert.equal(capabilities.protocol.minor, 4);
+    assert.equal(capabilities.protocol.minor, 5);
     assert.ok(capabilities.transports.includes("grpc+unix+shared-memory-v1"));
     assert.equal(capabilities.backends.find((entry) => entry.kind === 4).available, true);
     const diagnostics = JSON.parse(Buffer.from(capabilities.diagnosticJson).toString("utf8"));

@@ -4,8 +4,8 @@ import { useState } from "react";
 import { IconPlus } from "@tabler/icons-react";
 
 import {
+    sensorCatalogEntryChoiceLabel,
     sensorCatalogEntryKey,
-    sensorCatalogEntryLabel,
 } from "../plugin/PluginSensorAuthoring.js";
 import { Button } from "./Button.js";
 import { NativeSelect } from "./FormControls.js";
@@ -27,7 +27,7 @@ export default function SensorTypeAdder({ entries = [], onAdd }) {
                     const key = sensorCatalogEntryKey(entry);
                     return (
                         <option key={key} value={key}>
-                            {sensorCatalogEntryLabel(entry)}
+                            {sensorCatalogEntryChoiceLabel(entry, entries)}
                         </option>
                     );
                 })}

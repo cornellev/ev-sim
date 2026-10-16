@@ -9,6 +9,7 @@ export function usePluginLibrary() {
         status: "loading",
         packages: [],
         installed: [],
+        builds: [],
         error: null,
     });
     const mountedRef = useRef(true);
@@ -21,6 +22,7 @@ export function usePluginLibrary() {
             status: "ready",
             packages: Array.isArray(local?.packages) ? local.packages : [],
             installed: Array.isArray(library?.packages) ? library.packages : [],
+            builds: Array.isArray(local?.builds) ? local.builds : [],
             error: null,
         });
     }).catch((caught) => {
@@ -30,6 +32,7 @@ export function usePluginLibrary() {
             status: "error",
             packages: hasReadyRef.current ? current.packages : [],
             installed: hasReadyRef.current ? current.installed : [],
+            builds: hasReadyRef.current ? current.builds : [],
             error: message,
         }));
     }), []);

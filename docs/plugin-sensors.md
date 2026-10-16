@@ -163,7 +163,9 @@ PLG-07 adds a revisioned `GET /api/storage/plugins/sensors` catalog and exact
 CAS authoring sessions. Config stamps `manifest.plugins.artifacts` plus
 `sensors.sample.range-image` when creating a custom sensor. Vehicle documents
 store optional `pluginLocks`; those sensors are templates and previews and
-never auto-populate `sensorRig`. Custom `contributeSensorView` components
+do not execute from the vehicle document. A run opts in by setting
+`sensorRig.inheritance.mode` to `vehicle`, which copies the mounts into
+`sensorRig` and stamps the matching run plugin grant. Custom `contributeSensorView` components
 receive frozen `{ context, sensor, descriptor, fields, diagnostics, onChange }`.
 Generic fallbacks edit scan layout JSON, declared parameters, and explicit
 products without mutating the draft on validation failure. Integrity failures

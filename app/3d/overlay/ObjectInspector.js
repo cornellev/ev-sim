@@ -18,6 +18,7 @@ import { deltaBetweenFrames } from "../editor/objects/transformDelta.js";
 import { GROUP_TYPE_ID } from "../editor/objects/types/group.js";
 import { EditorPresentationRegistry, editorPresentationRegistry, readObjectFieldValues } from "../editor/presentation/EditorPresentationRegistry.js";
 import { SECTION_KINDS } from "../editor/presentation/builtinSections.js";
+import { ScriptAttachmentSection } from "./inspector/ScriptAttachmentSection.js";
 import {
     fieldKey,
     groupFields,
@@ -290,6 +291,12 @@ export function ObjectInspector({ data }) {
                         <SkyLocalPreview data={data} />
                     </PropertySection>
                 );
+            case SECTION_KINDS.SCRIPTS:
+                return (
+                    <PropertySection key={section.id} id={section.id} title={section.title}>
+                        <ScriptAttachmentSection data={data} section={section} onResult={report} />
+                    </PropertySection>
+                );
             case SECTION_KINDS.ASSET_REVISION:
                 return (
                     <PropertySection key={section.id} id={section.id} title={section.title}>
@@ -352,7 +359,7 @@ export function ObjectInspector({ data }) {
                 </p>
             )}
             {showAdvancedSwitch && (
-                <div className="border-b border-[var(--slate-border-60)] px-2 py-1 [&_.sf-switch-row]:min-h-0 [&_.sf-switch-copy__label]:text-[12px]">
+                <div className="border-b border-[var(--slate-border-60)] px-2 py-1 [&_.sf-switch-copy__label]:text-[12px]">
                     <AdvancedSwitch />
                 </div>
             )}

@@ -27,14 +27,19 @@ function roundToStep(value, step, precision) {
 /**
  * Number field that scrubbing left/right adjusts, while still allowing typed entry.
  * Drag right to increase, left to decrease. Hold Shift for finer steps, Alt for coarser.
+ * Optional gesture callbacks group a scrub, arrow hold, or typed edit into one commit.
  */
 export function DragNumber({
     value,
     onChange,
+    onGestureStart,
+    onGestureEnd,
+    onGestureCancel,
     step = 0.01,
     min,
     max,
     precision = 3,
+    commitOnBlur = false,
     disabled = false,
     className = "",
     "aria-label": ariaLabel,
@@ -45,6 +50,39 @@ export function DragNumber({
     const inputRef = useRef(null);
     const dragRef = useRef(null);
     const suppressClickRef = useRef(false);
+    const textRef = useRef(null);
+    const gestureRef = useRef(null);
+    const callbacksRef = useRef({});
+    useEffect(() => {
+        callbacksRef.current = { onGestureStart, onGestureEnd, onGestureCancel };
+    }, [onGestureStart, onGestureEnd, onGestureCancel]);
+
+    const tracking = () => Boolean(
+        callbacksRef.current.onGestureStart
+        || callbacksRef.current.onGestureEnd
+        || callbacksRef.current.onGestureCancel,
+    );
+
+    const beginGesture = (kind) => {
+        if (!tracking() || gestureRef.current) return;
+        gestureRef.current = kind;
+        callbacksRef.current.onGestureStart?.();
+    };
+
+    const finishGesture = (kinds) => {
+        if (!gestureRef.current) return;
+        if (kinds && !kinds.includes(gestureRef.current)) return;
+        gestureRef.current = null;
+        callbacksRef.current.onGestureEnd?.();
+    };
+
+    const cancelGesture = () => {
+        if (!gestureRef.current) return;
+        gestureRef.current = null;
+        textRef.current = null;
+        setText(null);
+        callbacksRef.current.onGestureCancel?.();
+    };
 
     useEffect(() => () => {
         const state = dragRef.current;
@@ -59,13 +97,14 @@ export function DragNumber({
         const next = Number(candidate);
         if (!Number.isFinite(next)) return false;
         const clamped = clamp(next, min, max);
+        beginGesture("text");
         onChange?.(clamped);
         return true;
     };
 
-    const endDrag = (event) => {
+    const releaseDrag = (event) => {
         const state = dragRef.current;
-        if (!state) return;
+        if (!state) return null;
         dragRef.current = null;
         document.documentElement.style.cursor = state.previousCursor;
         document.documentElement.style.userSelect = state.previousUserSelect;
@@ -77,6 +116,12 @@ export function DragNumber({
         } catch {
             // Capture may already be released.
         }
+        return state;
+    };
+
+    const endDrag = (event) => {
+        const state = releaseDrag(event);
+        if (!state) return;
         if (state.moved) {
             suppressClickRef.current = true;
         } else {
@@ -105,14 +150,25 @@ export function DragNumber({
             }}
             onChange={(event) => {
                 const raw = event.target.value;
+                textRef.current = raw;
                 setText(raw);
-                commitText(raw);
+                if (!commitOnBlur) commitText(raw);
             }}
             onBlur={() => {
-                if (text !== null) commitText(text);
+                const raw = textRef.current;
+                textRef.current = null;
                 setText(null);
+                if (raw !== null) commitText(raw);
+                finishGesture(["text", "keyboard"]);
             }}
             onKeyDown={(event) => {
+                if (event.key === "Escape" && gestureRef.current) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    releaseDrag(event);
+                    cancelGesture();
+                    return;
+                }
                 if (event.key === "Enter") {
                     event.currentTarget.blur();
                     return;
@@ -126,9 +182,14 @@ export function DragNumber({
                         min,
                         max,
                     );
+                    if (!gestureRef.current) beginGesture("keyboard");
                     onChange?.(next);
                     setText(null);
+                    textRef.current = null;
                 }
+            }}
+            onKeyUp={(event) => {
+                if (event.key === "ArrowUp" || event.key === "ArrowDown") finishGesture(["keyboard"]);
             }}
             onPointerDown={(event) => {
                 if (disabled || event.button !== 0) return;
@@ -156,6 +217,7 @@ export function DragNumber({
                 if (!state.moved) {
                     state.moved = true;
                     setDragging(true);
+                    beginGesture("pointer");
                 }
 
                 const multiplier = event.shiftKey ? 0.1 : event.altKey ? 10 : 1;
@@ -164,8 +226,16 @@ export function DragNumber({
                 onChange?.(next);
                 setText(formatValue(next, precision));
             }}
-            onPointerUp={endDrag}
-            onPointerCancel={endDrag}
+            onPointerUp={(event) => {
+                const moved = dragRef.current?.moved === true;
+                endDrag(event);
+                if (moved) finishGesture(["pointer"]);
+            }}
+            onPointerCancel={(event) => {
+                const moved = dragRef.current?.moved === true;
+                endDrag(event);
+                if (moved && gestureRef.current === "pointer") cancelGesture();
+            }}
         />
     );
 }

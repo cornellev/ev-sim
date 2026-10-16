@@ -38,7 +38,8 @@ export const PHYSICS_BACKEND_CONFIG_HASH_V2 = simulationSha256(PHYSICS_BACKEND_C
 
 
 function worldHasCollisionProxies(world) {
-    return (world?.assetProxies ?? []).some((entry) => (entry.collision?.length ?? 0) > 0);
+    return (world?.assetProxies ?? []).some((entry) => (entry.collision?.length ?? 0) > 0)
+        || (world?.primitives ?? []).length > 0;
 }
 
 export function createPhysicsBackendSelection(world = null) {

@@ -102,6 +102,26 @@ MKT PR changes a schema, trust rule, hash, acceptance criterion, or milestone
 status. Update another roadmap only when that roadmap's own contract or
 acceptance evidence actually changes.
 
+## Planner-toolkit roadmap
+
+Before changing the Python planning helpers, `planning-oracle` observation
+profile, episode start/goal overrides, or planner examples, read:
+
+1. [`docs/planner-toolkit-plan.md`](docs/planner-toolkit-plan.md)
+2. [`docs/python-headless.md`](docs/python-headless.md)
+3. [`proto/cev_sim/headless/v1/headless.proto`](proto/cev_sim/headless/v1/headless.proto)
+4. [`docs/architecture.md`](docs/architecture.md)
+
+This is a separate `PLN-*` program. Do not treat it as a headless PR 13.
+`planning-oracle` is an explicit opt-in observation profile for planner and
+controller testing. It must not change the `measured-state` profile, its
+hashes, or the rule that state-only observations exclude oracle pose.
+
+Update the progress and decision log in `docs/planner-toolkit-plan.md`
+whenever a PLN milestone changes a contract, hash, acceptance criterion, or
+milestone status. Update the headless roadmap only when the Protobuf contract
+itself changes.
+
 ## Architectural invariants
 
 - JavaScript remains the single authoritative simulator implementation.

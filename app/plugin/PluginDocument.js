@@ -7,6 +7,7 @@ import { PLUGIN_PORT_TYPES } from "../plugin-api/ports.js";
 import { clonePluginJson } from "./PluginJson.js";
 import { PLUGIN_ERROR_CODES, pluginError } from "./PluginErrors.js";
 import { normalizePluginSensorDescriptor } from "./PluginSensorContract.js";
+import { PLANT_ABI_VERSION, PLANT_PARAMETER_SOURCES, PLANT_STEP_CAPABILITY } from "./PlantModule.js";
 import { assertPluginSettingValue, normalizePluginUnitState } from "./PluginValues.js";
 
 export const PLUGIN_DOCUMENT_KIND = "cev-sim.plugin";
@@ -129,6 +130,45 @@ function normalizeUnit(value, pluginId, path) {
     return { type, ports: normalizePorts(source.ports, `${path}.ports`), settings, defaults, catalog: normalizeCatalog(source.catalog, `${path}.catalog`) };
 }
 
+const PLANT_SOURCES = new Set(PLANT_PARAMETER_SOURCES);
+
+function normalizePlantParameter(value, path) {
+    const source = object(value, path);
+    exactKeys(source, ["key", "source", "default"], path);
+    const key = text(source.key, `${path}.key`);
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) throw new Error(`${path}.key must be an identifier.`);
+    const parameterSource = text(source.source, `${path}.source`);
+    if (!PLANT_SOURCES.has(parameterSource)) throw new Error(`${path}.source is unsupported.`);
+    const parameter = { key, source: parameterSource };
+    if (parameterSource === "default") {
+        if (!Number.isFinite(source.default)) throw new Error(`${path}.default must be a finite number.`);
+        parameter.default = source.default;
+    } else if (source.default !== undefined) {
+        throw new Error(`${path}.default is valid only for source "default".`);
+    }
+    return parameter;
+}
+
+function normalizePlant(value, pluginId, path) {
+    const source = object(value, path);
+    exactKeys(source, ["id", "abi", "module", "parameters"], path);
+    const id = text(source.id, `${path}.id`);
+    if (!id.startsWith(`${pluginId}.`) || id.length === pluginId.length + 1) {
+        throw new Error(`${path}.id must start with "${pluginId}."`);
+    }
+    if (source.abi !== PLANT_ABI_VERSION) throw new Error(`${path}.abi must be ${PLANT_ABI_VERSION}.`);
+    const modulePath = packagePath(source.module, `${path}.module`);
+    if (!modulePath.endsWith(".wasm")) throw new Error(`${path}.module must be a .wasm path.`);
+    if (!Array.isArray(source.parameters) || source.parameters.length > 32) {
+        throw new Error(`${path}.parameters must be an array of at most 32 entries.`);
+    }
+    const parameters = source.parameters.map((entry, index) => normalizePlantParameter(entry, `${path}.parameters.${index}`));
+    if (new Set(parameters.map((entry) => entry.key)).size !== parameters.length) {
+        throw new Error(`${path}.parameters contains duplicate keys.`);
+    }
+    return { id, abi: PLANT_ABI_VERSION, module: modulePath, parameters };
+}
+
 function normalizeSystem(value, pluginId, path) {
     const source = object(value, path);
     exactKeys(source, ["id", "phase", "priority", "stateVersion"], path);
@@ -143,7 +183,7 @@ function normalizeSystem(value, pluginId, path) {
 export function assertPluginDocument(value) {
     try {
         const source = object(value, "plugin.json");
-        exactKeys(source, ["kind", "api", "id", "version", "engines", "entry", "capabilities", "units", "systems", "sensorTypes", "editor"], "plugin.json");
+        exactKeys(source, ["kind", "api", "id", "version", "engines", "entry", "capabilities", "units", "systems", "sensorTypes", "plants", "editor"], "plugin.json");
         if (source.kind !== PLUGIN_DOCUMENT_KIND) throw new Error(`plugin.json.kind must be "${PLUGIN_DOCUMENT_KIND}".`);
         if (source.api !== PLUGIN_DOCUMENT_API) throw new Error(`plugin.json.api must be ${PLUGIN_DOCUMENT_API}.`);
         const id = text(source.id, "plugin.json.id");
@@ -156,10 +196,13 @@ export function assertPluginDocument(value) {
         exactKeys(engines, ["cevSim"], "plugin.json.engines");
         const cevSim = text(engines.cevSim, "plugin.json.engines.cevSim");
         if (!semver.validRange(cevSim)) throw new Error("plugin.json.engines.cevSim must be a valid SemVer range.");
-        const entrySource = object(source.entry, "plugin.json.entry");
-        exactKeys(entrySource, ["runtime", "ui"], "plugin.json.entry");
-        const entry = { runtime: packagePath(entrySource.runtime, "plugin.json.entry.runtime", { module: true }) };
-        if (entrySource.ui !== undefined) entry.ui = packagePath(entrySource.ui, "plugin.json.entry.ui", { module: true });
+        let entry;
+        if (source.entry !== undefined) {
+            const entrySource = object(source.entry, "plugin.json.entry");
+            exactKeys(entrySource, ["runtime", "ui"], "plugin.json.entry");
+            entry = { runtime: packagePath(entrySource.runtime, "plugin.json.entry.runtime", { module: true }) };
+            if (entrySource.ui !== undefined) entry.ui = packagePath(entrySource.ui, "plugin.json.entry.ui", { module: true });
+        }
         const capabilities = [...validateCapabilityGrants(source.capabilities ?? [], source.capabilities ?? [], source.capabilities ?? [])];
         if (!Array.isArray(source.units)) throw new Error("plugin.json.units must be an array.");
         if (!Array.isArray(source.systems ?? [])) throw new Error("plugin.json.systems must be an array.");
@@ -171,13 +214,26 @@ export function assertPluginDocument(value) {
         const sensorTypes = source.sensorTypes?.map((sensorType, index) => (
             normalizePluginSensorDescriptor(sensorType, id, `plugin.json.sensorTypes.${index}`)
         ));
+        if (source.plants !== undefined && !Array.isArray(source.plants)) {
+            throw new Error("plugin.json.plants must be an array when present.");
+        }
+        const plants = source.plants?.map((plant, index) => normalizePlant(plant, id, `plugin.json.plants.${index}`));
         if ((sensorTypes?.length ?? 0) > 0 && !capabilities.includes("sensors.sample.range-image")) {
             throw new Error("plugin.json sensorTypes require capability \"sensors.sample.range-image\".");
+        }
+        if ((plants?.length ?? 0) > 0 && !capabilities.includes(PLANT_STEP_CAPABILITY)) {
+            throw new Error(`plugin.json plants require capability "${PLANT_STEP_CAPABILITY}".`);
+        }
+        const hasJavaScriptContribution = units.length > 0 || systems.length > 0
+            || (sensorTypes?.length ?? 0) > 0 || source.editor !== undefined;
+        if (!entry && (hasJavaScriptContribution || !(plants?.length))) {
+            throw new Error("plugin.json.entry.runtime is required.");
         }
         for (const [label, entries] of [
             ["unit type", units.map((unit) => unit.type)],
             ["system id", systems.map((system) => system.id)],
             ["sensor type", sensorTypes?.map((sensorType) => sensorType.type) ?? []],
+            ["plant id", plants?.map((plant) => plant.id) ?? []],
         ]) {
             if (new Set(entries).size !== entries.length) throw new Error(`plugin.json contains a duplicate ${label}.`);
         }
@@ -185,6 +241,7 @@ export function assertPluginDocument(value) {
             ...units.map((unit) => unit.type),
             ...systems.map((system) => system.id),
             ...(sensorTypes?.map((sensorType) => sensorType.type) ?? []),
+            ...(plants?.map((plant) => plant.id) ?? []),
         ];
         if (new Set(contributionIds).size !== contributionIds.length) throw new Error("plugin.json contains duplicate contribution IDs.");
         let editor;
@@ -201,11 +258,12 @@ export function assertPluginDocument(value) {
             id,
             version,
             engines: { cevSim },
-            entry,
+            ...(entry ? { entry } : {}),
             capabilities,
             units,
             systems,
             ...(sensorTypes === undefined ? {} : { sensorTypes }),
+            ...(plants === undefined ? {} : { plants }),
             ...(editor ? { editor } : {}),
         });
     } catch (error) {
@@ -234,7 +292,7 @@ export function assertPluginCompatibility(document, { pluginApi = PLUGIN_DOCUMEN
 
 export function runtimeManifestProjection(document) {
     const projection = clonePluginJson(document, "plugin document");
-    delete projection.entry.ui;
+    if (projection.entry) delete projection.entry.ui;
     delete projection.editor;
     return deepFreeze(projection);
 }

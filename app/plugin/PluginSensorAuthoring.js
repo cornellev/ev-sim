@@ -7,6 +7,7 @@ import {
     validateVehicleSensorDefinition,
 } from "../simulation/sensors/SensorTypeRegistry.js";
 import { PLUGIN_ERROR_CODES, pluginError } from "./PluginErrors.js";
+import { PLANT_STEP_CAPABILITY } from "./PlantModule.js";
 import { clonePluginJson } from "./PluginJson.js";
 import { verifyPluginPackage } from "./PluginPackage.js";
 import {
@@ -117,9 +118,21 @@ export function buildRevisionedSensorCatalog({ library = { revision: 0, packages
     };
 }
 
+function normalizePlantIds(value, path) {
+    if (value === undefined) return [];
+    if (!Array.isArray(value)) throw new TypeError(`${path} must be an array.`);
+    const plants = value.map((entry, index) => {
+        const normalized = String(entry ?? "").trim();
+        if (!normalized) throw new TypeError(`${path}.${index} is required.`);
+        return normalized;
+    }).sort(comparePluginText);
+    if (new Set(plants).size !== plants.length) throw new TypeError(`${path} contains duplicates.`);
+    return plants;
+}
+
 export function normalizeVehiclePluginLock(value, path = "pluginLocks.0") {
     const source = object(value, path);
-    exactKeys(source, ["pluginId", "version", "packageHash", "runtimeHash", "sensorTypes"], path);
+    exactKeys(source, ["pluginId", "version", "packageHash", "runtimeHash", "sensorTypes", "plants"], path);
     const version = String(source.version ?? "").trim();
     if (!version) throw new TypeError(`${path}.version is required.`);
     if (!Array.isArray(source.sensorTypes)) throw new TypeError(`${path}.sensorTypes must be an array.`);
@@ -131,12 +144,14 @@ export function normalizeVehiclePluginLock(value, path = "pluginLocks.0") {
     if (new Set(sensorTypes).size !== sensorTypes.length) {
         throw new TypeError(`${path}.sensorTypes contains duplicates.`);
     }
+    const plants = normalizePlantIds(source.plants, `${path}.plants`);
     return Object.freeze({
         pluginId: pluginId(source.pluginId, `${path}.pluginId`),
         version,
         packageHash: digest(source.packageHash, `${path}.packageHash`),
         runtimeHash: digest(source.runtimeHash, `${path}.runtimeHash`),
         sensorTypes: Object.freeze(sensorTypes),
+        ...(plants.length > 0 ? { plants: Object.freeze(plants) } : {}),
     });
 }
 
@@ -184,22 +199,78 @@ export function stampVehiclePluginSensorLock(locks, catalogEntry) {
     )));
 }
 
-export function reconcileVehiclePluginLocks(locks, sensors = [], { sensorRegistry = sensorTypeRegistry } = {}) {
+export function stampVehiclePluginPlantLock(locks, catalogEntry) {
+    const plantId = String(catalogEntry?.plantId ?? catalogEntry?.id ?? "").trim();
+    if (!plantId) throw new TypeError("A plant id is required to lock vehicle dynamics.");
+    const nextLock = {
+        pluginId: catalogEntry.pluginId,
+        version: catalogEntry.version,
+        packageHash: catalogEntry.packageHash,
+        runtimeHash: catalogEntry.runtimeHash,
+        sensorTypes: [],
+        plants: [plantId],
+    };
+    const current = normalizeVehiclePluginLocks(locks) ?? [];
+    const existing = current.find((entry) => entry.pluginId === nextLock.pluginId);
+    if (!existing) return normalizeVehiclePluginLocks([...current, nextLock]);
+    const hashDiffers = existing.packageHash !== nextLock.packageHash || existing.runtimeHash !== nextLock.runtimeHash;
+    if (hashDiffers && existing.sensorTypes.length > 0) {
+        throw pluginError(
+            PLUGIN_ERROR_CODES.REGISTRATION,
+            "Sensors from this plugin are locked to the previous build.",
+            { pluginId: existing.pluginId, packageHash: nextLock.packageHash },
+        );
+    }
+    if (hashDiffers) {
+        return normalizeVehiclePluginLocks(current.map((entry) => (
+            entry.pluginId === existing.pluginId ? nextLock : entry
+        )));
+    }
+    const plants = uniqueSorted([...(existing.plants ?? []), plantId]);
+    return normalizeVehiclePluginLocks(current.map((entry) => (
+        entry.pluginId === existing.pluginId ? { ...entry, plants } : entry
+    )));
+}
+
+export function reconcileVehiclePluginLocks(locks, sensors = [], { sensorRegistry = sensorTypeRegistry, dynamics = null } = {}) {
     if (locks === undefined || locks === null) return undefined;
     const current = normalizeVehiclePluginLocks(locks) ?? [];
     const typesByPlugin = new Map();
+    const usedTypes = new Set();
     for (const sensor of sensors) {
-        const ownership = sensorRegistry.get(sensor?.type)?.pluginSensor?.ownership;
+        const type = String(sensor?.type ?? "").trim();
+        if (!type) continue;
+        usedTypes.add(type);
+        const ownership = sensorRegistry.get(type)?.pluginSensor?.ownership;
         if (!ownership?.pluginId) continue;
         const types = typesByPlugin.get(ownership.pluginId) ?? [];
-        if (!types.includes(sensor.type)) types.push(sensor.type);
+        if (!types.includes(type)) types.push(type);
         typesByPlugin.set(ownership.pluginId, types);
     }
+    const selectedPlant = typeof dynamics?.plant === "string" ? dynamics.plant : "";
     const next = [];
     for (const lock of current) {
-        const types = typesByPlugin.get(lock.pluginId);
-        if (!types?.length) continue;
-        next.push({ ...lock, sensorTypes: types });
+        const preserved = [];
+        for (const type of lock.sensorTypes) {
+            if (!usedTypes.has(type)) continue;
+            const definition = sensorRegistry.get(type);
+            if (!definition) {
+                preserved.push(type);
+                continue;
+            }
+            if (definition.pluginSensor?.ownership?.pluginId === lock.pluginId) preserved.push(type);
+        }
+        const types = uniqueSorted([...(typesByPlugin.get(lock.pluginId) ?? []), ...preserved]);
+        const plants = selectedPlant && (lock.plants ?? []).includes(selectedPlant) ? [selectedPlant] : [];
+        if (types.length === 0 && plants.length === 0) continue;
+        next.push({
+            pluginId: lock.pluginId,
+            version: lock.version,
+            packageHash: lock.packageHash,
+            runtimeHash: lock.runtimeHash,
+            sensorTypes: types,
+            ...(plants.length > 0 ? { plants } : {}),
+        });
     }
     return normalizeVehiclePluginLocks(next);
 }
@@ -246,6 +317,67 @@ export function stampManifestPluginSelectionForSensor(selection, catalogEntry) {
     });
 }
 
+export function stampManifestPluginSelectionForVehicleLock(selection, lock) {
+    const plugin = String(lock?.pluginId ?? "").trim();
+    const packageHash = String(lock?.packageHash ?? "").trim();
+    if (!plugin || !packageHash) throw new TypeError("A vehicle plugin lock requires pluginId and packageHash.");
+    const grants = [];
+    if ((lock.plants ?? []).length > 0) grants.push(PLANT_STEP_CAPABILITY);
+    if ((lock.sensorTypes ?? []).length > 0) grants.push(pluginSensorRangeImageCapability());
+    if (grants.length === 0) return normalizePluginSelection(selection);
+    const current = normalizePluginSelection(selection) ?? { enabled: true, artifacts: [] };
+    const existing = current.artifacts.find((entry) => entry.pluginId === plugin);
+    if (!existing) {
+        return normalizePluginSelection({
+            enabled: true,
+            artifacts: [...current.artifacts, {
+                pluginId: plugin,
+                expectedHash: packageHash,
+                capabilities: grants,
+            }],
+        });
+    }
+    if (existing.expectedHash !== packageHash) {
+        throw pluginError(
+            PLUGIN_ERROR_CODES.REGISTRATION,
+            `Run is locked to plugin "${existing.pluginId}" package ${existing.expectedHash}; cannot add ${packageHash}.`,
+            { pluginId: existing.pluginId, packageHash },
+        );
+    }
+    const capabilities = uniqueSorted([...existing.capabilities, ...grants]);
+    return normalizePluginSelection({
+        enabled: true,
+        artifacts: current.artifacts.map((entry) => (
+            entry.pluginId === existing.pluginId ? { ...entry, capabilities } : entry
+        )),
+    });
+}
+
+export function stampManifestPluginSelectionForPlant(selection, lock) {
+    const plugin = String(lock?.pluginId ?? "").trim();
+    const packageHash = String(lock?.packageHash ?? "").trim();
+    if (!plugin || !packageHash) throw new TypeError("A plant lock requires pluginId and packageHash.");
+    const current = normalizePluginSelection(selection) ?? { enabled: true, artifacts: [] };
+    const existing = current.artifacts.find((entry) => entry.pluginId === plugin);
+    if (!existing) {
+        return normalizePluginSelection({
+            enabled: true,
+            artifacts: [...current.artifacts, {
+                pluginId: plugin,
+                expectedHash: packageHash,
+                capabilities: [PLANT_STEP_CAPABILITY],
+            }],
+        });
+    }
+    const capabilities = uniqueSorted([...existing.capabilities, PLANT_STEP_CAPABILITY]);
+    return normalizePluginSelection({
+        enabled: true,
+        artifacts: current.artifacts.map((entry) => (
+            entry.pluginId === plugin ? { ...entry, expectedHash: packageHash, capabilities } : entry
+        )),
+    });
+}
+
 export function verifyVehiclePluginLockAgainstPackage(lock, verified, path = "pluginLocks") {
     if (!verified?.document || !verified?.resource) {
         throw new Error(`${path}: plugin package ${lock.packageHash} is not available.`);
@@ -260,6 +392,12 @@ export function verifyVehiclePluginLockAgainstPackage(lock, verified, path = "pl
     for (const type of lock.sensorTypes) {
         if (!declared.has(type)) {
             throw new Error(`${path}: plugin "${lock.pluginId}" does not declare sensor type "${type}".`);
+        }
+    }
+    const declaredPlants = new Set((verified.document.plants ?? []).map((entry) => entry.id));
+    for (const plantId of lock.plants ?? []) {
+        if (!declaredPlants.has(plantId)) {
+            throw new Error(`${path}: plugin "${lock.pluginId}" does not declare plant "${plantId}".`);
         }
     }
     return verified;
@@ -289,8 +427,11 @@ export function assertVehiclePluginLocksMatchRun({
                 || plugin.runtimeHash !== lock.runtimeHash) {
                 throw new Error(`Vehicle "${vehicleId}" plugin "${lock.pluginId}" conflicts with the run selection.`);
             }
-            if (!plugin.capabilities.includes(pluginSensorRangeImageCapability())) {
+            if (lock.sensorTypes.length > 0 && !plugin.capabilities.includes(pluginSensorRangeImageCapability())) {
                 throw new Error(`Vehicle "${vehicleId}" plugin "${lock.pluginId}" is missing grant "${pluginSensorRangeImageCapability()}".`);
+            }
+            if ((lock.plants?.length ?? 0) > 0 && !plugin.capabilities.includes(PLANT_STEP_CAPABILITY)) {
+                throw new Error(`Vehicle "${vehicleId}" plugin "${lock.pluginId}" is missing grant "${PLANT_STEP_CAPABILITY}".`);
             }
             const verified = packageByHash.get(lock.packageHash);
             if (!verified) {
@@ -314,6 +455,15 @@ export function collectVehiclePluginLockIssues(manifest, { sensorRegistry = sens
                 });
             }
             seenTypes.set(type, lock);
+        }
+    }
+    if (manifest.dynamics?.plant) {
+        const lock = locks.find((entry) => entry.plants?.includes(manifest.dynamics.plant));
+        if (!lock) {
+            issues.push({
+                path: "dynamics.plant",
+                message: `Plant "${manifest.dynamics.plant}" has no matching plugin lock.`,
+            });
         }
     }
     for (const [index, sensor] of (manifest.sensors ?? []).entries()) {
@@ -483,8 +633,42 @@ export function commitPluginSensorAuthoringPatch(sensor, definition, patch, {
     return normalized;
 }
 
-export function pluginSensorCatalogEntryForType(catalog, type) {
-    return (catalog?.sensors ?? []).find((entry) => entry.type === type) || null;
+export function pluginSensorCatalogEntryForType(catalog, type, packageHash = null) {
+    const sensors = catalog?.sensors ?? [];
+    if (packageHash) {
+        const exact = sensors.find((entry) => entry.type === type && entry.ownership?.packageHash === packageHash);
+        if (exact) return exact;
+    }
+    return sensors.find((entry) => entry.type === type) || null;
+}
+
+export function stampInheritedPluginSelections(manifest, catalog, registry = sensorTypeRegistry) {
+    let next = manifest;
+    const issues = [];
+    for (const [index, sensor] of (manifest?.sensorRig?.sensors ?? []).entries()) {
+        if (!sensor?.inheritedFrom) continue;
+        const definition = registry.get(sensor.type);
+        const entry = pluginSensorCatalogEntryForType(catalog, sensor.type);
+        const pluginOwned = Boolean(definition?.pluginSensor) || (entry && entry.ownership !== "builtin");
+        if (!pluginOwned) continue;
+        if (!entry?.ownership || entry.ownership === "builtin") {
+            issues.push({
+                path: `sensorRig.sensors.${index}.type`,
+                message: `Inherited sensor "${sensor.id}" requires plugin type "${sensor.type}" in the sensor catalog.`,
+            });
+            continue;
+        }
+        try {
+            const plugins = stampManifestPluginSelectionForSensor(next.plugins, entry);
+            if (plugins !== next.plugins) next = { ...next, plugins };
+        } catch (error) {
+            issues.push({
+                path: "plugins",
+                message: error instanceof Error ? error.message : String(error),
+            });
+        }
+    }
+    return { manifest: next, issues };
 }
 
 export function sensorCatalogEntries(catalog, registry = sensorTypeRegistry) {
@@ -504,6 +688,27 @@ export function sensorCatalogEntryKey(entry) {
 
 export function sensorCatalogEntryLabel(entry) {
     return entry?.label || entry?.type || "";
+}
+
+function catalogPackageIdentity(entry) {
+    const owner = entry?.ownership;
+    if (!owner || owner === "builtin") return "builtin";
+    return `${owner.packageHash || ""}@${owner.version || ""}`;
+}
+
+export function sensorCatalogEntryChoiceLabel(entry, entries = []) {
+    const label = sensorCatalogEntryLabel(entry);
+    const sameType = entries.filter((item) => item?.type === entry?.type);
+    const identities = new Set(sameType.map(catalogPackageIdentity));
+    if (identities.size < 2) return label;
+    const owner = entry?.ownership;
+    if (!owner || owner === "builtin") return label;
+    const versions = new Set(sameType.map((item) => (
+        item?.ownership && item.ownership !== "builtin" ? item.ownership.version || "" : "builtin"
+    )));
+    if (versions.size > 1 && owner.version) return `${label} (${owner.version})`;
+    const hash = String(owner.packageHash || "");
+    return hash ? `${label} (${hash.slice(0, 8)})` : label;
 }
 
 export { describePluginSensorObservation };

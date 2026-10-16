@@ -85,7 +85,7 @@ become collision, route, LiDAR, registry, or oracle truth.
 | Environment schema | 3 | VIS-03 |
 | Package admission | Protocol 1.4 | VIS-13b |
 
-The current runtime advertises protocol 1.4 and `identity_profiles: ["world-bound@2"]`.
+The current runtime advertises protocol 1.5 and `identity_profiles: ["world-bound@2"]`.
 Configured Unix-socket supervisors additionally advertise
 `asset_admission_profiles: ["cev-sim.run-package@1"]`; TCP and explicitly
 disabled admission advertise none and reject the admission RPC. Unknown
@@ -686,7 +686,7 @@ uses exact JCS for v11. Canonical wire bytes and original pretty-printed file
 bytes can have different digests without changing normalized run identity.
 Neither byte digest is inserted into its own bundle.
 
-Python discovers capabilities with protocol 1.2, then negotiates up to 1.4.
+Python discovers capabilities with protocol 1.2, then negotiates up to 1.5.
 Legacy bundles still work with 1.2 supervisors. A v11 request requires both
 protocol 1.3 and `world-bound@2` before batch creation; the JavaScript
 supervisor remains the authoritative semantic verifier. No protobuf field

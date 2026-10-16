@@ -6,7 +6,23 @@ function isMajorZeroVersion(version) {
     return Number.isFinite(major) && major === 0;
 }
 
-function startup(directoryRoot, env) {
+async function checkInternet() {
+    const source = "https://github.com/cornellev/ev-sim";
+    try {
+        const req = await fetch(source);
+    } catch (e) {
+        return false;
+    }
+    return true;
+}
+
+async function startup(directoryRoot, env) {
+    if (!(await checkInternet())) {
+        console.warn(
+            `[WARNING] You're offline! Cannot check upstream.`
+        )
+    }
+
     if (isMajorZeroVersion(packageJson.version) && !process.env.IN_DEVELOPMENT) {
         console.warn(
             '[WARNING] This is an early development build of ev-sim. \nIt is not intended for large scale usage and may contain bugs or incomplete features.\n\nPlease use at your own risk.'

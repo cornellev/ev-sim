@@ -19,6 +19,7 @@ export const PLUGIN_CAPABILITIES = Object.freeze([
     "topics.publish",
     "overlay.spawn",
     "sensors.sample.range-image",
+    "plant.step",
 ]);
 
 const KNOWN_CAPABILITIES = new Set(PLUGIN_CAPABILITIES);

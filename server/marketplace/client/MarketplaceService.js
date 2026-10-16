@@ -167,6 +167,28 @@ function publicSource(source, health) {
     });
 }
 
+function publicationSlug(value) {
+    return String(value ?? "").toLowerCase().replace(/[^a-z0-9.-]+/gu, "-").replace(/^-+|-+$/gu, "") || "publication";
+}
+
+function appendPublicationItemSuffix(baseId, suffix) {
+    const extra = publicationSlug(suffix).replace(/\./gu, "-");
+    const candidate = `${baseId}-${extra}`.slice(0, 255).replace(/-+$/gu, "");
+    return assertMarketplaceId(candidate, "itemId");
+}
+
+export function allocatePublicationItemId(baseId, { taken, disambiguator }) {
+    assertMarketplaceId(baseId, "itemId");
+    if (!taken(baseId)) return baseId;
+    const primary = appendPublicationItemSuffix(baseId, disambiguator);
+    if (!taken(primary)) return primary;
+    for (let attempt = 2; attempt < 100; attempt += 1) {
+        const candidate = appendPublicationItemSuffix(baseId, `${disambiguator}-${attempt}`);
+        if (!taken(candidate)) return candidate;
+    }
+    throw marketplaceError(MARKETPLACE_ERROR_CODES.CONFLICT, "No free marketplace item ID is available for this publication.");
+}
+
 export class MarketplaceService {
     #sourceQueues = new Map();
     #controllers = new Set();
@@ -1201,10 +1223,18 @@ export class MarketplaceService {
         if (inventory && !inventory.publishable) throw marketplaceError(MARKETPLACE_ERROR_CODES.INCOMPATIBLE, inventory.unavailableReason);
         const localId = inventory?.localId ?? "collection";
         const namespace = publisher.namespaces[0];
-        const slug = String(localId).toLowerCase().replace(/[^a-z0-9.-]+/gu, "-").replace(/^-+|-+$/gu, "") || "publication";
+        const slug = publicationSlug(localId);
         const defaultItemId = input.contentKind === "plugin" ? inventory.identity.pluginId : `${namespace}.${slug}`;
         const mode = input.mode ?? "create-item";
-        const requestedItemId = input.itemId ?? input.item?.itemId ?? defaultItemId;
+        const explicitItemId = input.itemId ?? input.item?.itemId ?? null;
+        const takenItemId = (itemId) => current.documents.items.some((entry) => entry.itemId === itemId)
+            || this.publicationDraftStore.snapshot().drafts.some((draft) => draft.mode === "create-item" && draft.item.itemId === itemId);
+        const requestedItemId = explicitItemId ?? (mode === "create-item" && input.contentKind !== "plugin"
+            ? allocatePublicationItemId(defaultItemId, {
+                taken: takenItemId,
+                disambiguator: input.localSelection?.publicationProjectId ?? input.item?.displayName ?? slug,
+            })
+            : defaultItemId);
         const existingItem = current.documents.items.find((entry) => entry.itemId === requestedItemId) ?? null;
         if (mode === "new-release" && !existingItem) {
             throw marketplaceError(MARKETPLACE_ERROR_CODES.SOURCE_NOT_FOUND, "Existing marketplace item was not found in the verified source snapshot.");
@@ -1215,7 +1245,7 @@ export class MarketplaceService {
         const contract = MARKETPLACE_ARTIFACTS[input.contentKind];
         const existingItemInput = existingItem ? (({ kind: _kind, version: _version, publisherId: _publisherId, contentKind: _contentKind, ...editable }) => editable)(structuredClone(existingItem)) : null;
         const item = input.item ?? existingItemInput ?? {
-            itemId: defaultItemId,
+            itemId: requestedItemId,
             displayName: inventory?.name ?? "Marketplace Collection",
             summary: inventory?.summary ?? "A curated collection of exact marketplace releases.",
             description: "",

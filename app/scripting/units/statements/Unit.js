@@ -58,9 +58,24 @@ export function PassthroughUnit({ _uuid, portTypes = {} }) {
     );
 }
 
+export function PassUnit({ _uuid, portTypes = {} }) {
+    const valueType = portTypes.inputs?.value || portTypes.outputs?.value || "generic";
+
+    return (
+        <Unit
+            title="Pass"
+            hasOptions={false}
+            _uuid={_uuid}
+            inputs={[{ label: "value", type: valueType }]}
+            outputs={[{ label: "value", type: valueType }]}
+        />
+    );
+}
+
 export {
     IgnoreBlock,
     NopBlock,
+    PassBlock,
     PassthroughBlock,
     SequenceBlock,
 } from "./Unit.block.js";

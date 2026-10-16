@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { IconFolder, IconFolderPlus, IconPhoto, IconTrafficCone } from "@tabler/icons-react";
+import { IconCube, IconFolder, IconFolderPlus, IconPhoto, IconTrafficCone } from "@tabler/icons-react";
 import { listPerceptionLabels } from "../../../autonomy/PerceptionLabelCatalog.js";
 import { EDITOR_MODES, EDITOR_TOOLS, MAP_TOOLS } from "../../editor/EditorState";
 import {
@@ -11,6 +11,7 @@ import {
     computeItemWindow,
 } from "../../editor/presentation/virtualWindow.js";
 import { PLACEMENT_CATALOG } from "../../editor/placement/PlacementCatalog";
+import { PRIMITIVE_SHAPES, primitiveLabel } from "../../../simulation/world/PrimitiveRecords.js";
 import { cn } from "../ui/cn";
 import { ContextMenuSurface } from "../ui/ContextMenuSurface.js";
 import { AssetCatalogBar } from "./AssetCatalogBar.js";
@@ -103,7 +104,11 @@ export function AssetPane({ data }) {
     const inMap = editorSnapshot?.editorMode === EDITOR_MODES.MAP;
     const activePlacement = editorSnapshot?.activePlacement;
     const activeId = inMap
-        ? (editorSnapshot?.map?.activeMapTool === MAP_TOOLS.FEATURE_PLACE ? editorSnapshot.map.activeFeatureType : activePlacement?.assetId)
+        ? (editorSnapshot?.map?.activeMapTool === MAP_TOOLS.FEATURE_PLACE
+            ? editorSnapshot.map.activeFeatureType
+            : editorSnapshot?.map?.activeMapTool === MAP_TOOLS.PRIMITIVE_PLACE
+                ? activePlacement?.id
+                : activePlacement?.assetId)
         : (editorSnapshot?.activeTool === EDITOR_TOOLS.PLACE ? activePlacement?.id ?? activePlacement?.assetId : null);
     const builtins = useMemo(() => {
         const needle = query.trim().toLowerCase();
@@ -111,13 +116,19 @@ export function AssetPane({ data }) {
     }, [query]);
     const models = catalog.assets.filter((asset) => (showArchived || !asset.archived) && (folder === "all" || asset.folderId === (folder === "root" ? null : folder)));
     const catalogRows = useMemo(() => {
+        const visiblePrimitives = kind !== "models" && (folder === "all" || folder === "built-ins")
+            ? PRIMITIVE_SHAPES
+                .map((shape) => ({ id: shape, label: primitiveLabel(shape) }))
+                .filter((asset) => !query.trim() || `${asset.label} ${asset.id}`.toLowerCase().includes(query.trim().toLowerCase()))
+            : [];
         const visibleBuiltins = kind !== "models" && (folder === "all" || folder === "built-ins") ? builtins : [];
         const visibleModels = kind !== "builtins" && folder !== "built-ins" ? models : [];
         return [
+            ...visiblePrimitives.map((asset) => ({ kind: "primitive", key: `primitive:${asset.id}`, asset })),
             ...visibleBuiltins.map((asset) => ({ kind: "builtin", key: asset.id, asset })),
             ...visibleModels.map((asset) => ({ kind: "model", key: asset.id, asset })),
         ];
-    }, [builtins, folder, kind, models]);
+    }, [builtins, folder, kind, models, query]);
     const gridColumns = view === "grid"
         ? Math.max(1, Math.floor((viewportSize.width + CATALOG_GRID_GAP) / (130 + CATALOG_GRID_GAP)))
         : 1;
@@ -185,6 +196,15 @@ export function AssetPane({ data }) {
         return true;
     };
 
+    const armPrimitive = (asset) => {
+        const editor = data.editor?.();
+        if (!editor) return;
+        if (activeId === asset.id && activePlacement?.kind === "primitive") {
+            if (inMap) editor.setActiveMapTool(MAP_TOOLS.SELECT);
+            else editor.setActiveTool(EDITOR_TOOLS.SELECT);
+        } else editor.setPlacementAsset({ kind: "primitive", id: asset.id, label: asset.label });
+        data.simulation?.()?.render?.();
+    };
     const armBuiltin = (asset) => {
         const editor = data.editor?.();
         if (!editor) return;
@@ -575,6 +595,10 @@ export function AssetPane({ data }) {
                             className={cn("absolute inset-x-0 top-0", view === "grid" ? "grid gap-1.5" : "flex flex-col")}
                         >
                             {visibleCatalogRows.map((row) => {
+                                if (row.kind === "primitive") {
+                                    const asset = row.asset;
+                                    return <article role="listitem" key={row.key} style={{ height: `${catalogWindow.itemHeight}px` }}><button type="button" aria-pressed={activeId === asset.id && activePlacement?.kind === "primitive"} aria-label={`Place ${asset.label}`} onClick={() => armPrimitive(asset)} className="flex h-full w-full items-center gap-2 rounded border border-[var(--slate-border-70)] bg-[var(--slate-surface-2)] px-2 text-xs hover:bg-[var(--slate-surface-hover)]"><IconCube size={20} /><span className="truncate">{asset.label}</span></button></article>;
+                                }
                                 if (row.kind === "builtin") {
                                     const asset = row.asset;
                                     return <article role="listitem" key={row.key} style={{ height: `${catalogWindow.itemHeight}px` }}><button type="button" aria-pressed={activeId === asset.id} aria-label={`Place ${asset.label}`} onClick={() => armBuiltin(asset)} className="flex h-full w-full items-center gap-2 rounded border border-[var(--slate-border-70)] bg-[var(--slate-surface-2)] px-2 text-xs hover:bg-[var(--slate-surface-hover)]"><IconTrafficCone size={20} /><span className="truncate">{asset.label}</span></button></article>;

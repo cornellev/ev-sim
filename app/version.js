@@ -9,3 +9,15 @@ export function isMajorZeroVersion(version = CEV_SIM_VERSION) {
     const major = Number.parseInt(String(version).split(".")[0], 10);
     return Number.isFinite(major) && major === 0;
 }
+
+export function getSubVersion() {
+    return parseInt(CEV_SIM_VERSION.split(".")[2]);
+}
+
+export function getMinorVersion() {
+    return parseInt(CEV_SIM_VERSION.split(".")[1]);
+}
+
+export function getMajorVersion() {
+    return parseInt(CEV_SIM_VERSION.split(".")[0]);
+}

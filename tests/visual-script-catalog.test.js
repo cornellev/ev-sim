@@ -154,18 +154,37 @@ test("control temporal and controller blocks are placeable and searchable", () =
 
 test("simulator adapters and texture ops are placeable and searchable", () => {
     const simulator = UNIT_CATALOG_META.filter((entry) => entry.category === "simulator" && entry.placeable);
-    assert.equal(simulator.length, 16);
+    assert.equal(simulator.length, 27);
     assert.ok(simulator.some((entry) => entry.type === "VehicleStateBlock"));
     assert.ok(simulator.some((entry) => entry.type === "SpawnPropBlock"));
     assert.ok(simulator.some((entry) => entry.type === "ScatterFeaturesBlock"));
     assert.ok(simulator.some((entry) => entry.type === "SampleRoadBlock"));
     assert.ok(simulator.some((entry) => entry.type === "GetNearestRoadBlock"));
+    assert.equal(UNIT_CATALOG_META.find((entry) => entry.type === "DeriveFromAttachmentBlock")?.placeable, false);
+    for (const type of [
+        "GeneralAttachmentBlock",
+        "RoadAttachmentBlock",
+        "GroupAttachmentBlock",
+        "BuildingAttachmentBlock",
+        "IntersectionAttachmentBlock",
+        "PropAttachmentBlock",
+        "AssetAttachmentBlock",
+    ]) {
+        assert.ok(simulator.some((entry) => entry.type === type), type);
+    }
+    assert.equal(UNIT_CATALOG_META.find((entry) => entry.type === "PlaceFeatureBlock")?.authoring, true);
+    assert.equal(UNIT_CATALOG_META.find((entry) => entry.type === "CreateGroupBlock")?.authoring, true);
+    assert.equal(UNIT_CATALOG_META.find((entry) => entry.type === "CloneObjectBlock")?.authoring, true);
+    assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "RoadCrossSectionBlock").keywords.includes("shoulder"));
     assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "GetNearestRoadBlock").keywords.includes("nearest"));
     assert.equal(UNIT_CATALOG_META.find((entry) => entry.type === "TextureImportBlock")?.category, "objects");
     assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "TextureImportBlock").keywords.includes("texture"));
     assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "LogMessageBlock").keywords.includes("print"));
     assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "LinspaceBlock")?.category === "collections");
-    assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "RepeatProgramBlock")?.category === "statements");
+    for (const type of ["RepeatBlock", "RepeatIndexBlock", "PassBlock"]) {
+        assert.equal(UNIT_CATALOG_META.find((entry) => entry.type === type)?.category, "statements", type);
+    }
+    assert.equal(UNIT_CATALOG_META.some((entry) => entry.type === "RepeatProgramBlock"), false);
     assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "FrameAlongPathBlock")?.category === "mission");
     assert.ok(simulator.some((entry) => entry.type === "SimulationClockBlock"));
     assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "VehicleStateBlock").keywords.includes("adapter"));

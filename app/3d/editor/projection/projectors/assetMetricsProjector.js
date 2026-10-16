@@ -1,6 +1,26 @@
 /** ED-07 runtime truth projection for immutable per-instance asset metrics. */
 
 import { createWorldDescription } from "../../../../simulation/world/WorldDescription.js";
+import { ASSET_LIDAR_TYPE, trianglesFromSolid } from "../lidarSolidTriangles.js";
+
+function uploadAssetLidar(context, entries) {
+    const objects = context?.data?.objects?.();
+    if (typeof objects?.replaceTriangles !== "function") return;
+    const triangles = [];
+    for (const entry of entries.values()) {
+        for (const proxy of entry.lidar ?? []) {
+            triangles.push(...trianglesFromSolid(proxy, {
+                geometryType: ASSET_LIDAR_TYPE,
+                sourceId: entry.sourceId,
+                idPrefix: proxy.id,
+            }));
+        }
+    }
+    objects.replaceTriangles(
+        (triangle) => triangle.environmentGeometryType === ASSET_LIDAR_TYPE,
+        triangles,
+    );
+}
 
 function entityId(objectId) {
     return `asset-metric:${objectId}`;
@@ -30,6 +50,7 @@ export function createAssetMetricsProjector() {
     const reset = (context = lastContext) => {
         for (const id of entries.keys()) context?.registry?.unregisterEntity(entityId(id), { affectsPersistence: false });
         entries.clear();
+        uploadAssetLidar(context, entries);
     };
 
     const sync = (context = lastContext) => {
@@ -58,6 +79,7 @@ export function createAssetMetricsProjector() {
                 record: entry,
             }, { affectsPersistence: false });
         }
+        uploadAssetLidar(context, entries);
     };
 
     return {

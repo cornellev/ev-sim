@@ -22,7 +22,6 @@ import { LoadRoadsFromGeoJSON } from "./city/CityBuilder";
 import { SimulationChrome } from "./overlay/SimulationChrome";
 import { EnvironmentEditorChrome } from "./overlay/EnvironmentEditorChrome";
 import { isThreeDMode, THREE_D_MODES } from "./viewState";
-import { SensorTest } from "./scenes/SensorTest";
 import { setupScanCar } from "./vehicles/ScanCar";
 import { Q1 } from "./igvc/mini/q1";
 import { Q2 } from "./igvc/mini/q2";
@@ -548,7 +547,7 @@ async function enterRuntimeMode(runtime, mode) {
     const simulation = data.simulation();
 
     if (mode === THREE_D_MODES.SIMULATION) {
-        data.environment().projector?.()?.setEditorAssetsEnabled?.(false);
+        data.environment().projector?.()?.setEditorAssetsEnabled?.(true);
         data.environment().setToolController(null);
         runtime.disposeEditorInfrastructure?.();
         runtime.disposeEditorInfrastructure = null;
@@ -828,9 +827,8 @@ export default function TotalScene({
             // await setupCity(scene, data);
             const environmentLoader = new EnvironmentLoader({ data, scene });
             await environmentLoader.load(environmentId, {
-                editorAssetsEnabled: modeRef.current === THREE_D_MODES.ENVIRONMENT,
+                editorAssetsEnabled: true,
             });
-            // await SensorTest(data, scene);
             // const miniKey =
             //     typeof window !== "undefined"
             //         ? new URLSearchParams(window.location.search).get("mini")

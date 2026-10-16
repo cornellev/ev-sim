@@ -13,6 +13,8 @@ import {
     normalizePose3d,
     normalizeVec3,
     orderedBounds,
+    portsCompatible,
+    REPEAT_REF_TYPE,
     UNIT,
     UNIT_TYPE,
     valuesEqual,
@@ -119,7 +121,14 @@ import {
     WORLD_BLOCK_PORTS,
     WORLD_BLOCKS,
 } from "../app/scripting/units/world/WorldBlocks.block.js";
-import { RepeatProgramBlock, repeatProgramPorts } from "../app/scripting/units/statements/RepeatProgram.block.js";
+import {
+    INDEX_OUTSIDE_REPEAT_ERROR,
+    REPEAT_INDEX_PORTS,
+    REPEAT_PORTS,
+    RepeatBlock,
+    RepeatIndexBlock,
+} from "../app/scripting/units/statements/Repeat.block.js";
+import { PassBlock } from "../app/scripting/units/statements/Unit.block.js";
 import { EpisodeOverlay } from "../app/simulation/episode/EpisodeOverlay.js";
 
 function configuredBlock(BlockClass, values, options = {}) {
@@ -1509,14 +1518,49 @@ const ORIGIN_POSE = {
     rotation: { x: 0, y: 0, z: 0, order: "XYZ" },
 };
 
-test("repeat program exposes count plus last-iteration ports", () => {
-    const ports = repeatProgramPorts();
-    assert.deepEqual(typeMapFromPorts(ports), {
-        inputs: { count: "int32" },
-        outputs: { then: UNIT_TYPE, count: "int32" },
+test("Repeat takes a body and hands a repeat_ref to Index", () => {
+    assert.deepEqual(new RepeatBlock("repeat").typeMap, typeMapFromPorts(REPEAT_PORTS));
+    assert.deepEqual(typeMapFromPorts(REPEAT_PORTS), {
+        inputs: { count: "int32", body: UNIT_TYPE },
+        outputs: { then: UNIT_TYPE, count: "int32", repeat: REPEAT_REF_TYPE },
     });
-    const block = new RepeatProgramBlock("repeat");
-    assert.deepEqual(block.typeMap, typeMapFromPorts(ports));
+    assert.deepEqual(new RepeatIndexBlock("index").typeMap, typeMapFromPorts(REPEAT_INDEX_PORTS));
+    assert.deepEqual(typeMapFromPorts(REPEAT_INDEX_PORTS), {
+        inputs: { repeat: REPEAT_REF_TYPE },
+        outputs: { index: "int32", count: "int32", t: "float64" },
+    });
+    assert.equal(portsCompatible(REPEAT_REF_TYPE, REPEAT_REF_TYPE), true);
+    assert.equal(portsCompatible(REPEAT_REF_TYPE, "generic"), false);
+    assert.equal(portsCompatible("generic", REPEAT_REF_TYPE), false);
+    assert.equal(portsCompatible(REPEAT_REF_TYPE, UNIT_TYPE), false);
+});
+
+test("Index reads the frame of its Repeat and never runs it", () => {
+    const index = new RepeatIndexBlock("index");
+    index.inputs = { repeat: { from: "repeat" } };
+    index.getInput = () => assert.fail("Index must not pull its Repeat");
+    const frames = new Map([["repeat", { index: 2, count: 5 }]]);
+    index.setManager({ getLoopFrame: (uuid) => frames.get(uuid) ?? null });
+    const output = index.execute();
+    assert.equal(output.get("index"), 2);
+    assert.equal(output.get("count"), 5);
+    assert.equal(output.get("t"), 0.5);
+
+    frames.set("repeat", { index: 0, count: 1 });
+    assert.equal(index.execute().get("t"), 0);
+    frames.clear();
+    assert.throws(() => index.execute(), new RegExp(INDEX_OUTSIDE_REPEAT_ERROR));
+});
+
+test("Pass is an identity with one generic port", () => {
+    const pass = new PassBlock("pass");
+    assert.deepEqual(pass.typeMap, { inputs: { value: "generic" }, outputs: { value: "generic" } });
+    assert.equal(pass.valid(), false);
+    pass.inputs = { value: {} };
+    const pose = { position: { x: 1, y: 2, z: 3 }, rotation: { x: 0, y: 0, z: 0, order: "XYZ" } };
+    pass.getInput = () => pose;
+    assert.equal(pass.valid(), true);
+    assert.equal(pass.execute().get("value"), pose);
 });
 
 test("path frame spawn scatter and sample-road blocks execute", () => {

@@ -2,6 +2,7 @@ import express from "express";
 import { storageEvents } from "../mcp/events.js";
 import { exportEnvironmentPackage } from "../marketplace/EnvironmentPackage.js";
 import { exportRunTemplatePackage } from "../marketplace/RunTemplatePackage.js";
+import { GitHubUrdfService, encodeGitHubResult } from "../vehicles/GitHubUrdfService.js";
 import { jsonHandler } from "./jsonHandler.js";
 
 /**
@@ -12,9 +13,11 @@ import { jsonHandler } from "./jsonHandler.js";
  * behavior (caching, atomic writes, on-disk layout) lives in StorageService.
  *
  * @param {import("../storage/StorageService.js").StorageService} service
+ * @param {{ githubUrdf?: GitHubUrdfService }} [options]
  */
-export function createStorageRouter(service) {
+export function createStorageRouter(service, { githubUrdf = null } = {}) {
     const router = express.Router();
+    const github = githubUrdf ?? new GitHubUrdfService();
 
     // --- Environments ---
     router.get("/environments", handle(async () => service.listEnvironments()));
@@ -230,16 +233,71 @@ export function createStorageRouter(service) {
     router.put("/run-manifests/:id", handle(async (req) => service.putRunManifest(req.params.id, req.body ?? {})));
     router.delete("/run-manifests/:id", handle(async (req) => service.deleteRunManifest(req.params.id)));
 
+    // --- Public GitHub URDF acquisition. These routes do not write vehicles. ---
+    router.post("/vehicle-urdf/github/inspect", handle(async (req) => encodeGitHubResult(await github.inspect({
+        url: req.body?.url,
+        body: req.body,
+        signal: req.signal,
+    }))));
+    router.post("/vehicle-urdf/github/fetch", handle(async (req) => encodeGitHubResult(await github.fetch({
+        url: req.body?.url,
+        entryPath: req.body?.entryPath,
+        body: req.body,
+        signal: req.signal,
+    }))));
+
     // --- Vehicle manifests ---
     router.get("/vehicles", handle(async () => service.listVehicleManifests()));
-    router.post("/vehicles", handle(async (req) => service.createVehicleManifest(req.body ?? {})));
+    router.post("/vehicles", handle(async (req) => {
+        const vehicle = await service.createVehicleManifest(req.body ?? {});
+        storageEvents.publish({ domain: "vehicle", id: vehicle.id, action: "created" });
+        return vehicle;
+    }));
     router.post("/vehicles/import", handle(async (req) => service.importVehicleBundle(req.body ?? {})));
-    router.post("/vehicles/:id/duplicate", handle(async (req) => service.duplicateVehicleManifest(req.params.id, req.body ?? {})));
+    router.post("/vehicles/:id/migrate", handle(async (req) => {
+        const vehicle = await service.publishVehicleMigration({
+            vehicleId: req.params.id,
+            manifest: req.body?.manifest,
+            expectedRevision: req.body?.expectedRevision,
+            operationId: req.body?.operationId,
+            stageId: req.body?.stageId ?? null,
+        });
+        storageEvents.publish({ domain: "vehicle", id: vehicle.id, action: "updated" });
+        return vehicle;
+    }));
+    router.post("/vehicles/:id/duplicate", handle(async (req) => {
+        const vehicle = await service.duplicateVehicleManifest(req.params.id, req.body ?? {});
+        storageEvents.publish({ domain: "vehicle", id: vehicle.id, action: "created" });
+        return vehicle;
+    }));
+    router.post("/vehicles/:id/rename", handle(async (req) => {
+        const vehicle = await service.renameVehicleManifest(req.params.id, req.body ?? {});
+        storageEvents.publish({ domain: "vehicle", id: vehicle.id, action: "updated" });
+        return vehicle;
+    }));
+    router.post("/vehicles/:id/change-id", handle(async (req) => {
+        const vehicle = await service.changeVehicleId(req.params.id, req.body ?? {});
+        storageEvents.publish({ domain: "vehicle", id: req.params.id, action: "deleted" });
+        storageEvents.publish({ domain: "vehicle", id: vehicle.id, action: "created" });
+        return vehicle;
+    }));
     router.post("/vehicles/:id/validate", handle(async (req) => service.validateVehicleManifest(req.params.id, req.body ?? null)));
     router.get("/vehicles/:id/export", handle(async (req) => service.exportVehicleBundle(req.params.id)));
     router.get("/vehicles/:id", handle(async (req) => service.getVehicleManifest(req.params.id)));
-    router.put("/vehicles/:id", handle(async (req) => service.putVehicleManifest(req.params.id, req.body ?? {})));
-    router.delete("/vehicles/:id", handle(async (req) => service.deleteVehicleManifest(req.params.id)));
+    router.put("/vehicles/:id", handle(async (req) => {
+        const vehicle = await service.putVehicleManifest(req.params.id, req.body ?? {});
+        storageEvents.publish({ domain: "vehicle", id: vehicle.id, action: "updated" });
+        return vehicle;
+    }));
+    router.delete("/vehicles/:id", handle(async (req) => {
+        const expected = req.query.expectedRevision;
+        const deleted = await service.deleteVehicleManifest(
+            req.params.id,
+            expected === undefined ? undefined : Number(expected),
+        );
+        if (deleted) storageEvents.publish({ domain: "vehicle", id: req.params.id, action: "deleted" });
+        return deleted;
+    }));
 
     // --- Visual layer descriptors and access sidecars ---
     router.post("/visual-layers", handle(async (req) => service.publishVisualLayer(req.body ?? {})));
@@ -249,6 +307,29 @@ export function createStorageRouter(service) {
 
     // --- Vehicle model assets (raw binary uploads, not JSON) ---
     const rawBody = express.raw({ limit: "100mb", type: () => true });
+    router.post("/vehicle-stages", handle(async () => service.vehicleStages.createStage()));
+    router.post("/vehicle-stages/:id/renew", handle(async (req) => service.vehicleStages.renewStage(req.params.id)));
+    router.delete("/vehicle-stages/:id", handle(async (req) => service.vehicleStages.abandonStage(req.params.id)));
+    router.put("/vehicle-stages/:id/members/:name", rawBody, handle(async (req) => {
+        if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+            throw new Error("A non-empty binary request body is required.");
+        }
+        return service.vehicleStages.putMember(req.params.id, req.params.name, req.body);
+    }));
+    router.get("/vehicle-stages/:id/members/:name", async (req, res) => {
+        try {
+            const member = await service.vehicleStages.readMember(req.params.id, req.params.name);
+            res.setHeader("Content-Type", member.mediaType || "application/octet-stream");
+            res.setHeader("Content-Length", String(member.size));
+            res.setHeader("X-Content-SHA256", member.sha256);
+            res.setHeader("Cache-Control", "no-store");
+            res.send(Buffer.from(member.bytes));
+        } catch (error) {
+            const status = Number(error.statusCode) || (error.code === "ENOENT" ? 404 : 400);
+            if (!res.headersSent) res.status(status).json({ error: error.message, code: error.code });
+        }
+    });
+
     router.put("/vehicle-assets/:id/:file", rawBody, handle(async (req) => {
         if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
             throw new Error("A non-empty binary request body is required.");

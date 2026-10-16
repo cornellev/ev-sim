@@ -9,10 +9,14 @@
 #   EV_SIM_BRANCH / --branch B   Compatibility alias for --ref
 #   EV_SIM_REPO                  Override clone URL
 #   --no-install                 Clone only; skip npm ci
+#   --build                      Run npm run build after install
 #   --start                      Run npm run dev after install
 #   --marketplace                Write CEV_SIM_MARKETPLACE_ENABLED=1 to .env.local
 #   --no-marketplace             Write CEV_SIM_MARKETPLACE_ENABLED=0 to .env.local
 #   -h, --help                   Show help
+#
+# Creates server/data/visual-source-registry.json with the local owned-lab
+# grant when that file is absent. An existing registry is kept.
 
 set -euo pipefail
 
@@ -20,12 +24,21 @@ REPO_URL="${EV_SIM_REPO:-https://github.com/cornellev/ev-sim.git}"
 REF="${EV_SIM_REF:-${EV_SIM_BRANCH:-main}}"
 INSTALL_DIR="${EV_SIM_DIR:-}"
 SKIP_NPM=0
+RUN_BUILD=0
 START_DEV=0
 # Empty means ask. 1 or 0 skips the prompt.
 MARKETPLACE_CHOICE=""
 MARKETPLACE_FLAG_SET=0
+# created or kept. Empty until configure_visual_source_registry runs.
+VISUAL_REGISTRY_STATUS=""
 REQUIRED_NODE_VERSION="22.22.2"
 SUPPORTED_NODE_MAJOR=22
+NVM_INSTALL_VERSION="v0.40.3"
+# present: the active Node was already supported.
+# switched: nvm already had REQUIRED_NODE_VERSION and this process selected it.
+# installed: this run installed that version and made it the nvm default.
+NODE_SETUP="present"
+NODE_DEFAULT_SET=0
 
 # ── colors ──────────────────────────────────────────────────────────────────
 if [[ -t 1 ]] && [[ "${NO_COLOR:-}" == "" ]] && [[ "${TERM:-}" != "dumb" ]]; then
@@ -61,6 +74,7 @@ Options:
   --ref REF        Clone tag, branch, or commit REF (default: main)
   --branch NAME    Compatibility alias for --ref
   --no-install     Skip npm ci
+  --build          Run npm run build after install
   --start          Start the dev server after install
   --marketplace    Enable the marketplace in .env.local
   --no-marketplace Disable the marketplace in .env.local
@@ -72,6 +86,18 @@ The installer creates .env.local in the install directory. Without
 Enter, y, or yes writes CEV_SIM_MARKETPLACE_ENABLED=1. n or no writes 0.
 An existing assignment is kept unless a flag is passed.
 A non-interactive run creates the file and leaves that setting unchanged.
+When visual-source-registry.json is absent, the installer creates it with
+the local owned-lab grant. The default path is
+server/data/visual-source-registry.json. An existing registry is kept.
+CEV_SIM_VISUAL_SOURCE_REGISTRY, or CEV_SIM_DATA_DIR when the registry
+variable is unset, selects another path from the environment or from
+.env.local.
+When Node.js >=22.22.2 <23 is not active and nvm already has 22.22.2, the
+installer switches to it. When 22.22.2 is not installed, the installer asks
+whether to install it with nvm and make it the default.
+Enter, y, or yes installs it, including nvm ${NVM_INSTALL_VERSION} when nvm
+is missing. n or no stops. A run with no terminal stops and prints install
+instructions.
 
 Environment:
   EV_SIM_DIR, EV_SIM_REF, EV_SIM_BRANCH, EV_SIM_REPO, NO_COLOR
@@ -85,6 +111,7 @@ while [[ $# -gt 0 ]]; do
     --ref)        REF="${2:-}"; shift 2 || fail "--ref requires a tag, branch, or commit" ;;
     --branch)     REF="${2:-}"; shift 2 || fail "--branch requires a name" ;;
     --no-install) SKIP_NPM=1; shift ;;
+    --build)      RUN_BUILD=1; shift ;;
     --start)      START_DEV=1; shift ;;
     --marketplace)
       if [[ "$MARKETPLACE_FLAG_SET" -eq 1 && "$MARKETPLACE_CHOICE" != "1" ]]; then
@@ -106,6 +133,10 @@ while [[ $# -gt 0 ]]; do
     *)            fail "Unknown option: $1 (try --help)" ;;
   esac
 done
+
+if [[ "$RUN_BUILD" -eq 1 && "$SKIP_NPM" -eq 1 ]]; then
+  fail "--build needs dependencies installed; omit --no-install"
+fi
 
 INSTALL_DIR="${INSTALL_DIR:-$PWD/ev-sim}"
 
@@ -132,6 +163,7 @@ EOF
 have() { command -v "$1" >/dev/null 2>&1; }
 
 node_version_supported() {
+  hash -r 2>/dev/null || true
   node -e '
     const [major, minor, patch] = process.versions.node.split(".").map(Number);
     const [requiredMajor, requiredMinor, requiredPatch] = process.argv[2].split(".").map(Number);
@@ -140,6 +172,181 @@ node_version_supported() {
       && (minor > requiredMinor || (minor === requiredMinor && patch >= requiredPatch))
       && major === requiredMajor ? 0 : 1);
   ' "$SUPPORTED_NODE_MAJOR" "$REQUIRED_NODE_VERSION" >/dev/null 2>&1
+}
+
+nvm_dir() {
+  printf '%s\n' "${NVM_DIR:-$HOME/.nvm}"
+}
+
+nvm_is_installed() {
+  [[ -s "$(nvm_dir)/nvm.sh" ]]
+}
+
+required_node_bin() {
+  printf '%s/versions/node/v%s/bin\n' "$(nvm_dir)" "$REQUIRED_NODE_VERSION"
+}
+
+# nvm.sh and the nvm function read unset variables. Restore the installer's flags after.
+run_nvm() {
+  set +e
+  set +u
+  "$@"
+  local status=$?
+  set -euo pipefail
+  return "$status"
+}
+
+load_nvm() {
+  NVM_DIR="$(nvm_dir)"
+  export NVM_DIR
+  if [[ ! -s "${NVM_DIR}/nvm.sh" ]]; then
+    return 1
+  fi
+  set +e
+  set +u
+  # --no-use skips nvm's automatic version switch while the file is sourced.
+  # shellcheck disable=SC1091
+  . "${NVM_DIR}/nvm.sh" --no-use || true
+  set -euo pipefail
+  type nvm >/dev/null 2>&1
+}
+
+# Select an already-installed copy of REQUIRED_NODE_VERSION for this process.
+switch_to_required_node() {
+  local bin
+  bin="$(required_node_bin)"
+  if [[ ! -x "${bin}/node" ]]; then
+    return 1
+  fi
+  if nvm_is_installed; then
+    load_nvm || true
+    if type nvm >/dev/null 2>&1; then
+      run_nvm nvm use "$REQUIRED_NODE_VERSION" >/dev/null 2>&1 || true
+    fi
+  fi
+  PATH="${bin}:${PATH}"
+  export PATH
+  hash -r 2>/dev/null || true
+  have node && node_version_supported
+}
+
+install_required_node() {
+  local log status bin
+  NVM_DIR="$(nvm_dir)"
+  export NVM_DIR
+
+  if ! nvm_is_installed; then
+    if ! have curl; then
+      fail "curl is required to install nvm. Install Node.js ${REQUIRED_NODE_VERSION} from https://nodejs.org, then re-run."
+    fi
+    log="$(mktemp -t ev-sim-nvm.XXXXXX)"
+    spin_start "Installing nvm ${NVM_INSTALL_VERSION}…"
+    if curl -fsSL "https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_INSTALL_VERSION}/install.sh" | bash >"$log" 2>&1; then
+      spin_stop ok "Installed nvm ${NVM_INSTALL_VERSION}"
+      rm -f "$log"
+    else
+      spin_stop quiet
+      printf '  %s✗%s  nvm install failed — last lines:\n' "$RED" "$RESET" >&2
+      tail -n 20 "$log" >&2 || true
+      fail "Full log: ${log}"
+    fi
+  fi
+
+  load_nvm || fail "Could not load nvm from ${NVM_DIR}"
+
+  log="$(mktemp -t ev-sim-node.XXXXXX)"
+  spin_start "Installing Node.js ${REQUIRED_NODE_VERSION}…"
+  status=0
+  run_nvm nvm install "$REQUIRED_NODE_VERSION" >"$log" 2>&1 || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    spin_stop quiet
+    printf '  %s✗%s  Node.js install failed — last lines:\n' "$RED" "$RESET" >&2
+    tail -n 20 "$log" >&2 || true
+    fail "Full log: ${log}"
+  fi
+  rm -f "$log"
+  spin_stop ok "Installed Node.js ${REQUIRED_NODE_VERSION}"
+
+  status=0
+  run_nvm nvm alias default "$REQUIRED_NODE_VERSION" >/dev/null 2>&1 || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    warn "Installed Node.js ${REQUIRED_NODE_VERSION}, but could not set it as the nvm default"
+  else
+    NODE_DEFAULT_SET=1
+  fi
+  run_nvm nvm use "$REQUIRED_NODE_VERSION" >/dev/null 2>&1 || true
+  bin="$(required_node_bin)"
+  PATH="${bin}:${PATH}"
+  export PATH
+  hash -r 2>/dev/null || true
+  if ! have node || ! node_version_supported; then
+    fail "Node.js ${REQUIRED_NODE_VERSION} installed, but it is not active on PATH"
+  fi
+  NODE_SETUP="installed"
+}
+
+# yes, no, or skip (no terminal). Default is yes, matching the marketplace prompt.
+ask_yes() {
+  local prompt="$1"
+  local answer=""
+  # Group the tty open so a missing controlling terminal stays quiet.
+  if { : >/dev/tty </dev/tty; } 2>/dev/null; then
+    printf '  %s [%sY%s/n] ' "$prompt" "$BOLD" "$RESET" >/dev/tty
+    if ! IFS= read -r answer </dev/tty; then
+      answer=""
+    fi
+    answer="$(printf '%s' "$answer" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+    case "$answer" in
+      n|no) printf 'no\n' ;;
+      *) printf 'yes\n' ;;
+    esac
+    return 0
+  fi
+  printf 'skip\n'
+}
+
+ensure_supported_node() {
+  local found="" answer
+  if have node && node_version_supported; then
+    ok "node $(node -v 2>/dev/null)"
+    return 0
+  fi
+
+  if have node; then
+    found="$(node -v 2>/dev/null || true)"
+  fi
+
+  if switch_to_required_node; then
+    if [[ -n "$found" ]]; then
+      ok "node $(node -v 2>/dev/null)  (switched from ${found})"
+    else
+      ok "node $(node -v 2>/dev/null)  (switched to ${REQUIRED_NODE_VERSION})"
+    fi
+    NODE_SETUP="switched"
+    return 0
+  fi
+
+  if [[ -n "$found" ]]; then
+    warn "Found Node.js ${found}; need >=${REQUIRED_NODE_VERSION} <23"
+  else
+    warn "Node.js is not installed (need >=${REQUIRED_NODE_VERSION} <23)"
+  fi
+  if ! nvm_is_installed; then
+    info "nvm is not installed. Yes installs nvm ${NVM_INSTALL_VERSION}, then Node.js ${REQUIRED_NODE_VERSION}."
+  fi
+  answer="$(ask_yes "Install Node.js ${REQUIRED_NODE_VERSION} with nvm and use it as the default?")"
+  case "$answer" in
+    yes)
+      install_required_node
+      ok "node $(node -v 2>/dev/null)"
+      ;;
+    no)
+      fail "Node.js >=${REQUIRED_NODE_VERSION} <23 is required; development uses ${REQUIRED_NODE_VERSION}. Get it at https://nodejs.org, then re-run."
+      ;;
+    *)
+      fail "Node.js >=${REQUIRED_NODE_VERSION} <23 is required; development uses ${REQUIRED_NODE_VERSION}. No terminal available to install it. Run 'nvm install ${REQUIRED_NODE_VERSION}' or get it at https://nodejs.org, then re-run."
+      ;;
+  esac
 }
 
 spinner_pid=""
@@ -184,7 +391,6 @@ cleanup() {
   spin_stop quiet
   printf '\033[?25h' 2>/dev/null || true
 }
-trap cleanup EXIT INT TERM
 
 # Replace KEY= in .env.local, or append it. Other lines stay as they are.
 write_env_assignment() {
@@ -211,7 +417,6 @@ write_env_assignment() {
 
 configure_local_env() {
   local env_file="${INSTALL_DIR}/.env.local"
-  local answer=""
 
   step "Local environment"
 
@@ -237,20 +442,14 @@ EOF
   fi
 
   if [[ -z "$MARKETPLACE_CHOICE" ]]; then
-    if [[ -r /dev/tty && -w /dev/tty ]] && : >/dev/tty </dev/tty 2>/dev/null; then
-      printf '  Enable the marketplace? [%sY%s/n] ' "$BOLD" "$RESET" >/dev/tty
-      if ! IFS= read -r answer </dev/tty; then
-        answer=""
-      fi
-      answer="$(printf '%s' "$answer" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
-      case "$answer" in
-        n|no) MARKETPLACE_CHOICE=0 ;;
-        *) MARKETPLACE_CHOICE=1 ;;
-      esac
-    else
-      info "No terminal — left CEV_SIM_MARKETPLACE_ENABLED unchanged"
-      return
-    fi
+    case "$(ask_yes "Enable the marketplace?")" in
+      no) MARKETPLACE_CHOICE=0 ;;
+      yes) MARKETPLACE_CHOICE=1 ;;
+      *)
+        info "No terminal — left CEV_SIM_MARKETPLACE_ENABLED unchanged"
+        return
+        ;;
+    esac
   fi
 
   write_env_assignment "$env_file" "CEV_SIM_MARKETPLACE_ENABLED" "$MARKETPLACE_CHOICE"
@@ -261,7 +460,209 @@ EOF
   fi
 }
 
+# ── visual source registry ──────────────────────────────────────────────────
+# Operator grant file. The running app has no mutation API for it.
+# The document matches the local owned-lab example in docs/development.md.
+
+# Print a simply quoted or unquoted value. 2 = empty, 1 = unsupported.
+parse_env_assignment() {
+  local raw="$1"
+  local inner=""
+  local inner_length=0
+  if [[ -z "$raw" ]]; then
+    return 2
+  fi
+  if [[ "$raw" == \"* ]]; then
+    if [[ "$raw" != *\" || ${#raw} -lt 2 ]]; then
+      return 1
+    fi
+    inner_length=$(( ${#raw} - 2 ))
+    if [[ "$inner_length" -lt 1 ]]; then
+      return 2
+    fi
+    inner="${raw:1:inner_length}"
+    if [[ "$inner" == *\"* || "$raw" != "\"${inner}\"" ]]; then
+      return 1
+    fi
+    printf '%s\n' "$inner"
+    return 0
+  fi
+  if [[ "$raw" == \'* ]]; then
+    if [[ "$raw" != *\' || ${#raw} -lt 2 ]]; then
+      return 1
+    fi
+    inner_length=$(( ${#raw} - 2 ))
+    if [[ "$inner_length" -lt 1 ]]; then
+      return 2
+    fi
+    inner="${raw:1:inner_length}"
+    if [[ "$inner" == *\'* || "$raw" != "'${inner}'" ]]; then
+      return 1
+    fi
+    printf '%s\n' "$inner"
+    return 0
+  fi
+  if [[ "$raw" == *\"* || "$raw" == *\'* ]]; then
+    return 1
+  fi
+  printf '%s\n' "$raw"
+}
+
+# First supported assignment wins. Process environment, then .env.local.
+lookup_install_setting() {
+  local key="$1"
+  local outvar="$2"
+  local from_env="${!key-}"
+  local file="" line="" raw="" parsed="" status=0
+  if [[ -n "$from_env" ]]; then
+    printf -v "$outvar" '%s' "$from_env"
+    return 0
+  fi
+  file="${INSTALL_DIR}/.env.local"
+  if [[ ! -f "$file" ]]; then
+    return 1
+  fi
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    [[ "$line" == "${key}="* ]] || continue
+    raw="${line#"${key}="}"
+    status=0
+    parsed="$(parse_env_assignment "$raw")" || status=$?
+    if [[ "$status" -eq 0 ]]; then
+      printf -v "$outvar" '%s' "$parsed"
+      return 0
+    fi
+    if [[ "$status" -eq 2 ]]; then
+      continue
+    fi
+    fail "Unsupported ${key} assignment in ${file}"
+  done < "$file"
+  return 1
+}
+
+resolve_install_path() {
+  local value="$1"
+  local outvar="$2"
+  if [[ "$value" == "~" || "$value" == "~/"* ]]; then
+    if [[ -z "${HOME-}" ]]; then
+      fail "Cannot expand ~ in ${value}"
+    fi
+    value="${HOME}${value:1}"
+  fi
+  if [[ "$value" != /* ]]; then
+    value="${INSTALL_DIR%/}/${value}"
+  fi
+  printf -v "$outvar" '%s' "$value"
+}
+
+visual_source_registry_path() {
+  local outvar="$1"
+  local registry="" data="" resolved=""
+  if lookup_install_setting CEV_SIM_VISUAL_SOURCE_REGISTRY registry; then
+    resolve_install_path "$registry" resolved
+    printf -v "$outvar" '%s' "$resolved"
+    return 0
+  fi
+  if lookup_install_setting CEV_SIM_DATA_DIR data; then
+    data="${data%/}"
+    resolve_install_path "${data}/visual-source-registry.json" resolved
+    printf -v "$outvar" '%s' "$resolved"
+    return 0
+  fi
+  printf -v "$outvar" '%s' "${INSTALL_DIR%/}/server/data/visual-source-registry.json"
+}
+
+# 0 when dest is a regular file. 1 when it is absent. Anything else stops.
+registry_destination_state() {
+  local dest="$1"
+  if [[ -L "$dest" || ( -e "$dest" && ! -f "$dest" ) ]]; then
+    fail "${dest} exists and is not a regular file"
+  fi
+  if [[ -f "$dest" ]]; then
+    return 0
+  fi
+  return 1
+}
+
+configure_visual_source_registry() {
+  local dest="" parent="" tmp=""
+  step "Visual source registry"
+  visual_source_registry_path dest
+  if registry_destination_state "$dest"; then
+    info "Kept existing visual-source-registry.json"
+    VISUAL_REGISTRY_STATUS="kept"
+    return 0
+  fi
+  parent="$(dirname -- "$dest")"
+  mkdir -p -- "$parent" || fail "Could not create ${parent}"
+  if registry_destination_state "$dest"; then
+    info "Kept existing visual-source-registry.json"
+    VISUAL_REGISTRY_STATUS="kept"
+    return 0
+  fi
+  tmp="$(mktemp "${parent}/.visual-source-registry.XXXXXX")"
+  cat >"$tmp" <<'EOF'
+{
+  "kind": "cev-sim.visual-source-registry",
+  "version": 1,
+  "sources": [
+    {
+      "id": "owned-lab",
+      "kind": "owned",
+      "status": "active",
+      "ancestorIds": [],
+      "permissions": {
+        "attribution": true,
+        "derivatives": true,
+        "display": true,
+        "export": true,
+        "live-preview-display": true,
+        "machine-interpretation": true,
+        "ml": true,
+        "persistent-cache": true,
+        "retention": true,
+        "transient-cache": true,
+        "worker-access": true
+      }
+    }
+  ]
+}
+EOF
+  chmod 644 "$tmp"
+  if [[ -L "$dest" || ( -e "$dest" && ! -f "$dest" ) ]]; then
+    rm -f -- "$tmp"
+    fail "${dest} exists and is not a regular file"
+  fi
+  if [[ -f "$dest" ]]; then
+    rm -f -- "$tmp"
+    info "Kept existing visual-source-registry.json"
+    VISUAL_REGISTRY_STATUS="kept"
+    return 0
+  fi
+  mv -n -- "$tmp" "$dest"
+  if [[ -e "$tmp" ]]; then
+    rm -f -- "$tmp"
+    if registry_destination_state "$dest"; then
+      info "Kept existing visual-source-registry.json"
+      VISUAL_REGISTRY_STATUS="kept"
+      return 0
+    fi
+    fail "Could not create ${dest}"
+  fi
+  if [[ -L "$dest" || ! -f "$dest" ]]; then
+    fail "${dest} exists and is not a regular file"
+  fi
+  ok "Created visual-source-registry.json with the owned-lab grant"
+  VISUAL_REGISTRY_STATUS="created"
+}
+
+# Tests source this file and call configure_visual_source_registry directly.
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+  return 0
+fi
+
 # ── main ────────────────────────────────────────────────────────────────────
+trap cleanup EXIT INT TERM
 banner
 
 step "Checking prerequisites"
@@ -272,15 +673,7 @@ else
   fail "git is required. Install it, then re-run this script."
 fi
 
-if have node; then
-  NODE_V="$(node -v 2>/dev/null || true)"
-  if ! node_version_supported; then
-    fail "Node.js >=22.22.2 <23 required (found ${NODE_V}); development uses ${REQUIRED_NODE_VERSION}. Get it at https://nodejs.org"
-  fi
-  ok "node ${NODE_V}"
-else
-  fail "Node.js >=22.22.2 <23 is required; development uses ${REQUIRED_NODE_VERSION}. Get it at https://nodejs.org then re-run."
-fi
+ensure_supported_node
 
 if have npm; then
   ok "npm  v$(npm -v 2>/dev/null)"
@@ -355,15 +748,52 @@ fi
 
 configure_local_env
 
+configure_visual_source_registry
+
+if [[ "$RUN_BUILD" -eq 1 ]]; then
+  step "Building"
+  info "npm run build  (this may take a minute)"
+  LOG_FILE="$(mktemp -t ev-sim-build.XXXXXX)"
+  spin_start "npm run build…"
+  if (
+    cd "$INSTALL_DIR"
+    npm run build >"$LOG_FILE" 2>&1
+  ); then
+    spin_stop ok "Build finished"
+    rm -f "$LOG_FILE"
+  else
+    spin_stop quiet
+    printf '  %s✗%s  npm run build failed — last lines:\n' "$RED" "$RESET" >&2
+    tail -n 20 "$LOG_FILE" >&2 || true
+    fail "Full log: ${LOG_FILE}"
+  fi
+fi
+
 # ── done ────────────────────────────────────────────────────────────────────
 printf '\n'
 printf '  %s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n' "$GREEN" "$RESET"
 printf '  %s%sInstallation complete%s\n' "$GREEN" "$BOLD" "$RESET"
 printf '\n'
+if [[ "$NODE_SETUP" == "installed" && "$NODE_DEFAULT_SET" -eq 1 ]]; then
+  printf '  Node.js %s is the nvm default. Open a new terminal so this shell picks it up.\n' "$REQUIRED_NODE_VERSION"
+  printf '\n'
+elif [[ "$NODE_SETUP" == "installed" ]]; then
+  printf '  Node.js %s was installed with nvm. Open a new terminal and run %snvm use%s in the project.\n' \
+    "$REQUIRED_NODE_VERSION" "$BOLD" "$RESET"
+  printf '\n'
+elif [[ "$NODE_SETUP" == "switched" ]]; then
+  printf '  This install used Node.js %s from nvm. In a shell that still has another Node, run %snvm use%s in the project first.\n' \
+    "$REQUIRED_NODE_VERSION" "$BOLD" "$RESET"
+  printf '\n'
+fi
 printf '  %sStart the workbench:%s\n' "$WHITE" "$RESET"
 printf '\n'
 printf '    %scd %s%s\n' "$CYAN" "$INSTALL_DIR" "$RESET"
 printf '    %snpm run dev%s\n' "$CYAN" "$RESET"
+if [[ "$RUN_BUILD" -eq 1 ]]; then
+  printf '\n'
+  printf '  %snpm run build%s finished. %snpm start%s serves that build.\n' "$BOLD" "$RESET" "$BOLD" "$RESET"
+fi
 printf '\n'
 printf '  Open the URL Next prints (usually %slocalhost:3000%s).\n' "$BOLD" "$RESET"
 printf '  Press %sEscape%s in the app for the mode menu.\n' "$BOLD" "$RESET"
@@ -371,6 +801,11 @@ if [[ "$MARKETPLACE_CHOICE" == "1" ]]; then
   printf '  Marketplace is enabled in %s.env.local%s.\n' "$BOLD" "$RESET"
 elif [[ "$MARKETPLACE_CHOICE" == "0" ]]; then
   printf '  Marketplace is disabled in %s.env.local%s.\n' "$BOLD" "$RESET"
+fi
+if [[ "$VISUAL_REGISTRY_STATUS" == "created" ]]; then
+  printf '  Created %svisual-source-registry.json%s with the local owned-lab grant.\n' "$BOLD" "$RESET"
+elif [[ "$VISUAL_REGISTRY_STATUS" == "kept" ]]; then
+  printf '  Kept the existing %svisual-source-registry.json%s.\n' "$BOLD" "$RESET"
 fi
 printf '  Optional: %spython -m pip install -e ./python%s (Python 3.10–3.13, docs/python-headless.md)\n' "$CYAN" "$RESET"
 printf '  Optional: %snpx cev-sim --help%s (cameras need CEV_SIM_HEADLESS_SUPERVISOR_CONFIG)\n' "$CYAN" "$RESET"

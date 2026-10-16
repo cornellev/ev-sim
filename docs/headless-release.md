@@ -148,12 +148,12 @@ GitHub OIDC and provenance, not long-lived tokens.
 | --- | --- | --- |
 | npm CLI/worker | `cev-sim@0.2.0` | Node `>=22.22.2 <23`; Linux/macOS x64/ARM64 |
 | Python adapter | `cev-sim==0.2.0` | Python `>=3.10,<3.14`; pure Python wheel and sdist |
-| Headless protocol | `1.4` | Server accepts historical JSON clients through `1.4`; package admission requires configured Unix protocol `1.4` |
+| Headless protocol | `1.5` | Server accepts historical JSON clients through `1.5`; package admission requires configured Unix protocol `1.4` |
 | Run manifest / bundle | `11` / `1` | Unchanged by the 0.2.0 packaging bump; release metadata now tracks `RUN_MANIFEST_VERSION` |
 | SFLog | `1` | Unchanged by the 0.2.0 packaging bump |
 
 `release:check` enforces coordinated root package, plugin, `app/version.js`,
 Python project, and Python runtime versions; MCP advertisement of
-`CEV_SIM_VERSION`; the Apache-2.0 license; protocol 1.4; generated stub
+`CEV_SIM_VERSION`; the Apache-2.0 license; protocol 1.5; generated stub
 presence; and byte-for-byte PR 1 characterization stability. With `--dist`, it
 also verifies artifact sizes and SHA-256 records.

@@ -3,6 +3,9 @@ import express from "express";
 import { storageEvents } from "../mcp/events.js";
 import { installPluginSource, removePluginSource } from "../plugins/pluginLibrary.js";
 import { installDetectedPlugin, listLocalPlugins } from "../plugins/localPlugins.js";
+import { reimportDetectedPlugin } from "../plugins/reimportLocalPlugin.js";
+import { readLocalBuilds } from "../plugins/plantBuild.js";
+import { listPlantCatalog } from "../plugins/plantCatalog.js";
 import { listSensorCatalog } from "../plugins/sensorCatalog.js";
 import { PLUGIN_PACKAGE_MEDIA_TYPE, PORTABLE_PLUGIN_MAX_JSON_BYTES } from "../plugins/PortablePluginFile.js";
 
@@ -74,10 +77,19 @@ export function createPluginRouter(service, { jsonParser } = {}) {
         }
     });
 
+    router.get("/plants", async (_req, res) => {
+        try {
+            res.json(await listPlantCatalog(service));
+        } catch (error) {
+            sendError(res, error);
+        }
+    });
+
     router.get("/local", async (_req, res) => {
         try {
             const packages = await listLocalPlugins();
-            res.json({ ok: true, packages });
+            const builds = await readLocalBuilds(service.plugins?.root);
+            res.json({ ok: true, packages, builds });
         } catch (error) {
             sendError(res, error);
         }
@@ -92,6 +104,24 @@ export function createPluginRouter(service, { jsonParser } = {}) {
                 ok: true,
                 package: metadata,
                 revision: library.revision,
+            });
+        } catch (error) {
+            sendError(res, error);
+        }
+    });
+
+    router.post("/local/reimport", parser, async (req, res) => {
+        try {
+            const result = await reimportDetectedPlugin(service, req.body?.directory);
+            if (!result.unchanged) {
+                publishLibrary(result.package.pluginId, "installed", result.package.packageHash, result.revision);
+            }
+            res.json({
+                ok: true,
+                unchanged: result.unchanged === true,
+                package: result.package,
+                revision: result.revision,
+                updated: result.updated,
             });
         } catch (error) {
             sendError(res, error);

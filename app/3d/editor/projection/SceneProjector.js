@@ -10,6 +10,7 @@ import { createFeaturesProjector } from "./projectors/featuresProjector.js";
 import { createObjectsProjector } from "./projectors/objectsProjector.js";
 import { createRoadsProjector } from "./projectors/roadsProjector.js";
 import { createSkyProjector } from "./projectors/skyProjector.js";
+import { createSolidsProjector } from "./projectors/solidsProjector.js";
 import { createAssetInstancesProjector } from "./projectors/assetInstancesProjector.js";
 import { createAssetMetricsProjector } from "./projectors/assetMetricsProjector.js";
 import { createOverlayMetricsProjector } from "./projectors/overlayMetricsProjector.js";
@@ -26,6 +27,7 @@ export function createDefaultProjectors() {
         createOverlayMetricsProjector(),
         createTileSourceProjector(),
         createSkyProjector(),
+        createSolidsProjector(),
     ];
 }
 

@@ -60,6 +60,8 @@ Live sessions stay in sync: MCP writes and workspace commands publish Server-Sen
 | `environment_remove_road` / `environment_move_road_node` | Road edits; move accepts optional `y`, intersections are y-only |
 | `environment_add_building` / `environment_remove_building` | Rectangle buildings |
 | `environment_add_object` / `environment_move_object` / `environment_remove_object` | Props (`stop-sign`, `one-way-sign`, `barrel`, `tire`, `cone`) |
+| `environment_add_primitive` | Box, sphere, cylinder, cone, or pyramid. `x`/`z` place it; `y` defaults so the bottom sits on y = 0 |
+| `environment_set_floor` | Enable or disable the y = 0 support-plane floor |
 | `environment_validate` | Geometric conflict report, road-domain validation (geometry, lanes, turn rules, junction connector warnings; `roadsOk`), and schema-v4 object-graph `issues` (`{ path, code, message, severity }`) |
 
 Mutating placement tools return a `conflicts` array (road crossings, corridor overlaps, building overlaps, object proximity). Pass `strict: true` to reject instead of keeping the edit.

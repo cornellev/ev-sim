@@ -14,7 +14,7 @@ import { rep103PoseToThree } from "../../autonomy/CoordinateFrames.js";
 export class ManifestWheelOdometry extends Device {
     constructor(config, options = {}) {
         const threePose = rep103PoseToThree(config.pose);
-        super("Manifest Wheel Odometry", {
+        super(config.id || "Manifest Wheel Odometry", {
             telemetryId: config.id,
             position: new THREE.Vector3(threePose.position.x, threePose.position.y, threePose.position.z),
             rotation: new THREE.Euler(threePose.rotation.x, threePose.rotation.y, threePose.rotation.z, threePose.rotation.order || "XYZ"),

@@ -7,6 +7,8 @@ export const MEASURED_PERCEPTION_PROFILE_ID = "measured-perception";
 export const MEASURED_PERCEPTION_PROFILE_VERSION = 1;
 export const ROUTE_SAFETY_PROFILE_ID = "route-safety";
 export const ROUTE_SAFETY_PROFILE_VERSION = 1;
+export const PLANNING_ORACLE_PROFILE_ID = "planning-oracle";
+export const PLANNING_ORACLE_PROFILE_VERSION = 1;
 
 export const MEASURED_STATE_CONFIG = Object.freeze({
     kind: "cev-sim.observation-profile-config",
@@ -30,6 +32,29 @@ export const MEASURED_PERCEPTION_CONFIG = Object.freeze({
     metadata: "validity-sequence-is-new-age-steps-v1",
     oracleProducts: "excluded",
 });
+export const PLANNING_ORACLE_CONFIG = Object.freeze({
+    kind: "cev-sim.observation-profile-config",
+    version: 1,
+    state: "measured-state@1",
+    ego: "oracle-pose-velocity-steering-v1",
+    actors: "other-actors-pose-footprint-by-stable-id",
+    goal: "episode-goal-xz-yaw-v1",
+    oracleProducts: "explicit-opt-in",
+});
+export const PLANNING_ORACLE_CONFIG_HASH = simulationSha256(PLANNING_ORACLE_CONFIG);
+export const PLANNING_ORACLE_SCHEMA_HASH = simulationSha256({
+    id: PLANNING_ORACLE_PROFILE_ID,
+    version: PLANNING_ORACLE_PROFILE_VERSION,
+    fields: [
+        "sensors/*/{value,validity,sequence,is_new,age_steps}",
+        "oracle/ego/{pose,velocity,steering}",
+        "oracle/actors/{pose,footprint,validity}",
+        "oracle/goal",
+        "oracle/goal/validity",
+        "task/{value,validity,sequence,is_new,age_steps}",
+    ],
+});
+
 export const MEASURED_PERCEPTION_CONFIG_HASH = simulationSha256(MEASURED_PERCEPTION_CONFIG);
 export const MEASURED_PERCEPTION_SCHEMA_HASH = simulationSha256({
     id: MEASURED_PERCEPTION_PROFILE_ID,
@@ -86,6 +111,10 @@ export function measuredPerceptionProfileRef() {
     return { id: MEASURED_PERCEPTION_PROFILE_ID, version: 1, configHash: MEASURED_PERCEPTION_CONFIG_HASH };
 }
 
+export function planningOracleProfileRef() {
+    return { id: PLANNING_ORACLE_PROFILE_ID, version: 1, configHash: PLANNING_ORACLE_CONFIG_HASH };
+}
+
 export function routeSafetyProfileRef(config = DEFAULT_ROUTE_SAFETY_CONFIG) {
     const preset = ROUTE_SAFETY_PRESETS.find((entry) => (
         entry.config.terminateOnCollision === Boolean(config.terminateOnCollision)
@@ -108,6 +137,9 @@ export function resolveObservationProfile(ref) {
     if (actual.id === MEASURED_PERCEPTION_PROFILE_ID
         && actual.version === MEASURED_PERCEPTION_PROFILE_VERSION
         && actual.configHash === MEASURED_PERCEPTION_CONFIG_HASH) return MEASURED_PERCEPTION_CONFIG;
+    if (actual.id === PLANNING_ORACLE_PROFILE_ID
+        && actual.version === PLANNING_ORACLE_PROFILE_VERSION
+        && actual.configHash === PLANNING_ORACLE_CONFIG_HASH) return PLANNING_ORACLE_CONFIG;
     throw new HeadlessEpisodeError("UNSUPPORTED_CAPABILITY", `Unsupported observation profile ${actual.id}@${actual.version} (${actual.configHash}).`);
 }
 
@@ -126,6 +158,7 @@ export function getHeadlessProfileCapabilities() {
         observationProfiles: [
             { id: MEASURED_STATE_PROFILE_ID, version: 1, description: "Measured state sensors and route task signals.", configSchemaHash: MEASURED_STATE_SCHEMA_HASH },
             { id: MEASURED_PERCEPTION_PROFILE_ID, version: 1, description: "Measured state, RGB camera, and range/incidence LiDAR tensors.", configSchemaHash: MEASURED_PERCEPTION_SCHEMA_HASH },
+            { id: PLANNING_ORACLE_PROFILE_ID, version: 1, description: "Measured state plus explicit ground-truth ego, actor, and goal tensors for planner testing.", configSchemaHash: PLANNING_ORACLE_SCHEMA_HASH },
         ],
         rewardProfiles: [{ id: ROUTE_SAFETY_PROFILE_ID, version: 1, description: "Route progress, completion, safety, and optional smoothness.", configSchemaHash: ROUTE_SAFETY_SCHEMA_HASH }],
     };

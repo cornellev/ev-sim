@@ -28,6 +28,9 @@ export class PluginLoader {
             });
         }
         if (this.authorizePackage) await this.authorizePackage(verified.resource.packageHash, verified);
+        if (!verified.document.entry) {
+            return this.host.registerPackage(verified, null, { capabilities });
+        }
         let namespace;
         try {
             namespace = await this.moduleSource.importRuntime(verified);

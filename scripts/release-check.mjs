@@ -113,8 +113,8 @@ async function main() {
     if (!license.includes("Apache License") || !license.includes("Version 2.0, January 2004")) {
         throw new Error("The repository Apache-2.0 license text is missing or incomplete.");
     }
-    if (HEADLESS_PROTOCOL.major !== 1 || HEADLESS_PROTOCOL.minor !== 4) {
-        throw new Error("VIS-13b requires the additive protocol 1.4 admission contract.");
+    if (HEADLESS_PROTOCOL.major !== 1 || HEADLESS_PROTOCOL.minor !== 5) {
+        throw new Error("The advertised headless protocol must be 1.5, which keeps the protocol 1.4 admission contract.");
     }
     for (const relative of [
         "python/src/cev_sim/py.typed",

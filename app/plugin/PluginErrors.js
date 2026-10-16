@@ -10,6 +10,7 @@ export const PLUGIN_ERROR_CODES = Object.freeze({
     EXECUTION: "PLUGIN_EXECUTION",
     UNAVAILABLE: "PLUGIN_FEATURE_UNAVAILABLE",
     RESOURCE: "PLUGIN_RESOURCE",
+    BUILD_FAILED: "PLUGIN_BUILD_FAILED",
 });
 
 export class PluginError extends Error {

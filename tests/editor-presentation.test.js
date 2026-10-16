@@ -10,6 +10,7 @@ import {
     createDefaultPresentation,
     createEditorPresentationRegistry,
     editorPresentationRegistry,
+    hierarchyRootMenuOptions,
     readObjectFieldValues,
 } from "../app/3d/editor/presentation/EditorPresentationRegistry.js";
 import {
@@ -71,7 +72,7 @@ test("ED-02 the presentation registry falls back to capability-driven defaults a
     assert.ok(roadMenu.some((option) => option.id === MENU_OPTION_IDS.DRAPE_TO_GLB));
 
     const sections = fallback.getInspectorSections({ record, document, sky: null });
-    assert.deepEqual(sections.map((section) => section.id), [SECTION_IDS.OBJECT, SECTION_IDS.TRANSFORM, SECTION_IDS.OPTIONS]);
+    assert.deepEqual(sections.map((section) => section.id), [SECTION_IDS.OBJECT, SECTION_IDS.TRANSFORM, SECTION_IDS.OPTIONS, SECTION_IDS.SCRIPTS]);
     assert.deepEqual(sections[1].transform.position, { x: 60, y: 0, z: 44 });
     assert.equal(sections[1].editable, false);
     assert.equal(sections[2].fields.some((entry) => entry.path[0] === "assetId"), true);
@@ -104,6 +105,47 @@ test("ED-02 the presentation registry falls back to capability-driven defaults a
     assert.equal(createDefaultPresentation("vendor.thing").supported, false);
     const unsupported = registry.get("vendor.thing").getInspectorSections({ record: { id: "v", typeId: "vendor.thing", typeVersion: 3 }, document });
     assert.deepEqual(unsupported.map((section) => section.id), [SECTION_IDS.OBJECT, SECTION_IDS.UNSUPPORTED]);
+});
+
+test("a selected group can create an empty subgroup and empty hierarchy space can create a root group", async () => {
+    const { document, service, bus } = await yardService();
+    const registry = createEditorPresentationRegistry();
+    const groupId = service.run("groupObjects", { objectIds: ["feature-cone"], name: "Pair" }).result.groupId;
+    const record = document.getObject(groupId);
+    const selected = [];
+    const selection = { select: (id) => { selected.push(id); } };
+    const options = registry.forRecord(record).getMenuOptions({
+        record,
+        records: [record],
+        document,
+        bus,
+        selection,
+        commands: objectCommands,
+    });
+    const subgroup = options.find((option) => option.id === MENU_OPTION_IDS.NEW_GROUP);
+    assert.equal(subgroup.label, "New Subgroup");
+    const created = subgroup.run();
+    assert.equal(created.ok, true, JSON.stringify(created.issues));
+    assert.equal(document.getObject(created.result.objectId).parentId, groupId);
+    assert.equal(document.getObject(created.result.objectId).typeId, "group");
+    assert.deepEqual(selected, [created.result.objectId]);
+
+    const cone = document.getObject("feature-barrel");
+    const coneOptions = registry.forRecord(cone).getMenuOptions({
+        record: cone,
+        records: [cone],
+        document,
+        bus,
+        selection,
+        commands: objectCommands,
+    });
+    assert.equal(coneOptions.some((option) => option.id === MENU_OPTION_IDS.NEW_GROUP), false);
+
+    const root = hierarchyRootMenuOptions({ commands: objectCommands, bus, selection });
+    assert.equal(root[0].label, "New Group");
+    const rootCreated = root[0].run();
+    assert.equal(rootCreated.ok, true, JSON.stringify(rootCreated.issues));
+    assert.equal(document.getObject(rootCreated.result.objectId).parentId, null);
 });
 
 test("ED-02 the hierarchy model orders siblings, nests groups, inherits hidden state, filters, and flattens", async () => {
@@ -200,9 +242,9 @@ test("ED-02 a test-only object type appears in the hierarchy and inspector by re
     assert.deepEqual(group.children.map((node) => node.id), ["feature-cone", "marker-1"]);
 
     const sections = presentation.forRecord(marker.record).getInspectorSections({ record: marker.record, document });
-    assert.deepEqual(sections.map((section) => section.id), [SECTION_IDS.OBJECT, SECTION_IDS.OPTIONS, "marker-preview"]);
+    assert.deepEqual(sections.map((section) => section.id), [SECTION_IDS.OBJECT, SECTION_IDS.OPTIONS, SECTION_IDS.SCRIPTS, "marker-preview"]);
     assert.equal(sections[1].values.radius, 2.5);
-    assert.equal(sections[2].radius, 2.5);
+    assert.equal(sections[3].radius, 2.5);
     const options = presentation.forRecord(marker.record).getMenuOptions({ record: marker.record, records: [marker.record], commands: objectCommands, bus: service.bus });
     assert.ok(options.some((option) => option.id === MENU_OPTION_IDS.DELETE && option.disabled === false));
     // The marker participates in the shared commands (reparent, delete, undo) like any other type.

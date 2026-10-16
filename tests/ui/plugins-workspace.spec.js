@@ -37,15 +37,20 @@ test.afterAll(async ({ request }) => {
 test("plugins pane lists a local package and its details", async ({ page }) => {
     test.setTimeout(90_000);
     await page.goto("/");
+    await expect(page.getByRole("heading", { name: "Preparing scene" })).toHaveCount(0);
     const opener = page.getByRole("button", { name: "Open workspace switcher" }).first();
     await expect(opener).toBeVisible();
-    await opener.click({ force: true });
+    await opener.evaluate((button) => button.click());
     const dialog = page.getByRole("dialog", { name: "Workspaces" });
     await expect(dialog).toBeVisible();
 
     await dialog.getByRole("button", { name: "Plugins", exact: true }).click();
     await expect(dialog).toBeVisible();
-    await expect(dialog.getByRole("button", { name: "Settings", exact: true })).toBeDisabled();
+    const settings = dialog.getByRole("button", { name: "Settings", exact: true });
+    await expect(settings).toBeEnabled();
+    await settings.click();
+    await expect(dialog.getByRole("switch", { name: "Advanced" })).toBeVisible();
+    await dialog.getByRole("button", { name: "Plugins", exact: true }).click();
 
     const row = dialog.getByRole("button", { name: "acme.controls 1.0.0" });
     await expect(row).toBeVisible();
@@ -60,5 +65,9 @@ test("plugins pane lists a local package and its details", async ({ page }) => {
     await detail.getByRole("button", { name: "Install" }).click();
     await expect(detail.getByText("Installed")).toBeVisible();
     await expect(detail.getByRole("button", { name: "Install" })).toHaveCount(0);
+    const reimport = detail.getByRole("button", { name: "Reimport" });
+    await expect(reimport).toBeVisible();
+    await reimport.click();
+    await expect(detail.getByText("Already current.")).toBeVisible();
     await expect(dialog).toBeVisible();
 });

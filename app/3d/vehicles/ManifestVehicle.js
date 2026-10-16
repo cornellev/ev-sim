@@ -1,13 +1,19 @@
 import * as THREE from "three";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
 
 import { PhysicalVehicle } from "./Vehicle";
 import { getSensorType } from "../devices/SensorTypeRegistry.js";
 import { createVehicleSensorDevice, sensorRuntimeRegistry } from "../devices/SensorRuntimeRegistry.js";
 import { Triangle } from "../data/objects/Triangle";
 import { normalizeVehicleManifest, resolveVehicleModelUrl } from "../../vehicles/VehicleManifest.js";
-import { applyModelPlacement } from "./ModelPlacement.js";
+import { measurePlacedVehicleModel } from "../../vehicles/model/measurePlacedVehicle.js";
+import { publishedVehicleModelSource, VehicleModelLoader } from "./VehicleModelLoader.js";
+import {
+    applyMeasuredPlacement,
+    captureModelRest,
+    presentBoundWheels,
+} from "./presentBoundWheels.js";
 import { attachVehiclePlant, resetVehiclePlant, stepVehiclePlant } from "./VehiclePlantAdapter.js";
+import { visualWheelYaws } from "../../vehicles/plan/turnGeometry.js";
 import { resetEgoPresentation, updateEgoPresentation } from "./EgoPresentation.js";
 
 export { applyModelPlacement } from "./ModelPlacement.js";
@@ -36,19 +42,32 @@ export class ManifestVehicle extends PhysicalVehicle {
         this.steeringAngle = 0;
         this.displaySteeringAngle = 0;
 
-        // Physics reads collisionDimensions for the swept AABB half extents.
+        // Physics reads collisionDimensions and collisionCenter for the swept oriented box.
         this.collisionDimensions = { ...this.manifest.boundingBox.size };
+        this.collisionCenter = { ...this.manifest.boundingBox.center };
+        const catalogProvided = options.plants !== undefined;
         attachVehiclePlant(this, {
             id: this.telemetryId || this.manifest.id,
             type: this.manifest.id,
             pose: { position: this.position, rotation: this.rotation },
-        }, { manifest: this.manifest });
+        }, { manifest: this.manifest }, {
+            plantPluginId: options.plantPluginId,
+            plantRuntimeHash: options.plantRuntimeHash,
+            stepper: options.plantStepper ?? null,
+            unresolved: Boolean(this.manifest.dynamics?.plant)
+                && !options.plantStepper
+                && (options.unresolvedPluginPlant === true || !catalogProvided),
+        });
 
         this.cameraFocusOffset = new THREE.Vector3(
             this.manifest.egoCenter.x,
             this.manifest.egoCenter.y,
             this.manifest.egoCenter.z,
         );
+        this.modelLoader = options.modelLoader ?? null;
+        this._ownsModelLoader = this.modelLoader == null;
+        this._modelLoadToken = 0;
+        this._modelLease = null;
 
         /** @type {{ pivot: THREE.Group, steerable: boolean }[]} */
         this._wheels = [];
@@ -88,22 +107,54 @@ export class ManifestVehicle extends PhysicalVehicle {
         this.sceneObject = new THREE.Group();
         this.sceneObject.position.copy(this.position);
         this.sceneObject.rotation.copy(this.rotation);
+        this._wheels = [];
+        this._wheelsPresented = false;
         scene.add(this.sceneObject);
+        const sceneObject = this.sceneObject;
+        const token = ++this._modelLoadToken;
 
         const modelUrl = resolveVehicleModelUrl(this.vehicleManifestId, this.manifest.model.asset);
         if (modelUrl) {
             try {
-                const loader = new GLTFLoader();
-                const gltf = await loader.loadAsync(modelUrl);
-                applyModelPlacement(gltf.scene, this.manifest.model, this.manifest.boundingBox);
-                this.sceneObject.add(gltf.scene);
+                if (!this.modelLoader) {
+                    this.modelLoader = new VehicleModelLoader({ THREE });
+                    this._ownsModelLoader = true;
+                }
+                const lease = await this.modelLoader.load({
+                    slotId: this.vehicleManifestId,
+                    source: publishedVehicleModelSource(this.manifest, modelUrl),
+                    model: this.manifest.model,
+                    boundingBox: this.manifest.boundingBox,
+                });
+                if (token !== this._modelLoadToken) {
+                    lease?.dispose?.();
+                    return;
+                }
+                if (!lease?.root || lease.stale || lease.aborted) {
+                    lease?.dispose?.();
+                    sceneObject.add(this._buildPlaceholderBody());
+                } else {
+                    this._modelLease = lease;
+                    sceneObject.add(lease.root);
+                    if (this.manifest.version === 3 && lease.glbBytes) {
+                        try {
+                            this._presentCanonicalModel(lease, sceneObject);
+                        } catch (error) {
+                            console.warn(`Could not present bound wheels for "${this.vehicleManifestId}":`, error);
+                        }
+                    }
+                }
             } catch (error) {
                 console.warn(`Could not load model for vehicle "${this.vehicleManifestId}":`, error);
-                this.sceneObject.add(this._buildPlaceholderBody());
+                if (token === this._modelLoadToken) sceneObject.add(this._buildPlaceholderBody());
             }
-        } else {
-            this.sceneObject.add(this._buildPlaceholderBody());
+        } else if (token === this._modelLoadToken) {
+            sceneObject.add(this._buildPlaceholderBody());
         }
+
+        if (token !== this._modelLoadToken) return;
+
+        if (!this._wheelsPresented) this._buildWheels();
 
         // Debug plate at the kinematic origin (vehicle-local 0,0,0).
         const originMarker = new THREE.Mesh(
@@ -115,7 +166,6 @@ export class ManifestVehicle extends PhysicalVehicle {
         originMarker.name = "vehicle-origin-debug";
         this.sceneObject.add(originMarker);
 
-        this._buildWheels();
         this._registerLidarZone();
 
         // Vehicles spawned mid-session never go through DeviceDatabase.setup, so
@@ -126,6 +176,30 @@ export class ManifestVehicle extends PhysicalVehicle {
                 device._sceneReady = true;
             }
         }
+    }
+
+    _presentCanonicalModel(lease, parent) {
+        const measurement = measurePlacedVehicleModel({
+            glbBytes: lease.glbBytes,
+            model: this.manifest.model,
+            boundingBox: this.manifest.boundingBox,
+            hiddenNodeIndices: this.manifest.model?.hiddenNodeIndices ?? [],
+        });
+        applyMeasuredPlacement(lease.root, measurement.placement);
+        this._modelRest = captureModelRest(lease.root, lease.nodeMappings);
+        const presented = presentBoundWheels({
+            root: lease.root,
+            wheelsGroup: parent,
+            manifest: this.manifest,
+            nodeMappings: lease.nodeMappings,
+            THREE,
+        });
+        this._wheels = [...presented.pivots, ...presented.cylinders].map((entry) => ({
+            wheelId: entry.wheelId,
+            pivot: entry.pivot,
+            steerable: entry.steerable,
+        }));
+        this._wheelsPresented = true;
     }
 
     _buildPlaceholderBody() {
@@ -151,7 +225,19 @@ export class ManifestVehicle extends PhysicalVehicle {
             pivot.position.set(wheel.position.x, wheel.position.y, wheel.position.z);
             pivot.add(mesh);
             this.sceneObject.add(pivot);
-            this._wheels.push({ pivot, steerable: wheel.steerable });
+            this._wheels.push({ wheelId: wheel.id, pivot, steerable: wheel.steerable });
+        }
+    }
+
+    _applyVisualSteering() {
+        const yaws = visualWheelYaws(this.manifest, this.displaySteeringAngle);
+        const byId = new Map(yaws.map((entry) => [entry.wheelId, entry.yaw]));
+        for (const wheel of this._wheels) {
+            if (wheel.wheelId && byId.has(wheel.wheelId)) {
+                wheel.pivot.rotation.y = byId.get(wheel.wheelId);
+            } else {
+                wheel.pivot.rotation.y = wheel.steerable ? this.displaySteeringAngle : 0;
+            }
         }
     }
 
@@ -210,9 +296,7 @@ export class ManifestVehicle extends PhysicalVehicle {
         stepVehiclePlant(this, deltaTime);
 
         this.displaySteeringAngle += (steering - this.displaySteeringAngle) * 0.25;
-        for (const wheel of this._wheels) {
-            if (wheel.steerable) wheel.pivot.rotation.y = this.displaySteeringAngle;
-        }
+        this._applyVisualSteering();
 
         this._updateLidarZoneTransform();
         updateEgoPresentation(this, deltaTime);
@@ -237,9 +321,7 @@ export class ManifestVehicle extends PhysicalVehicle {
         super.resetRunState(entry);
         resetVehiclePlant(this, entry);
         this.displaySteeringAngle = Number(entry.steeringAngle) || 0;
-        for (const wheel of this._wheels) {
-            if (wheel.steerable) wheel.pivot.rotation.y = this.displaySteeringAngle;
-        }
+        this._applyVisualSteering();
         this._updateLidarZoneTransform();
         resetEgoPresentation(this);
     }
@@ -249,6 +331,10 @@ export class ManifestVehicle extends PhysicalVehicle {
     }
 
     dispose() {
+        this._modelLoadToken += 1;
+        this._modelLease?.dispose();
+        this._modelLease = null;
+        if (this._ownsModelLoader) this.modelLoader?.dispose();
         const data = this.db?.getParent?.();
         if (this._zoneTriangles.length > 0) {
             const mine = new Set(this._zoneTriangles);

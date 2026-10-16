@@ -22,7 +22,13 @@ function Block({ title, children }) {
 function installLabel(installState) {
     if (installState === "installed") return "Installed";
     if (installState === "detected") return "Not installed";
+    if (installState === "update-available") return "Update available";
     return null;
+}
+
+function showPackageAction(installState, imported) {
+    if (installState === "unavailable") return false;
+    return imported || installState === "detected" || installState === "update-available";
 }
 
 export function PluginPackageDetail({
@@ -33,7 +39,9 @@ export function PluginPackageDetail({
     onRetry,
     installState = "unavailable",
     installing = false,
+    imported = false,
     installError = null,
+    installMessage = null,
     onInstall,
 }) {
     if (status === "loading") {
@@ -57,6 +65,7 @@ export function PluginPackageDetail({
     const units = Array.isArray(document.units) ? document.units : [];
     const systems = Array.isArray(document.systems) ? document.systems : [];
     const sensorTypes = Array.isArray(document.sensorTypes) ? document.sensorTypes : [];
+    const plants = Array.isArray(document.plants) ? document.plants : [];
 
     return (
         <section className={styles.detail} aria-label="Plugin details">
@@ -64,16 +73,17 @@ export function PluginPackageDetail({
                 <h1>{document.id}</h1>
                 <p>{document.version}</p>
                 {installLabel(installState) ? <p className={styles.packageStatus}>{installLabel(installState)}</p> : null}
-                {installState === "detected" ? (
+                {showPackageAction(installState, imported) ? (
                     <div className={styles.detailActions}>
-                        <Button size="compact" loading={installing} onClick={onInstall}>Install</Button>
+                        <Button size="compact" loading={installing} onClick={onInstall}>{imported ? "Reimport" : "Install"}</Button>
                     </div>
                 ) : null}
+                {installMessage ? <p className={styles.installMessage}>{installMessage}</p> : null}
                 {installError ? <p className={styles.installError}>{installError}</p> : null}
             </header>
             <dl className={styles.meta}>
                 <Field label="Engine" value={document.engines?.cevSim || "Unknown"} />
-                <Field label="Runtime entry" value={document.entry?.runtime || "Unknown"} />
+                <Field label="Runtime entry" value={document.entry?.runtime || "none"} />
                 {document.entry?.ui ? <Field label="UI entry" value={document.entry.ui} /> : null}
             </dl>
             <Block title="Capabilities">
@@ -103,6 +113,18 @@ export function PluginPackageDetail({
                             <li key={system.id}>
                                 <span>{system.id}</span>
                                 <span className={styles.muted}>priority {system.priority}</span>
+                            </li>
+                        ))}
+                    </ul>
+                </Block>
+            )}
+            {plants.length > 0 && (
+                <Block title="Plants">
+                    <ul className={styles.plainList}>
+                        {plants.map((plant) => (
+                            <li key={plant.id}>
+                                <span>{plant.id}</span>
+                                <span className={styles.muted}>{plant.module}</span>
                             </li>
                         ))}
                     </ul>

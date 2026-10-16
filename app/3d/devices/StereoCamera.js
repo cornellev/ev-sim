@@ -1,6 +1,7 @@
 import { LiDAR3d } from "./LiDAR3d.js";
 import * as THREE from "three";
 import { getWebGL2Context, PixelPackSlot, withPixelPackBufferUnbound } from "../util/glReadback.js";
+import { cameraScanAngles } from "./cameraScanAngles.js";
 
 
 export class StereoCamera extends LiDAR3d {
@@ -22,14 +23,16 @@ export class StereoCamera extends LiDAR3d {
 
         const cameraWidth = camera.width ?? 320;
         const cameraHeight = camera.height ?? 180;
-        const cameraAspect = cameraWidth / Math.max(1, cameraHeight);
         const cameraVerticalFov = camera.fov ?? 75;
-        const cameraHorizontalFov = THREE.MathUtils.radToDeg(
-            2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(cameraVerticalFov) / 2) * cameraAspect)
-        );
-
-        const resolvedThetaRange = thetaRange ?? [-cameraHorizontalFov / 2, cameraHorizontalFov / 2];
-        const resolvedPhiRange = phiRange ?? [-cameraVerticalFov / 2, cameraVerticalFov / 2];
+        const scan = cameraScanAngles({
+            width: cameraWidth,
+            height: cameraHeight,
+            fov: cameraVerticalFov,
+            thetaRange,
+            phiRange,
+        });
+        const resolvedThetaRange = scan.thetaRange;
+        const resolvedPhiRange = scan.phiRange;
 
         super(position, rotation, range, thetaStep, resolvedThetaRange, phiStep, resolvedPhiRange);
 

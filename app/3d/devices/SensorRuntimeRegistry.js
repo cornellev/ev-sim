@@ -179,16 +179,7 @@ registerSensorRuntime("lidar3d", {
 
 registerSensorRuntime("imu", {
     createRunDevice: (config, options) => new ManifestImu(config, options),
-    createVehicleDevice(entry) {
-        return {
-            id: entry.id,
-            type: "imu",
-            config: entry.config,
-            enabled: true,
-            getPosition: () => toVector3(entry.pose.position),
-            getRotation: () => toEuler(entry.pose.rotation),
-        };
-    },
+    createVehicleDevice: (entry) => createMountedVehicleDevice(entry),
     createPreview(sensor) {
         const color = getSensorType(sensor.type)?.color ?? 0xa78bfa;
         const holder = new THREE.Group();
@@ -203,16 +194,7 @@ registerSensorRuntime("imu", {
 
 registerSensorRuntime("gnss", {
     createRunDevice: (config, options) => new ManifestGnss(config, options),
-    createVehicleDevice(entry) {
-        return {
-            id: entry.id,
-            type: "gnss",
-            config: entry.config,
-            enabled: true,
-            getPosition: () => toVector3(entry.pose.position),
-            getRotation: () => toEuler(entry.pose.rotation),
-        };
-    },
+    createVehicleDevice: (entry) => createMountedVehicleDevice(entry),
     createPreview(sensor) {
         const color = getSensorType(sensor.type)?.color ?? 0x34d399;
         const holder = new THREE.Group();
@@ -227,16 +209,7 @@ registerSensorRuntime("gnss", {
 
 registerSensorRuntime("wheel-odometry", {
     createRunDevice: (config, options) => new ManifestWheelOdometry(config, options),
-    createVehicleDevice(entry) {
-        return {
-            id: entry.id,
-            type: "wheel-odometry",
-            config: entry.config,
-            enabled: true,
-            getPosition: () => toVector3(entry.pose.position),
-            getRotation: () => toEuler(entry.pose.rotation),
-        };
-    },
+    createVehicleDevice: (entry) => createMountedVehicleDevice(entry),
     createPreview(sensor) {
         const color = getSensorType(sensor.type)?.color ?? 0xfb923c;
         const holder = new THREE.Group();
@@ -248,6 +221,19 @@ registerSensorRuntime("wheel-odometry", {
     },
     previewSignature: (sensor) => sensor.type,
 });
+
+function createMountedVehicleDevice(entry) {
+    return {
+        id: entry.id,
+        name: entry.id,
+        type: entry.type,
+        config: entry.config,
+        enabled: true,
+        getPosition: () => toVector3(entry.pose.position),
+        getRotation: () => toEuler(entry.pose.rotation),
+        onParentUpdate() {},
+    };
+}
 
 function toVector3(value = {}) {
     return new THREE.Vector3(value.x, value.y, value.z);

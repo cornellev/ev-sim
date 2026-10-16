@@ -119,7 +119,7 @@ test("ED-09 a registered overlay type is created, inspected, projected, and undo
     const tree = buildHierarchyTree(document.objects, { presentation });
     assert.ok(tree.some((node) => node.id === objectId));
     const sections = presentation.forRecord(record).getInspectorSections({ record, document });
-    assert.deepEqual(sections.map((section) => section.id), [SECTION_IDS.OBJECT, SECTION_IDS.OPTIONS]);
+    assert.deepEqual(sections.map((section) => section.id), [SECTION_IDS.OBJECT, SECTION_IDS.OPTIONS, SECTION_IDS.SCRIPTS]);
     assert.equal(sections[1].kind, "options");
     assert.equal(sections[1].values.radius, 2.5);
 

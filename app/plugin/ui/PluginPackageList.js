@@ -4,10 +4,11 @@ import styles from "./PluginsPage.module.css";
 function statusLabel(state) {
     if (state === "installed") return "Installed";
     if (state === "detected") return "Not installed";
+    if (state === "update-available") return "Update available";
     return null;
 }
 
-export function PluginPackageList({ packages, installed, selectedDirectory, onSelect }) {
+export function PluginPackageList({ packages, installed, builds = [], selectedDirectory, onSelect }) {
     return (
         <nav className={styles.list} aria-label="Local plugins">
             <header className={styles.listHeader}>
@@ -16,7 +17,7 @@ export function PluginPackageList({ packages, installed, selectedDirectory, onSe
             <ul className={styles.packageList}>
                 {packages.map((entry) => {
                     const selected = entry.directory === selectedDirectory;
-                    const label = statusLabel(localPackageInstallState(entry, installed));
+                    const label = statusLabel(localPackageInstallState(entry, installed, builds));
                     const name = entry.version ? `${entry.id} ${entry.version}` : entry.id;
                     return (
                         <li key={entry.directory}>

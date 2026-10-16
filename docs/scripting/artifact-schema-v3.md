@@ -56,6 +56,8 @@ The compiler snapshots `nodes[].ports` from resolved editor types. Those maps, `
 
 Effect order is not implied by graph layout. A write or assert runs only if it is reachable from a final state through `then`, an identity output, `Sequence`, or `Passthrough`.
 
+Transitions with `type: "repeat_ref"` (Repeat to Index) are emitted like any other transition, but they are excluded from cycle detection and are never resolved as inputs at run time. The runner computes each Repeat's pass set from `transitions.success` and caches it per artifact. Adding `repeat_ref` is additive within v3.
+
 ## Success Transition
 
 Each success transition has:
@@ -78,6 +80,8 @@ The compiler rejects missing ports, type mismatches, duplicate input edges, and 
 - `label`: external label.
 - `type`: exported type.
 - `portId`: optional stable internal port id, used by multi-output nodes.
+- `sceneType`: optional, only on `scene_object` program inputs. One of `road`, `group`, `building`, `intersection`, `builtin-prop`, `asset-instance`. Omitted means any object. An empty id is the hierarchy root only when `sceneType` and `sceneTypes` are both omitted.
+- `sceneTypes`: optional array of those same host ids when one input accepts more than one type. A single allowed type stays on `sceneType`. An empty id is not the root when `sceneTypes` is set.
 
 Program input/output labels must be unique within each role. Exported `type` values are concrete strings from `SUPPORTED_TYPES`, including `unit` and `actor_command`. They must never be `generic`.
 

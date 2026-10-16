@@ -18,6 +18,7 @@ import {
     IconCircle as FaCircle,
     IconCamera as FaCamera,
     IconView360 as FaView360,
+    IconRadar as FaRadar,
 } from "@tabler/icons-react";
 import { FlyoutPanel } from "./ui/FlyoutPanel";
 import { MenuButton } from "./ui/MenuButton";
@@ -42,6 +43,8 @@ export function SimulationMenu({
     onOpenReplay,
     viewMode = "3d",
     onViewModeChange,
+    lidarViewportEnabled = false,
+    onLidarViewportEnabledChange,
 }) {
     const [openPanel, setOpenPanel] = useState(null);
     const [toggles, setToggles] = useState({
@@ -253,6 +256,17 @@ export function SimulationMenu({
                                         <MenuButton compact title="Open vehicle viewer, editor, and inspector" className="justify-start">
                                             <FaEdit className="h-3 w-3" />
                                             Life Render
+                                        </MenuButton>
+                                        <MenuButton
+                                            compact
+                                            active={lidarViewportEnabled}
+                                            title={lidarViewportEnabled ? "Show the camera view" : "Show the LiDAR view from this camera"}
+                                            ariaLabel="LiDAR View"
+                                            className="justify-start"
+                                            onClick={() => onLidarViewportEnabledChange?.(!lidarViewportEnabled)}
+                                        >
+                                            <FaRadar className="h-3 w-3" />
+                                            LiDAR View
                                         </MenuButton>
                                     </div>
                                 </PanelSection>

@@ -163,6 +163,7 @@ export class PluginSensorDevice {
         transformRuntime = null,
     } = {}) {
         this.id = admission.sensor.id;
+        this.name = this.id;
         this.telemetryId = this.id;
         this.type = admission.sensor.type;
         this.config = admission.sensor;
@@ -206,6 +207,10 @@ export class PluginSensorDevice {
     }
 
     setup() {}
+
+    // Vehicle pose updates call this on every attached device. Capture reads the
+    // live vehicle list, and this sensor has no scene visual to move.
+    onParentUpdate() {}
 
     getParent() {
         return this.parent ?? null;

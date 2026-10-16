@@ -114,11 +114,11 @@ def space_from_proto(space: pb.SpaceSpec) -> gym.Space[Any]:
         converted: OrderedDict[str, gym.Space[Any]] = OrderedDict()
         for entry in space.dictionary.entries:
             if entry.space.WhichOneof("kind") != "box":
-                raise CevSimCompatibilityError("PR 8 supports only flat dictionaries of Box tensors")
+                raise CevSimCompatibilityError("Only flat dictionaries of Box tensors are supported")
             converted[entry.key] = box_space_from_proto(entry.space)
         return gym.spaces.Dict(converted)
     raise CevSimCompatibilityError(
-        f"PR 8 does not define a packed tensor layout for {kind or 'unspecified'} space {space.id!r}"
+        f"No packed tensor layout is defined for {kind or 'unspecified'} space {space.id!r}"
     )
 
 

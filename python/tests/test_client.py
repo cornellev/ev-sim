@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import stat
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -36,6 +37,9 @@ from cev_sim.config import (
     MEASURED_STATE_PROFILE,
     MEASURED_STATE_PROFILE_VERSION,
     MEASURED_STATE_SCHEMA_HASH,
+    PLANNING_ORACLE_PROFILE,
+    PLANNING_ORACLE_PROFILE_VERSION,
+    PLANNING_ORACLE_SCHEMA_HASH,
     PROTOCOL_MAJOR,
     PROTOCOL_MINOR,
     ROUTE_SAFETY_PROFILE,
@@ -67,6 +71,11 @@ def capabilities() -> pb.GetCapabilitiesResponse:
                 id=MEASURED_PERCEPTION_PROFILE,
                 version=MEASURED_PERCEPTION_PROFILE_VERSION,
                 config_schema_hash=MEASURED_PERCEPTION_SCHEMA_HASH,
+            ),
+            pb.ProfileCapability(
+                id=PLANNING_ORACLE_PROFILE,
+                version=PLANNING_ORACLE_PROFILE_VERSION,
+                config_schema_hash=PLANNING_ORACLE_SCHEMA_HASH,
             ),
         ],
         reward_profiles=[
@@ -284,6 +293,47 @@ def test_v11_requires_explicit_identity_capability_before_batch_creation(headles
             client.create_batch(headless_fixture["bundlePath"], count=1, output_directory=tmp_path,
                                 episode=EpisodeConfig(), resource_limits=ResourceLimits(),
                                 artifact_policy=ArtifactPolicy(profile="disabled"))
+
+
+def test_omitted_output_dir_is_temporary_and_removed(monkeypatch: pytest.MonkeyPatch) -> None:
+    created: dict[str, object] = {}
+
+    class FakeBundle:
+        document = {"manifest": {"clock": {"stepNs": 16_666_667}}}
+
+    class FakeBatch:
+        batch_id = "batch"
+        action_space = None
+        observation_space = None
+        states = ["prepared"]
+        bundle = FakeBundle()
+
+        def close(self, **_kwargs: object) -> None:
+            created["batch_closed"] = True
+
+    class FakeClient:
+        def __init__(self, **kwargs: object) -> None:
+            created["launch"] = kwargs.get("launch")
+            created["target"] = kwargs.get("target")
+
+        def create_batch(self, *_args: object, **kwargs: object) -> FakeBatch:
+            created["output"] = kwargs["output_directory"]
+            created["artifact_policy"] = kwargs["artifact_policy"]
+            return FakeBatch()
+
+        def close(self) -> None:
+            created["client_closed"] = True
+
+    monkeypatch.setattr("cev_sim.env.SupervisorClient", FakeClient)
+    env = CevSimEnv("bundle.json")
+    output = Path(str(created["output"]))
+    assert output.is_dir()
+    assert created["target"] is None
+    assert created["launch"] is not None
+    assert created["artifact_policy"].profile == "disabled"
+    env.close()
+    assert not output.exists()
+    assert created["client_closed"] is True
 
 
 def test_python_package_staging_is_atomic_private_and_hashed(tmp_path) -> None:

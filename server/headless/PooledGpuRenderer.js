@@ -527,7 +527,13 @@ export class ChromiumWebGlRendererAdapter {
                     return shader;
                 };
                 const renderLidar = (job) => {
-                    const triangles = job.triangles || [];
+                    const planes = job.planes || [];
+                    const triangles = (job.triangles || []).length > 0 ? job.triangles : (planes.length === 0 ? [] : [{
+                        vertices: [[0, 0, 0], [0, 0, 0], [0, 0, 0]],
+                        normal: [0, 1, 0],
+                        semanticId: 0,
+                        instanceId: 0,
+                    }]);
                     if (triangles.length === 0) return [];
                     const packed = new Float32Array(triangles.length * 16);
                     triangles.forEach((triangle, index) => {
@@ -570,6 +576,7 @@ export class ChromiumWebGlRendererAdapter {
                                 float distance=hit(uOrigin,rd,av.xyz,bv.xyz,cv);
                                 if(distance>=0.0001&&distance<=uRange&&distance<best){best=distance;incidence=abs(dot(n,rd));semantic=av.w;instance=bv.w;}
                             }
+                            ${planes.length > 0 ? `if(abs(rd.y)>1e-7){float distance=(${Number(planes[0].y).toExponential(16)}-uOrigin.y)/rd.y;if(distance>=0.0001&&distance<=uRange&&distance<best){best=distance;incidence=abs(rd.y);semantic=${Number(planes[0].semanticId)}.0;instance=${Number(planes[0].instanceId)}.0;}}` : ""}
                             color=best<=uRange?vec4(best,incidence,semantic,instance):vec4(0.);
                         }`);
                     const program = gl.createProgram();
