@@ -238,16 +238,18 @@ export function buildImuMeasurement(snapshot, sensorConfig, rng, state = {}) {
         nextDrift.acceleration,
     );
 
-    const measuredAngular = saturateVector({
+    const rawAngular = {
         x: angularVelocity.x + angularNoise.x,
         y: angularVelocity.y + angularNoise.y,
         z: angularVelocity.z + angularNoise.z,
-    }, sensorConfig.calibration.angularVelocitySaturation);
-    const measuredAcceleration = saturateVector({
+    };
+    const rawAcceleration = {
         x: specificForce.x + accelerationNoise.x,
         y: specificForce.y + accelerationNoise.y,
         z: specificForce.z + accelerationNoise.z,
-    }, sensorConfig.calibration.linearAccelerationSaturation);
+    };
+    const measuredAngular = saturateVector(rawAngular, sensorConfig.calibration.angularVelocitySaturation);
+    const measuredAcceleration = saturateVector(rawAcceleration, sensorConfig.calibration.linearAccelerationSaturation);
 
     return {
         measurement: {
@@ -261,8 +263,8 @@ export function buildImuMeasurement(snapshot, sensorConfig, rng, state = {}) {
             turnOnBias,
             drift: nextDrift,
             lastCaptureTimeNs: snapshot.captureTimeNs,
-            saturated: measuredAngular.x !== angularVelocity.x + angularNoise.x
-                || measuredAcceleration.z !== specificForce.z + accelerationNoise.z,
+            saturated: ["x", "y", "z"].some((axis) => measuredAngular[axis] !== rawAngular[axis]
+                || measuredAcceleration[axis] !== rawAcceleration[axis]),
         },
     };
 }
