@@ -1,0 +1,258 @@
+{
+  "kind": "cev-sim.editor-asset-revision",
+  "version": 2,
+  "assetId": "corridor-cone",
+  "revision": 1,
+  "publicationId": "corridor-cone",
+  "modelUseHash": "b99469a4d5218866b723e671d9de7363b5cf5a1210ae711914dc7a81851a0816",
+  "createdAt": "2026-10-17T21:31:12.256Z",
+  "definition": {
+    "kind": "cev-sim.asset-definition",
+    "version": 1,
+    "normalization": {
+      "metersPerUnit": 1,
+      "orientation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "pivot": [
+        0,
+        0,
+        0
+      ]
+    },
+    "sources": [
+      {
+        "id": "source",
+        "modelUseHash": "1e0f42d1f09cdea670044337d0519a55d6fd6aae26b082407288d61708f2c476"
+      }
+    ],
+    "parts": [
+      {
+        "id": "root",
+        "parentId": null,
+        "order": 0,
+        "name": "Cone",
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "quaternion": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "content": {
+          "kind": "model-node",
+          "sourceId": "source",
+          "nodeIndex": 0
+        },
+        "appearanceVisible": true,
+        "materialBindings": {}
+      }
+    ],
+    "materials": [],
+    "lidarProxies": [],
+    "collisionProxies": [
+      {
+        "id": "body",
+        "kind": "box",
+        "enabled": true,
+        "transform": {
+          "position": [
+            0,
+            0.2,
+            0
+          ],
+          "quaternion": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "size": [
+          0.4,
+          0.4,
+          0.4
+        ]
+      }
+    ]
+  },
+  "metric": {
+    "collision": [
+      {
+        "id": "body",
+        "kind": "convex",
+        "triangles": [
+          [
+            0,
+            2,
+            1
+          ],
+          [
+            0,
+            3,
+            2
+          ],
+          [
+            4,
+            5,
+            6
+          ],
+          [
+            4,
+            6,
+            7
+          ],
+          [
+            0,
+            1,
+            5
+          ],
+          [
+            0,
+            5,
+            4
+          ],
+          [
+            3,
+            7,
+            6
+          ],
+          [
+            3,
+            6,
+            2
+          ],
+          [
+            0,
+            4,
+            7
+          ],
+          [
+            0,
+            7,
+            3
+          ],
+          [
+            1,
+            2,
+            6
+          ],
+          [
+            1,
+            6,
+            5
+          ]
+        ],
+        "vertices": [
+          [
+            -0.2,
+            0,
+            -0.2
+          ],
+          [
+            0.2,
+            0,
+            -0.2
+          ],
+          [
+            0.2,
+            0.4,
+            -0.2
+          ],
+          [
+            -0.2,
+            0.4,
+            -0.2
+          ],
+          [
+            -0.2,
+            0,
+            0.2
+          ],
+          [
+            0.2,
+            0,
+            0.2
+          ],
+          [
+            0.2,
+            0.4,
+            0.2
+          ],
+          [
+            -0.2,
+            0.4,
+            0.2
+          ]
+        ]
+      }
+    ],
+    "lidar": [],
+    "version": 1
+  },
+  "metricHash": "33f945ec680128edf12119b40090cbcd3cae78bdba6e319b365c89878737bd5a",
+  "geometryHash": "8d3f78b91a89bc5080a79623dcf458ee50f86c3d58c8aac1d4b89892bcda8073",
+  "publicationPayloadHash": "ea704cbb84ea6c93daca2a78ee33ef5171aa7f635eab16a57b5c1ea6e875063e",
+  "appearance": [
+    {
+      "id": "asset:corridor-cone:1:material:source/source-material-0",
+      "mode": "metallic-roughness",
+      "alphaMode": "OPAQUE",
+      "alphaCutoff": 0.5,
+      "doubleSided": false,
+      "parameters": {
+        "baseColorFactor": [
+          1,
+          0,
+          0,
+          1
+        ],
+        "metallicFactor": 1,
+        "roughnessFactor": 1,
+        "emissiveFactor": [
+          0,
+          0,
+          0
+        ],
+        "emissiveStrength": 1,
+        "normalScale": 1,
+        "occlusionStrength": 1,
+        "clearcoatFactor": 0,
+        "clearcoatRoughnessFactor": 0,
+        "sheenColorFactor": [
+          0,
+          0,
+          0
+        ],
+        "sheenRoughnessFactor": 0,
+        "specularFactor": 1,
+        "specularColorFactor": [
+          1,
+          1,
+          1
+        ]
+      },
+      "textures": [],
+      "extensions": []
+    }
+  ]
+}

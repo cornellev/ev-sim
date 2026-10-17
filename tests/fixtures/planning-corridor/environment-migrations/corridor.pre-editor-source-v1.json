@@ -1,0 +1,52 @@
+{
+  "kind": "cev-sim.environment-pre-editor-source",
+  "version": 1,
+  "environmentId": "corridor",
+  "revision": 1,
+  "migratedAt": "2026-10-17T21:31:12.488Z",
+  "manifest": {
+    "roadsAuthored": false,
+    "visualLayer": null,
+    "evidence": null,
+    "document": {
+      "environmentId": "corridor",
+      "chunkSize": 20,
+      "roads": {
+        "nodes": [],
+        "edges": []
+      },
+      "buildings": [],
+      "features": [],
+      "earth": null,
+      "roadsAuthored": false,
+      "buildingsAuthored": false,
+      "featuresAuthored": false,
+      "objectGraphVersion": 1,
+      "objects": [
+        {
+          "id": "skybox",
+          "typeId": "skybox",
+          "typeVersion": 1,
+          "name": "Skybox",
+          "parentId": null,
+          "order": 0,
+          "components": {
+            "tags": [],
+            "locked": false,
+            "editorHidden": false
+          }
+        }
+      ]
+    },
+    "environmentId": "corridor",
+    "name": "Corridor",
+    "schemaVersion": 4,
+    "templateId": "blank",
+    "roadStylePreset": "default",
+    "revision": 1,
+    "buildingsAuthored": false,
+    "featuresAuthored": false,
+    "createdAt": "2026-10-17T21:31:12.448Z",
+    "updatedAt": "2026-10-17T21:31:12.448Z"
+  }
+}

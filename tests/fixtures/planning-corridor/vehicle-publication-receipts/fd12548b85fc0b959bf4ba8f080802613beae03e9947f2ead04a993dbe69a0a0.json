@@ -1,0 +1,147 @@
+{
+  "kind": "cev-sim.vehicle-publication-receipt",
+  "version": 1,
+  "operationId": "fd12548b85fc0b959bf4ba8f080802613beae03e9947f2ead04a993dbe69a0a0",
+  "requestHash": "0bea9fd6bc2fa2f1c7d62f3ae58b5e71c92cc2441b610182508fbf23da16f16d",
+  "vehicleId": "corridor-car",
+  "revision": 1,
+  "definitionHash": "3e1c8cd2756ecaa50bcdd749f0c221fc7576408d27f14f0f1a49ca483cd458c2",
+  "manifest": {
+    "kind": "cev-sim.vehicle",
+    "version": 2,
+    "id": "corridor-car",
+    "name": "Corridor Car",
+    "description": "",
+    "model": {
+      "asset": null,
+      "scale": 1,
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "order": "XYZ"
+      },
+      "offset": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      }
+    },
+    "boundingBox": {
+      "size": {
+        "x": 2.7,
+        "y": 1.4,
+        "z": 1.25
+      },
+      "center": {
+        "x": 0,
+        "y": 0.7,
+        "z": 0
+      }
+    },
+    "egoCenter": {
+      "x": 0,
+      "y": 0.5,
+      "z": 0
+    },
+    "wheels": [
+      {
+        "id": "front-left",
+        "position": {
+          "x": 0.75,
+          "y": 0.25,
+          "z": 0.55
+        },
+        "radius": 0.25,
+        "width": 0.15,
+        "steerable": true
+      },
+      {
+        "id": "front-right",
+        "position": {
+          "x": 0.75,
+          "y": 0.25,
+          "z": -0.55
+        },
+        "radius": 0.25,
+        "width": 0.15,
+        "steerable": true
+      },
+      {
+        "id": "rear-left",
+        "position": {
+          "x": -0.75,
+          "y": 0.25,
+          "z": 0.55
+        },
+        "radius": 0.25,
+        "width": 0.15,
+        "steerable": false
+      },
+      {
+        "id": "rear-right",
+        "position": {
+          "x": -0.75,
+          "y": 0.25,
+          "z": -0.55
+        },
+        "radius": 0.25,
+        "width": 0.15,
+        "steerable": false
+      }
+    ],
+    "kinematics": {
+      "wheelbase": 1.5,
+      "maxSteeringAngle": 0.6,
+      "maxSpeed": 15,
+      "maxAcceleration": 3,
+      "maxDeceleration": 5,
+      "maxJerk": 10,
+      "maxSteeringRate": 1.2,
+      "responseDelayNs": 0
+    },
+    "sensors": [
+      {
+        "id": "roof-lidar",
+        "type": "lidar3d",
+        "pose": {
+          "position": {
+            "x": 0.35,
+            "y": 0.8,
+            "z": 0
+          },
+          "rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0,
+            "order": "XYZ"
+          }
+        },
+        "config": {
+          "range": 20,
+          "thetaStep": 2,
+          "thetaRange": [
+            -180,
+            180
+          ],
+          "phiStep": 1,
+          "phiRange": [
+            -20,
+            20
+          ]
+        }
+      }
+    ],
+    "lidarZone": {
+      "params": {
+        "voxelSize": 0.2
+      },
+      "vertices": [],
+      "triangles": []
+    },
+    "revision": 1,
+    "definitionHash": "3e1c8cd2756ecaa50bcdd749f0c221fc7576408d27f14f0f1a49ca483cd458c2",
+    "createdAt": "2026-10-17T21:31:12.551Z",
+    "updatedAt": "2026-10-17T21:31:12.551Z"
+  }
+}

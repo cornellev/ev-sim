@@ -25,6 +25,10 @@ is out of scope and tracked as a later item.
 | PLN-06: rendering, examples, quickstart | Complete | example smoke runs |
 | PLN-07: Python `configure` / `launch` | Complete | `npm run test:cli`, `npm run test:python`, example `00` |
 | PLN-08: session clock, loop, and pose readers | Complete | `npm run lint:python`, `npm run test:python` |
+| PLN-09: admit a saved environment into the planning store | Complete | `tests/headless-planning-bundle.test.js` |
+| PLN-10: start clearance uses physics colliders | Complete | `tests/headless-planning-bundle.test.js`; example bundles unchanged |
+| PLN-11: Python occupancy reads those footprints | Complete | `npm run test:python` |
+| PLN-12: saved corridor through `create_bundle` | Complete | `python/tests/test_planning_corridor.py` |
 
 ## Locked decisions
 
@@ -93,6 +97,21 @@ therefore steps in `configure`. A vehicle with no plugin locks keeps
 `world-bound@2` and the previous plugin-free bundle shape. This does not
 change the Protobuf contract or the `measured-state` profile.
 
+### PLN-D08 — Planning colliders are the physics colliders on the ground plane
+
+Asset-proxy collision meshes and scene primitives join building and feature
+rings as planner obstacles. Each mesh becomes the convex hull of its vertices
+on `(x, z)`. There is no height filter. `worldHash`, `measured-state`, and the
+Protobuf contract stay unchanged. IGVC has neither proxies nor primitives, so
+its start pose and the example bundles stay put.
+
+The temporary planning store does not contain editor-asset bytes. `create-bundle`
+validates each embedded asset-metric snapshot against the source data directory,
+then commits that environment with `trustedAssetPins`. When `visualLayer.accessHash`
+is set, the access record, its descriptor, and its use records are copied first.
+GLB bytes stay in the source store. A built-in bundle with no `dataDir` does not
+take this path.
+
 ## Milestones
 
 ### PLN-01
@@ -156,6 +175,30 @@ is true while that episode is running and does not itself step. `pose()`,
 `velocity()`, `steering()`, and `goal()` copy the latest `planning-oracle`
 values. `max_steps=0` remains no policy-step limit.
 
+### PLN-09
+
+`create-bundle` validates editor-asset pins against the source data directory,
+then writes the environment into the temporary store without a second asset
+lookup. A pinned visual-layer closure is copied when one is present. Built-in
+bundles do not take this branch.
+
+### PLN-10
+
+Start clearance uses `planningObstacleFootprints`: building and feature rings
+plus the ground-plane convex hull of each asset-proxy collision mesh and each
+scene primitive. A collider on the first route sample advances the start pose.
+
+### PLN-11
+
+`PlanningWorld.obstacles` includes those three sources. `occupancy_grid` and
+the planner view already consume `obstacle.footprint`.
+
+### PLN-12
+
+`tests/fixtures/planning-corridor/` is a saved road with one pinned cone, one
+box, and a plugin-free vehicle. `create_bundle` plus `load_world` is the same
+path `configure` uses. `server/data` stays untracked.
+
 ## Verification
 
 ```text
@@ -171,6 +214,8 @@ PLN-03 through PLN-05 also run `npm run test:headless`, `npm run test:supervisor
 show an empty characterization delta. PLN-06 runs each example with `--steps 50`.
 PLN-07 also runs `npm run test:cli` and `python python/examples/00_free_drive.py --steps 50`.
 PLN-08 runs `npm run lint:python` and `npm run test:python`.
+PLN-09 through PLN-12 run `tests/headless-planning-bundle.test.js`,
+`npm test`, `npm run lint:python`, `npm run test:python`, and `npm run test:cli`.
 `npm run fixtures:planning` must leave the example bundles unchanged.
 
 ## Progress and decision log
@@ -219,3 +264,24 @@ and copies the installed packages into the temporary store before resolve. A
 dynamics plant selected on that vehicle is stepped by the existing headless
 worker. Plugin-free vehicles stay on `world-bound@2`. The Protobuf contract
 and `measured-state` hashes are unchanged.
+
+### 2026-10-17 — PLN-09 through PLN-12
+
+Saved schema-v4 environments can become planning bundles. Editor-asset pins are
+checked on the source store, and the temporary store commits that snapshot
+without reading GLB bytes. A pinned visual-layer access record, descriptor, and
+use closure are copied when `accessHash` is set. A stored vehicle's model bytes
+are copied before its manifest is published, so a version 3 model closure such
+as `merceves` validates in the temporary store. Planner obstacles are the
+physics colliders projected to the ground plane: building and feature rings,
+asset-proxy collision hulls, and scene primitives. `cev_sim.configure` follows
+the same `create_bundle` path. `worldHash`, `measured-state`, and the IGVC
+example bundles are unchanged.
+
+Local verification on 2026-10-17: ESLint and Python lint passed. The Node suite
+reported 2281 passes, 7 skips, and 1 failure in `tests/vehicle-hierarchy.test.js`
+(`a lidar sensor is one hierarchy row and does not share the LiDAR zone id`),
+which does not import the planning bundle. `npm run test:cli` passed.
+`npm run test:python` passed, 129 tests. `npm run fixtures:planning` changed
+only `exportedAt` on the IGVC example bundles, and those files were left as
+committed. `npm run fixtures:headless` produced an empty characterization delta.

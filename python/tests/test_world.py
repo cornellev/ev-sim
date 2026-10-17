@@ -7,6 +7,7 @@ import numpy as np
 from cev_sim.world import direction_from_yaw, grid_to_world, load_world, world_to_grid, yaw_from_direction
 
 FIXTURE = Path(__file__).parent / "fixtures" / "planning-world-bundle.json"
+COLLIDER_FIXTURE = Path(__file__).parent / "fixtures" / "planning-collider-bundle.json"
 
 
 def test_world_reads_route_vehicle_and_goal() -> None:
@@ -47,3 +48,22 @@ def test_inflation_blocks_cells_beside_an_obstacle() -> None:
     row, col = world_to_grid(tight, 3.25, 0.25)
     assert tight.cells[row, col] == 0
     assert wide.cells[row, col] == 1
+
+
+def test_proxy_and_primitive_hulls_block_occupancy() -> None:
+    world = load_world(COLLIDER_FIXTURE)
+    assert any(obstacle.id == "cone/body" for obstacle in world.obstacles)
+    assert any(obstacle.id == "primitive:crate" for obstacle in world.obstacles)
+    bounds = (0.0, -2.0, 12.0, 2.0)
+    grid = world.occupancy_grid(0.5, bounds=bounds)
+    free_row, free_col = world_to_grid(grid, 1.25, 0.25)
+    cone_row, cone_col = world_to_grid(grid, 8.25, 0.25)
+    box_row, box_col = world_to_grid(grid, 10.25, 0.25)
+    assert grid.cells[free_row, free_col] == 0
+    assert grid.cells[cone_row, cone_col] == 1
+    assert grid.cells[box_row, box_col] == 1
+    tight = world.occupancy_grid(0.5, inflate_m=0.0, bounds=bounds)
+    wide = world.occupancy_grid(0.5, inflate_m=0.3, bounds=bounds)
+    beside_row, beside_col = world_to_grid(tight, 7.75, 0.25)
+    assert tight.cells[beside_row, beside_col] == 0
+    assert wide.cells[beside_row, beside_col] == 1

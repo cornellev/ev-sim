@@ -982,6 +982,8 @@ export class StorageService {
      * Persist a full environment replacement.
      * Public writes are `{ manifest, expectedRevision }`. Internal callers may
      * pass `{ create: true }` to publish revision 1 without a prior document.
+     * `{ trustedAssetPins: true }` skips the editor-asset revision lookup.
+     * The caller must already have validated those pins against the source store.
      */
     putEnvironment(environmentId, input = {}, options = {}) {
         return this._withEnvironmentWrite(environmentId, async () => {
@@ -1010,6 +1012,7 @@ export class StorageService {
                 supportedAssetMetricVersions: parsed.supportedAssetMetricVersions,
                 supportedEditorSourceVersions: parsed.supportedEditorSourceVersions,
                 supportedScenePrimitiveVersions: parsed.supportedScenePrimitiveVersions,
+                trustedAssetPins: options.trustedAssetPins === true,
             });
         });
     }
@@ -3890,6 +3893,37 @@ export class StorageService {
         return null;
     }
 
+    assertEditorAssetPins(manifest) {
+        return this._assertEditorAssetPins(manifest, null);
+    }
+
+    /**
+     * Copy a pinned visual-layer descriptor, access sidecar, and use records
+     * so a planning temp store can commit the environment unchanged.
+     * Planning compilation does not read the asset bytes.
+     */
+    async copyVisualLayerClosure(source, manifest) {
+        const accessHash = manifest?.visualLayer?.accessHash;
+        if (!accessHash || source === this) return;
+        const access = await source._visualLayerAccess.get(accessHash);
+        if (!access) {
+            throw visualAssetError(
+                VISUAL_LAYER_ERROR_CODES.ACCESS_NOT_FOUND,
+                `Visual layer access ${accessHash} was not found.`,
+            );
+        }
+        const descriptorHash = manifest.visualLayer?.descriptorHash ?? null;
+        const descriptor = descriptorHash ? await source._visualLayerDescriptors.get(descriptorHash) : null;
+        if (descriptor) await this._visualLayerDescriptors.put(descriptor);
+        await this._visualLayerAccess.put(access);
+        if (descriptor) {
+            for (const entry of access.assets ?? []) {
+                const use = await source.visualAssets.getUse(entry.useHash);
+                await this.visualAssets.importUse(use);
+            }
+        }
+    }
+
     async _commitEnvironment(environmentId, manifest, {
         expectedRevision,
         create = false,
@@ -3898,6 +3932,7 @@ export class StorageService {
         supportedAssetMetricVersions = [1],
         supportedEditorSourceVersions = [1],
         supportedScenePrimitiveVersions = [1],
+        trustedAssetPins = false,
     } = {}) {
         const current = await this._readEnvironment(environmentId);
         const stored = await this._fileStore(this._environmentPath(environmentId), null).read();
@@ -3926,7 +3961,7 @@ export class StorageService {
             revision,
             current,
         });
-        await this._assertEditorAssetPins(prepared, current);
+        await this._assertEditorAssetPins(prepared, current, { trustedAssetPins });
         if (stored && prepared.schemaVersion >= 4 && readSchemaVersion(stored) < 4) {
             await this._retainPreMigrationCopy(environmentId, stored, prepared.schemaVersion);
         }
@@ -3956,7 +3991,7 @@ export class StorageService {
         return this._fileStore(this._environmentPath(environmentId), null).write(prepared);
     }
 
-    async _assertEditorAssetPins(prepared, current) {
+    async _assertEditorAssetPins(prepared, current, { trustedAssetPins = false } = {}) {
         const references = collectAssetInstanceReferences(prepared?.document);
         const currentReferences = new Map(collectAssetInstanceReferences(current?.document).map((entry) => [entry.objectId, entry]));
         const metricIssues = validateAssetMetricsDomain(prepared?.document);
@@ -3967,6 +4002,7 @@ export class StorageService {
             error.issues = metricIssues;
             throw error;
         }
+        if (trustedAssetPins) return;
         const definitions = new Map((prepared?.document?.assetMetrics?.definitions ?? []).map((entry) => [
             assetMetricKey(entry.assetId, entry.revision),
             normalizeAssetMetricDefinition(entry),

@@ -1,0 +1,26 @@
+{
+  "kind": "cev-sim.visual-asset-roots",
+  "version": 1,
+  "roots": {
+    "editor-asset:corridor-cone:revision:1": {
+      "ownerId": "editor-asset:corridor-cone:revision:1",
+      "ownerKind": "editor-asset-revision",
+      "generation": 1,
+      "useHashes": [
+        "b99469a4d5218866b723e671d9de7363b5cf5a1210ae711914dc7a81851a0816"
+      ],
+      "useHash": "b99469a4d5218866b723e671d9de7363b5cf5a1210ae711914dc7a81851a0816",
+      "acquiredAt": "2026-10-17T21:31:12.409Z"
+    },
+    "editor-asset:corridor-cone:revision:1:dependency:1": {
+      "ownerId": "editor-asset:corridor-cone:revision:1:dependency:1",
+      "ownerKind": "editor-asset-revision-dependency",
+      "generation": 1,
+      "useHashes": [
+        "1e0f42d1f09cdea670044337d0519a55d6fd6aae26b082407288d61708f2c476"
+      ],
+      "useHash": "1e0f42d1f09cdea670044337d0519a55d6fd6aae26b082407288d61708f2c476",
+      "acquiredAt": "2026-10-17T21:31:12.415Z"
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "kind": "cev-sim.visual-source-registry",
+  "version": 1,
+  "sources": [
+    {
+      "id": "owned-lab",
+      "kind": "owned",
+      "status": "active",
+      "ancestorIds": [],
+      "permissions": {
+        "attribution": true,
+        "derivatives": true,
+        "display": true,
+        "export": true,
+        "live-preview-display": true,
+        "machine-interpretation": true,
+        "ml": true,
+        "persistent-cache": true,
+        "retention": true,
+        "transient-cache": true,
+        "worker-access": true
+      }
+    }
+  ]
+}

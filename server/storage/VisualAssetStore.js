@@ -252,6 +252,22 @@ export class VisualAssetStore {
         return this._readUse(useHash, { optional });
     }
 
+    /** Install a use record already published in another store. Bytes stay behind. */
+    async importUse(use) {
+        await this.initialize();
+        const normalized = normalizeVisualAssetUse(use);
+        const digest = hashVisualAssetUse(normalized);
+        const existing = await this._readUse(digest, { optional: true });
+        if (existing) {
+            if (canonicalExactStringify(existing) !== canonicalExactStringify(normalized)) {
+                throw visualAssetError(VISUAL_ASSET_ERROR_CODES.CONFLICT, "Visual asset use digest collision.");
+            }
+            return digest;
+        }
+        await writeExclusiveFile(this._usePath(digest), `${canonicalExactStringify(normalized)}\n`, { faults: this.faults });
+        return digest;
+    }
+
     async getRoot(ownerId) {
         await this.initialize();
         return this._roots.roots[ownerId] ?? null;

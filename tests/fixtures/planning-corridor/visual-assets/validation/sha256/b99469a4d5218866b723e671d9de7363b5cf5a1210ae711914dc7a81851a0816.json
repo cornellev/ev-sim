@@ -1,0 +1,32 @@
+{
+  "asset": {
+    "mediaType": "model/gltf-binary",
+    "role": "mesh",
+    "sha256": "4090c13be4f70f054e4f9aadee108c28f455dac8ed1ad046138e0552937064d0",
+    "sizeBytes": 812
+  },
+  "decodedBytesEstimate": 860,
+  "graph": {
+    "depth": 1,
+    "images": [],
+    "nodes": 1,
+    "triangles": 1,
+    "uris": []
+  },
+  "inspected": {
+    "height": 0,
+    "mipLevels": 0,
+    "width": 0
+  },
+  "kind": "cev-sim.visual-asset-validation",
+  "profile": {
+    "id": "static-gltf-surface",
+    "version": 1
+  },
+  "useHash": "b99469a4d5218866b723e671d9de7363b5cf5a1210ae711914dc7a81851a0816",
+  "validator": {
+    "id": "gltf-validator",
+    "version": "2.0.0-dev.3.10"
+  },
+  "version": 2
+}

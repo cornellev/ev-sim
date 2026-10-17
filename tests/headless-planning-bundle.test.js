@@ -9,8 +9,15 @@ import { verifyPluginPackage } from "../app/plugin/PluginPackage.js";
 import { PluginRunSession, PLG03_RUNTIME_CAPABILITIES } from "../app/plugin/PluginRunSession.js";
 import { HeadlessVehicleManager } from "../app/simulation/headless/HeadlessVehicleManager.js";
 import { createDefaultVehicleManifest } from "../app/vehicles/VehicleManifest.js";
-import { createPlanningBundle, firstClearRouteIndex, yawFromDirection } from "../server/headless/PlanningBundle.js";
+import {
+    convexHullXZ,
+    createPlanningBundle,
+    firstClearRouteIndex,
+    planningObstacleFootprints,
+    yawFromDirection,
+} from "../server/headless/PlanningBundle.js";
 import { StorageService } from "../server/storage/StorageService.js";
+import { buildPlanningCorridor, CORRIDOR_ENVIRONMENT_ID, CORRIDOR_VEHICLE_ID } from "./helpers/planning-corridor.js";
 import { pluginFixtureResource } from "./helpers/pluginFixtures.js";
 
 function stripVolatile(value) {
@@ -23,6 +30,45 @@ function stripVolatile(value) {
     }
     return copy;
 }
+
+test("planning footprints project proxy collision meshes and primitives to the ground plane", () => {
+    const footprints = planningObstacleFootprints({
+        obstacles: [{
+            id: "building:shed",
+            footprint: [
+                { x: 0, z: 0 },
+                { x: 1, z: 0 },
+                { x: 0, z: 1 },
+            ],
+        }],
+        assetProxies: [{
+            id: "cone",
+            collision: [{
+                id: "cone/body",
+                vertices: [[0, 0, 0], [1, 0, 0], [0.2, 1, 1], [0, 0, 0]],
+            }],
+        }, {
+            id: "edge",
+            collision: [{ id: "edge/span", vertices: [[9, 0, 0], [9, 1, 1]] }],
+        }],
+        primitives: [{
+            id: "crate",
+            vertices: [
+                [4, 0, -1], [5, 0, -1], [5, 0, 1], [4, 0, 1],
+                [4, 1, -1], [5, 1, -1], [5, 1, 1], [4, 1, 1],
+            ],
+        }],
+    });
+    assert.deepEqual(footprints.map((entry) => entry.id), ["building:shed", "cone/body", "crate"]);
+    assert.equal(convexHullXZ([[0, 0, 0], [1, 0, 0], [0.2, 1, 1]]).length, 3);
+    assert.equal(footprints[2].footprint.length, 4);
+    const index = firstClearRouteIndex(
+        [{ x: 0.2, z: 0.2 }, { x: 3, z: 0.2 }, { x: 6, z: 0 }],
+        { x: 0.3, z: 0.3 },
+        footprints,
+    );
+    assert.equal(index, 1);
+});
 
 test("planning bundle clearance skips an obstacle on the first pose", () => {
     const polyline = [
@@ -229,5 +275,51 @@ test("a dynamics plant without a lock or an installed package fails before expor
     await assert.rejects(
         () => createPlanningBundle({ dataDir, vehicleId: "plant-car", bundleId: "missing-package" }),
         /must be installed in the data directory/,
+    );
+});
+
+test("create-bundle admits a pinned cone environment and starts clear of it", async (t) => {
+    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "cev-planning-corridor-"));
+    t.after(() => fs.rm(dataDir, { recursive: true, force: true }));
+    await buildPlanningCorridor(dataDir);
+    const bundle = await createPlanningBundle({
+        dataDir,
+        environmentId: CORRIDOR_ENVIRONMENT_ID,
+        vehicleId: CORRIDOR_VEHICLE_ID,
+        finish: "none",
+        bundleId: "corridor",
+    });
+    const description = bundle.resolved.world.description;
+    assert.ok(description.assetProxies.length > 0);
+    assert.equal(description.primitives.length, 1);
+    const footprints = planningObstacleFootprints(description);
+    const cone = footprints.find((entry) => entry.id.startsWith("cone/"));
+    const box = footprints.find((entry) => entry.id === "primitive:crate");
+    assert.ok(cone);
+    assert.ok(box);
+    const pose = bundle.manifest.initialState.vehicles[0].pose.position;
+    const yaw = bundle.manifest.initialState.vehicles[0].pose.rotation.y;
+    const size = bundle.resolved.vehicles[0].manifest.boundingBox.size;
+    assert.ok(pose.x > Math.max(...cone.footprint.map((point) => point.x)));
+    assert.equal(firstClearRouteIndex([
+        pose,
+        { x: pose.x + Math.cos(yaw), z: pose.z - Math.sin(yaw) },
+    ], size, footprints), 0);
+    assert.equal(bundle.resolved.scenario.scenario.triggers[0].condition.kind, "flag");
+});
+
+test("create-bundle rejects a pin the source store cannot resolve", async (t) => {
+    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "cev-planning-missing-pin-"));
+    t.after(() => fs.rm(dataDir, { recursive: true, force: true }));
+    await buildPlanningCorridor(dataDir);
+    await fs.rm(path.join(dataDir, "editor-assets"), { recursive: true, force: true });
+    await assert.rejects(
+        () => createPlanningBundle({
+            dataDir,
+            environmentId: CORRIDOR_ENVIRONMENT_ID,
+            vehicleId: CORRIDOR_VEHICLE_ID,
+            bundleId: "missing-pin",
+        }),
+        /was not found|does not match the published revision/,
     );
 });

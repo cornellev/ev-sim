@@ -1,0 +1,124 @@
+{
+  "kind": "cev-sim.run-bundle",
+  "version": 1,
+  "resolvedHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "simulationSemanticHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "manifest": {
+    "kind": "cev-sim.run-manifest",
+    "version": 11,
+    "id": "planning-colliders",
+    "controls": {"targetVehicleId": "ego"},
+    "clock": {"stepNs": 16666667, "maxSteps": null},
+    "sensorRig": {"sensors": []},
+    "assertions": [],
+    "initialState": {
+      "vehicles": [{
+        "id": "ego",
+        "role": "ego",
+        "type": "fixture-car",
+        "pose": {
+          "position": {"x": 1.0, "y": 0.0, "z": 0.0},
+          "rotation": {"x": 0.0, "y": 0.0, "z": 0.0, "order": "XYZ"}
+        }
+      }]
+    }
+  },
+  "resolved": {
+    "kind": "cev-sim.run-manifest",
+    "version": 11,
+    "identityProfile": {"id": "world-bound", "version": 2},
+    "resolvedHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "simulationSemanticHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "manifest": {
+      "kind": "cev-sim.run-manifest",
+      "version": 11,
+      "id": "planning-colliders",
+      "controls": {"targetVehicleId": "ego"},
+      "clock": {"stepNs": 16666667, "maxSteps": null},
+      "sensorRig": {"sensors": []},
+      "assertions": [],
+      "initialState": {
+        "vehicles": [{
+          "id": "ego",
+          "role": "ego",
+          "type": "fixture-car",
+          "pose": {
+            "position": {"x": 1.0, "y": 0.0, "z": 0.0},
+            "rotation": {"x": 0.0, "y": 0.0, "z": 0.0, "order": "XYZ"}
+          }
+        }]
+      }
+    },
+    "scenario": {
+      "scenario": {
+        "routes": [{
+          "actorId": "ego",
+          "waypoints": [
+            {"kind": "start", "position": {"x": 0.0, "z": 0.0}},
+            {"kind": "finish", "position": {"x": 10.0, "z": 0.0}}
+          ],
+          "verification": {
+            "polyline": [{"x": 0.0, "z": 0.0}, {"x": 10.0, "z": 0.0}],
+            "cumulativeDistances": [0, 10],
+            "totalLength": 10
+          }
+        }],
+        "zones": [],
+        "triggers": [],
+        "completion": {"conditions": []}
+      }
+    },
+    "world": {
+      "description": {
+        "obstacles": [],
+        "assetProxies": [{
+          "id": "cone",
+          "collision": [{
+            "id": "cone/body",
+            "vertices": [
+              [8.0, 0.0, 0.0],
+              [8.5, 0.0, 0.0],
+              [8.5, 0.0, 0.5],
+              [8.0, 0.0, 0.5],
+              [8.0, 1.0, 0.0],
+              [8.5, 1.0, 0.0],
+              [8.5, 1.0, 0.5],
+              [8.0, 1.0, 0.5]
+            ]
+          }]
+        }],
+        "primitives": [{
+          "id": "primitive:crate",
+          "vertices": [
+            [10.0, 0.0, 0.0],
+            [10.5, 0.0, 0.0],
+            [10.5, 0.0, 0.5],
+            [10.0, 0.0, 0.5],
+            [10.0, 1.0, 0.0],
+            [10.5, 1.0, 0.0],
+            [10.5, 1.0, 0.5],
+            [10.0, 1.0, 0.5]
+          ]
+        }],
+        "drivableSurfaces": [{
+          "id": "road",
+          "vertices": [
+            {"x": 0.0, "z": -2.0},
+            {"x": 12.0, "z": -2.0},
+            {"x": 12.0, "z": 2.0},
+            {"x": 0.0, "z": 2.0}
+          ],
+          "indices": [0, 1, 2, 0, 2, 3]
+        }]
+      }
+    },
+    "vehicles": [{
+      "actorId": "ego",
+      "vehicleId": "fixture-car",
+      "manifest": {
+        "boundingBox": {"size": {"x": 2.0, "y": 1.0, "z": 1.0}},
+        "kinematics": {"wheelbase": 1.2, "maxSpeed": 10, "maxSteeringAngle": 0.5}
+      }
+    }]
+  }
+}

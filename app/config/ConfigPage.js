@@ -2135,7 +2135,7 @@ function Scripts({ draft, update, validation = null, sensorRegistry = sensorType
                     })}
                 />
                 <p className="text-xs text-zinc-400">
-                    Exact packageHash locks. Library revision {library.revision}. Enabling with an empty lock list does not invent packages.
+                    Library revision {library.revision}.
                 </p>
                 <div className="flex items-center justify-between gap-2">
                     <select

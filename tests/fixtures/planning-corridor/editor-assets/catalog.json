@@ -1,0 +1,19 @@
+{
+  "kind": "cev-sim.editor-asset-catalog",
+  "version": 1,
+  "revision": 1,
+  "folders": [],
+  "assets": [
+    {
+      "id": "corridor-cone",
+      "name": "Corridor cone",
+      "folderId": null,
+      "tags": [],
+      "archived": false,
+      "latestRevision": 1,
+      "thumbnails": {},
+      "createdAt": "2026-10-17T21:31:12.256Z",
+      "updatedAt": "2026-10-17T21:31:12.256Z"
+    }
+  ]
+}

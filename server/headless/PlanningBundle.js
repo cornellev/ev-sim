@@ -90,6 +90,81 @@ function obstaclePolygon(obstacle) {
     ];
 }
 
+function roundPlane(value) {
+    return Number(value.toFixed(6));
+}
+
+function planePoint(vertex) {
+    if (Array.isArray(vertex)) return { x: Number(vertex[0]), z: Number(vertex[2]) };
+    return { x: Number(vertex?.x), z: Number(vertex?.z) };
+}
+
+/** Convex hull of mesh vertices on the ground plane. Fewer than three points yields null. */
+export function convexHullXZ(vertices) {
+    const unique = [];
+    const seen = new Set();
+    for (const vertex of vertices ?? []) {
+        const point = planePoint(vertex);
+        if (!Number.isFinite(point.x) || !Number.isFinite(point.z)) continue;
+        const key = `${point.x.toFixed(6)},${point.z.toFixed(6)}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        unique.push({ x: roundPlane(point.x), z: roundPlane(point.z) });
+    }
+    unique.sort((left, right) => left.x - right.x || left.z - right.z);
+    if (unique.length < 3) return null;
+    const cross = (origin, left, right) => (
+        (left.x - origin.x) * (right.z - origin.z) - (left.z - origin.z) * (right.x - origin.x)
+    );
+    const chain = (points) => {
+        const built = [];
+        for (const point of points) {
+            while (built.length >= 2 && cross(built[built.length - 2], built[built.length - 1], point) <= 0) {
+                built.pop();
+            }
+            built.push(point);
+        }
+        return built;
+    };
+    const hull = chain(unique).slice(0, -1).concat(chain(unique.slice().reverse()).slice(0, -1));
+    return hull.length >= 3 ? hull : null;
+}
+
+/**
+ * Building and feature rings, plus the ground projection of each physics collider.
+ * Asset-proxy collision meshes and scene primitives are the same solids the physics step uses.
+ */
+export function planningObstacleFootprints(description) {
+    const footprints = [];
+    for (const obstacle of description?.obstacles ?? []) {
+        const footprint = obstaclePolygon(obstacle);
+        if (!footprint) continue;
+        footprints.push({
+            id: String(obstacle.id ?? `obstacle-${footprints.length}`),
+            footprint,
+        });
+    }
+    for (const proxy of description?.assetProxies ?? []) {
+        for (const mesh of proxy?.collision ?? []) {
+            const footprint = convexHullXZ(mesh?.vertices);
+            if (!footprint) continue;
+            footprints.push({
+                id: String(mesh?.id ?? proxy?.id ?? `proxy-${footprints.length}`),
+                footprint,
+            });
+        }
+    }
+    for (const solid of description?.primitives ?? []) {
+        const footprint = convexHullXZ(solid?.vertices);
+        if (!footprint) continue;
+        footprints.push({
+            id: String(solid?.id ?? `primitive-${footprints.length}`),
+            footprint,
+        });
+    }
+    return footprints;
+}
+
 function polygonsOverlap(left, right) {
     if (!left || !right || left.length < 3 || right.length < 3) return false;
     return left.some((point) => pointInRing(point, right))
@@ -331,10 +406,10 @@ async function resolvePlanningVehicle(live, storage, vehicleId, copyStored) {
     assertPlanningPlantLock(snapshot.manifest);
     await copyPlanningPluginPackages(live, storage, snapshot.manifest);
     if (copyStored) {
-        await storage.createVehicleManifest(snapshot.manifest);
         for (const file of snapshot.files || []) {
             await storage.putVehicleAsset(vehicleId, file.name, file.bytes);
         }
+        await storage.createVehicleManifest(snapshot.manifest);
     }
     return snapshot.manifest;
 }
@@ -382,7 +457,12 @@ export async function createPlanningBundle({
         const environment = await live.getEnvironment(selectedEnvironmentId, { full: true });
         if (!environment) throw new Error(`Environment "${selectedEnvironmentId}" was not found.`);
         if (dataDir) {
-            await storage.putEnvironment(selectedEnvironmentId, structuredClone(environment), { create: true });
+            await live.assertEditorAssetPins(environment);
+            await storage.copyVisualLayerClosure(live, environment);
+            await storage.putEnvironment(selectedEnvironmentId, structuredClone(environment), {
+                create: true,
+                trustedAssetPins: true,
+            });
         }
         const initial = source.initialState?.vehicles?.find((vehicle) => vehicle.id === "ego")
             ?? source.initialState?.vehicles?.[0];
@@ -407,7 +487,7 @@ export async function createPlanningBundle({
             finish,
         });
         let verified = await verifyDraft(storage, scenario);
-        const obstacles = createWorldResource(environment).description.obstacles ?? [];
+        const obstacles = planningObstacleFootprints(createWorldResource(environment).description);
         const clearIndex = firstClearRouteIndex(verified.verification.polyline, size, obstacles);
         if (clearIndex < 0) throw new Error("The route has no start pose clear of obstacles.");
         if (clearIndex > 0) {

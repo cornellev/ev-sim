@@ -1,0 +1,289 @@
+{
+  "roadsAuthored": true,
+  "visualLayer": {
+    "descriptorHash": "91c94e7f7fd2654da497cff03f945200f7811028503b21138c9f32a9ef99c17f",
+    "accessHash": "27742ef5a7ed47b06c8ebda31489591c29cd0e2b4ce2df11ec18a69d253b4ec8"
+  },
+  "evidence": null,
+  "document": {
+    "environmentId": "corridor",
+    "chunkSize": 20,
+    "roads": {
+      "geometryVersion": 2,
+      "nodes": [
+        {
+          "id": "a",
+          "x": 0,
+          "z": 0
+        },
+        {
+          "id": "b",
+          "x": 30,
+          "z": 0
+        }
+      ],
+      "edges": [
+        {
+          "id": "road",
+          "startNodeId": "a",
+          "endNodeId": "b",
+          "width": 8,
+          "laneCount": 1,
+          "bidirectional": true,
+          "geometry": {
+            "version": 1,
+            "kind": "polyline",
+            "knots": [
+              {
+                "id": "start"
+              },
+              {
+                "id": "end"
+              }
+            ]
+          }
+        }
+      ],
+      "turnRules": []
+    },
+    "buildings": [],
+    "features": [],
+    "earth": null,
+    "roadsAuthored": true,
+    "buildingsAuthored": false,
+    "featuresAuthored": false,
+    "geoFrame": {
+      "version": 1,
+      "projection": "wgs84-local-tangent",
+      "axes": "east-up-south",
+      "origin": {
+        "lat": 42.443,
+        "lng": -76.502,
+        "height": 0
+      }
+    },
+    "primitives": [
+      {
+        "id": "crate",
+        "shape": "box",
+        "position": {
+          "x": 12,
+          "y": 0.5,
+          "z": 2
+        },
+        "rotationY": 0,
+        "size": {
+          "x": 1.2,
+          "y": 1,
+          "z": 1.2
+        },
+        "color": "#c4a574",
+        "tags": [
+          "unknown"
+        ]
+      }
+    ],
+    "assetMetrics": {
+      "version": 1,
+      "definitions": [
+        {
+          "assetId": "corridor-cone",
+          "revision": 1,
+          "metricHash": "33f945ec680128edf12119b40090cbcd3cae78bdba6e319b365c89878737bd5a",
+          "collision": [
+            {
+              "id": "body",
+              "kind": "convex",
+              "triangles": [
+                [
+                  0,
+                  2,
+                  1
+                ],
+                [
+                  0,
+                  3,
+                  2
+                ],
+                [
+                  4,
+                  5,
+                  6
+                ],
+                [
+                  4,
+                  6,
+                  7
+                ],
+                [
+                  0,
+                  1,
+                  5
+                ],
+                [
+                  0,
+                  5,
+                  4
+                ],
+                [
+                  3,
+                  7,
+                  6
+                ],
+                [
+                  3,
+                  6,
+                  2
+                ],
+                [
+                  0,
+                  4,
+                  7
+                ],
+                [
+                  0,
+                  7,
+                  3
+                ],
+                [
+                  1,
+                  2,
+                  6
+                ],
+                [
+                  1,
+                  6,
+                  5
+                ]
+              ],
+              "vertices": [
+                [
+                  -0.2,
+                  0,
+                  -0.2
+                ],
+                [
+                  0.2,
+                  0,
+                  -0.2
+                ],
+                [
+                  0.2,
+                  0.4,
+                  -0.2
+                ],
+                [
+                  -0.2,
+                  0.4,
+                  -0.2
+                ],
+                [
+                  -0.2,
+                  0,
+                  0.2
+                ],
+                [
+                  0.2,
+                  0,
+                  0.2
+                ],
+                [
+                  0.2,
+                  0.4,
+                  0.2
+                ],
+                [
+                  -0.2,
+                  0.4,
+                  0.2
+                ]
+              ]
+            }
+          ],
+          "lidar": []
+        }
+      ]
+    },
+    "objectGraphVersion": 1,
+    "objects": [
+      {
+        "id": "skybox",
+        "typeId": "skybox",
+        "typeVersion": 1,
+        "name": "Skybox",
+        "parentId": null,
+        "order": 0,
+        "components": {
+          "tags": [],
+          "locked": false,
+          "editorHidden": false
+        }
+      },
+      {
+        "id": "cone",
+        "typeId": "asset-instance",
+        "typeVersion": 2,
+        "name": "Cone",
+        "parentId": null,
+        "order": 1,
+        "components": {
+          "tags": [],
+          "locked": false,
+          "editorHidden": false,
+          "asset": {
+            "assetId": "corridor-cone",
+            "revision": 1,
+            "position": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "rotationY": 0,
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "overrides": {}
+          }
+        }
+      },
+      {
+        "id": "road",
+        "typeId": "road",
+        "typeVersion": 1,
+        "name": "Road",
+        "parentId": null,
+        "order": 3,
+        "components": {
+          "tags": [],
+          "locked": false,
+          "editorHidden": false
+        }
+      },
+      {
+        "id": "crate",
+        "typeId": "primitive",
+        "typeVersion": 1,
+        "name": "Box",
+        "parentId": null,
+        "order": 4,
+        "components": {
+          "tags": [],
+          "locked": false,
+          "editorHidden": false
+        }
+      }
+    ]
+  },
+  "environmentId": "corridor",
+  "name": "Corridor",
+  "schemaVersion": 4,
+  "templateId": "blank",
+  "roadStylePreset": "default",
+  "revision": 3,
+  "buildingsAuthored": false,
+  "featuresAuthored": false,
+  "createdAt": "2026-10-17T21:31:12.448Z",
+  "updatedAt": "2026-10-17T21:31:12.529Z"
+}

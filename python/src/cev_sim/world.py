@@ -149,11 +149,7 @@ def load_world(bundle: BundleInput) -> PlanningWorld:
     if len(polyline) < 2 or len(distances) != len(polyline):
         raise CevSimConfigurationError("The bundle route needs a verified polyline and cumulative distances")
     description = ((resolved.get("world") or {}).get("description") or {})
-    obstacles = tuple(
-        Obstacle(id=str(entry.get("id") or f"obstacle-{index}"), footprint=_points(entry.get("footprint")))
-        for index, entry in enumerate(description.get("obstacles") or [])
-        if _points(entry.get("footprint")).size
-    )
+    obstacles = _planning_obstacles(description)
     surfaces = tuple(_surface(entry, index) for index, entry in enumerate(description.get("drivableSurfaces") or []))
     surfaces = tuple(surface for surface in surfaces if len(surface.vertices) >= 3)
     vehicle = _vehicle(resolved, manifest)
@@ -180,6 +176,70 @@ def _ego_route(scenario: dict[str, Any], manifest: dict[str, Any]) -> dict[str, 
     if routes:
         return routes[0]
     raise CevSimConfigurationError("The bundle has no ego route")
+
+
+def _planning_obstacles(description: dict[str, Any]) -> tuple[Obstacle, ...]:
+    """Buildings, features, asset-proxy collision hulls, and scene primitives."""
+    obstacles: list[Obstacle] = []
+    for index, entry in enumerate(description.get("obstacles") or []):
+        footprint = _points(entry.get("footprint"))
+        if footprint.size == 0:
+            continue
+        obstacles.append(Obstacle(id=str(entry.get("id") or f"obstacle-{index}"), footprint=footprint))
+    for proxy in description.get("assetProxies") or []:
+        for mesh in proxy.get("collision") or []:
+            hull = _convex_hull_xz(mesh.get("vertices"))
+            if len(hull) < 3:
+                continue
+            obstacles.append(Obstacle(
+                id=str(mesh.get("id") or proxy.get("id") or f"proxy-{len(obstacles)}"),
+                footprint=hull,
+            ))
+    for index, solid in enumerate(description.get("primitives") or []):
+        hull = _convex_hull_xz(solid.get("vertices"))
+        if len(hull) < 3:
+            continue
+        obstacles.append(Obstacle(id=str(solid.get("id") or f"primitive-{index}"), footprint=hull))
+    return tuple(obstacles)
+
+
+def _convex_hull_xz(vertices: Any) -> np.ndarray:
+    """Monotone-chain hull on `(x, z)`, matching `convexHullXZ` in the planning bundle."""
+    unique: list[tuple[float, float]] = []
+    seen: set[str] = set()
+    for point in vertices or []:
+        if isinstance(point, dict):
+            x = float(point.get("x", 0.0))
+            z = float(point.get("z", 0.0))
+        else:
+            x = float(point[0])
+            z = float(point[2])
+        if not np.isfinite(x) or not np.isfinite(z):
+            continue
+        key = f"{x:.6f},{z:.6f}"
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append((float(f"{x:.6f}"), float(f"{z:.6f}")))
+    unique.sort()
+    if len(unique) < 3:
+        return np.zeros((0, 2), dtype=np.float64)
+
+    def cross(origin: tuple[float, float], left: tuple[float, float], right: tuple[float, float]) -> float:
+        return (left[0] - origin[0]) * (right[1] - origin[1]) - (left[1] - origin[1]) * (right[0] - origin[0])
+
+    def chain(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
+        built: list[tuple[float, float]] = []
+        for point in points:
+            while len(built) >= 2 and cross(built[-2], built[-1], point) <= 0:
+                built.pop()
+            built.append(point)
+        return built
+
+    hull = chain(unique)[:-1] + chain(list(reversed(unique)))[:-1]
+    if len(hull) < 3:
+        return np.zeros((0, 2), dtype=np.float64)
+    return np.asarray(hull, dtype=np.float64)
 
 
 def _points(value: Any) -> np.ndarray:
