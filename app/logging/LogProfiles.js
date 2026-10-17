@@ -103,10 +103,18 @@ export const DEFAULT_TELEMETRY_PROFILE = Object.freeze({
     ],
 });
 
+const LOG_PROFILES = Object.freeze([
+    SIMULATION_RUN_SENSOR_PROFILE,
+    DEFAULT_REPLAY_PROFILE,
+    DEFAULT_TELEMETRY_PROFILE,
+]);
+
+export function listLogProfiles() {
+    return LOG_PROFILES;
+}
+
 export function builtInProfile(id) {
-    if (id === SIMULATION_RUN_SENSOR_PROFILE.id) return SIMULATION_RUN_SENSOR_PROFILE;
-    if (id === DEFAULT_TELEMETRY_PROFILE.id) return DEFAULT_TELEMETRY_PROFILE;
-    return DEFAULT_REPLAY_PROFILE;
+    return LOG_PROFILES.find((profile) => profile.id === id) ?? DEFAULT_REPLAY_PROFILE;
 }
 
 function escapeRegExp(value) {

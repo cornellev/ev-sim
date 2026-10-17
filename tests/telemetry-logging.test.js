@@ -17,7 +17,9 @@ import {
     DEFAULT_REPLAY_PROFILE,
     DEFAULT_TELEMETRY_PROFILE,
     SIMULATION_RUN_SENSOR_PROFILE,
+    builtInProfile,
     globMatches,
+    listLogProfiles,
     resolveProfileRule,
     shouldSkipHeavyAlias,
 } from "../app/logging/LogProfiles.js";
@@ -213,6 +215,17 @@ test("decodeRecordStream can skip unused payloads while extracting one path", ()
     assert.equal(decoded.checkpoints.length, 1);
     assert.deepEqual(decoded.checkpoints[0].values, {});
     assert.ok([...decoded.schemas.values()].some((schema) => schema.path === "vehicles.ego.steeringAngle"));
+});
+
+test("listLogProfiles is the built-in catalog used by profile lookup", () => {
+    const profiles = listLogProfiles();
+    assert.deepEqual(profiles.map((profile) => profile.id), [
+        SIMULATION_RUN_SENSOR_PROFILE.id,
+        DEFAULT_REPLAY_PROFILE.id,
+        DEFAULT_TELEMETRY_PROFILE.id,
+    ]);
+    for (const profile of profiles) assert.equal(builtInProfile(profile.id), profile);
+    assert.equal(builtInProfile("not-a-profile"), DEFAULT_REPLAY_PROFILE);
 });
 
 test("recording profiles use last-match precedence and lock replay-critical signals", () => {

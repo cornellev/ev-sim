@@ -54,6 +54,7 @@ import {
     validateRunManifestOnServer,
 } from "../simulation/RunManifestClient.js";
 import { getRunSessionController } from "../simulation/RunSessionController.js";
+import { listLogProfiles } from "../logging/LogProfiles.js";
 import { getBuiltInVehicleManifest } from "../vehicles/BuiltInVehicleManifests.js";
 import { getVehicleManifest, listVehicleManifests } from "../vehicles/VehicleManifestClient.js";
 import { subscribeStorageEvents } from "../client/storageEvents.js";
@@ -2509,7 +2510,28 @@ function Assertions({ draft, update }) {
 }
 
 function Logging({ draft, update }) {
-    return <div className="grid gap-4 md:grid-cols-2"><Field label="Run logging policy"><select value={draft.logging.policy} onChange={(event) => update(["logging", "policy"], event.target.value)}><option value="required">Required: reject run if unavailable</option><option value="optional">Optional: continue degraded</option><option value="disabled">Disabled</option></select></Field><Field label="Recording profile"><input value={draft.logging.profileId} onChange={(event) => update(["logging", "profileId"], event.target.value)} /></Field></div>;
+    const profiles = listLogProfiles();
+    const profileId = draft.logging.profileId;
+    const known = profiles.some((profile) => profile.id === profileId);
+    return (
+        <div className="grid gap-4 md:grid-cols-2">
+            <Field label="Run logging policy">
+                <select value={draft.logging.policy} onChange={(event) => update(["logging", "policy"], event.target.value)}>
+                    <option value="required">Required: reject run if unavailable</option>
+                    <option value="optional">Optional: continue degraded</option>
+                    <option value="disabled">Disabled</option>
+                </select>
+            </Field>
+            <Field label="Recording profile">
+                <select value={profileId} onChange={(event) => update(["logging", "profileId"], event.target.value)}>
+                    {profiles.map((profile) => (
+                        <option key={profile.id} value={profile.id}>{profile.name}</option>
+                    ))}
+                    {!known && profileId ? <option value={profileId}>{profileId}</option> : null}
+                </select>
+            </Field>
+        </div>
+    );
 }
 
 function emptyCandidateModel() {
