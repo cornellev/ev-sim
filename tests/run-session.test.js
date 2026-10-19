@@ -224,6 +224,31 @@ test("transient logging override skips recording and speed override applies imme
     assert.equal(controller._speedOverride, null);
 });
 
+test("stopping a superseded run skips finalize when the kernel was not prepared", async () => {
+    const controller = controllerFor("disabled", async () => {});
+    controller.snapshot.status = "running";
+    let finalized = false;
+    controller.data = {
+        ...controller.data,
+        simulation: () => ({
+            resolvedRun: null,
+            lifecycleState: "idle",
+            steps: 0,
+            timeNs: 0,
+            finalize() {
+                finalized = true;
+                throw new Error("Cannot finalize before preparing a managed run.");
+            },
+            stop() {},
+        }),
+    };
+
+    const result = await controller.stop({ status: "superseded" });
+    assert.equal(finalized, false);
+    assert.equal(result.status, "superseded");
+    assert.equal(controller.snapshot.status, "superseded");
+});
+
 test("external-ros realtime cases force 1x regardless of speed override", () => {
     const speeds = [];
     const controller = controllerFor("disabled", async () => {});

@@ -26,7 +26,30 @@ import { Dialog } from "radix-ui";
 import { PluginLibraryPanel } from "../../../plugin/ui/PluginLibraryPanel.js";
 import { IconButton } from "../../../ui";
 import { SettingsPane } from "./SettingsPane.js";
-import { APP_VIEWS, THREE_D_MODES } from "../../viewState";
+import { APP_VIEWS, THREE_D_MODES, workspaceAllowedDuringManagedRun } from "../../viewState";
+
+const MANAGED_RUN_LOCK_HINT = "Stop the run before opening this workspace.";
+
+const WORKSPACE_DESTINATIONS = {
+    simulation: { view: APP_VIEWS.THREE_D, threeDMode: THREE_D_MODES.SIMULATION },
+    environment: { view: APP_VIEWS.THREE_D, threeDMode: THREE_D_MODES.ENVIRONMENT },
+    vehicles: { view: APP_VIEWS.VEHICLE_EDITOR },
+    config: { view: APP_VIEWS.CONFIG },
+    scenarios: { view: APP_VIEWS.SCENARIOS },
+    experiments: { view: APP_VIEWS.EXPERIMENTS },
+    "headless-runs": { view: APP_VIEWS.HEADLESS_RUNS },
+    scripting: { view: APP_VIEWS.SCRIPTING },
+    bindings: { view: APP_VIEWS.BINDINGS },
+    replay: { view: APP_VIEWS.REPLAY },
+    analysis: { view: APP_VIEWS.ANALYSIS },
+    logs: { view: APP_VIEWS.LOGS },
+};
+
+function destinationLocked(managedRunLocked, key, active) {
+    if (!managedRunLocked || active) return false;
+    const destination = WORKSPACE_DESTINATIONS[key];
+    return !workspaceAllowedDuringManagedRun(destination?.view, destination?.threeDMode ?? null);
+}
 
 const ICON_PROPS = { size: 16, stroke: 1.75 };
 
@@ -62,6 +85,7 @@ export default function Menu({
     onAnalysis,
     marketplaceAvailable = false,
     onMarketplace,
+    managedRunLocked = false,
     onClose,
     instant = false,
 }) {
@@ -145,14 +169,16 @@ export default function Menu({
                             {railSections(marketplaceAvailable).map((section) => {
                                 const Icon = section.icon;
                                 if (section.destination) {
+                                    const marketplaceLocked = managedRunLocked && !marketplaceActive;
                                     return (
                                         <IconButton
                                             key={section.id}
                                             ref={marketplaceActive ? selectedRef : undefined}
-                                            label={section.label}
-                                            tooltip={section.label}
+                                            label={marketplaceLocked ? MANAGED_RUN_LOCK_HINT : section.label}
+                                            tooltip={marketplaceLocked ? MANAGED_RUN_LOCK_HINT : section.label}
                                             className="sf-workspace-menu__rail-destination"
                                             aria-current={marketplaceActive ? "page" : undefined}
+                                            disabled={marketplaceLocked}
                                             onClick={() => marketplaceActive ? onClose?.() : onMarketplace?.()}
                                         >
                                             <Icon {...ICON_PROPS} aria-hidden="true" />
@@ -176,7 +202,7 @@ export default function Menu({
                             })}
                         </nav>
                         <div className="sf-workspace-menu__pane">
-                            {pane === "plugins" ? <PluginLibraryPanel onOpenMarketplace={marketplaceAvailable ? () => {
+                            {pane === "plugins" ? <PluginLibraryPanel onOpenMarketplace={marketplaceAvailable && !managedRunLocked ? () => {
                                 onClose?.();
                                 onMarketplace?.();
                             } : null} /> : pane === "settings" ? <SettingsPane /> : (
@@ -187,6 +213,7 @@ export default function Menu({
                                             <div className="sf-workspace-menu__items">
                                                 {section.items.map((item) => {
                                                     const Icon = item.icon || IconCube;
+                                                    const locked = destinationLocked(managedRunLocked, item.key, item.active);
                                                     return (
                                                         <button
                                                             key={item.key}
@@ -195,12 +222,13 @@ export default function Menu({
                                                             className="sf-workspace-menu__item"
                                                             data-active={item.active || undefined}
                                                             aria-current={item.active ? "page" : undefined}
+                                                            disabled={locked}
                                                             onClick={() => item.active ? onClose?.() : item.onSelect?.()}
                                                         >
                                                             <Icon className="sf-workspace-menu__icon" {...ICON_PROPS} aria-hidden="true" />
                                                             <span className="sf-workspace-menu__copy">
                                                                 <span className="sf-workspace-menu__label">{item.label}</span>
-                                                                <span className="sf-workspace-menu__hint">{item.hint}</span>
+                                                                <span className="sf-workspace-menu__hint">{locked ? MANAGED_RUN_LOCK_HINT : item.hint}</span>
                                                             </span>
                                                         </button>
                                                     );

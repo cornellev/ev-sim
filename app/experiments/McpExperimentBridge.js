@@ -36,7 +36,7 @@ export default function McpExperimentBridge({ onOpenWorkspace }) {
         const requestId = event.requestId || `${event.action}:${event.at}`;
         runMcpCommandOnce(requestId, async () => {
             try {
-                if (event.data?.openWorkspace !== false) onOpenWorkspace?.();
+                if (event.data?.openWorkspace !== false) onOpenWorkspace?.(null, { force: true });
                 const snapshot = controller.getSnapshot();
                 const requestedResultId = event.data?.resultId || null;
                 const activeResultId = snapshot.result?.id || null;

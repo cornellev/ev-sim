@@ -1827,13 +1827,18 @@ html[data-perspective-view="idle"] #canvas-container canvas {
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .sf-workspace-menu__item:not([data-active]):hover {
+  .sf-workspace-menu__item:not([data-active]):not(:disabled):hover {
     background: var(--slate-surface-2);
     color: var(--slate-fg);
   }
 }
 
-.sf-workspace-menu__item:active {
+.sf-workspace-menu__item:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.sf-workspace-menu__item:active:not(:disabled) {
   transform: scale(0.99);
 }
 

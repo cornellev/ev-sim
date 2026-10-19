@@ -508,6 +508,8 @@ test("run finalization records scenario semantics and finalized log id", async (
     const simulation = {
         steps: 4,
         timeNs: 2_000_000_000,
+        resolvedRun: { manifest: { id: "manifest-1" } },
+        lifecycleState: "prepared",
         finalize({ status }) {
             finalizedStatus = status;
             return {

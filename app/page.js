@@ -19,7 +19,7 @@ import { getMarketplaceStatus } from './marketplace/MarketplaceClient';
 import McpExperimentBridge from './experiments/McpExperimentBridge';
 import { getExperimentRunController } from './experiments/ExperimentRunController';
 import Menu from './3d/overlay/menu/Menu';
-import { APP_VIEWS, THREE_D_MODES } from './3d/viewState';
+import { APP_VIEWS, THREE_D_MODES, managedRunBlocksNavigation, workspaceAllowedDuringManagedRun } from './3d/viewState';
 import {
     getActiveEnvironmentId,
     listEnvironments,
@@ -97,6 +97,7 @@ function HomeContent() {
     const [experimentNavigation, setExperimentNavigation] = useState(null);
     const [marketplaceAvailable, setMarketplaceAvailable] = useState(false);
     const [marketplaceReloadRequired, setMarketplaceReloadRequired] = useState(null);
+    const [managedRunLocked, setManagedRunLocked] = useState(false);
     const perspectiveActive = usePerspectiveViewActive();
 
     useEffect(() => {
@@ -138,6 +139,11 @@ function HomeContent() {
         setExperimentExecutionActive(snapshot.status === "running");
     }), []);
 
+    useEffect(() => getRunSessionController().subscribe((snapshot) => {
+        const locked = managedRunBlocksNavigation(snapshot);
+        setManagedRunLocked((current) => current === locked ? current : locked);
+    }), []);
+
     useEffect(() => {
         const workspace = view === APP_VIEWS.THREE_D ? threeDMode : view;
         getTelemetryTabBridge().setContext({ workspace, environmentId: activeEnvironmentId });
@@ -152,18 +158,21 @@ function HomeContent() {
         setMenuVisible(true);
     }, []);
 
-    const requestWorkspace = useCallback((action) => {
+    const requestWorkspace = useCallback((action, { view: destinationView, threeDMode: destinationMode = null, force = false } = {}) => {
+        if (!force && managedRunLocked && !workspaceAllowedDuringManagedRun(destinationView, destinationMode)) {
+            return false;
+        }
         const changedImmediately = requestNavigation(action);
         if (!changedImmediately) setMenuVisible(false);
         return changedImmediately;
-    }, [requestNavigation]);
+    }, [managedRunLocked, requestNavigation]);
 
     const goToSimulation = useCallback(() => {
         requestWorkspace(() => {
             setView(APP_VIEWS.THREE_D);
             setThreeDMode(THREE_D_MODES.SIMULATION);
             setMenuVisible(false);
-        });
+        }, { view: APP_VIEWS.THREE_D, threeDMode: THREE_D_MODES.SIMULATION });
     }, [requestWorkspace]);
 
     const goToEnvironmentEditor = useCallback(() => {
@@ -171,21 +180,21 @@ function HomeContent() {
             setView(APP_VIEWS.THREE_D);
             setThreeDMode(THREE_D_MODES.ENVIRONMENT);
             setMenuVisible(false);
-        });
+        }, { view: APP_VIEWS.THREE_D, threeDMode: THREE_D_MODES.ENVIRONMENT });
     }, [requestWorkspace]);
 
     const goToScripting = useCallback(() => {
         requestWorkspace(() => {
             setView(APP_VIEWS.SCRIPTING);
             setMenuVisible(false);
-        });
+        }, { view: APP_VIEWS.SCRIPTING });
     }, [requestWorkspace]);
 
     const goToBindings = useCallback(() => {
         requestWorkspace(() => {
             setView(APP_VIEWS.BINDINGS);
             setMenuVisible(false);
-        });
+        }, { view: APP_VIEWS.BINDINGS });
     }, [requestWorkspace]);
 
     const goToReplay = useCallback((logId = null) => {
@@ -193,14 +202,14 @@ function HomeContent() {
             if (typeof logId === "string") setSelectedLogId(logId);
             setView(APP_VIEWS.REPLAY);
             setMenuVisible(false);
-        });
+        }, { view: APP_VIEWS.REPLAY });
     }, [requestWorkspace]);
 
     const goToLogs = useCallback(() => {
         requestWorkspace(() => {
             setView(APP_VIEWS.LOGS);
             setMenuVisible(false);
-        });
+        }, { view: APP_VIEWS.LOGS });
     }, [requestWorkspace]);
 
     const goToAnalysis = useCallback((logId = null) => {
@@ -208,7 +217,7 @@ function HomeContent() {
             if (typeof logId === "string") setSelectedLogId(logId);
             setView(APP_VIEWS.ANALYSIS);
             setMenuVisible(false);
-        });
+        }, { view: APP_VIEWS.ANALYSIS });
     }, [requestWorkspace]);
 
     const goToConfig = useCallback((manifestId = null) => {
@@ -216,30 +225,30 @@ function HomeContent() {
             setConfigInitialManifestId(typeof manifestId === "string" ? manifestId : null);
             setView(APP_VIEWS.CONFIG);
             setMenuVisible(false);
-        });
+        }, { view: APP_VIEWS.CONFIG });
     }, [requestWorkspace]);
 
     const goToVehicleEditor = useCallback(() => {
         requestWorkspace(() => {
             setView(APP_VIEWS.VEHICLE_EDITOR);
             setMenuVisible(false);
-        });
+        }, { view: APP_VIEWS.VEHICLE_EDITOR });
     }, [requestWorkspace]);
 
     const goToScenarios = useCallback(() => {
         requestWorkspace(() => {
             setView(APP_VIEWS.SCENARIOS);
             setMenuVisible(false);
-        });
+        }, { view: APP_VIEWS.SCENARIOS });
     }, [requestWorkspace]);
 
-    const goToExperiments = useCallback((target = null) => {
+    const goToExperiments = useCallback((target = null, { force = false } = {}) => {
         requestWorkspace(() => {
             setExperimentNavigation(target && typeof target === "object" ? target : null);
             setView(APP_VIEWS.EXPERIMENTS);
             setThreeDMode(THREE_D_MODES.SIMULATION);
             setMenuVisible(false);
-        });
+        }, { view: APP_VIEWS.EXPERIMENTS, threeDMode: THREE_D_MODES.SIMULATION, force });
     }, [requestWorkspace]);
 
     const goToHeadlessRuns = useCallback((suiteId = null) => {
@@ -248,7 +257,7 @@ function HomeContent() {
             setView(APP_VIEWS.HEADLESS_RUNS);
             setThreeDMode(THREE_D_MODES.SIMULATION);
             setMenuVisible(false);
-        });
+        }, { view: APP_VIEWS.HEADLESS_RUNS });
     }, [requestWorkspace]);
 
     const goToMarketplace = useCallback(() => {
@@ -256,7 +265,7 @@ function HomeContent() {
         requestWorkspace(() => {
             setView(APP_VIEWS.MARKETPLACE);
             setMenuVisible(false);
-        });
+        }, { view: APP_VIEWS.MARKETPLACE });
     }, [marketplaceAvailable, requestWorkspace]);
 
     const updateExperimentDiagnosticsViewport = useCallback((nextViewport) => {
@@ -290,7 +299,7 @@ function HomeContent() {
             setView(APP_VIEWS.THREE_D);
             setThreeDMode(THREE_D_MODES.ENVIRONMENT);
             setMenuVisible(false);
-        });
+        }, { view: APP_VIEWS.THREE_D, threeDMode: THREE_D_MODES.ENVIRONMENT });
     }, [requestWorkspace, selectEnvironment]);
 
     useEffect(() => getRunSessionController().setEnvironmentHandler(selectEnvironment), [selectEnvironment]);
@@ -389,6 +398,7 @@ function HomeContent() {
                     onAnalysis={goToAnalysis}
                     marketplaceAvailable={marketplaceAvailable}
                     onMarketplace={goToMarketplace}
+                    managedRunLocked={managedRunLocked}
                     instant={menuSource === "keyboard"}
                 />
             )

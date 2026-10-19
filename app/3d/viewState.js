@@ -87,3 +87,24 @@ export function parseWorkspaceKey(workspaceKey) {
 
     return { view: APP_VIEWS.SCRIPTING, threeDMode: null };
 }
+
+const OPEN_MANAGED_RUN_STATUSES = new Set(["preparing", "ready", "running", "paused"]);
+
+/**
+ * True while a managed run is still open. Stopped, completed, failed, and idle
+ * sessions leave the workspace switcher alone.
+ * @param {{ activeRunId?: string | null, status?: string } | null | undefined} snapshot
+ */
+export function managedRunBlocksNavigation(snapshot) {
+    return Boolean(snapshot?.activeRunId) && OPEN_MANAGED_RUN_STATUSES.has(snapshot.status);
+}
+
+/**
+ * Simulation and the inspect workspaces leave a prepared run in place.
+ * @param {AppView} view
+ * @param {ThreeDMode | null} [threeDMode]
+ */
+export function workspaceAllowedDuringManagedRun(view, threeDMode = null) {
+    if (view === APP_VIEWS.THREE_D) return threeDMode === THREE_D_MODES.SIMULATION;
+    return view === APP_VIEWS.REPLAY || view === APP_VIEWS.ANALYSIS || view === APP_VIEWS.LOGS;
+}

@@ -304,7 +304,8 @@ export class RunSessionController {
 
     async stop({ status = "stopped" } = {}) {
         const simulation = this.data?.simulation?.();
-        const kernelFinalization = simulation?.finalize?.({ status }) ?? null;
+        const canFinalize = Boolean(simulation?.resolvedRun) && simulation.lifecycleState !== "disposed";
+        const kernelFinalization = canFinalize ? simulation.finalize({ status }) : null;
         const finalized = kernelFinalization
             ? {
                 results: kernelFinalization.assertions || [],
