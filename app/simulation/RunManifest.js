@@ -26,6 +26,7 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 import { assertRunIdentityCounters } from "./kernel/RunIdentity.js";
 import { canonicalStringify } from "./canonicalJson.js";
 import { canonicalNumericTree } from "./kernel/SimulationHashes.js";
+import { observationProfileChoices } from "./headless/ProfileRegistry.js";
 import { renderSceneProviderRegistry } from "./render/RenderSceneProviderRegistry.js";
 import { normalizePbrRenderRecipe } from "./render/PbrRenderScene.js";
 import { normalizePluginSelection } from "../plugin/PluginSelection.js";
@@ -625,6 +626,23 @@ export function createDefaultRunManifest(overrides = {}) {
     return normalizeRunManifest({ ...base, ...overrides }, { allowMissingKind: true });
 }
 
+const PUBLISHED_OBSERVATION_PROFILE_IDS = new Set([
+    "planning-oracle",
+    "planning-occupancy",
+    "sensor-occupancy",
+    "measured-perception",
+]);
+
+function canonicalObservationProfile(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const id = String(value.id || "").trim();
+    const version = Number(value.version);
+    const configHash = String(value.configHash || value.config_hash || "").trim().toLowerCase();
+    if (!id || !Number.isInteger(version) || version < 1) return null;
+    if (id === "measured-state" && version === 1) return null;
+    return { id, version, configHash };
+}
+
 export function normalizeRunManifest(value, {
     allowMissingKind = false,
     sensorRegistry = sensorTypeRegistry,
@@ -688,6 +706,7 @@ export function normalizeRunManifest(value, {
         { sensorRegistry },
     );
     const scenario = scenarioSelection(source.scenario);
+    const observationProfile = canonicalObservationProfile(source.observationProfile);
     const controlsSource = {
         ...object(source.controls),
         authority: source.controls?.authority
@@ -718,6 +737,7 @@ export function normalizeRunManifest(value, {
             modules: { ...DEFAULT_MODULES, ...object(clock.modules) },
         },
         sensorRig,
+        ...(observationProfile ? { observationProfile } : {}),
         scripts: {
             enabled: scripts.enabled !== false,
             artifacts: (Array.isArray(scripts.artifacts) ? scripts.artifacts : []).map((entry) => ({
@@ -892,6 +912,24 @@ export function validateRunManifest(value, {
             issues.push({ path: `provenance.candidateModels.${index}`, message: `Duplicate candidate model identity "${model.role}/${model.modelId}".` });
         }
         modelKeys.add(key);
+    }
+    if (manifest.observationProfile) {
+        const profile = manifest.observationProfile;
+        if (!PUBLISHED_OBSERVATION_PROFILE_IDS.has(profile.id)) {
+            issues.push({ path: "observationProfile.id", message: `Observation profile "${profile.id}" is not a published preset.` });
+        }
+        if (!SHA256_HEX_PATTERN.test(profile.configHash || "")) {
+            issues.push({ path: "observationProfile.configHash", message: "Observation profile config hash must be a 64-character SHA-256 hex string." });
+        } else {
+            const known = observationProfileChoices().find((choice) => choice.id === profile.id && choice.version === profile.version);
+            if (known && known.configHash !== profile.configHash) {
+                issues.push({ path: "observationProfile.configHash", message: `Observation profile ${profile.id}@${profile.version} does not match its published config hash.` });
+            }
+        }
+        const hasLidar = (manifest.sensorRig?.sensors || []).some((sensor) => sensor.enabled !== false && sensor.type === "lidar3d");
+        if (profile.id === "sensor-occupancy" && !hasLidar) {
+            issues.push({ path: "sensorRig.sensors", message: "Sensor occupancy requires an enabled lidar3d sensor." });
+        }
     }
     return { ok: issues.length === 0, manifest, issues };
 }

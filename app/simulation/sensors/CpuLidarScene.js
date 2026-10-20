@@ -87,6 +87,16 @@ function vehicleMatrix(vehicle) {
     return new Matrix4().compose(position, quaternion, new Vector3(1, 1, 1));
 }
 
+export function lidarSensorWorldPose(vehicle, pose) {
+    const matrix = sensorMatrix(vehicle, pose);
+    const origin = new Vector3().setFromMatrixPosition(matrix);
+    const quaternion = new Quaternion().setFromRotationMatrix(matrix);
+    return {
+        origin: { x: origin.x, y: origin.y, z: origin.z },
+        quaternion: { x: quaternion.x, y: quaternion.y, z: quaternion.z, w: quaternion.w },
+    };
+}
+
 function sensorMatrix(vehicle, pose) {
     const converted = rep103PoseToThree(pose);
     const local = new Matrix4().compose(

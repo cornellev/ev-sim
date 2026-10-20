@@ -81,6 +81,15 @@ as 0 and obstacle or off-road cells as 1.
 poses and footprints, and `oracle/goal`. The default profile remains
 `measured-state` and still excludes oracle pose.
 
+`planning-occupancy@1` keeps those tensors and adds a 1000 by 1000 costmap at
+5 cm (`oracle/occupancy`, `oracle/occupancy/origin`,
+`oracle/occupancy/resolution`). `env.occupancy()` returns an `OccupancyGrid`.
+`inflate_occupancy` expands blocked cells in Python. `sensor-occupancy@1`
+adds `oracle/sensor-occupancy`, with 0 unknown, 1 free, and 2 occupied.
+`env.sensor_occupancy()` returns a `SensorOccupancyGrid`. That profile needs
+an enabled lidar. `configure(..., view="sensor-occupancy", sensors="all")`
+builds one. The default `configure` view remains `"planning"`.
+
 ```python
 from cev_sim import (
     PLANNING_ORACLE_OBSERVATION_PROFILE,
@@ -139,7 +148,8 @@ with cev_sim.launch(config) as sim:
 | `goal` | `None` | `(x, z)` or `(x, z, yaw)`. `None` is a free drive. |
 | `goal_tolerance_m` | `1.0` | Success radius when `goal` is set. |
 | `max_steps` | `0` | Policy-step limit. `0` does not truncate. |
-| `view` | `"planning"` | `"planning"` selects `planning-oracle@1`. `"measured"` selects `measured-state`. |
+| `view` | `"planning"` | `"planning"` selects `planning-oracle@1`. `"measured"` selects `measured-state`. `"occupancy"` selects `planning-occupancy@1`. `"sensor-occupancy"` selects `sensor-occupancy@1` and requires `sensors="all"`. |
+| `sensors` | `"state"` | `"state"` keeps state sensors. `"all"` keeps the saved rig, including lidar. |
 | `logging` | `False` | `False` discards artifacts. A directory path keeps an evaluation log. |
 | `data_dir` | `CEV_SIM_DATA_DIR`, then checkout `server/data` | Saved environment and vehicle store. Omitted when only built-ins exist. |
 
@@ -168,6 +178,8 @@ truncated. It does not step. `sim.clock.steps()` is the simulation step,
 one simulation step. `sim.pose()`, `sim.velocity()`, `sim.steering()`, and
 `sim.goal()` copy the latest planning-oracle values. `goal()` is the route end
 during a free drive. Those four readers require the planning view.
+`sim.occupancy()` requires `planning-occupancy` or `sensor-occupancy`.
+`sim.sensor_occupancy()` requires `sensor-occupancy`.
 
 ## Gymnasium environment
 
@@ -281,7 +293,8 @@ is retained in `info["cev_sim.final_result"]`.
 ## Reference
 
 The client discovers capabilities using protocol 1.2 and negotiates up to 1.5.
-Supervisors at protocol 1.5 advertise `planning-oracle@1`. Older supervisors
+A protocol 1.5 supervisor advertises `planning-oracle@1`,
+`planning-occupancy@1`, and `sensor-occupancy@1`. Supervisors below 1.5
 remain usable for measured-state and measured-perception. Start and goal
 overrides are sent only after the negotiated minor is at least 5.
 The client validates runtime name, profile schemas, backend versions, space layouts,

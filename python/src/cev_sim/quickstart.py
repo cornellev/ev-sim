@@ -24,7 +24,9 @@ import numpy as np
 from .bundles import create_bundle
 from .config import (
     DEFAULT_OBSERVATION_PROFILE,
+    PLANNING_OCCUPANCY_OBSERVATION_PROFILE,
     PLANNING_ORACLE_OBSERVATION_PROFILE,
+    SENSOR_OCCUPANCY_OBSERVATION_PROFILE,
     ArtifactPolicy,
     EpisodeConfig,
 )
@@ -35,6 +37,8 @@ from .world import PlanningWorld, load_world, yaw_from_direction
 _VIEWS = {
     "planning": PLANNING_ORACLE_OBSERVATION_PROFILE,
     "measured": DEFAULT_OBSERVATION_PROFILE,
+    "occupancy": PLANNING_OCCUPANCY_OBSERVATION_PROFILE,
+    "sensor-occupancy": SENSOR_OCCUPANCY_OBSERVATION_PROFILE,
 }
 
 
@@ -107,6 +111,7 @@ def configure(
     goal_tolerance_m: float = 1.0,
     max_steps: int = 0,
     view: str = "planning",
+    sensors: str = "state",
     logging: str | Path | bool = False,
     data_dir: str | Path | None = None,
 ) -> RunConfig:
@@ -114,13 +119,21 @@ def configure(
 
     ``goal=None`` does not add a finish line. Pass ``goal=(x, z)`` to stop
     when the car gets that close. ``start=(x, z)`` faces the car along the
-    nearest route segment. ``logging=False`` discards artifacts.
+    nearest route segment.     ``logging=False`` discards artifacts.
     ``logging="runs/name"`` keeps an evaluation log there.
+    ``view="occupancy"`` publishes the 5 cm costmap. ``view="sensor-occupancy"``
+    also publishes the latest lidar grid and requires ``sensors="all"``.
     """
     environment_id = _identifier(environment, "environment")
     vehicle_id = None if vehicle is None else _identifier(vehicle, "vehicle")
     if view not in _VIEWS:
-        raise CevSimConfigurationError('view must be "planning" or "measured"')
+        raise CevSimConfigurationError(
+            'view must be "planning", "measured", "occupancy", or "sensor-occupancy"'
+        )
+    if sensors not in {"state", "all"}:
+        raise CevSimConfigurationError('sensors must be "state" or "all"')
+    if view == "sensor-occupancy" and sensors != "all":
+        raise CevSimConfigurationError('view "sensor-occupancy" requires sensors="all"')
     if type(max_steps) is not int or max_steps < 0:
         raise CevSimConfigurationError("max_steps must be a non-negative integer")
     if isinstance(goal_tolerance_m, bool) or not isinstance(goal_tolerance_m, (int, float)):
@@ -140,6 +153,7 @@ def configure(
             vehicle=vehicle_id,
             data_dir=resolved_data,
             finish="none",
+            sensors=sensors,
         )
         world = load_world(bundle_path)
     except Exception:

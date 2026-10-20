@@ -298,6 +298,34 @@ class CevSimEnv(gym.Env[dict[str, np.ndarray[Any, Any]], np.ndarray[Any, Any]]):
         """
         return self._oracle("oracle/goal", 3)
 
+    def occupancy(self) -> Any:
+        """Latest oracle costmap. 0 is drivable and clear; 1 is blocked."""
+        from .world import OccupancyGrid
+
+        cells = np.asarray(self._profile_tensor("oracle/occupancy"), dtype=np.uint8)
+        origin = self._profile_tensor("oracle/occupancy/origin").reshape(2)
+        resolution = self._profile_tensor("oracle/occupancy/resolution").reshape(1)
+        return OccupancyGrid(
+            cells=cells,
+            origin_x=float(origin[0]),
+            origin_z=float(origin[1]),
+            resolution_m=float(resolution[0]),
+        )
+
+    def sensor_occupancy(self) -> Any:
+        """Latest lidar grid. 0 is unknown, 1 is free, and 2 is occupied."""
+        from .world import SensorOccupancyGrid
+
+        cells = np.asarray(self._profile_tensor("oracle/sensor-occupancy"), dtype=np.uint8)
+        origin = self._profile_tensor("oracle/sensor-occupancy/origin").reshape(2)
+        resolution = self._profile_tensor("oracle/occupancy/resolution").reshape(1)
+        return SensorOccupancyGrid(
+            cells=cells,
+            origin_x=float(origin[0]),
+            origin_z=float(origin[1]),
+            resolution_m=float(resolution[0]),
+        )
+
     def set_overlay(self, path: Any) -> None:
         """Store a planned path, as an (N, 2) array of (x, z) points, for render()."""
         self._overlay_path = None if path is None else np.asarray(path, dtype=np.float64)
@@ -316,6 +344,16 @@ class CevSimEnv(gym.Env[dict[str, np.ndarray[Any, Any]], np.ndarray[Any, Any]]):
         self.clock.update(info)
         if self.render_mode == "human":
             self.render()
+
+    def _profile_tensor(self, key: str) -> np.ndarray[Any, Any]:
+        if self._closed or self._batch is None:
+            raise CevSimConfigurationError("Environment is closed")
+        if self._last_observation is None:
+            raise CevSimConfigurationError("reset() before reading the observation")
+        value = self._last_observation.get(key)
+        if value is None:
+            raise CevSimConfigurationError(f"{key} is not in this observation profile")
+        return np.array(value, copy=True)
 
     def _oracle(self, key: str, length: int) -> np.ndarray[Any, Any]:
         if self._closed or self._batch is None:

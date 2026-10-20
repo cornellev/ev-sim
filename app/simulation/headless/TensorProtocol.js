@@ -34,8 +34,12 @@ function elementCount(shape) {
 
 export function packTensor(dtype, shape, values) {
     const spec = tensorSpec(dtype, shape);
-    const entries = Array.from(values ?? []);
     const count = elementCount(spec.shape);
+    if (spec.dtype === 4 && values instanceof Uint8Array) {
+        if (values.length !== count) throw new RangeError(`Tensor requires ${count} values, received ${values.length}.`);
+        return { spec, payload: { packedData: new Uint8Array(values) } };
+    }
+    const entries = Array.from(values ?? []);
     if (entries.length !== count) throw new RangeError(`Tensor requires ${count} values, received ${entries.length}.`);
     const packedData = new Uint8Array(count * TYPE_BYTES[spec.dtype]);
     const view = new DataView(packedData.buffer);

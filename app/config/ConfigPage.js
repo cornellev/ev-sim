@@ -23,6 +23,7 @@ import {
     ORACLE_PRODUCT_TOGGLES,
     sensorTypeRegistry,
 } from "../3d/devices/SensorTypeRegistry.js";
+import { observationProfileChoices } from "../simulation/headless/ProfileRegistry.js";
 import {
     applyManifestOracleProduct,
     CONTROL_AUTHORITY_MODES,
@@ -111,7 +112,7 @@ import {
 import { radToDeg } from "three/src/math/MathUtils.js";
 import { degToRad } from "../util/Math.js";
 
-const TABS = ["Overview", "Scenario", "Initial State", "Clock", "Controls", "Sensors", "Scripts", "Topics", "Assertions", "Logging", "Provenance", "JSON"];
+const TABS = ["Overview", "Scenario", "Initial State", "Clock", "Controls", "Sensors", "Observation", "Scripts", "Topics", "Assertions", "Logging", "Provenance", "JSON"];
 const CANDIDATE_MODEL_ROLE_OPTIONS = [
     "perception",
     "localization",
@@ -171,6 +172,7 @@ function parseInputValue(value) {
 }
 
 function validationIssueLocation(path = "") {
+    if (path.startsWith("observationProfile")) return "Observation";
     if (path.startsWith("sensorRig")) return "Sensors";
     if (path.startsWith("topics")) return "Topics";
     if (path.startsWith("scenario")) return "Scenario";
@@ -857,6 +859,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                                                 vehicleCatalog={vehicleCatalog}
                                             />
                                         )}
+                                        {item === "Observation" && <Observation draft={draft} update={update} />}
                                         {item === "Scripts" && (
                                             <Scripts
                                                 draft={draft}
@@ -1234,6 +1237,47 @@ function InitialState({ draft, update, vehicleCatalog = [] }) {
                     <VectorFields label="Linear velocity (m/s)" value={vehicle.linearVelocity} onChange={(axis, value) => update(["initialState", "vehicles", index, "linearVelocity", axis], value)} />
                 </div>
             )}
+        </div>
+    );
+}
+
+function Observation({ draft, update }) {
+    const choices = observationProfileChoices();
+    const selectedId = draft.observationProfile?.id || "measured-state";
+    const selected = choices.find((choice) => choice.id === selectedId) || choices[0];
+    const hasLidar = (draft.sensorRig?.sensors || []).some((sensor) => sensor.enabled !== false && sensor.type === "lidar3d");
+    const choose = (id) => {
+        if (id === "measured-state") {
+            update(["observationProfile"], null);
+            return;
+        }
+        const choice = choices.find((entry) => entry.id === id);
+        if (!choice) return;
+        update(["observationProfile"], { id: choice.id, version: choice.version, configHash: choice.configHash });
+    };
+    return (
+        <div className="space-y-5">
+            <Field label="Observation profile">
+                <select value={selected.id} onChange={(event) => choose(event.target.value)}>
+                    {choices.map((choice) => (
+                        <option key={choice.id} value={choice.id} disabled={choice.requiresLidar && !hasLidar}>
+                            {choice.label}
+                        </option>
+                    ))}
+                </select>
+            </Field>
+            <p className="text-[13px] text-[var(--slate-fg-2)]">{selected.detail}</p>
+            {selected.requiresLidar && !hasLidar && (
+                <p className="text-[13px] text-[var(--slate-fg-2)]">Add an enabled lidar on the Sensors tab to use this profile.</p>
+            )}
+            {selected.resolutionM ? (
+                <div className="grid gap-4 md:grid-cols-4">
+                    <Field label="Resolution (m)"><input readOnly value={selected.resolutionM} /></Field>
+                    <Field label="Cells"><input readOnly value={selected.cells} /></Field>
+                    <Field label="Window (m)"><input readOnly value={selected.cells * selected.resolutionM} /></Field>
+                    <Field label="Config hash"><input readOnly value={selected.configHash} /></Field>
+                </div>
+            ) : null}
         </div>
     );
 }

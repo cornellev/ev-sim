@@ -19,11 +19,18 @@ import {
     PlanningOracleObservationBuilder,
     planningActorIds,
 } from "./PlanningOracleObservation.js";
+import {
+    createPlanningOccupancyObservationSpace,
+    createSensorOccupancyObservationSpace,
+    PlanningOccupancyObservationBuilder,
+} from "./PlanningOccupancyObservation.js";
 import { assertStartPoseClear, goalReached } from "./EpisodeOverrides.js";
 import { canonicalEpisodeOverrides } from "../kernel/SimulationHashes.js";
 import {
     MEASURED_PERCEPTION_PROFILE_ID,
+    PLANNING_OCCUPANCY_PROFILE_ID,
     PLANNING_ORACLE_PROFILE_ID,
+    SENSOR_OCCUPANCY_PROFILE_ID,
     measuredStateProfileRef,
     resolveObservationProfile,
     resolveRewardProfile,
@@ -96,6 +103,16 @@ function compareBackends(left, right) {
     return left.kind - right.kind || compareUtf8(left.capabilityId, right.capabilityId);
 }
 
+function manifestObservationProfile(resolvedRun) {
+    const profile = resolvedRun?.manifest?.observationProfile;
+    if (!profile?.id) return null;
+    return {
+        id: String(profile.id),
+        version: Number(profile.version),
+        configHash: String(profile.configHash || profile.config_hash || ""),
+    };
+}
+
 export function normalizeEpisodeSpec(resolvedRun, spec = {}) {
     const requestsLidar = resolvedRun.manifest.sensorRig?.sensors?.some(
         (sensor) => sensor.enabled !== false && sensor.type === "lidar3d",
@@ -140,7 +157,10 @@ export function normalizeEpisodeSpec(resolvedRun, spec = {}) {
         resetSeed: String(spec.resetSeed ?? spec.reset_seed ?? resolvedRun.manifest.seed ?? "0"),
         actionRepeat: Number(spec.actionRepeat ?? spec.action_repeat ?? 1),
         maxEpisodeSteps: String(spec.maxEpisodeSteps ?? spec.max_episode_steps ?? "0"),
-        observationProfile: spec.observationProfile || spec.observation_profile || measuredStateProfileRef(),
+        observationProfile: spec.observationProfile
+            || spec.observation_profile
+            || manifestObservationProfile(resolvedRun)
+            || measuredStateProfileRef(),
         rewardProfile: spec.rewardProfile || spec.reward_profile || routeSafetyProfileRef(),
         backendSelections: backends,
         overrides: canonicalEpisodeOverrides(spec.overrides),
@@ -251,6 +271,8 @@ export class HeadlessEpisode {
             throw new HeadlessEpisodeError("INVALID_REQUEST", "reset_seed must be a uint64 value.");
         }
         const observationConfig = resolveObservationProfile(spec.observationProfile);
+        const planningOccupancy = spec.observationProfile.id === PLANNING_OCCUPANCY_PROFILE_ID;
+        const sensorOccupancy = spec.observationProfile.id === SENSOR_OCCUPANCY_PROFILE_ID;
         const planningOracle = spec.observationProfile.id === PLANNING_ORACLE_PROFILE_ID;
         const measuredPerception = spec.observationProfile.id === MEASURED_PERCEPTION_PROFILE_ID;
         const rewardConfig = resolveRewardProfile(spec.rewardProfile);
@@ -413,15 +435,36 @@ export class HeadlessEpisode {
                 "measured-perception requires at least one measured RGB camera or measured LiDAR point-cloud product.",
             );
         }
+        if (sensorOccupancy && !enabledSensors.some((sensor) => sensor.type === "lidar3d")) {
+            throw new HeadlessEpisodeError(
+                "BUNDLE_INVALID",
+                "sensor-occupancy requires an enabled lidar3d sensor.",
+            );
+        }
+        const actorCount = planningActorIds(resolvedRun).length;
         const spaces = {
             actionSpace: ACTION_SPACE,
-            observationSpace: planningOracle
-                ? createPlanningOracleObservationSpace(descriptors, planningActorIds(resolvedRun))
-                : measuredPerception
-                    ? createMeasuredPerceptionObservationSpace(descriptors, perceptionDescriptors)
-                    : createMeasuredStateObservationSpace(descriptors),
+            observationSpace: sensorOccupancy
+                ? createSensorOccupancyObservationSpace(descriptors, actorCount)
+                : planningOccupancy
+                    ? createPlanningOccupancyObservationSpace(descriptors, actorCount)
+                    : planningOracle
+                        ? createPlanningOracleObservationSpace(descriptors, actorCount)
+                        : measuredPerception
+                            ? createMeasuredPerceptionObservationSpace(descriptors, perceptionDescriptors)
+                            : createMeasuredStateObservationSpace(descriptors),
         };
-        return { spec, rewardConfig, route, spaces, observationConfig, measuredPerception, planningOracle };
+        return {
+            spec,
+            rewardConfig,
+            route,
+            spaces,
+            observationConfig,
+            measuredPerception,
+            planningOracle,
+            planningOccupancy,
+            sensorOccupancy,
+        };
     }
 
     async prepare(resolvedRun, episodeSpec = {}) {
@@ -430,6 +473,7 @@ export class HeadlessEpisode {
             episode: prepared.spec,
             requireStateSensors: true,
             perceptionObservations: prepared.measuredPerception,
+            sensorOccupancy: prepared.sensorOccupancy,
         });
         this.resolvedRun = this.kernel.resolvedRun;
         this.episodeSpec = prepared.spec;
@@ -437,11 +481,17 @@ export class HeadlessEpisode {
         this.route = prepared.route;
         this.spaces = prepared.spaces;
         const vehicleSource = () => this.runtime.vehicles;
-        this.observationBuilder = prepared.planningOracle
-            ? new PlanningOracleObservationBuilder(this.runtime.devices, this.route, vehicleSource, resolvedRun)
-            : prepared.measuredPerception
-                ? new MeasuredPerceptionObservationBuilder(this.runtime.devices, this.route, vehicleSource)
-                : new MeasuredStateObservationBuilder(this.runtime.devices, this.route, vehicleSource);
+        const occupancy = prepared.planningOccupancy || prepared.sensorOccupancy;
+        this.observationBuilder = occupancy
+            ? new PlanningOccupancyObservationBuilder(this.runtime.devices, this.route, vehicleSource, resolvedRun, {
+                sensorOccupancy: prepared.sensorOccupancy,
+                getOverlayObstacles: () => this.kernel.context.episodeOverlay?.toObstacles?.() ?? [],
+            })
+            : prepared.planningOracle
+                ? new PlanningOracleObservationBuilder(this.runtime.devices, this.route, vehicleSource, resolvedRun)
+                : prepared.measuredPerception
+                    ? new MeasuredPerceptionObservationBuilder(this.runtime.devices, this.route, vehicleSource)
+                    : new MeasuredStateObservationBuilder(this.runtime.devices, this.route, vehicleSource);
         this.lifecycleState = "prepared";
         return {
             episodeHash: this.kernel.episodeHash,

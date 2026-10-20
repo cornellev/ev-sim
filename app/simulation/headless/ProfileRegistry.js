@@ -1,3 +1,4 @@
+import { OCCUPANCY_CELLS, OCCUPANCY_RESOLUTION_M } from "../occupancy/constants.js";
 import { simulationSha256 } from "../kernel/SimulationHashes.js";
 import { HeadlessEpisodeError } from "./HeadlessErrors.js";
 
@@ -9,6 +10,10 @@ export const ROUTE_SAFETY_PROFILE_ID = "route-safety";
 export const ROUTE_SAFETY_PROFILE_VERSION = 1;
 export const PLANNING_ORACLE_PROFILE_ID = "planning-oracle";
 export const PLANNING_ORACLE_PROFILE_VERSION = 1;
+export const PLANNING_OCCUPANCY_PROFILE_ID = "planning-occupancy";
+export const PLANNING_OCCUPANCY_PROFILE_VERSION = 1;
+export const SENSOR_OCCUPANCY_PROFILE_ID = "sensor-occupancy";
+export const SENSOR_OCCUPANCY_PROFILE_VERSION = 1;
 
 export const MEASURED_STATE_CONFIG = Object.freeze({
     kind: "cev-sim.observation-profile-config",
@@ -52,6 +57,57 @@ export const PLANNING_ORACLE_SCHEMA_HASH = simulationSha256({
         "oracle/goal",
         "oracle/goal/validity",
         "task/{value,validity,sequence,is_new,age_steps}",
+    ],
+});
+
+const ORACLE_SCHEMA_FIELDS = Object.freeze([
+    "sensors/*/{value,validity,sequence,is_new,age_steps}",
+    "oracle/ego/{pose,velocity,steering}",
+    "oracle/actors/{pose,footprint,validity}",
+    "oracle/goal",
+    "oracle/goal/validity",
+    "task/{value,validity,sequence,is_new,age_steps}",
+]);
+
+export const PLANNING_OCCUPANCY_CONFIG = Object.freeze({
+    kind: "cev-sim.observation-profile-config",
+    version: 1,
+    state: "planning-oracle@1",
+    occupancy: "world-xz-costmap-v1",
+    resolutionM: OCCUPANCY_RESOLUTION_M,
+    cells: OCCUPANCY_CELLS,
+});
+export const PLANNING_OCCUPANCY_CONFIG_HASH = simulationSha256(PLANNING_OCCUPANCY_CONFIG);
+export const PLANNING_OCCUPANCY_SCHEMA_HASH = simulationSha256({
+    id: PLANNING_OCCUPANCY_PROFILE_ID,
+    version: PLANNING_OCCUPANCY_PROFILE_VERSION,
+    fields: [
+        ...ORACLE_SCHEMA_FIELDS,
+        "oracle/occupancy",
+        "oracle/occupancy/origin",
+        "oracle/occupancy/resolution",
+    ],
+});
+
+export const SENSOR_OCCUPANCY_CONFIG = Object.freeze({
+    kind: "cev-sim.observation-profile-config",
+    version: 1,
+    state: "planning-occupancy@1",
+    sensorOccupancy: "latest-lidar-azimuth-v1",
+    resolutionM: OCCUPANCY_RESOLUTION_M,
+    cells: OCCUPANCY_CELLS,
+});
+export const SENSOR_OCCUPANCY_CONFIG_HASH = simulationSha256(SENSOR_OCCUPANCY_CONFIG);
+export const SENSOR_OCCUPANCY_SCHEMA_HASH = simulationSha256({
+    id: SENSOR_OCCUPANCY_PROFILE_ID,
+    version: SENSOR_OCCUPANCY_PROFILE_VERSION,
+    fields: [
+        ...ORACLE_SCHEMA_FIELDS,
+        "oracle/occupancy",
+        "oracle/occupancy/origin",
+        "oracle/occupancy/resolution",
+        "oracle/sensor-occupancy",
+        "oracle/sensor-occupancy/origin",
     ],
 });
 
@@ -115,6 +171,55 @@ export function planningOracleProfileRef() {
     return { id: PLANNING_ORACLE_PROFILE_ID, version: 1, configHash: PLANNING_ORACLE_CONFIG_HASH };
 }
 
+export function planningOccupancyProfileRef() {
+    return { id: PLANNING_OCCUPANCY_PROFILE_ID, version: 1, configHash: PLANNING_OCCUPANCY_CONFIG_HASH };
+}
+
+export function sensorOccupancyProfileRef() {
+    return { id: SENSOR_OCCUPANCY_PROFILE_ID, version: 1, configHash: SENSOR_OCCUPANCY_CONFIG_HASH };
+}
+
+export function observationProfileChoices() {
+    return [
+        {
+            id: MEASURED_STATE_PROFILE_ID,
+            version: 1,
+            configHash: MEASURED_STATE_CONFIG_HASH,
+            label: "Measured state",
+            detail: "Default Gym observation. No occupancy grid.",
+            requiresLidar: false,
+        },
+        {
+            id: PLANNING_ORACLE_PROFILE_ID,
+            version: 1,
+            configHash: PLANNING_ORACLE_CONFIG_HASH,
+            label: "Planning oracle",
+            detail: "Oracle pose, actors, and goal. No occupancy grid.",
+            requiresLidar: false,
+        },
+        {
+            id: PLANNING_OCCUPANCY_PROFILE_ID,
+            version: 1,
+            configHash: PLANNING_OCCUPANCY_CONFIG_HASH,
+            label: "Planning occupancy",
+            detail: `${OCCUPANCY_CELLS}×${OCCUPANCY_CELLS} at 5 cm, 50 m window`,
+            requiresLidar: false,
+            resolutionM: OCCUPANCY_RESOLUTION_M,
+            cells: OCCUPANCY_CELLS,
+        },
+        {
+            id: SENSOR_OCCUPANCY_PROFILE_ID,
+            version: 1,
+            configHash: SENSOR_OCCUPANCY_CONFIG_HASH,
+            label: "Sensor occupancy",
+            detail: `Planning occupancy plus the latest lidar scan, ${OCCUPANCY_CELLS}×${OCCUPANCY_CELLS} at 5 cm`,
+            requiresLidar: true,
+            resolutionM: OCCUPANCY_RESOLUTION_M,
+            cells: OCCUPANCY_CELLS,
+        },
+    ];
+}
+
 export function routeSafetyProfileRef(config = DEFAULT_ROUTE_SAFETY_CONFIG) {
     const preset = ROUTE_SAFETY_PRESETS.find((entry) => (
         entry.config.terminateOnCollision === Boolean(config.terminateOnCollision)
@@ -140,6 +245,12 @@ export function resolveObservationProfile(ref) {
     if (actual.id === PLANNING_ORACLE_PROFILE_ID
         && actual.version === PLANNING_ORACLE_PROFILE_VERSION
         && actual.configHash === PLANNING_ORACLE_CONFIG_HASH) return PLANNING_ORACLE_CONFIG;
+    if (actual.id === PLANNING_OCCUPANCY_PROFILE_ID
+        && actual.version === PLANNING_OCCUPANCY_PROFILE_VERSION
+        && actual.configHash === PLANNING_OCCUPANCY_CONFIG_HASH) return PLANNING_OCCUPANCY_CONFIG;
+    if (actual.id === SENSOR_OCCUPANCY_PROFILE_ID
+        && actual.version === SENSOR_OCCUPANCY_PROFILE_VERSION
+        && actual.configHash === SENSOR_OCCUPANCY_CONFIG_HASH) return SENSOR_OCCUPANCY_CONFIG;
     throw new HeadlessEpisodeError("UNSUPPORTED_CAPABILITY", `Unsupported observation profile ${actual.id}@${actual.version} (${actual.configHash}).`);
 }
 
@@ -159,6 +270,8 @@ export function getHeadlessProfileCapabilities() {
             { id: MEASURED_STATE_PROFILE_ID, version: 1, description: "Measured state sensors and route task signals.", configSchemaHash: MEASURED_STATE_SCHEMA_HASH },
             { id: MEASURED_PERCEPTION_PROFILE_ID, version: 1, description: "Measured state, RGB camera, and range/incidence LiDAR tensors.", configSchemaHash: MEASURED_PERCEPTION_SCHEMA_HASH },
             { id: PLANNING_ORACLE_PROFILE_ID, version: 1, description: "Measured state plus explicit ground-truth ego, actor, and goal tensors for planner testing.", configSchemaHash: PLANNING_ORACLE_SCHEMA_HASH },
+            { id: PLANNING_OCCUPANCY_PROFILE_ID, version: 1, description: "Planning oracle plus a 1000 by 1000 world costmap at 5 cm.", configSchemaHash: PLANNING_OCCUPANCY_SCHEMA_HASH },
+            { id: SENSOR_OCCUPANCY_PROFILE_ID, version: 1, description: "Planning occupancy plus the latest delivered lidar occupancy grid.", configSchemaHash: SENSOR_OCCUPANCY_SCHEMA_HASH },
         ],
         rewardProfiles: [{ id: ROUTE_SAFETY_PROFILE_ID, version: 1, description: "Route progress, completion, safety, and optional smoothness.", configSchemaHash: ROUTE_SAFETY_SCHEMA_HASH }],
     };

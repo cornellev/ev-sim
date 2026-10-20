@@ -345,6 +345,7 @@ export class SimulationKernel {
         episode = null,
         requireStateSensors = false,
         perceptionObservations = false,
+        sensorOccupancy = false,
         episodePhase = "start",
     } = {}) {
         if (!resolved?.manifest) throw new Error("Resolved run manifest is required.");
@@ -493,6 +494,10 @@ export class SimulationKernel {
                 renderScene: this.resolvedRun.renderScene ?? null,
                 renderRuntime,
                 perceptionObservations,
+                sensorOccupancy,
+                vehicleBoxes: Object.fromEntries((this.resolvedRun.vehicles || [])
+                    .filter((entry) => entry?.actorId && entry.manifest?.boundingBox)
+                    .map((entry) => [entry.actorId, entry.manifest.boundingBox])),
                 sensorAdmission,
                 pluginSession: candidatePluginSession,
                 nativePacketSink: this.context.devices.nativePacketSink?.() ?? null,

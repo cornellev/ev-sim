@@ -6,6 +6,7 @@ import { buildCameraInfo, buildImageMessage } from "./SensorMessages.js";
 import { compareUtf8 } from "../world/WorldDescription.js";
 import { assertGpuSensorBackendSelection } from "./GpuSensorBackend.js";
 import { buildLidarCapture } from "./LidarProducts.js";
+import { reduceLidarOccupancy } from "../occupancy/reduceLidarOccupancy.js";
 
 function clone(value) {
     return cloneJson(value);
@@ -41,7 +42,9 @@ class HeadlessGpuSensorDevice {
         this.enabled = config.enabled !== false;
         this.gpuCapture = true;
         this.perceptionObservations = publisherOptions.perceptionObservations === true;
+        this.sensorOccupancy = publisherOptions.sensorOccupancy === true;
         this.latestObservation = null;
+        this.latestOccupancyCells = null;
         this.deliveryGeneration = 0;
         this.contractPublisher = new SensorPublisher(this, this.config, publisherOptions);
     }
@@ -163,6 +166,9 @@ class HeadlessGpuSensorDevice {
                 : new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4);
         }
         if (this.type === "lidar3d") {
+            const occupancyCells = this.sensorOccupancy && raw instanceof Float32Array
+                ? reduceLidarOccupancy(this, raw, this.manager.vehicles()) || []
+                : null;
             const result = buildLidarCapture({
                 buffer: raw,
                 config: this.config,
@@ -171,6 +177,7 @@ class HeadlessGpuSensorDevice {
                 publisher: this.contractPublisher,
                 includeObservation: this.perceptionObservations,
             });
+            if (occupancyCells) result.occupancyCells = occupancyCells;
             if (rendered.observation) result.observation = rendered.observation;
             if (rendered.rawSharedMemory) {
                 await this.manager.rendererClient.releaseSharedTensor?.(rendered.rawSharedMemory);
@@ -484,6 +491,10 @@ class HeadlessGpuSensorDevice {
         };
     }
 
+    onDeliveredOccupancy(cells) {
+        this.latestOccupancyCells = cells;
+    }
+
     releaseObservation(observation) {
         if (!observation?.sharedMemory) return;
         const pending = this.manager.rendererClient.releaseSharedTensor?.(observation.sharedMemory);
@@ -612,6 +623,10 @@ export class HeadlessGpuSensorManager {
         }
         this.scene = this.renderScene || this.lidarGeometry;
         this.seed = String(options.seed ?? "0");
+        this.vehicleBoxes = options.vehicleBoxes || {};
+        this.sensorWorldPose = options.sensorOccupancy
+            ? (await import("./CpuLidarScene.js")).lidarSensorWorldPose
+            : null;
         this.transformRuntime = options.transformRuntime ?? null;
         const ids = new Set();
         const vehicleIds = new Set(this.vehicles().map((vehicle) => vehicle.telemetryId || vehicle.id));
@@ -628,6 +643,7 @@ export class HeadlessGpuSensorManager {
                 stepNs: options.stepNs,
                 runtimeData: this.runtimeData,
                 perceptionObservations: options.perceptionObservations,
+                sensorOccupancy: options.sensorOccupancy,
                 encodeTopicValue: messageCodec.encodeTopicValue,
                 nowNs: () => 0,
             });
@@ -707,7 +723,9 @@ export class HeadlessGpuSensorManager {
                 for (const { entry, result } of staged) {
                     const checkpoint = entry.publisher.queueCheckpoint();
                     entry.publisher._acceptCapture(result, entry.context, 0);
-                    const hasPayload = (result?.messages?.length || 0) > 0 || Boolean(result?.observation);
+                    const hasPayload = (result?.messages?.length || 0) > 0
+                        || Boolean(result?.observation)
+                        || Array.isArray(result?.occupancyCells);
                     if (hasPayload && entry.publisher.queueCheckpoint() === checkpoint) rejected = true;
                 }
                 if (rejected) {
@@ -733,6 +751,7 @@ export class HeadlessGpuSensorManager {
             device.releaseObservation(device.latestObservation);
             device.contractPublisher.reset({ resetSeed: this.seed });
             device.latestObservation = null;
+            device.latestOccupancyCells = null;
             device.deliveryGeneration = 0;
         }
         return this.getDeterministicState();

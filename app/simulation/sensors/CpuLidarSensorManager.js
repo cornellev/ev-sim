@@ -4,6 +4,7 @@ import { compareUtf8 } from "../world/WorldDescription.js";
 import { assertLidarGeometryResource } from "../lidar/LidarGeometry.js";
 import { assertCpuLidarBackendSelection } from "./CpuLidarBackend.js";
 import { buildLidarCapture } from "./LidarProducts.js";
+import { reduceLidarOccupancy } from "../occupancy/reduceLidarOccupancy.js";
 
 function clone(value) {
     return cloneJson(value);
@@ -19,7 +20,9 @@ class HeadlessCpuLidarDevice {
         this.enabled = config.enabled !== false;
         this.gpuCapture = false;
         this.perceptionObservations = publisherOptions.perceptionObservations === true;
+        this.sensorOccupancy = publisherOptions.sensorOccupancy === true;
         this.latestObservation = null;
+        this.latestOccupancyCells = null;
         this.deliveryGeneration = 0;
         this.contractPublisher = new SensorPublisher(this, this.config, publisherOptions);
     }
@@ -41,7 +44,10 @@ class HeadlessCpuLidarDevice {
             return [];
         }
         const buffer = this.manager.scene.capture(this.config, vehicles);
-        return buildLidarCapture({
+        const occupancyCells = this.sensorOccupancy
+            ? reduceLidarOccupancy(this, buffer, vehicles) || []
+            : null;
+        const result = buildLidarCapture({
             buffer,
             config: this.config,
             captureTimeNs: context.captureTimeNs,
@@ -49,6 +55,12 @@ class HeadlessCpuLidarDevice {
             publisher: this.contractPublisher,
             includeObservation: this.perceptionObservations,
         });
+        if (occupancyCells) result.occupancyCells = occupancyCells;
+        return result;
+    }
+
+    onDeliveredOccupancy(cells) {
+        this.latestOccupancyCells = cells;
     }
 
     onDeliveredObservation(observation, metadata) {
@@ -138,8 +150,10 @@ export class HeadlessCpuLidarSensorManager {
         for (const [type, definition] of Object.entries(options.schemas ?? {})) {
             messageCodec.registerMsgDefinition(type, definition);
         }
-        const { CpuLidarScene } = await import("./CpuLidarScene.js");
+        const { CpuLidarScene, lidarSensorWorldPose } = await import("./CpuLidarScene.js");
         this.scene = new CpuLidarScene(options.lidarGeometry);
+        this.vehicleBoxes = options.vehicleBoxes || {};
+        this.sensorWorldPose = lidarSensorWorldPose;
         const ids = new Set();
         const vehicleIds = new Set(this.vehicles().map((vehicle) => vehicle.telemetryId || vehicle.id));
         this.devices = configs.map((config) => {
@@ -156,6 +170,7 @@ export class HeadlessCpuLidarSensorManager {
                 stepNs: options.stepNs,
                 runtimeData: this.runtimeData,
                 perceptionObservations: options.perceptionObservations,
+                sensorOccupancy: options.sensorOccupancy,
                 encodeTopicValue: messageCodec.encodeTopicValue,
                 // Capture timing is diagnostic only and must not perturb deterministic state.
                 nowNs: () => 0,
@@ -184,6 +199,7 @@ export class HeadlessCpuLidarSensorManager {
         }
         for (const device of this.devices) {
             device.latestObservation = null;
+            device.latestOccupancyCells = null;
             device.deliveryGeneration = 0;
             device.contractPublisher.reset({ resetSeed: this.seed });
         }

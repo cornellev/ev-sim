@@ -27,6 +27,9 @@ from .config import (
     MEASURED_STATE_PROFILE_VERSION,
     MEASURED_STATE_SCHEMA_HASH,
     MIN_PROTOCOL_MINOR,
+    PLANNING_OCCUPANCY_PROFILE,
+    PLANNING_OCCUPANCY_PROFILE_VERSION,
+    PLANNING_OCCUPANCY_SCHEMA_HASH,
     PLANNING_ORACLE_PROFILE,
     PLANNING_ORACLE_PROFILE_VERSION,
     PLANNING_ORACLE_SCHEMA_HASH,
@@ -36,6 +39,9 @@ from .config import (
     ROUTE_SAFETY_PROFILE_VERSION,
     ROUTE_SAFETY_SCHEMA_HASH,
     ROUTED_GPU_SENSOR_BACKEND,
+    SENSOR_OCCUPANCY_PROFILE,
+    SENSOR_OCCUPANCY_PROFILE_VERSION,
+    SENSOR_OCCUPANCY_SCHEMA_HASH,
     STATE_SENSOR_CAPABILITY,
     STATE_SENSOR_KIND,
     STATE_SENSOR_VERSION,
@@ -546,7 +552,19 @@ class SupervisorClient:
                         PLANNING_ORACLE_PROFILE_VERSION,
                         PLANNING_ORACLE_SCHEMA_HASH,
                         capabilities.observation_profiles,
-                    )
+                    ),
+                    (
+                        PLANNING_OCCUPANCY_PROFILE,
+                        PLANNING_OCCUPANCY_PROFILE_VERSION,
+                        PLANNING_OCCUPANCY_SCHEMA_HASH,
+                        capabilities.observation_profiles,
+                    ),
+                    (
+                        SENSOR_OCCUPANCY_PROFILE,
+                        SENSOR_OCCUPANCY_PROFILE_VERSION,
+                        SENSOR_OCCUPANCY_SCHEMA_HASH,
+                        capabilities.observation_profiles,
+                    ),
                 ]
                 if protocol.minor >= 5
                 else []

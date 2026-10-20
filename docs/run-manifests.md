@@ -382,7 +382,15 @@ GNSS treats map/odom position as ENU offset from the manifest datum. Wheel odome
 
 PR 5 leaves `cev-sim.run-manifest` version 9, `cev-sim.run-bundle` version 1,
 and Protobuf v1 unchanged. Episode-local profile presets are selected only by
-`ProfileRef { id, version, config_hash }`:
+`ProfileRef { id, version, config_hash }`. A run manifest may store
+`observationProfile` for `planning-oracle@1`, `planning-occupancy@1`,
+`sensor-occupancy@1`, or `measured-perception@1`. The field is omitted for
+`measured-state@1`, so unchanged manifests keep their canonical bytes.
+Headless prepare uses that manifest profile when the episode spec does not
+set one. An explicit episode profile wins. The Run Configuration
+Observation tab edits the preset. `planning-occupancy@1` is a 1000 by 1000
+world costmap at 5 cm. `sensor-occupancy@1` adds the latest lidar grid and
+requires an enabled `lidar3d`.
 
 The state-sensor backend is kind `STATE_SENSOR`, capability
 `deterministic-state-sensors`, version `1`, with config hash

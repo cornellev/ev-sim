@@ -59,6 +59,30 @@ class VehicleModel:
 
 
 @dataclass(frozen=True)
+class SensorOccupancyGrid:
+    """Latest lidar grid. 0 is unknown, 1 is free, and 2 is occupied.
+
+    This is not an :class:`OccupancyGrid`: there, 1 means blocked.
+    """
+
+    cells: np.ndarray
+    origin_x: float
+    origin_z: float
+    resolution_m: float
+
+    def world_to_grid(self, x: float, z: float) -> tuple[int, int]:
+        column = int(np.floor((float(x) - self.origin_x) / self.resolution_m))
+        row = int(np.floor((float(z) - self.origin_z) / self.resolution_m))
+        return row, column
+
+    def grid_to_world(self, row: int, col: int) -> tuple[float, float]:
+        return (
+            self.origin_x + (int(col) + 0.5) * self.resolution_m,
+            self.origin_z + (int(row) + 0.5) * self.resolution_m,
+        )
+
+
+@dataclass(frozen=True)
 class OccupancyGrid:
     """`cells` is uint8 with shape `(rows, cols)`. 0 is drivable and free; 1 is blocked."""
 
@@ -78,6 +102,35 @@ def world_to_grid(grid: OccupancyGrid, x: float, z: float) -> tuple[int, int]:
     column = int(np.floor((float(x) - grid.origin_x) / grid.resolution_m))
     row = int(np.floor((float(z) - grid.origin_z) / grid.resolution_m))
     return row, column
+
+
+def inflate_occupancy(grid: OccupancyGrid, inflate_m: float) -> OccupancyGrid:
+    """Mark cells within ``inflate_m`` of a blocked cell as blocked."""
+    if isinstance(inflate_m, bool) or not isinstance(inflate_m, (int, float)) or inflate_m < 0:
+        raise CevSimConfigurationError("inflate_m must be non-negative")
+    if inflate_m == 0:
+        return grid
+    radius = int(np.ceil(float(inflate_m) / grid.resolution_m))
+    cells = np.array(grid.cells, copy=True)
+    blocked = np.argwhere(cells != 0)
+    rows, cols = cells.shape
+    radius_sq = float(inflate_m) ** 2
+    for row, col in blocked:
+        r0 = max(0, int(row) - radius)
+        r1 = min(rows, int(row) + radius + 1)
+        c0 = max(0, int(col) - radius)
+        c1 = min(cols, int(col) + radius + 1)
+        for next_row in range(r0, r1):
+            for next_col in range(c0, c1):
+                distance_sq = ((next_row - row) ** 2 + (next_col - col) ** 2) * grid.resolution_m ** 2
+                if distance_sq <= radius_sq:
+                    cells[next_row, next_col] = 1
+    return OccupancyGrid(
+        cells=cells,
+        origin_x=grid.origin_x,
+        origin_z=grid.origin_z,
+        resolution_m=grid.resolution_m,
+    )
 
 
 def grid_to_world(grid: OccupancyGrid, row: int, col: int) -> tuple[float, float]:

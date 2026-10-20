@@ -8,6 +8,8 @@ headless, visual-layer, environment-editor, plugin, or marketplace programs.
 Python remains a client. It does not grow a second simulation kernel.
 `measured-state` stays the default observation and keeps its hashes. Oracle
 pose is available only through the explicit `planning-oracle@1` profile.
+`planning-occupancy@1` and `sensor-occupancy@1` add the 5 cm grids and do not
+change the earlier profile hashes.
 
 State save/restore, so the simulator can be cloned as an MPC rollout model,
 is out of scope and tracked as a later item.
@@ -29,6 +31,10 @@ is out of scope and tracked as a later item.
 | PLN-10: start clearance uses physics colliders | Complete | `tests/headless-planning-bundle.test.js`; example bundles unchanged |
 | PLN-11: Python occupancy reads those footprints | Complete | `npm run test:python` |
 | PLN-12: saved corridor through `create_bundle` | Complete | `python/tests/test_planning_corridor.py` |
+| PLN-13: oracle occupancy kernel | Complete | `tests/occupancy-oracle.test.js` |
+| PLN-14: `planning-occupancy@1` | Complete | `tests/occupancy-episode.test.js` |
+| PLN-15: Python `occupancy()` | Complete | `python/tests/test_occupancy.py` |
+| PLN-16: `sensor-occupancy@1` | Complete | `tests/occupancy-episode.test.js` |
 
 ## Locked decisions
 
@@ -264,6 +270,19 @@ and copies the installed packages into the temporary store before resolve. A
 dynamics plant selected on that vehicle is stepped by the existing headless
 worker. Plugin-free vehicles stay on `world-bound@2`. The Protobuf contract
 and `measured-state` hashes are unchanged.
+
+### 2026-10-19 — PLN-13 through PLN-16
+
+`planning-occupancy@1` publishes `oracle/occupancy` as uint8
+`[1000, 1000]` at 0.05 m, plus origin and resolution. 0 is drivable and
+clear; 1 is blocked. The window is centered on the ego and snapped to the
+grid. `sensor-occupancy@1` adds `oracle/sensor-occupancy`, where 0 is
+unknown, 1 is free, and 2 is occupied. It is reduced from the raw lidar
+range image at capture and applied when that frame is delivered.
+`measured-state@1`, `measured-perception@1`, and `planning-oracle@1` keep
+their hashes. Run manifests omit `observationProfile` when it is
+`measured-state@1`, so existing definition hashes stay put. The Run
+Configuration Observation tab selects one published preset.
 
 ### 2026-10-17 — PLN-09 through PLN-12
 

@@ -26,6 +26,7 @@ export function normalizeCaptureResult(captured, captureTimeNs, sampleIndex) {
         sampleIndex: Number.isFinite(captured.sampleIndex) ? captured.sampleIndex : sampleIndex,
         rng: captured.rng,
         observation: captured.observation ?? null,
+        occupancyCells: Array.isArray(captured.occupancyCells) ? captured.occupancyCells : null,
     };
 }
 
@@ -235,6 +236,7 @@ export class SensorPublisher {
             frame.messages = null;
             frame.nativePackets = null;
             frame.observation = null;
+            frame.occupancyCells = null;
             frame.encodedByTopic = null;
         }
         this.queue = keep;
@@ -265,7 +267,7 @@ export class SensorPublisher {
         const captureDurationNs = Math.max(0, this._time() - captureStartNs);
         this.health.captureTimeNs = captureDurationNs;
         this.health.captureTimeTotalNs += captureDurationNs;
-        if (result.messages.length > 0 || result.nativePackets.length > 0 || result.observation) {
+        if (result.messages.length > 0 || result.nativePackets.length > 0 || result.observation || result.occupancyCells) {
             this.health.capturedFrames += 1;
             return this.enqueue(
                 result.messages,
@@ -274,7 +276,7 @@ export class SensorPublisher {
                 result.rng || context.rng,
                 result.observation,
                 result.nativePackets,
-                { allowOwnershipTransfer },
+                { allowOwnershipTransfer, occupancyCells: result.occupancyCells },
             );
         }
         return null;
@@ -334,6 +336,7 @@ export class SensorPublisher {
 
     enqueue(messages, captureTimeNs, sampleIndex, rng, observation = null, nativePackets = [], {
         allowOwnershipTransfer = false,
+        occupancyCells = null,
     } = {}) {
         const stepNs = this.stepNs || this.manifestStepNs || 16_666_667;
         const delivery = resolveSensorDelivery(this.config, captureTimeNs, rng, stepNs);
@@ -400,6 +403,7 @@ export class SensorPublisher {
             messages: frameMessages,
             nativePackets: nativePackets.map((packet) => ({ ...packet, payload: new Uint8Array(packet.payload) })),
             observation,
+            occupancyCells: Array.isArray(occupancyCells) ? occupancyCells : null,
             encodedByTopic: new Map(),
             encodeReady: false,
             encodeFailed: false,
@@ -512,6 +516,7 @@ export class SensorPublisher {
                 frame.messages = null;
                 frame.nativePackets = null;
                 frame.observation = null;
+                frame.occupancyCells = null;
                 frame.encodedByTopic = null;
                 continue;
             }
@@ -541,10 +546,20 @@ export class SensorPublisher {
                     sequence: frame.sequence,
                 });
             }
+            if (Array.isArray(frame.occupancyCells)) {
+                this.device.onDeliveredOccupancy?.(frame.occupancyCells, {
+                    captureTimeNs: frame.captureTimeNs,
+                    captureStep: frame.captureStep,
+                    deliveryTimeNs: frame.deliveryTimeNs,
+                    deliveryStep: clock.step,
+                    sequence: frame.sequence,
+                });
+            }
             // Drop frame references immediately after delivery so Image/PointCloud buffers can GC.
             frame.messages = null;
             frame.nativePackets = null;
             frame.observation = null;
+            frame.occupancyCells = null;
             frame.encodedByTopic?.clear?.();
             frame.encodedByTopic = null;
         }
