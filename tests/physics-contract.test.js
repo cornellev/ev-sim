@@ -91,7 +91,7 @@ test("vehicle dynamics rejects unknown models, stray physical fields, and a plug
     );
 });
 
-test("the plant factory accepts dynamic-bicycle and refuses to integrate it", () => {
+test("the plant factory accepts dynamic-bicycle and takes one flat step", () => {
     const manifest = normalizeVehicleManifest({
         id: "dyno",
         dynamics: { model: DYNAMIC_BICYCLE_MODEL },
@@ -100,7 +100,16 @@ test("the plant factory accepts dynamic-bicycle and refuses to integrate it", ()
     assert.equal(definition.motionModel, "dynamic-bicycle");
     assert.equal(definition.version, 1);
     assert.deepEqual(definition.dynamics, manifest.dynamics);
-    assert.throws(() => new KinematicVehiclePlant(definition), /not available yet/);
+    assert.deepEqual(definition.axle, { lf: 0.75, lr: 0.75 });
+    const plant = new KinematicVehiclePlant(definition);
+    plant.update(0.01);
+    assert.equal(plant.velocity.x, 0);
+    assert.equal(plant.position.x, 0);
+    assert.equal(plant.lateralVelocity, 0);
+    assert.equal(plant.yawRate, 0);
+    assert.equal("lateralVelocity" in plant.getDeterministicState(), true);
+    const kinematic = new KinematicVehiclePlant(createVehiclePlantDefinition({ type: "big-car" }));
+    assert.equal("lateralVelocity" in kinematic.getDeterministicState(), false);
     assert.throws(
         () => createVehiclePlantDefinition({}, null, { motionModel: "dynamic-bicycle" }),
         /requires manifest\.dynamics\.model/,

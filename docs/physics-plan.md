@@ -32,7 +32,7 @@ This program does not take that layer.
 | Milestone | Implementation | Verification |
 | --- | --- | --- |
 | PHY-01: contracts | Complete | `tests/physics-contract.test.js`; characterization delta empty |
-| PHY-02: dynamic bicycle plant and controls | Pending | slope, straight, step-steer, and friction-circle tests; kinematic tape unchanged |
+| PHY-02: dynamic bicycle plant and controls | Complete | `tests/dynamic-bicycle.test.js`; obstacle clamp in `tests/oriented-vehicle-collision.test.js`; kinematic tape unchanged |
 | PHY-03: sensors and a second characterization tape | Pending | IMU and wheel-odometry consumers; do not overwrite `characterization.v1.json` |
 
 ## What is modeled
@@ -174,10 +174,10 @@ it is.
 set. A plugin plant replaces the built-in model. The built-in model is not
 implemented as a plugin.
 
-New authoring runs default to `dynamic-bicycle` only once PHY-02 lands.
-Existing documents, received bundles, and `characterization.v1.json` stay on
-the kinematic bicycle. PHY-03 adds a second characterization tape and does not
-overwrite the first.
+New editor vehicles and URDF imports use `dynamic-bicycle`.
+`createBlankVehicleManifest()`, built-in vehicles, existing documents, received
+bundles, and `characterization.v1.json` stay on the kinematic bicycle. PHY-03
+adds a second characterization tape and does not overwrite the first.
 
 ## Locked decisions
 
@@ -208,7 +208,7 @@ wheel spin, four-wheel rays, and Rapier drive contact are out of this program.
 PHY-01 runs `tests/physics-contract.test.js`, `npm run lint`, `npm test`, and
 `npm run fixtures:headless` with an empty fixture delta.
 
-PHY-02 adds plant sanity tests and keeps the kinematic characterization match.
+PHY-02 runs `tests/dynamic-bicycle.test.js` and keeps the kinematic characterization match.
 
 PHY-03 runs browser/headless plant parity at the existing `1e-9` tolerance and
 writes a second characterization tape.
@@ -228,3 +228,14 @@ with the dynamic model is rejected. The plant factory derives
 integrator, so a requested dynamic plant cannot silently run as kinematic.
 `VEHICLE_PLANT_VERSION` stays 1. No protobuf or backend-selection change.
 Built-in vehicles stay on `bicycle` or `scenario-keyframes`.
+
+### 2026-10-20 — PHY-02
+
+The built-in plant integrates the dynamic bicycle: body `vx`, `vy`, and yaw
+rate, gravity from the draped pitch, and Coulomb-limited linear axle forces.
+Velocity mode is a jerk-limited speed loop onto `ax_cmd`. Acceleration mode
+writes `ax_cmd` and does not snap `velocity.x`. A shortened obstacle step
+removes the into-wall part of `vx` and `vy` for this model only. New editor
+vehicles and URDF imports store `dynamic-bicycle-v1`. The blank helper,
+built-in vehicles, and `characterization.v1.json` stay kinematic.
+`VEHICLE_PLANT_VERSION` stays 1.

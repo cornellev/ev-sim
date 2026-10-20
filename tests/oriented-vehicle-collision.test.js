@@ -165,6 +165,108 @@ test("oriented vehicle-vehicle sweep ignores the world-axis box", async () => {
     physics.disposeRun();
 });
 
+test("a shortened dynamic bicycle loses into-wall speed and a kinematic plant does not", async () => {
+    const wall = obbAsConvex(
+        { x: 3, y: 0.5, z: 0 },
+        { half: { x: 0.05, y: 1, z: 2 }, center: { x: 0, y: 0, z: 0 }, yaw: 0 },
+    );
+    function body(motionModel) {
+        return {
+            telemetryId: "ego",
+            motionModel,
+            collisionDimensions: { x: 2, y: 1, z: 1 },
+            collisionCenter: { x: 0, y: 0, z: 0 },
+            rotation: { y: 0 },
+            position: { x: 0, y: 0.5, z: 0 },
+            velocity: { x: 8, y: 0, z: 0 },
+            lateralVelocity: 0.4,
+            yawRate: 0.2,
+            updatePosition(position) { Object.assign(this.position, position); },
+        };
+    }
+    async function drive(vehicle) {
+        const world = {
+            obstacles: [],
+            assetProxies: [{ id: "wall", sourceId: "wall", collision: [wall] }],
+        };
+        const physics = new PhysicsEngine({
+            vehicles: () => ({ vehicles: [vehicle] }),
+            objects: () => ({ boxes: () => [] }),
+            bindings: () => ({ signalStore: null }),
+        }, { loadPhysics: async () => fakeRapier() });
+        await physics.configureRun({
+            manifest: {},
+            worldDescription: world,
+            backendSelection: createPhysicsBackendSelection(world),
+        });
+        physics.beginStep();
+        vehicle.position.x = 5;
+        physics.step(1 / 60);
+        physics.disposeRun();
+        return vehicle;
+    }
+    const dynamic = await drive(body("dynamic-bicycle"));
+    assert.ok(dynamic.position.x > 1.5 && dynamic.position.x < 2.2);
+    assert.ok(Math.abs(dynamic.velocity.x) < 1e-9);
+    assert.ok(Math.abs(dynamic.lateralVelocity - 0.4) < 1e-9);
+    assert.equal(dynamic.yawRate, 0.2);
+
+    const kinematic = await drive(body("bicycle"));
+    assert.ok(kinematic.position.x > 1.5 && kinematic.position.x < 2.2);
+    assert.equal(kinematic.velocity.x, 8);
+    assert.equal(kinematic.lateralVelocity, 0.4);
+
+    const plant = {
+        motionModel: "dynamic-bicycle",
+        position: { x: 0, y: 0.5, z: 0 },
+        velocity: { x: 8, y: 1, z: 2 },
+        lateralVelocity: 0.4,
+        rotation: { y: 0 },
+        yawRate: 0.2,
+    };
+    const view = body("bicycle");
+    view.plant = plant;
+    await drive(view);
+    assert.ok(plant.position.x > 1.5 && plant.position.x < 2.2);
+    assert.ok(Math.abs(plant.velocity.x) < 1e-9);
+    assert.ok(Math.abs(view.velocity.x) < 1e-9);
+    assert.equal(plant.yawRate, 0.2);
+});
+
+test("a ground-floor hold does not change dynamic planar speed", async () => {
+    const vehicle = {
+        telemetryId: "ego",
+        motionModel: "dynamic-bicycle",
+        collisionDimensions: { x: 2, y: 1, z: 1 },
+        collisionCenter: { x: 0, y: 0, z: 0 },
+        rotation: { y: 0 },
+        position: { x: 0, y: 0.2, z: 0 },
+        velocity: { x: 4, y: 0, z: 0 },
+        lateralVelocity: 0.25,
+        yawRate: 0.1,
+        updatePosition(position) { Object.assign(this.position, position); },
+    };
+    const world = { obstacles: [], groundPlane: { y: 1 } };
+    const physics = new PhysicsEngine({
+        vehicles: () => ({ vehicles: [vehicle] }),
+        objects: () => ({ boxes: () => [] }),
+        bindings: () => ({ signalStore: null }),
+    }, { loadPhysics: async () => fakeRapier() });
+    await physics.configureRun({
+        manifest: {},
+        worldDescription: world,
+        backendSelection: createPhysicsBackendSelection(world),
+    });
+    physics.beginStep();
+    vehicle.position.y = 0;
+    physics.step(1 / 60);
+    assert.equal(vehicle.position.y, 1);
+    assert.equal(vehicle.velocity.x, 4);
+    assert.equal(vehicle.lateralVelocity, 0.25);
+    assert.equal(vehicle.yawRate, 0.1);
+    physics.disposeRun();
+});
+
 test("the vehicle plant publishes the manifest bounding-box center", () => {
     const plant = new KinematicVehiclePlant(createVehiclePlantDefinition({ id: "ego", type: "big-car" }));
     assert.equal(plant.collisionCenter.y, 0.7);

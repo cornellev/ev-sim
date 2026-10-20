@@ -44,9 +44,30 @@ export function syncPlantFromVehicle(vehicle) {
     vehicle.plant.steeringAngle = Number(vehicle.steeringAngle) || 0;
 }
 
+function dynamicBody(vehicle) {
+    if (vehicle?.plant?.motionModel === "dynamic-bicycle") return vehicle.plant;
+    if (vehicle?.motionModel === "dynamic-bicycle") return vehicle;
+    return null;
+}
+
 /** Drive inputs belong on the plant; the Three view is a follower. */
-export function applyManualDrive(vehicle, { speedMps, steeringRad, accelerationX } = {}) {
+export function applyManualDrive(vehicle, { speedMps, steeringRad, accelerationX, mode } = {}) {
     const plant = vehicle.plant || null;
+    const dynamic = dynamicBody(vehicle);
+    if (dynamic) {
+        if (mode === "hold") dynamic.longitudinal = { mode: "hold" };
+        else if (mode === "stop") dynamic.longitudinal = { mode: "stop" };
+        else if (mode === "acceleration" || (mode === undefined && accelerationX !== undefined)) {
+            dynamic.longitudinal = { mode: "acceleration", accelerationMps2: Number(accelerationX) || 0 };
+        } else if (mode === "velocity" || speedMps !== undefined) {
+            dynamic.longitudinal = { mode: "velocity", speedMps: Number(speedMps) || 0 };
+        }
+        if (steeringRad !== undefined) {
+            dynamic.steeringAngle = Number(steeringRad) || 0;
+            if (plant && vehicle !== dynamic) vehicle.steeringAngle = dynamic.steeringAngle;
+        }
+        return;
+    }
     const target = plant || vehicle;
     if (speedMps !== undefined && target.velocity) {
         target.velocity.x = Number(speedMps) || 0;

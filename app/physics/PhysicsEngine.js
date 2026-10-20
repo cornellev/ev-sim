@@ -1,4 +1,5 @@
 import { assertPhysicsBackendSelection, PHYSICS_BACKEND_CONFIG } from "./PhysicsBackend.js";
+import { absorbDynamicClamp } from "../simulation/vehicles/dynamicBicycle.js";
 import { compareUtf8 } from "../simulation/world/WorldDescription.js";
 import { boxSupportRadius, obbAsConvex, orientedBoxCenter, sweepAabbConvex, sweepObbConvex } from "./SweptConvex.js";
 
@@ -430,6 +431,7 @@ export class PhysicsEngine {
                 };
                 state.vehicle.updatePosition?.(clamped);
                 if (!state.vehicle.updatePosition && state.vehicle.position) Object.assign(state.vehicle.position, clamped);
+                absorbDynamicClamp(state.vehicle, clamped, state.previous, candidate);
             }
             const plane = this.preparedWorldDescription?.groundPlane;
             if (plane && Number.isFinite(Number(plane.y))) {
@@ -475,16 +477,20 @@ export class PhysicsEngine {
                 if (impact === null) continue;
                 this.pendingContacts.add(`${left.id}|${right.id}`);
                 const safeImpact = Math.max(0, impact - 1e-9);
-                left.vehicle.updatePosition?.({
+                const leftClamped = {
                     x: left.previous.x + (leftCandidate.x - left.previous.x) * safeImpact,
                     y: left.previous.y + (leftCandidate.y - left.previous.y) * safeImpact,
                     z: left.previous.z + (leftCandidate.z - left.previous.z) * safeImpact,
-                });
-                right.vehicle.updatePosition?.({
+                };
+                const rightClamped = {
                     x: right.previous.x + (rightCandidate.x - right.previous.x) * safeImpact,
                     y: right.previous.y + (rightCandidate.y - right.previous.y) * safeImpact,
                     z: right.previous.z + (rightCandidate.z - right.previous.z) * safeImpact,
-                });
+                };
+                left.vehicle.updatePosition?.(leftClamped);
+                right.vehicle.updatePosition?.(rightClamped);
+                absorbDynamicClamp(left.vehicle, leftClamped, left.previous, leftCandidate);
+                absorbDynamicClamp(right.vehicle, rightClamped, right.previous, rightCandidate);
             }
         }
 

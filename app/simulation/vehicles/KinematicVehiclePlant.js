@@ -3,6 +3,7 @@ import { PLANT_STATE_LENGTH } from "../../plugin/PlantModule.js";
 import { getBuiltInVehicleManifest } from "../../vehicles/BuiltInVehicleManifests.js";
 import { DYNAMIC_BICYCLE_MODEL, normalizeVehicleManifest } from "../../vehicles/VehicleManifest.js";
 import { euler, finiteOr as finite, pose, vec3 } from "../../util/plainGeometry.js";
+import { deriveAxleDistances, longitudinalCommand, stepDynamicBicycle } from "./dynamicBicycle.js";
 
 export const VEHICLE_PLANT_KIND = "cev-sim.vehicle-plant";
 export const VEHICLE_PLANT_VERSION = 1;
@@ -75,7 +76,10 @@ export function createVehiclePlantDefinition(entry = {}, dependency = null, opti
                 runtimeHash: String(options.plantRuntimeHash || ""),
             },
         } : {}),
-        ...(motionModel === "dynamic-bicycle" ? { dynamics: { ...manifest.dynamics } } : {}),
+        ...(motionModel === "dynamic-bicycle" ? {
+            dynamics: { ...manifest.dynamics },
+            axle: deriveAxleDistances(manifest.wheels, manifest.kinematics?.wheelbase),
+        } : {}),
     };
 }
 
@@ -127,9 +131,6 @@ export class KinematicVehiclePlant {
         if (definition?.kind !== VEHICLE_PLANT_KIND || definition?.version !== VEHICLE_PLANT_VERSION) {
             throw new TypeError(`KinematicVehiclePlant requires ${VEHICLE_PLANT_KIND} v${VEHICLE_PLANT_VERSION}.`);
         }
-        if (definition.motionModel === "dynamic-bicycle") {
-            throw new TypeError("The built-in dynamic bicycle is not available yet.");
-        }
         if (definition.motionModel === "plugin" && !stepper && !unresolved) {
             throw pluginError(
                 PLUGIN_ERROR_CODES.UNAVAILABLE,
@@ -158,6 +159,10 @@ export class KinematicVehiclePlant {
         this.velocity = vec3();
         this.acceleration = vec3();
         this.steeringAngle = 0;
+        this.lateralVelocity = 0;
+        this.yawRate = 0;
+        this.axCommand = 0;
+        this.longitudinal = { mode: "hold" };
         this.elapsedTime = 0;
         this.started = false;
         this.completed = false;
@@ -177,7 +182,7 @@ export class KinematicVehiclePlant {
     }
 
     drapeToGround() {
-        if ((this.motionModel !== "bicycle" && this.motionModel !== "plugin") || typeof this.groundSampler !== "function") return;
+        if (!["bicycle", "plugin", "dynamic-bicycle"].includes(this.motionModel) || typeof this.groundSampler !== "function") return;
         const hit = this.groundSampler(this.position.x, this.position.z, this.rotation.y);
         if (!hit) return;
         this.position.y = finite(hit.y);
@@ -201,6 +206,14 @@ export class KinematicVehiclePlant {
         Object.assign(this.velocity, vec3(entry.linearVelocity ?? this.definition.initialLinearVelocity));
         Object.assign(this.acceleration, vec3(entry.linearAcceleration ?? this.definition.initialLinearAcceleration));
         this.steeringAngle = finite(entry.steeringAngle, this.definition.initialSteeringAngle);
+        this.lateralVelocity = 0;
+        this.yawRate = 0;
+        this.axCommand = 0;
+        this.longitudinal = { mode: "hold" };
+        if (this.motionModel === "dynamic-bicycle") {
+            this.velocity.y = 0;
+            this.velocity.z = 0;
+        }
         this.elapsedTime = 0;
         this.completed = false;
         this.started = true;
@@ -248,6 +261,58 @@ export class KinematicVehiclePlant {
     update(deltaTime) {
         const dt = finite(deltaTime);
         if (dt < 0) throw new RangeError("Vehicle plant delta time cannot be negative.");
+        if (this.motionModel === "dynamic-bicycle") {
+            const axle = this.definition.axle ?? deriveAxleDistances([], this.kinematics.wheelbase);
+            const dynamics = this.definition.dynamics ?? {};
+            this.axCommand = longitudinalCommand({
+                mode: this.longitudinal?.mode || "hold",
+                speedMps: this.longitudinal?.speedMps,
+                accelerationMps2: this.longitudinal?.accelerationMps2,
+                vx: this.velocity.x,
+                previousAx: this.axCommand,
+                dt,
+                maxAcceleration: finite(this.kinematics.maxAcceleration, 3),
+                maxDeceleration: finite(this.kinematics.maxDeceleration, 5),
+                maxJerk: finite(this.kinematics.maxJerk, 10),
+            });
+            const maximum = Math.min(finite(this.kinematics.maxSteeringAngle, 0.6), Math.PI * 0.49);
+            const steering = Math.max(-maximum, Math.min(maximum, this.steeringAngle));
+            // Explicit Euler: forces at the old state, translation at the old yaw.
+            const stepped = stepDynamicBicycle({
+                vx: this.velocity.x,
+                vy: this.lateralVelocity,
+                r: this.yawRate,
+                x: this.position.x,
+                z: this.position.z,
+                yaw: this.rotation.y,
+            }, {
+                axCommand: this.axCommand,
+                delta: steering,
+                pitch: this.rotation.z,
+                dt,
+                mass: dynamics.mass,
+                yawInertia: dynamics.yawInertia,
+                lf: axle.lf,
+                lr: axle.lr,
+                corneringStiffnessFront: dynamics.corneringStiffnessFront,
+                corneringStiffnessRear: dynamics.corneringStiffnessRear,
+                frictionMu: dynamics.frictionMu,
+                rollingResistance: dynamics.rollingResistance,
+            });
+            this.velocity.x = stepped.vx;
+            this.velocity.y = 0;
+            this.velocity.z = 0;
+            this.lateralVelocity = stepped.vy;
+            this.yawRate = stepped.r;
+            this.position.x = stepped.x;
+            this.position.z = stepped.z;
+            this.rotation.y = stepped.yaw;
+            this.acceleration.x = stepped.ax;
+            this.acceleration.y = stepped.ay;
+            this.acceleration.z = 0;
+            this.drapeToGround();
+            return;
+        }
         if (this.motionModel === "plugin") {
             if (this.unresolvedPluginPlant || !this.stepper) return;
             const next = this.stepper.step(packPlantState(this, this.stateBuffer), dt);
@@ -312,6 +377,10 @@ export class KinematicVehiclePlant {
             velocity: vec3(this.velocity),
             acceleration: vec3(this.acceleration),
             steeringAngle: finite(this.steeringAngle),
+            ...(this.motionModel === "dynamic-bicycle" ? {
+                lateralVelocity: finite(this.lateralVelocity),
+                yawRate: finite(this.yawRate),
+            } : {}),
         };
     }
 }

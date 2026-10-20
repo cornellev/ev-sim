@@ -13,6 +13,7 @@ import { deriveCompleteWheelbase } from "../axle/standardAxle.js";
 import {
     createBlankVehicleManifest,
     deriveWheelbase,
+    DYNAMIC_BICYCLE_MODEL,
     isValidVehicleId,
     resolveVehicleModelUrl,
 } from "../VehicleManifest.js";
@@ -739,7 +740,11 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
         while (existing.has(id)) id = `${vehicleIdFromName(baseName)}-${suffix++}`;
         await perform(async () => {
             const created = await createVehicleManifest(
-                createBlankVehicleManifest({ id, name: baseName }),
+                createBlankVehicleManifest({
+                    id,
+                    name: baseName,
+                    dynamics: { model: DYNAMIC_BICYCLE_MODEL },
+                }),
                 { operationId: createVehicleOperationId() },
             );
             await loadCatalog(created.id);

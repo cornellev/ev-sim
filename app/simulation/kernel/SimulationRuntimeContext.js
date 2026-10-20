@@ -352,7 +352,14 @@ export function createSimulationRuntimeContext(options = {}) {
                     const vehicle = vehicles.find((candidate) => candidate.telemetryId === vehicleId)
                         ?? (vehicleId === "ego" ? vehicles[0] : null);
                     if (!vehicle) continue;
-                    applyManualDrive(vehicle, {
+                    const dynamic = vehicle.plant?.motionModel === "dynamic-bicycle"
+                        || vehicle.motionModel === "dynamic-bicycle";
+                    applyManualDrive(vehicle, dynamic ? {
+                        mode: setpoint.command?.mode || "velocity",
+                        speedMps: setpoint.speedMps,
+                        accelerationX: setpoint.accelerationMps2,
+                        steeringRad: setpoint.steeringRadThree,
+                    } : {
                         speedMps: setpoint.speedMps,
                         steeringRad: setpoint.steeringRadThree,
                     });
