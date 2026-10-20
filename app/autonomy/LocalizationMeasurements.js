@@ -128,37 +128,63 @@ export function rep103BodyVelocity(vehicle) {
     });
 }
 
+function dynamicBicycleSource(vehicle) {
+    if (vehicle?.motionModel === "dynamic-bicycle") return vehicle;
+    if (vehicle?.plant?.motionModel === "dynamic-bicycle") return vehicle.plant;
+    return null;
+}
+
 export function captureVehicleSnapshot(vehicle, captureTimeNs, previous = null, stepNs = 16_666_667) {
+    const dynamic = dynamicBicycleSource(vehicle);
     const pose = rep103PoseFromVehicle(vehicle);
     const orientation = eulerToQuaternion(pose.rotation);
-    const bodyVelocity = rep103BodyVelocity(vehicle);
     const wheelbase = Number(
         vehicle?.manifest?.kinematics?.wheelbase
         || vehicle?.kinematics?.wheelbase
         || vehicle?.wheelbase
+        || dynamic?.kinematics?.wheelbase
         || 2.5,
     );
-    const steeringAngle = Number(vehicle?.steeringAngle || 0);
+    const steeringAngle = Number((dynamic ?? vehicle)?.steeringAngle || 0);
+    // Plant +vy is to the right. REP-103 +y is left.
+    const bodyVelocity = dynamic
+        ? {
+            x: Number(dynamic.velocity?.x || 0),
+            y: -Number(dynamic.lateralVelocity || 0),
+            z: 0,
+        }
+        : rep103BodyVelocity(vehicle);
     const speed = bodyVelocity.x;
-    const yawRate = wheelbase > 0 ? (speed / wheelbase) * Math.tan(steeringAngle) : 0;
+    const yawRate = dynamic
+        ? Number(dynamic.yawRate || 0)
+        : (wheelbase > 0 ? (speed / wheelbase) * Math.tan(steeringAngle) : 0);
     const bodyAngularVelocity = { x: 0, y: 0, z: yawRate };
 
     let bodyAcceleration = { x: 0, y: 0, z: 0 };
     let bodyAngularAcceleration = { x: 0, y: 0, z: 0 };
-    if (previous?.captureTimeNs != null && captureTimeNs > previous.captureTimeNs) {
-        const dt = (captureTimeNs - previous.captureTimeNs) / 1e9;
-        if (dt > 0) {
-            bodyAcceleration = {
-                x: (bodyVelocity.x - previous.bodyVelocity.x) / dt,
-                y: (bodyVelocity.y - previous.bodyVelocity.y) / dt,
-                z: (bodyVelocity.z - previous.bodyVelocity.z) / dt,
-            };
-            bodyAngularAcceleration = {
-                x: 0,
-                y: 0,
-                z: (yawRate - Number(previous.bodyAngularVelocity?.z || 0)) / dt,
-            };
-        }
+    const captureDt = previous?.captureTimeNs != null && captureTimeNs > previous.captureTimeNs
+        ? (captureTimeNs - previous.captureTimeNs) / 1e9
+        : 0;
+    if (dynamic) {
+        // shortcut: ax/ay are the last plant step, upgrade when a same-step clamp must be in the IMU sample.
+        bodyAcceleration = {
+            x: Number(dynamic.acceleration?.x || 0),
+            y: -Number(dynamic.acceleration?.y || 0),
+            z: 0,
+        };
+    } else if (captureDt > 0) {
+        bodyAcceleration = {
+            x: (bodyVelocity.x - previous.bodyVelocity.x) / captureDt,
+            y: (bodyVelocity.y - previous.bodyVelocity.y) / captureDt,
+            z: (bodyVelocity.z - previous.bodyVelocity.z) / captureDt,
+        };
+    }
+    if (captureDt > 0) {
+        bodyAngularAcceleration = {
+            x: 0,
+            y: 0,
+            z: (yawRate - Number(previous.bodyAngularVelocity?.z || 0)) / captureDt,
+        };
     }
     // The body frame rotates with the vehicle, so the derivative of body-frame
     // velocity omits omega x v. In a steady turn that term is the whole

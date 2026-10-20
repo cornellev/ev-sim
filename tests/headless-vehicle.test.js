@@ -8,6 +8,7 @@ import {
 } from "../app/simulation/vehicles/KinematicVehiclePlant.js";
 import { HeadlessVehicleManager } from "../app/simulation/headless/HeadlessVehicleManager.js";
 import { attachVehiclePlant, stepVehiclePlant } from "../app/3d/vehicles/VehiclePlantAdapter.js";
+import { replayDynamicBicycleCharacterization } from "./helpers/dynamicBicycleCharacterization.js";
 
 function entry(overrides = {}) {
     return {
@@ -132,4 +133,14 @@ test("browser presentation adapter and headless manager match a vehicle tape wit
         }
         assert.ok(Math.abs(left.steeringAngle - right.steeringAngle) <= 1e-9);
     }
+});
+
+test("dynamic bicycle browser and headless plants match within 1e-9", async () => {
+    const steps = await replayDynamicBicycleCharacterization();
+    assert.ok(steps[0].vx > 0);
+    const turned = steps.at(-1);
+    assert.ok(turned.vy > 0);
+    assert.ok(turned.r > 0);
+    assert.ok(Math.abs(turned.imu.angularZ - turned.r) <= 1e-9);
+    assert.ok(Math.abs(turned.wheel.angularZ) > 0);
 });

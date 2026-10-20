@@ -13,6 +13,7 @@ import {
     gaussianSample,
     quantizeTravel,
     saturateVector,
+    wheelTravelFromBicycle,
 } from "../app/autonomy/LocalizationMeasurements.js";
 import {
     buildImuMessage,
@@ -89,6 +90,139 @@ test("steady turn produces centripetal acceleration on IMU Y axis", () => {
         assert.ok(Math.abs(measurement.linearAcceleration.y - 3 * yawRate) < 0.2);
         assert.equal(Math.sign(measurement.linearAcceleration.y), Math.sign(yawRate));
     }
+});
+
+function quietImu() {
+    return normalizeRunSensor({
+        type: "imu",
+        calibration: {
+            angularVelocityStdDev: { x: 0, y: 0, z: 0 },
+            linearAccelerationStdDev: { x: 0, y: 0, z: 0 },
+            angularRandomWalk: { x: 0, y: 0, z: 0 },
+            accelerationRandomWalk: { x: 0, y: 0, z: 0 },
+            turnOnBias: {
+                randomize: false,
+                angular: { x: 0, y: 0, z: 0 },
+                acceleration: { x: 0, y: 0, z: 0 },
+            },
+            noise: {},
+        },
+    });
+}
+
+function dynamicVehicle(overrides = {}) {
+    return {
+        motionModel: "dynamic-bicycle",
+        position: { x: 0, y: 0, z: 0 },
+        rotation: { x: 0, y: 0, z: 0, order: "XYZ" },
+        velocity: { x: 3, y: 0, z: 0 },
+        acceleration: { x: 0, y: 0, z: 0 },
+        lateralVelocity: 0,
+        yawRate: 0,
+        steeringAngle: 0,
+        kinematics: { wheelbase: 2.5 },
+        ...overrides,
+    };
+}
+
+test("dynamic bicycle IMU uses plant yaw rate instead of steer", () => {
+    const config = quietImu();
+    const vehicle = dynamicVehicle({ yawRate: 0.4, steeringAngle: 0.2, lateralVelocity: 0.25 });
+    const snapshot = captureVehicleSnapshot(vehicle, 16_666_667);
+    const kinematicRate = (3 / 2.5) * Math.tan(0.2);
+    assert.ok(Math.abs(snapshot.bodyAngularVelocity.z - 0.4) < 1e-12);
+    assert.ok(Math.abs(snapshot.bodyAngularVelocity.z - kinematicRate) > 0.1);
+    assert.equal(snapshot.bodyVelocity.y, -0.25);
+    assert.equal(snapshot.speed, 3);
+    const { measurement } = buildImuMeasurement(snapshot, config, new SeededRNG("dyn-imu-rate"), createMeasurementSeedState(config, new SeededRNG("dyn-imu-rate")));
+    assert.ok(Math.abs(measurement.angularVelocity.z - 0.4) < 1e-12);
+    const truth = buildTruthOdometry(snapshot, { odom: "odom", baseLink: "base_link" });
+    assert.equal(truth.linearVelocity.y, -0.25);
+    assert.equal(truth.angularVelocity.z, 0.4);
+});
+
+test("steady dynamic turn centripetal acceleration is forward speed times plant yaw rate", () => {
+    const vehicle = dynamicVehicle({ yawRate: 0.4 });
+    const snapshot = captureVehicleSnapshot(vehicle, 16_666_667);
+    assert.ok(Math.abs(snapshot.bodyAcceleration.x) < 1e-12);
+    assert.ok(Math.abs(snapshot.bodyAcceleration.y - 3 * 0.4) < 1e-12);
+});
+
+test("dynamic body acceleration prefers the plant derivative over velocity finite difference", () => {
+    const first = captureVehicleSnapshot(dynamicVehicle({ velocity: { x: 1, y: 0, z: 0 }, acceleration: { x: 2, y: -0.5, z: 0 }, yawRate: 0 }), 10_000_000);
+    const second = captureVehicleSnapshot(dynamicVehicle({
+        velocity: { x: 9, y: 0, z: 0 },
+        acceleration: { x: 2, y: -0.5, z: 0 },
+        yawRate: 0,
+    }), 20_000_000, first);
+    assert.equal(second.bodyAcceleration.x, 2);
+    assert.equal(second.bodyAcceleration.y, 0.5);
+    assert.equal(second.bodyAngularAcceleration.z, 0);
+});
+
+test("pitched dynamic specific force cancels a free-slide acceleration and keeps a held one", () => {
+    const config = quietImu();
+    const pitch = 0.4;
+    const heldVehicle = dynamicVehicle({
+        velocity: { x: 0, y: 0, z: 0 },
+        rotation: { x: 0, y: 0, z: pitch, order: "XYZ" },
+        acceleration: { x: 0, y: 0, z: 0 },
+    });
+    const freeVehicle = dynamicVehicle({
+        velocity: { x: 0, y: 0, z: 0 },
+        rotation: { x: 0, y: 0, z: pitch, order: "XYZ" },
+        acceleration: { x: -9.81 * Math.sin(pitch), y: 0, z: 0 },
+    });
+    const measure = (vehicle) => buildImuMeasurement(
+        captureVehicleSnapshot(vehicle, 16_666_667),
+        config,
+        new SeededRNG("dyn-pitch"),
+        createMeasurementSeedState(config, new SeededRNG("dyn-pitch")),
+    ).measurement.linearAcceleration.x;
+    const held = measure(heldVehicle);
+    const free = measure(freeVehicle);
+    assert.ok(Math.abs(held) > 1);
+    assert.ok(Math.abs(free) < Math.abs(held) * 0.05);
+});
+
+test("a browser view reads yaw rate from its dynamic plant", () => {
+    const plant = dynamicVehicle({ yawRate: 0.3, steeringAngle: 0.4 });
+    const view = {
+        position: plant.position,
+        rotation: plant.rotation,
+        velocity: { x: 3, y: 0, z: 0 },
+        steeringAngle: 0,
+        plant,
+    };
+    const snapshot = captureVehicleSnapshot(view, 16_666_667);
+    assert.ok(Math.abs(snapshot.bodyAngularVelocity.z - 0.3) < 1e-12);
+});
+
+test("kinematic yawRate zero still uses the bicycle steer formula", () => {
+    const vehicle = mockVehicle({
+        motionModel: "bicycle",
+        yawRate: 0,
+        lateralVelocity: 1,
+        velocity: { x: 2, y: 0, z: 0 },
+        steeringAngle: 0.2,
+    });
+    const snapshot = captureVehicleSnapshot(vehicle, 16_666_667);
+    const expected = (2 / 2.5) * Math.tan(0.2);
+    assert.ok(Math.abs(snapshot.bodyAngularVelocity.z - expected) < 1e-12);
+    assert.equal(snapshot.bodyVelocity.y, 0);
+});
+
+test("wheel travel splits by plant yaw rate", () => {
+    const snapshot = captureVehicleSnapshot(dynamicVehicle({
+        velocity: { x: 4, y: 0, z: 0 },
+        yawRate: 0.5,
+        steeringAngle: 0,
+    }), 20_000_000);
+    const track = 1.2;
+    const dt = 0.02;
+    const { leftTravel, rightTravel } = wheelTravelFromBicycle(snapshot, track, 0, dt);
+    assert.ok(Math.abs((rightTravel - leftTravel) - 0.5 * track * dt) < 1e-12);
+    assert.ok(Math.abs(snapshot.bodyAngularVelocity.z - (4 / 2.5) * Math.tan(0)) > 0.1);
 });
 
 test("straight driving produces no lateral IMU acceleration", () => {

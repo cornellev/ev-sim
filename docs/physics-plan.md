@@ -33,7 +33,7 @@ This program does not take that layer.
 | --- | --- | --- |
 | PHY-01: contracts | Complete | `tests/physics-contract.test.js`; characterization delta empty |
 | PHY-02: dynamic bicycle plant and controls | Complete | `tests/dynamic-bicycle.test.js`; obstacle clamp in `tests/oriented-vehicle-collision.test.js`; kinematic tape unchanged |
-| PHY-03: sensors and a second characterization tape | Pending | IMU and wheel-odometry consumers; do not overwrite `characterization.v1.json` |
+| PHY-03: sensors and a second characterization tape | Complete | `tests/localization-sensors.test.js`; browser/headless parity in `tests/headless-vehicle.test.js`; `tests/dynamic-bicycle-characterization.test.js`; `characterization.v1.json` unchanged |
 
 ## What is modeled
 
@@ -239,3 +239,13 @@ removes the into-wall part of `vx` and `vy` for this model only. New editor
 vehicles and URDF imports store `dynamic-bicycle-v1`. The blank helper,
 built-in vehicles, and `characterization.v1.json` stay kinematic.
 `VEHICLE_PLANT_VERSION` stays 1.
+
+### 2026-10-20 — PHY-03
+
+IMU and wheel odometry read the dynamic plant. Body `vx`, right-positive
+`vy` flipped into REP-103, yaw rate, and the plant's body-component
+derivatives feed the existing `ω×v` correction. Kinematic snapshots still
+finite-difference `velocity.x` and use `v/L tan(δ)`. Browser and headless
+plants match within `1e-9` on the dynamic tape.
+`characterization.dynamic-bicycle.v1.json` records that tape.
+`characterization.v1.json` is unchanged. `VEHICLE_PLANT_VERSION` stays 1.

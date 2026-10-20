@@ -2,6 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { generateDynamicBicycleCharacterization } from "../tests/helpers/dynamicBicycleCharacterization.js";
 import { generateHeadlessCharacterization } from "../tests/helpers/headlessCharacterization.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -13,4 +14,9 @@ const tape = JSON.parse(await readFile(tapePath, "utf8"));
 const characterization = await generateHeadlessCharacterization(tape);
 await writeFile(characterizationPath, `${JSON.stringify(characterization, null, 2)}\n`);
 
+const dynamicPath = path.join(fixtureDirectory, "characterization.dynamic-bicycle.v1.json");
+const dynamic = await generateDynamicBicycleCharacterization();
+await writeFile(dynamicPath, `${JSON.stringify(dynamic, null, 2)}\n`);
+
 process.stdout.write(`${path.relative(root, characterizationPath)}\n`);
+process.stdout.write(`${path.relative(root, dynamicPath)}\n`);
