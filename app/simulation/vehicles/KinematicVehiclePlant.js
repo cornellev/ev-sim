@@ -1,7 +1,7 @@
 import { PLUGIN_ERROR_CODES, pluginError } from "../../plugin/PluginErrors.js";
 import { PLANT_STATE_LENGTH } from "../../plugin/PlantModule.js";
 import { getBuiltInVehicleManifest } from "../../vehicles/BuiltInVehicleManifests.js";
-import { normalizeVehicleManifest } from "../../vehicles/VehicleManifest.js";
+import { DYNAMIC_BICYCLE_MODEL, normalizeVehicleManifest } from "../../vehicles/VehicleManifest.js";
 import { euler, finiteOr as finite, pose, vec3 } from "../../util/plainGeometry.js";
 
 export const VEHICLE_PLANT_KIND = "cev-sim.vehicle-plant";
@@ -31,13 +31,22 @@ export function createVehiclePlantDefinition(entry = {}, dependency = null, opti
     const manifest = normalizeManifest(dependency?.manifest ?? options.manifest, type);
     const keyframes = normalizeKeyframes(entry.keyframes ?? options.keyframes ?? []);
     const pluginPlantId = manifest.dynamics?.plant || "";
+    const dynamicBicycle = manifest.dynamics?.model === DYNAMIC_BICYCLE_MODEL;
     let motionModel = options.motionModel;
-    if (!motionModel) motionModel = pluginPlantId ? "plugin" : type === "scenario-car" ? "scenario-keyframes" : "bicycle";
-    if (!new Set(["bicycle", "scenario-keyframes", "linear", "plugin"]).has(motionModel)) {
+    if (!motionModel) {
+        if (pluginPlantId) motionModel = "plugin";
+        else if (dynamicBicycle) motionModel = "dynamic-bicycle";
+        else if (type === "scenario-car") motionModel = "scenario-keyframes";
+        else motionModel = "bicycle";
+    }
+    if (!new Set(["bicycle", "dynamic-bicycle", "scenario-keyframes", "linear", "plugin"]).has(motionModel)) {
         throw new TypeError(`Unknown vehicle motion model "${motionModel}".`);
     }
     if (motionModel === "plugin" && !pluginPlantId) {
         throw new TypeError("Plugin vehicle motion requires manifest.dynamics.plant.");
+    }
+    if (motionModel === "dynamic-bicycle" && !dynamicBicycle) {
+        throw new TypeError("Dynamic bicycle motion requires manifest.dynamics.model \"dynamic-bicycle-v1\".");
     }
     return {
         kind: VEHICLE_PLANT_KIND,
@@ -66,6 +75,7 @@ export function createVehiclePlantDefinition(entry = {}, dependency = null, opti
                 runtimeHash: String(options.plantRuntimeHash || ""),
             },
         } : {}),
+        ...(motionModel === "dynamic-bicycle" ? { dynamics: { ...manifest.dynamics } } : {}),
     };
 }
 
@@ -116,6 +126,9 @@ export class KinematicVehiclePlant {
     constructor(definition, { stepper = null, unresolved = false } = {}) {
         if (definition?.kind !== VEHICLE_PLANT_KIND || definition?.version !== VEHICLE_PLANT_VERSION) {
             throw new TypeError(`KinematicVehiclePlant requires ${VEHICLE_PLANT_KIND} v${VEHICLE_PLANT_VERSION}.`);
+        }
+        if (definition.motionModel === "dynamic-bicycle") {
+            throw new TypeError("The built-in dynamic bicycle is not available yet.");
         }
         if (definition.motionModel === "plugin" && !stepper && !unresolved) {
             throw pluginError(

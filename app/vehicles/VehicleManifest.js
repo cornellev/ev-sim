@@ -51,13 +51,67 @@ export const DEFAULT_ACTUATOR_LIMITS = Object.freeze({
     responseDelayNs: 0,
 });
 
+export const KINEMATIC_BICYCLE_MODEL = "kinematic-bicycle-v1";
+export const DYNAMIC_BICYCLE_MODEL = "dynamic-bicycle-v1";
+
+/** Defaults for `dynamic-bicycle-v1`. `lf`/`lr` are derived, not stored. */
+export const DEFAULT_DYNAMIC_BICYCLE = Object.freeze({
+    mass: 1500,
+    yawInertia: 2250,
+    corneringStiffnessFront: 80000,
+    corneringStiffnessRear: 80000,
+    frictionMu: 0.9,
+    rollingResistance: 0.015,
+});
+
+const VEHICLE_MOTION_MODELS = new Set([KINEMATIC_BICYCLE_MODEL, DYNAMIC_BICYCLE_MODEL]);
+const DYNAMIC_BICYCLE_FIELDS = Object.freeze([
+    ["mass", false],
+    ["yawInertia", false],
+    ["corneringStiffnessFront", false],
+    ["corneringStiffnessRear", false],
+    ["frictionMu", false],
+    ["rollingResistance", true],
+]);
+const DYNAMICS_KEYS = new Set(["plant", "model", ...DYNAMIC_BICYCLE_FIELDS.map(([key]) => key)]);
+
+function dynamicsNumber(source, key, fallback, nonNegative) {
+    if (source[key] === undefined) return fallback;
+    const number = Number(source[key]);
+    const valid = Number.isFinite(number) && (nonNegative ? number >= 0 : number > 0);
+    if (!valid) {
+        const bound = nonNegative ? "greater than or equal to 0" : "greater than 0";
+        throw new Error(`vehicle manifest.dynamics.${key} must be a finite number ${bound}.`);
+    }
+    return canonicalFiniteNumber(number);
+}
+
 function normalizeVehicleDynamics(value) {
     if (value == null) return undefined;
     const source = object(value);
-    const unknown = Object.keys(source).find((key) => key !== "plant");
+    const unknown = Object.keys(source).find((key) => !DYNAMICS_KEYS.has(key));
     if (unknown) throw new Error(`vehicle manifest.dynamics contains unknown field "${unknown}".`);
-    const plant = text(source.plant, "vehicle manifest.dynamics.plant");
-    return plant ? { plant } : undefined;
+    const plant = text(source.plant);
+    const model = text(source.model);
+    if (model && !VEHICLE_MOTION_MODELS.has(model)) {
+        throw new Error(`vehicle manifest.dynamics.model "${model}" is not a known motion model.`);
+    }
+    const dynamic = model === DYNAMIC_BICYCLE_MODEL;
+    if (DYNAMIC_BICYCLE_FIELDS.some(([key]) => source[key] !== undefined) && !dynamic) {
+        throw new Error("vehicle manifest.dynamics physical fields require model \"dynamic-bicycle-v1\".");
+    }
+    if (plant && dynamic) {
+        throw new Error("vehicle manifest.dynamics.plant cannot be combined with model \"dynamic-bicycle-v1\".");
+    }
+    if (plant) return { plant };
+    if (!dynamic) return undefined;
+    return {
+        model: DYNAMIC_BICYCLE_MODEL,
+        ...Object.fromEntries(DYNAMIC_BICYCLE_FIELDS.map(([key, nonNegative]) => [
+            key,
+            dynamicsNumber(source, key, DEFAULT_DYNAMIC_BICYCLE[key], nonNegative),
+        ])),
+    };
 }
 
 function wheel(value = {}, index = 0) {

@@ -122,6 +122,24 @@ whenever a PLN milestone changes a contract, hash, acceptance criterion, or
 milestone status. Update the headless roadmap only when the Protobuf contract
 itself changes.
 
+## Vehicle-physics roadmap
+
+Before changing the vehicle plant, vehicle-manifest dynamics, or the
+characterization tape, read:
+
+1. [`docs/physics-plan.md`](docs/physics-plan.md)
+2. [`docs/vehicle-manifests.md`](docs/vehicle-manifests.md)
+3. [`docs/run-manifests.md`](docs/run-manifests.md)
+4. [`docs/architecture.md`](docs/architecture.md)
+
+This is a separate `PHY-*` program. Do not treat it as a headless PR 13.
+Do not add suspension springs, wheel spin, or Rapier drive contact. The
+kinematic `bicycle` plant and `tests/fixtures/headless/characterization.v1.json`
+stay pinned. A plugin `dynamics.plant` remains an override of the built-in plant.
+
+Update the progress and decision log in `docs/physics-plan.md` whenever a PHY
+milestone changes a contract, hash, acceptance criterion, or milestone status.
+
 ## Architectural invariants
 
 - JavaScript remains the single authoritative simulator implementation.
