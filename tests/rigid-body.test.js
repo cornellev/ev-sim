@@ -522,9 +522,57 @@ test("a sustained push matches closing speed and a side hit stays lateral", asyn
     wide.position.x += 0.2;
     wide.position.z += 0.05;
     lateral.step(dt);
-    const velocity = lateral.rigidBodyById.get("box").body.linvel();
-    assert.ok(Math.abs(velocity.z) > Math.abs(velocity.x), `vel ${velocity.x}, ${velocity.z}`);
+    const shifted = poseOf(lateral, "box");
+    assert.ok(shifted.position.z - 0.55 > Math.abs(shifted.position.x - 1.2), `box ${shifted.position.x}, ${shifted.position.z}`);
+    assert.ok(horizontalSpeed(lateral, "box") < 0.05, `speed ${horizontalSpeed(lateral, "box")}`);
     lateral.disposeRun();
+});
+
+test("a box dropped onto a raised car roof rests above it", async () => {
+    const { document, service } = yard();
+    service.run("setFloor", { enabled: true });
+    service.run("addPrimitive", { id: "box", shape: "box", x: 0, y: 3, z: 0, size: { x: 1, y: 1, z: 1 } });
+    service.run("addRigidBody", { objectId: "box" });
+    const vehicle = {
+        telemetryId: "ego",
+        collisionDimensions: { x: 2, y: 1.4, z: 2 },
+        collisionCenter: { x: 0, y: 0.7, z: 0 },
+        rotation: { y: 0 },
+        position: { x: 0, y: 0, z: 0 },
+        updatePosition(position) { Object.assign(this.position, position); },
+    };
+    const physics = await startPhysics(document, [vehicle]);
+    const dt = 1 / 60;
+    for (let step = 0; step < 240; step += 1) {
+        physics.beginStep();
+        physics.step(dt);
+    }
+    const rested = poseOf(physics, "box");
+    assert.ok(rested.position.y > 1.8 && rested.position.y < 2.2, `roof y ${rested.position.y}`);
+    physics.disposeRun();
+});
+
+test("an overlap with a raised roof lifts the box and lets the car through", async () => {
+    const { document, service } = yard();
+    service.run("addPrimitive", { id: "box", shape: "box", x: 0, y: 1.2, z: 0, size: { x: 1, y: 1, z: 1 } });
+    service.run("addRigidBody", { objectId: "box" });
+    service.run("setRigidBody", { objectId: "box", patch: { useGravity: false } });
+    const vehicle = {
+        telemetryId: "ego",
+        collisionDimensions: { x: 4, y: 1.4, z: 2 },
+        collisionCenter: { x: 0, y: 0.7, z: 0 },
+        rotation: { y: 0 },
+        position: { x: 0, y: 0, z: 0 },
+        updatePosition(position) { Object.assign(this.position, position); },
+    };
+    const physics = await startPhysics(document, [vehicle]);
+    physics.beginStep();
+    vehicle.position.x = 1;
+    physics.step(1 / 60);
+    const lifted = poseOf(physics, "box");
+    assert.ok(lifted.position.y > 1.7, `lifted y ${lifted.position.y}`);
+    assert.ok(vehicle.position.x > 0.5, `vehicle x ${vehicle.position.x}`);
+    physics.disposeRun();
 });
 
 test("editor reset restores rigid bodies when the pose list is empty", () => {

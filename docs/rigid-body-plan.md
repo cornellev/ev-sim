@@ -35,10 +35,15 @@ Dynamic bodies use the existing Rapier world gravity. Kinematic bodies and
 queue until the next physics step. The floor collider, when the document floor
 is enabled and its collider is not turned off, collides with dynamic bodies
 and not with the vehicle. The vehicle
-hull sweep treats a rigid body as another obstacle. Because that sweep stops
-short of penetration, a dynamic body receives an impulse for the remaining
-closing speed along the contact face. A vertical face falls back to the
-horizontal direction from the vehicle origin to the body.
+hull sweep treats a rigid body as another obstacle, and the Rapier car
+collider uses that hull's center and yaw. A hit that still has time left
+stops the car short of the body. A dynamic body already overlapping the hull
+is moved out along the sweep normal, including up, and the car keeps the
+part of the step that does not enter it. That overlap does not also take the
+closing-speed impulse. A separated approach still gives the body an impulse
+for the remaining closing speed along the contact face. A vertical face falls
+back to the horizontal direction from the vehicle origin to the body. A
+kinematic plant receives the clamped pose and keeps its commanded speed.
 
 Editor Play, when no run is resolved, steps that live world description.
 Entered from stopped, it rebuilds rigid bodies at the authored pose before
@@ -91,3 +96,7 @@ Make, Split, Get, and Add Rigid Body are scripting canvas blocks. Add records a 
 ### 2026-10-21 — vehicle push matches closing speed
 
 A dynamic body is pushed by the remaining closing speed along the sweep's contact face, so holding the car against a block does not stack speed. Editor Play from stopped rebuilds bodies at the authored pose when no run is resolved. The component schema, `worldHash` rule, and kinematic characterization tape are unchanged.
+
+### 2026-10-21 — a fallen cube no longer pins the car
+
+A nested kinematic plant takes the clamped pose and keeps its commanded speed. The Rapier car collider follows the sweep center and yaw, so a box rests on the roof. A cube that already overlaps that roof is lifted out along the normal, and the car keeps the motion that does not enter it. `worldHash` and the kinematic characterization tape are unchanged.

@@ -1,5 +1,5 @@
 import { assertPhysicsBackendSelection, PHYSICS_BACKEND_CONFIG } from "./PhysicsBackend.js";
-import { absorbDynamicClamp } from "../simulation/vehicles/dynamicBicycle.js";
+import { absorbDynamicClamp, dynamicBicycleBody } from "../simulation/vehicles/dynamicBicycle.js";
 import { worldSweepMesh } from "../simulation/world/RigidBodyRecords.js";
 import { compareUtf8 } from "../simulation/world/WorldDescription.js";
 import { boxSupportRadius, obbAsConvex, orientedBoxCenter, sweepAabbConvex, sweepObbConvex, sweepObbConvexHit } from "./SweptConvex.js";
@@ -193,6 +193,43 @@ function vehicleBox(vehicle) {
         half: vehicleHalfExtents(vehicle),
         center: vector(vehicle.collisionCenter),
         yaw: Number(vehicle.rotation?.y) || 0,
+    };
+}
+
+function yawQuaternion(yaw) {
+    const half = (Number(yaw) || 0) / 2;
+    return { x: 0, y: Math.sin(half), z: 0, w: Math.cos(half) };
+}
+
+/** A kinematic plant follows the clamped pose and keeps its commanded speed. */
+function absorbKinematicClamp(vehicle, position) {
+    const plant = vehicle?.plant;
+    if (!plant?.position || plant === dynamicBicycleBody(vehicle)) return;
+    plant.position.x = position.x;
+    plant.position.y = position.y;
+    plant.position.z = position.z;
+}
+
+/** Drop the part of the step that points into an already-overlapping body. */
+function motionClearOfOverlaps(previous, candidate, overlaps) {
+    const delta = {
+        x: candidate.x - previous.x,
+        y: candidate.y - previous.y,
+        z: candidate.z - previous.z,
+    };
+    for (const hit of overlaps) {
+        const normal = hit.normal;
+        if (!normal) continue;
+        const into = delta.x * normal[0] + delta.y * normal[1] + delta.z * normal[2];
+        if (into <= 0) continue;
+        delta.x -= into * normal[0];
+        delta.y -= into * normal[1];
+        delta.z -= into * normal[2];
+    }
+    return {
+        x: previous.x + delta.x,
+        y: previous.y + delta.y,
+        z: previous.z + delta.z,
     };
 }
 
@@ -428,7 +465,10 @@ export class PhysicsEngine {
             const position = vector(vehicle.position);
             const descriptor = this.RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(position.x, position.y, position.z);
             const body = this.world.createRigidBody(descriptor);
-            this.world.createCollider(this.RAPIER.ColliderDesc.cuboid(half.x, half.y, half.z), body);
+            const center = vector(vehicle.collisionCenter);
+            const collider = this.RAPIER.ColliderDesc.cuboid(half.x, half.y, half.z);
+            if (center.x || center.y || center.z) collider.setTranslation?.(center.x, center.y, center.z);
+            this.world.createCollider(collider, body);
             this.rigidbodies.push(body);
             return { id, vehicle, half, previous: position, body };
         });
@@ -518,7 +558,7 @@ export class PhysicsEngine {
         const velocity = { x: (candidate.x - previous.x) / deltaTime, z: (candidate.z - previous.z) / deltaTime };
         const origin = vector(vehicleState.vehicle.position);
         for (const hit of hits) {
-            if (hit.time > impact + 1e-12) continue;
+            if (hit.separate || hit.time > impact + 1e-12) continue;
             const state = this.rigidBodyById.get(hit.id);
             if (!state || state.spec.bodyType !== "dynamic") continue;
             const pose = state.body.translation();
@@ -535,6 +575,21 @@ export class PhysicsEngine {
                 id: state.id,
                 impulse: { x: axis.x * mass * remaining, y: 0, z: axis.z * mass * remaining },
             });
+        }
+    }
+
+    // shortcut: a second car adds its own depth after the first car already moved the body.
+    _separateOverlaps(overlaps) {
+        for (const hit of overlaps) {
+            if (!(hit.depth > 0) || !hit.normal) continue;
+            const state = this.rigidBodyById.get(hit.id);
+            const pose = state?.body?.translation?.();
+            if (!pose || typeof state.body.setTranslation !== "function") continue;
+            state.body.setTranslation({
+                x: pose.x + hit.normal[0] * hit.depth,
+                y: pose.y + hit.normal[1] * hit.depth,
+                z: pose.z + hit.normal[2] * hit.depth,
+            }, true);
         }
     }
 
@@ -611,7 +666,16 @@ export class PhysicsEngine {
                 const swept = obstacle.rigidBody
                     ? sweepObbConvexHit(state.previous, candidate, box, obstacle.convex)
                     : null;
-                hits.push({ id: obstacle.contactId ?? obstacle.id, time, normal: swept?.normal ?? null });
+                const separate = Boolean(obstacle.rigidBody)
+                    && time <= 1e-12
+                    && this.rigidBodyById.get(obstacle.id)?.spec.bodyType === "dynamic";
+                hits.push({
+                    id: obstacle.contactId ?? obstacle.id,
+                    time,
+                    normal: swept?.normal ?? null,
+                    depth: swept?.depth ?? 0,
+                    separate,
+                });
             }
             const collapsed = new Map();
             for (const hit of hits) {
@@ -619,7 +683,8 @@ export class PhysicsEngine {
                 if (!previous || hit.time < previous.time) collapsed.set(hit.id, hit);
             }
             hits.splice(0, hits.length, ...[...collapsed.values()].sort((left, right) => compareUtf8(left.id, right.id)));
-            const impact = hits.reduce((minimum, hit) => Math.min(minimum, hit.time), 1);
+            const overlaps = hits.filter((hit) => hit.separate);
+            const impact = hits.reduce((minimum, hit) => (hit.separate ? minimum : Math.min(minimum, hit.time)), 1);
             for (const hit of hits.filter((entry) => entry.time <= impact + 1e-12)) {
                 this.pendingContacts.add(`${state.id}|${hit.id}`);
             }
@@ -633,8 +698,13 @@ export class PhysicsEngine {
                 state.vehicle.updatePosition?.(clamped);
                 if (!state.vehicle.updatePosition && state.vehicle.position) Object.assign(state.vehicle.position, clamped);
                 absorbDynamicClamp(state.vehicle, clamped, state.previous, candidate);
+            } else if (overlaps.length) {
+                const slid = motionClearOfOverlaps(state.previous, candidate, overlaps);
+                state.vehicle.updatePosition?.(slid);
+                if (!state.vehicle.updatePosition && state.vehicle.position) Object.assign(state.vehicle.position, slid);
             }
             this._queueRigidBodyPush(state, candidate, deltaTime, hits, impact);
+            this._separateOverlaps(overlaps);
             const plane = this.preparedWorldDescription?.groundPlane;
             if (plane && Number.isFinite(Number(plane.y))) {
                 const current = vector(state.vehicle.position);
@@ -698,7 +768,9 @@ export class PhysicsEngine {
 
         for (const state of this.vehicleStates) {
             const position = vector(state.vehicle.position);
+            absorbKinematicClamp(state.vehicle, position);
             state.body.setNextKinematicTranslation(position);
+            state.body.setNextKinematicRotation?.(yawQuaternion(state.vehicle.rotation?.y));
         }
         this._stepRigidBodies();
         this.world.timestep = deltaTime;

@@ -233,6 +233,53 @@ test("a shortened dynamic bicycle loses into-wall speed and a kinematic plant do
     assert.equal(plant.yawRate, 0.2);
 });
 
+test("a nested kinematic plant takes the clamped pose and keeps its speed", async () => {
+    const wall = obbAsConvex(
+        { x: 3, y: 0.5, z: 0 },
+        { half: { x: 0.05, y: 1, z: 2 }, center: { x: 0, y: 0, z: 0 }, yaw: 0 },
+    );
+    const plant = {
+        motionModel: "bicycle",
+        position: { x: 0, y: 0.5, z: 0 },
+        velocity: { x: 8, y: 0, z: 0 },
+        rotation: { y: 0 },
+    };
+    const vehicle = {
+        telemetryId: "ego",
+        motionModel: "bicycle",
+        collisionDimensions: { x: 2, y: 1, z: 1 },
+        collisionCenter: { x: 0, y: 0, z: 0 },
+        rotation: { y: 0 },
+        position: { x: 0, y: 0.5, z: 0 },
+        velocity: { x: 8, y: 0, z: 0 },
+        plant,
+        updatePosition(position) { Object.assign(this.position, position); },
+    };
+    const world = {
+        obstacles: [],
+        assetProxies: [{ id: "wall", sourceId: "wall", collision: [wall] }],
+    };
+    const physics = new PhysicsEngine({
+        vehicles: () => ({ vehicles: [vehicle] }),
+        objects: () => ({ boxes: () => [] }),
+        bindings: () => ({ signalStore: null }),
+    }, { loadPhysics: async () => fakeRapier() });
+    await physics.configureRun({
+        manifest: {},
+        worldDescription: world,
+        backendSelection: createPhysicsBackendSelection(world),
+    });
+    physics.beginStep();
+    vehicle.position.x = 5;
+    physics.step(1 / 60);
+    assert.ok(plant.position.x > 1.5 && plant.position.x < 2.2, `plant x ${plant.position.x}`);
+    assert.equal(plant.position.x, vehicle.position.x);
+    assert.equal(plant.position.y, vehicle.position.y);
+    assert.equal(plant.position.z, vehicle.position.z);
+    assert.equal(plant.velocity.x, 8);
+    physics.disposeRun();
+});
+
 test("a ground-floor hold does not change dynamic planar speed", async () => {
     const vehicle = {
         telemetryId: "ego",

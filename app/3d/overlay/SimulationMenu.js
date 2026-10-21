@@ -329,7 +329,7 @@ export function SimulationMenu({
                             iconOnly
                             variant="danger"
                             active={simState?.status === "stopped"}
-                            onClick={() => invokeRunControl(() => runController.stop(), (simulation) => simulation?.stop())}
+                            onClick={() => invokeRunControl(() => runController.stop(), () => sim?.stop())}
                             title="Stop simulation"
                             ariaLabel="Stop"
                         >

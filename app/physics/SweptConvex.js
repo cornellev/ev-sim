@@ -155,7 +155,8 @@ function negateAxis(axis) {
 /**
  * First impact in [0, 1] of a translating oriented box, or null on a miss.
  * `normal` points from the box into the convex. An overlap uses the axis of
- * least overlap; a separated hit uses the axis that set the impact time.
+ * least overlap and reports that depth; a separated hit uses the axis that
+ * set the impact time and reports depth 0.
  * Yaw and center stay constant for the step.
  * @param {{ x: number, y: number, z: number }} originStart
  * @param {{ x: number, y: number, z: number }} originEnd
@@ -216,7 +217,12 @@ export function sweepObbConvexHit(originStart, originEnd, box, convex) {
     }
     if (exit < 0 || entry > 1) return null;
     const time = Math.max(0, entry);
-    return { time, normal: (time === 0 && overlapAxis) ? overlapAxis : hitAxis };
+    const overlapped = time === 0 && overlapAxis;
+    return {
+        time,
+        normal: overlapped ? overlapAxis : hitAxis,
+        depth: overlapped ? leastOverlap : 0,
+    };
 }
 
 /**
