@@ -108,9 +108,16 @@ export class RunSessionController {
             const status = simulationState.status === "playing" ? "running" : simulationState.status;
             const previous = this.snapshot.simulation;
             const assertionsChanged = assertionSignature(assertionResults) !== assertionSignature(this.snapshot.assertionResults);
-            const statusChanged = status !== this.snapshot.status;
+            // A prepared run rests with the engine paused at step zero. Copy that
+            // clock only after the operator has started the episode.
+            const mirrorsClock = this.snapshot.status === "running" || this.snapshot.status === "paused";
+            const statusChanged = mirrorsClock && status !== this.snapshot.status;
             if (statusChanged || assertionsChanged || scenarioTerminal) {
-                this._set({ status, assertionResults, simulation: simulationState });
+                this._set({
+                    ...(statusChanged ? { status } : {}),
+                    assertionResults,
+                    simulation: simulationState,
+                });
                 return;
             }
             // Time/step HUD updates come from SimulationEngine.subscribe; keep a live pointer

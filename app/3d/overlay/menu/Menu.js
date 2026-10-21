@@ -45,10 +45,10 @@ const WORKSPACE_DESTINATIONS = {
     logs: { view: APP_VIEWS.LOGS },
 };
 
-function destinationLocked(managedRunLocked, key, active) {
+function destinationLocked(managedRunLocked, key, active, runStatus) {
     if (!managedRunLocked || active) return false;
     const destination = WORKSPACE_DESTINATIONS[key];
-    return !workspaceAllowedDuringManagedRun(destination?.view, destination?.threeDMode ?? null);
+    return !workspaceAllowedDuringManagedRun(destination?.view, destination?.threeDMode ?? null, runStatus);
 }
 
 const ICON_PROPS = { size: 16, stroke: 1.75 };
@@ -86,6 +86,7 @@ export default function Menu({
     marketplaceAvailable = false,
     onMarketplace,
     managedRunLocked = false,
+    managedRunStatus = "idle",
     onClose,
     instant = false,
 }) {
@@ -213,7 +214,7 @@ export default function Menu({
                                             <div className="sf-workspace-menu__items">
                                                 {section.items.map((item) => {
                                                     const Icon = item.icon || IconCube;
-                                                    const locked = destinationLocked(managedRunLocked, item.key, item.active);
+                                                    const locked = destinationLocked(managedRunLocked, item.key, item.active, managedRunStatus);
                                                     return (
                                                         <button
                                                             key={item.key}

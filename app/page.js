@@ -98,6 +98,7 @@ function HomeContent() {
     const [marketplaceAvailable, setMarketplaceAvailable] = useState(false);
     const [marketplaceReloadRequired, setMarketplaceReloadRequired] = useState(null);
     const [managedRunLocked, setManagedRunLocked] = useState(false);
+    const [managedRunStatus, setManagedRunStatus] = useState("idle");
     const perspectiveActive = usePerspectiveViewActive();
 
     useEffect(() => {
@@ -141,7 +142,9 @@ function HomeContent() {
 
     useEffect(() => getRunSessionController().subscribe((snapshot) => {
         const locked = managedRunBlocksNavigation(snapshot);
+        const status = snapshot?.status || "idle";
         setManagedRunLocked((current) => current === locked ? current : locked);
+        setManagedRunStatus((current) => current === status ? current : status);
     }), []);
 
     useEffect(() => {
@@ -159,13 +162,13 @@ function HomeContent() {
     }, []);
 
     const requestWorkspace = useCallback((action, { view: destinationView, threeDMode: destinationMode = null, force = false } = {}) => {
-        if (!force && managedRunLocked && !workspaceAllowedDuringManagedRun(destinationView, destinationMode)) {
+        if (!force && managedRunLocked && !workspaceAllowedDuringManagedRun(destinationView, destinationMode, managedRunStatus)) {
             return false;
         }
         const changedImmediately = requestNavigation(action);
         if (!changedImmediately) setMenuVisible(false);
         return changedImmediately;
-    }, [managedRunLocked, requestNavigation]);
+    }, [managedRunLocked, managedRunStatus, requestNavigation]);
 
     const goToSimulation = useCallback(() => {
         requestWorkspace(() => {
@@ -399,6 +402,7 @@ function HomeContent() {
                     marketplaceAvailable={marketplaceAvailable}
                     onMarketplace={goToMarketplace}
                     managedRunLocked={managedRunLocked}
+                    managedRunStatus={managedRunStatus}
                     instant={menuSource === "keyboard"}
                 />
             )

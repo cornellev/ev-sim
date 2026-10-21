@@ -100,11 +100,14 @@ export function managedRunBlocksNavigation(snapshot) {
 }
 
 /**
- * Simulation and the inspect workspaces leave a prepared run in place.
+ * Simulation and the inspect workspaces leave a managed run in place.
+ * Run Configuration stays available while the episode is prepared and has not started.
  * @param {AppView} view
  * @param {ThreeDMode | null} [threeDMode]
+ * @param {string | null} [runStatus]
  */
-export function workspaceAllowedDuringManagedRun(view, threeDMode = null) {
+export function workspaceAllowedDuringManagedRun(view, threeDMode = null, runStatus = null) {
     if (view === APP_VIEWS.THREE_D) return threeDMode === THREE_D_MODES.SIMULATION;
+    if (view === APP_VIEWS.CONFIG && runStatus === "ready") return true;
     return view === APP_VIEWS.REPLAY || view === APP_VIEWS.ANALYSIS || view === APP_VIEWS.LOGS;
 }

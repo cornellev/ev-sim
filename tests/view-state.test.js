@@ -77,6 +77,11 @@ test("an open managed run keeps simulation and inspect workspaces available", ()
     assert.equal(workspaceAllowedDuringManagedRun(APP_VIEWS.THREE_D, THREE_D_MODES.ENVIRONMENT), false);
     assert.equal(workspaceAllowedDuringManagedRun(APP_VIEWS.VEHICLE_EDITOR), false);
     assert.equal(workspaceAllowedDuringManagedRun(APP_VIEWS.CONFIG), false);
+    assert.equal(workspaceAllowedDuringManagedRun(APP_VIEWS.CONFIG, null, "ready"), true);
+    assert.equal(workspaceAllowedDuringManagedRun(APP_VIEWS.CONFIG, null, "running"), false);
+    assert.equal(workspaceAllowedDuringManagedRun(APP_VIEWS.CONFIG, null, "paused"), false);
+    assert.equal(workspaceAllowedDuringManagedRun(APP_VIEWS.SCRIPTING, null, "ready"), false);
+    assert.equal(workspaceAllowedDuringManagedRun(APP_VIEWS.THREE_D, THREE_D_MODES.ENVIRONMENT, "ready"), false);
     assert.equal(workspaceAllowedDuringManagedRun(APP_VIEWS.SCENARIOS), false);
     assert.equal(workspaceAllowedDuringManagedRun(APP_VIEWS.EXPERIMENTS), false);
     assert.equal(workspaceAllowedDuringManagedRun(APP_VIEWS.HEADLESS_RUNS), false);

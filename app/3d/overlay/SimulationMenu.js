@@ -6,6 +6,7 @@ import {
     IconPlayerPause as FaPause,
     IconPlayerTrackNext as FaStepForward,
     IconPlayerStop as FaStop,
+    IconRestore as FaRestore,
     IconAdjustmentsHorizontal as FaSlidersH,
     IconCube as FaCube,
     IconTool as FaTools,
@@ -328,12 +329,22 @@ export function SimulationMenu({
                             iconOnly
                             variant="danger"
                             active={simState?.status === "stopped"}
-                            onClick={() => invokeRunControl(() => runController.reset(), () => sim?.stop())}
-                            title="Finalize and reset simulation"
-                            ariaLabel="Reset"
+                            onClick={() => invokeRunControl(() => runController.stop(), (simulation) => simulation?.stop())}
+                            title="Stop simulation"
+                            ariaLabel="Stop"
                         >
                             <FaStop className="h-3 w-3" />
                         </MenuButton>
+                        {runState.activeRunId && (
+                            <MenuButton
+                                iconOnly
+                                onClick={() => invokeRunControl(() => runController.reset(), () => {})}
+                                title="Finalize and reset simulation"
+                                ariaLabel="Reset"
+                            >
+                                <FaRestore className="h-3 w-3" />
+                            </MenuButton>
+                        )}
                         <MenuButton
                             iconOnly
                             active={viewMode === "map"}

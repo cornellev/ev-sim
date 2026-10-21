@@ -27,6 +27,34 @@ function controllerFor(policy, start) {
     return controller;
 }
 
+test("engine pause leaves a prepared or stopped run unchanged and pauses a running one", () => {
+    const controller = new RunSessionController();
+    let emit = null;
+    controller.recording = { attachSimulation() {} };
+    controller.attachData({
+        simulation: () => ({
+            setScenarioDiagnosticsEnabled() {},
+            subscribe(listener) {
+                emit = listener;
+                return () => {};
+            },
+        }),
+    });
+    controller.snapshot.activeRunId = "run-test";
+
+    controller.snapshot.status = "ready";
+    emit({ status: "paused", assertions: [], steps: 0, time: 0, timeNs: 0 });
+    assert.equal(controller.snapshot.status, "ready");
+
+    controller.snapshot.status = "stopped";
+    emit({ status: "paused", assertions: [], steps: 0, time: 0, timeNs: 0 });
+    assert.equal(controller.snapshot.status, "stopped");
+
+    controller.snapshot.status = "running";
+    emit({ status: "paused", assertions: [], steps: 1, time: 0.02, timeNs: 20_000_000 });
+    assert.equal(controller.snapshot.status, "paused");
+});
+
 test("required logging rejects the run before the first step when storage cannot open", async () => {
     const controller = controllerFor("required", async () => { throw new Error("storage offline"); });
     await assert.rejects(controller._ensureRecording(), /storage offline/);
