@@ -348,6 +348,9 @@ export function createSimulationRuntimeContext(options = {}) {
             rigidBodyPoses() {
                 return manager(options.physics)?.rigidBodyPoses?.() ?? [];
             },
+            preparedRigidBodies() {
+                return manager(options.physics)?.preparedWorldDescription?.rigidBodies ?? [];
+            },
         },
         scenarios: options.scenarios ?? null,
         controls: {

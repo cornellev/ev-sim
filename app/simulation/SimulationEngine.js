@@ -7,7 +7,7 @@ import { BrowserPbrWorkerRuntime } from "../3d/perception/BrowserPbrWorkerRuntim
 import { LidarViewportPreview } from "../3d/perception/LidarViewportPreview.js";
 import { ScenarioDiagnostics } from "../scenarios/ScenarioDiagnostics.js";
 import { ScenarioRuntime } from "../scenarios/ScenarioRuntime.js";
-import { SimulationKernel } from "./kernel/SimulationKernel.js";
+import { editorRigidBodiesReady, SimulationKernel } from "./kernel/SimulationKernel.js";
 import { createSimulationRuntimeContext } from "./kernel/SimulationRuntimeContext.js";
 import { BrowserPluginModuleSource } from "../plugin/browser/BrowserPluginModuleSource.js";
 import { PluginRunSession, pluginRuntimeCapabilitiesForRun } from "../plugin/PluginRunSession.js";
@@ -586,10 +586,21 @@ export class SimulationEngine {
 
     play() {
         this.syncEditorRigidBodies();
+        this.restoreStoppedEditorBodies();
         this.startLoop();
         this.kernel.play();
         this._syncEpisodeOverlayMeshes();
         this._emit();
+    }
+
+    // Play from stopped puts rigid bodies back on the authored pose. Pause
+    // resumes in place. A resolved run keeps the world it was prepared with.
+    restoreStoppedEditorBodies() {
+        if (this.resolvedRun || this.kernel.status !== "stopped") return;
+        const physics = this.data?.physics?.();
+        if (!editorRigidBodiesReady(physics)) return;
+        physics.resetRun();
+        this._applyRigidBodyPoses();
     }
 
     // A resolved run keeps the world it was prepared with. Editor play uses the

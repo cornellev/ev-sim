@@ -36,11 +36,14 @@ queue until the next physics step. The floor collider, when the document floor
 is enabled and its collider is not turned off, collides with dynamic bodies
 and not with the vehicle. The vehicle
 hull sweep treats a rigid body as another obstacle. Because that sweep stops
-short of penetration, a dynamic body also receives the vehicle's approach
-speed as an impulse.
+short of penetration, a dynamic body receives an impulse for the remaining
+closing speed along the contact face. A vertical face falls back to the
+horizontal direction from the vehicle origin to the body.
 
-Editor Play, when no run is resolved, steps that live world description. A
-resolved run keeps the world it was prepared with.
+Editor Play, when no run is resolved, steps that live world description.
+Entered from stopped, it rebuilds rigid bodies at the authored pose before
+stepping. Pause then Play leaves them where they are. A resolved run keeps
+the world it was prepared with.
 
 CPU LiDAR keeps body triangles in the authored static index until a body
 leaves its spawn pose. A capture then bakes every rigid body into one
@@ -84,3 +87,7 @@ its previous description and hash.
 ### 2026-10-21 — object scripts write the component
 
 Make, Split, Get, and Add Rigid Body are scripting canvas blocks. Add records a `put-rigid-body` op. `putRigidBody` writes the same `components.rigidBody` the inspector writes. The component schema and the kinematic characterization tape are unchanged.
+
+### 2026-10-21 — vehicle push matches closing speed
+
+A dynamic body is pushed by the remaining closing speed along the sweep's contact face, so holding the car against a block does not stack speed. Editor Play from stopped rebuilds bodies at the authored pose when no run is resolved. The component schema, `worldHash` rule, and kinematic characterization tape are unchanged.

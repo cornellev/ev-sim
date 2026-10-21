@@ -70,6 +70,11 @@ function poseOf(physics, id) {
     return physics.rigidBodyPoses().find((pose) => pose.id === id);
 }
 
+function horizontalSpeed(physics, id) {
+    const velocity = physics.rigidBodyById.get(id).body.linvel();
+    return Math.hypot(velocity.x, velocity.z);
+}
+
 test("putRigidBody replaces a body and rejects a group", () => {
     const { document, service } = yard();
     const group = service.run("createObject", { typeId: "group", name: "Group" });
@@ -244,6 +249,12 @@ test("dynamic bodies fall onto the floor, take forces, stack, and stop the vehic
     assert.ok(poseOf(physics, "box").position.x > 4.2, `box x ${poseOf(physics, "box").position.x}`);
     const contacts = physics.syncAndPublishContacts({ step: 1, timeNs: 0 });
     assert.ok(contacts.started.includes("ego|box"));
+    const speedAfterFirst = horizontalSpeed(physics, "box");
+    assert.ok(speedAfterFirst > 10, `first speed ${speedAfterFirst}`);
+    physics.beginStep();
+    vehicle.position.x += speedAfterFirst * dt;
+    physics.step(dt);
+    assert.ok(horizontalSpeed(physics, "box") <= speedAfterFirst + 1, `second speed ${horizontalSpeed(physics, "box")}`);
     physics.disposeRun();
 
     const empty = await startPhysics(new EnvironmentDocument({ environmentId: "empty" }));
@@ -467,5 +478,107 @@ test("editor reset restores rigid bodies when no run is resolved", () => {
     poses = [];
     calls.length = 0;
     kernel.reset();
+    assert.deepEqual(calls, []);
+});
+
+test("a sustained push matches closing speed and a side hit stays lateral", async () => {
+    const dt = 1 / 60;
+    const approach = 5;
+    const { document, service } = yard();
+    service.run("setFloor", { enabled: true });
+    service.run("addPrimitive", { id: "box", shape: "box", x: 1.2, y: 0.5, z: 0, size: { x: 1, y: 1, z: 1 } });
+    service.run("addRigidBody", { objectId: "box" });
+    const vehicle = {
+        telemetryId: "ego",
+        collisionDimensions: { x: 1, y: 1, z: 1 },
+        position: { x: 0, y: 0.5, z: 0 },
+        updatePosition(position) { Object.assign(this.position, position); },
+    };
+    const physics = await startPhysics(document, [vehicle]);
+    let maxSpeed = 0;
+    for (let step = 0; step < 30; step += 1) {
+        physics.beginStep();
+        vehicle.position.x += approach * dt;
+        physics.step(dt);
+        maxSpeed = Math.max(maxSpeed, horizontalSpeed(physics, "box"));
+    }
+    const rested = poseOf(physics, "box");
+    assert.ok(maxSpeed > 1 && maxSpeed <= approach + 0.25, `speed ${maxSpeed}`);
+    assert.ok(Math.hypot(rested.position.x - 1.2, rested.position.z) < 4, `box ${rested.position.x}, ${rested.position.z}`);
+    physics.disposeRun();
+
+    const { document: sideDocument, service: side } = yard();
+    side.run("addPrimitive", { id: "box", shape: "box", x: 1.2, y: 0.5, z: 0.55, size: { x: 0.6, y: 1, z: 0.6 } });
+    side.run("addRigidBody", { objectId: "box" });
+    side.run("setRigidBody", { objectId: "box", patch: { useGravity: false } });
+    const wide = {
+        telemetryId: "ego",
+        collisionDimensions: { x: 3, y: 1, z: 1 },
+        position: { x: 0, y: 0.5, z: 0 },
+        updatePosition(position) { Object.assign(this.position, position); },
+    };
+    const lateral = await startPhysics(sideDocument, [wide]);
+    lateral.beginStep();
+    wide.position.x += 0.2;
+    wide.position.z += 0.05;
+    lateral.step(dt);
+    const velocity = lateral.rigidBodyById.get("box").body.linvel();
+    assert.ok(Math.abs(velocity.z) > Math.abs(velocity.x), `vel ${velocity.x}, ${velocity.z}`);
+    lateral.disposeRun();
+});
+
+test("editor reset restores rigid bodies when the pose list is empty", () => {
+    const calls = [];
+    const kernel = new SimulationKernel({
+        environment: { reset() {}, getWorldDescription: () => null },
+        inputs: { reset() {} },
+        scripts: { reset() {} },
+        physics: {
+            rigidBodyPoses: () => [],
+            preparedWorldDescription: { rigidBodies: [{ id: "box" }] },
+            resetRun() { calls.push("reset"); },
+        },
+        devices: {
+            applyRigidBodyPoses() { calls.push("poses"); },
+        },
+    });
+    kernel.reset();
+    assert.deepEqual(calls, ["reset", "poses"]);
+});
+
+test("editor play from stopped restores rigid bodies and pause does not", () => {
+    const calls = [];
+    const mesh = {
+        position: { set(x, y, z) { this.xyz = [x, y, z]; } },
+        quaternion: { set() {} },
+        updateMatrixWorld() {},
+    };
+    const physics = {
+        world: {},
+        preparedWorldDescription: { rigidBodies: [{ id: "box" }] },
+        rigidBodyPoses: () => [{
+            id: "box",
+            host: "primitive",
+            position: { x: 1, y: 2, z: 3 },
+            rotation: { x: 0, y: 0, z: 0, w: 1 },
+        }],
+        resetRun() { calls.push("reset"); },
+    };
+    const engine = new SimulationEngine({
+        environment: () => ({ worldHash: "h", getWorldDescription: () => ({ rigidBodies: [{ id: "box" }] }) }),
+        physics: () => physics,
+        bindings: () => null,
+        scene: { getObjectByName(name) { return name === "primitive:box" ? mesh : null; } },
+    });
+    engine.restoreStoppedEditorBodies();
+    assert.deepEqual(calls, ["reset"]);
+    assert.deepEqual(mesh.position.xyz, [1, 2, 3]);
+    calls.length = 0;
+    engine.status = "paused";
+    engine.restoreStoppedEditorBodies();
+    assert.deepEqual(calls, []);
+    engine.status = "stopped";
+    engine.resolvedRun = { manifest: { id: "run" } };
+    engine.restoreStoppedEditorBodies();
     assert.deepEqual(calls, []);
 });

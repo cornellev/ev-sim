@@ -2,7 +2,7 @@ import { assertPhysicsBackendSelection, PHYSICS_BACKEND_CONFIG } from "./Physics
 import { absorbDynamicClamp } from "../simulation/vehicles/dynamicBicycle.js";
 import { worldSweepMesh } from "../simulation/world/RigidBodyRecords.js";
 import { compareUtf8 } from "../simulation/world/WorldDescription.js";
-import { boxSupportRadius, obbAsConvex, orientedBoxCenter, sweepAabbConvex, sweepObbConvex } from "./SweptConvex.js";
+import { boxSupportRadius, obbAsConvex, orientedBoxCenter, sweepAabbConvex, sweepObbConvex, sweepObbConvexHit } from "./SweptConvex.js";
 
 const DYNAMIC_GROUP = 0x0002;
 const FLOOR_GROUP = 0x0008;
@@ -194,6 +194,16 @@ function vehicleBox(vehicle) {
         center: vector(vehicle.collisionCenter),
         yaw: Number(vehicle.rotation?.y) || 0,
     };
+}
+
+function horizontalPushAxis(normal, pose, origin) {
+    const horizontal = Math.hypot(normal?.[0] ?? 0, normal?.[2] ?? 0);
+    if (horizontal > 1e-4) return { x: normal[0] / horizontal, z: normal[2] / horizontal };
+    const nx = pose.x - origin.x;
+    const nz = pose.z - origin.z;
+    const length = Math.hypot(nx, nz);
+    if (length <= 1e-8) return null;
+    return { x: nx / length, z: nz / length };
 }
 
 function sweepVehicleObstacle(start, end, box, obstacle) {
@@ -497,11 +507,11 @@ export class PhysicsEngine {
         return this.rigidBodyStates.flatMap((state) => {
             const mesh = worldSweepMesh(state.parts, state.body.translation(), state.body.rotation());
             if (mesh.vertices.length < 4) return [];
-            return [{ id: state.id, contactId: state.id, convex: mesh, bounds: mesh.bounds }];
+            return [{ id: state.id, contactId: state.id, convex: mesh, bounds: mesh.bounds, rigidBody: true }];
         });
     }
 
-    // shortcut: hull backoff leaves no penetration, so the kinematic car does not push; match its approach speed.
+    // shortcut: hull backoff leaves no penetration, so the kinematic car does not push; match its remaining closing speed.
     _queueRigidBodyPush(vehicleState, candidate, deltaTime, hits, impact) {
         if (!this.rigidBodyStates.length || !deltaTime) return;
         const previous = vehicleState.previous;
@@ -512,17 +522,18 @@ export class PhysicsEngine {
             const state = this.rigidBodyById.get(hit.id);
             if (!state || state.spec.bodyType !== "dynamic") continue;
             const pose = state.body.translation();
-            let nx = pose.x - origin.x;
-            let nz = pose.z - origin.z;
-            const length = Math.hypot(nx, nz);
-            if (length <= 1e-8) continue;
-            nx /= length;
-            nz /= length;
-            const into = velocity.x * nx + velocity.z * nz;
-            if (into <= 0) continue;
+            const axis = horizontalPushAxis(hit.normal, pose, origin);
+            if (!axis) continue;
+            const into = velocity.x * axis.x + velocity.z * axis.z;
+            const linvel = state.body.linvel?.() ?? {};
+            const carried = (Number(linvel.x) || 0) * axis.x + (Number(linvel.z) || 0) * axis.z;
+            const remaining = into - carried;
+            if (!(remaining > 0)) continue;
+            const reportedMass = Number(state.body.mass?.());
+            const mass = Number.isFinite(reportedMass) && reportedMass > 0 ? reportedMass : state.spec.mass;
             this._pushes.push({
                 id: state.id,
-                impulse: { x: nx * state.spec.mass * into, y: 0, z: nz * state.spec.mass * into },
+                impulse: { x: axis.x * mass * remaining, y: 0, z: axis.z * mass * remaining },
             });
         }
     }
@@ -597,11 +608,17 @@ export class PhysicsEngine {
             for (const obstacle of obstacles) {
                 const time = sweepVehicleObstacle(state.previous, candidate, box, obstacle);
                 if (time === null) continue;
-                hits.push({ id: obstacle.contactId ?? obstacle.id, time });
+                const swept = obstacle.rigidBody
+                    ? sweepObbConvexHit(state.previous, candidate, box, obstacle.convex)
+                    : null;
+                hits.push({ id: obstacle.contactId ?? obstacle.id, time, normal: swept?.normal ?? null });
             }
             const collapsed = new Map();
-            for (const hit of hits) collapsed.set(hit.id, Math.min(collapsed.get(hit.id) ?? Infinity, hit.time));
-            hits.splice(0, hits.length, ...[...collapsed].map(([id, time]) => ({ id, time })).sort((left, right) => compareUtf8(left.id, right.id)));
+            for (const hit of hits) {
+                const previous = collapsed.get(hit.id);
+                if (!previous || hit.time < previous.time) collapsed.set(hit.id, hit);
+            }
+            hits.splice(0, hits.length, ...[...collapsed.values()].sort((left, right) => compareUtf8(left.id, right.id)));
             const impact = hits.reduce((minimum, hit) => Math.min(minimum, hit.time), 1);
             for (const hit of hits.filter((entry) => entry.time <= impact + 1e-12)) {
                 this.pendingContacts.add(`${state.id}|${hit.id}`);

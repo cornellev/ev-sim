@@ -37,6 +37,14 @@ function cloneSnapshot(value) {
     return JSON.parse(JSON.stringify(value));
 }
 
+export function editorRigidBodiesReady(physics) {
+    if ((physics?.rigidBodyPoses?.() ?? []).length > 0) return true;
+    const prepared = physics?.preparedRigidBodies?.()
+        ?? physics?.preparedWorldDescription?.rigidBodies
+        ?? [];
+    return prepared.length > 0;
+}
+
 /**
  * Authoritative fixed-step simulation state machine. It deliberately owns no
  * RAF, renderer, scene, DOM, viewport controls, or presentation overlays.
@@ -266,7 +274,7 @@ export class SimulationKernel {
                 episodeLidarPrimitives: this.context.episodeOverlay?.toLidarPrimitives?.() ?? [],
             });
             this.context.devices.applyRigidBodyPoses?.(this.context.physics.rigidBodyPoses?.());
-        } else if ((this.context.physics.rigidBodyPoses?.() ?? []).length > 0) {
+        } else if (editorRigidBodiesReady(this.context.physics)) {
             this.context.physics.resetRun({ resetSeed });
             this.context.devices.applyRigidBodyPoses?.(this.context.physics.rigidBodyPoses?.());
         }

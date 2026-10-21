@@ -148,16 +148,21 @@ export function obbAsConvex(origin, box) {
     };
 }
 
+function negateAxis(axis) {
+    return [-axis[0], -axis[1], -axis[2]];
+}
+
 /**
  * First impact in [0, 1] of a translating oriented box, or null on a miss.
- * Yaw and center stay constant for the step. A zero-yaw, zero-center box
- * matches the historical AABB sweep.
+ * `normal` points from the box into the convex. An overlap uses the axis of
+ * least overlap; a separated hit uses the axis that set the impact time.
+ * Yaw and center stay constant for the step.
  * @param {{ x: number, y: number, z: number }} originStart
  * @param {{ x: number, y: number, z: number }} originEnd
  * @param {{ half: { x: number, y: number, z: number }, center?: { x: number, y: number, z: number }, yaw?: number }} box
  * @param {{ vertices: number[][], triangles: number[][], bounds?: object }} convex
  */
-export function sweepObbConvex(originStart, originEnd, box, convex) {
+export function sweepObbConvexHit(originStart, originEnd, box, convex) {
     const vertices = convex?.vertices;
     const triangles = convex?.triangles;
     if (!Array.isArray(vertices) || !Array.isArray(triangles) || vertices.length < 4 || triangles.length === 0) {
@@ -179,6 +184,9 @@ export function sweepObbConvex(originStart, originEnd, box, convex) {
     const frame = boxFrame(query.yaw);
     let entry = -Infinity;
     let exit = Infinity;
+    let hitAxis = null;
+    let leastOverlap = Infinity;
+    let overlapAxis = null;
     for (const axis of axesFor(vertices, triangles, [frame.x, frame.y, frame.z])) {
         const projections = vertices.map((point) => dot(point, axis));
         const targetMin = Math.min(...projections);
@@ -186,18 +194,39 @@ export function sweepObbConvex(originStart, originEnd, box, convex) {
         const center = dot(start, axis);
         const velocity = dot(delta, axis);
         const radius = supportRadius(axis, query);
+        const overlap = Math.min(center + radius, targetMax) - Math.max(center - radius, targetMin);
+        if (overlap > 0 && overlap < leastOverlap) {
+            leastOverlap = overlap;
+            const targetCenter = (targetMin + targetMax) / 2;
+            overlapAxis = center <= targetCenter ? [...axis] : negateAxis(axis);
+        }
         if (Math.abs(velocity) <= EPSILON) {
             if (center + radius < targetMin || center - radius > targetMax) return null;
             continue;
         }
         const first = (targetMin - (center + radius)) / velocity;
         const second = (targetMax - (center - radius)) / velocity;
-        entry = Math.max(entry, Math.min(first, second));
+        const near = Math.min(first, second);
+        if (near > entry) {
+            entry = near;
+            hitAxis = first <= second ? [...axis] : negateAxis(axis);
+        }
         exit = Math.min(exit, Math.max(first, second));
         if (entry > exit) return null;
     }
     if (exit < 0 || entry > 1) return null;
-    return Math.max(0, entry);
+    const time = Math.max(0, entry);
+    return { time, normal: (time === 0 && overlapAxis) ? overlapAxis : hitAxis };
+}
+
+/**
+ * First impact in [0, 1] of a translating oriented box, or null on a miss.
+ * Yaw and center stay constant for the step. A zero-yaw, zero-center box
+ * matches the historical AABB sweep.
+ */
+export function sweepObbConvex(originStart, originEnd, box, convex) {
+    const hit = sweepObbConvexHit(originStart, originEnd, box, convex);
+    return hit ? hit.time : null;
 }
 
 export function sweepAabbConvex(start, end, half, convex) {
