@@ -87,6 +87,7 @@ export class VehicleDatabase extends Database {
                 unresolvedPluginPlant: mount.unresolvedPluginPlant === true,
                 plantPluginId: mount.plantPluginId,
                 plantRuntimeHash: mount.plantRuntimeHash,
+                plantModel: mount.plantModel,
                 plants,
                 skipManifestDevices: options.skipManifestDevices === true,
             });

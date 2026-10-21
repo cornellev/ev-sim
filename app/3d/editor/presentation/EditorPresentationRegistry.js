@@ -10,6 +10,7 @@
  * fields.
  */
 
+import { RIGID_BODY_HOSTS } from "../../../simulation/world/RigidBodyRecords.js";
 import { objectTypeRegistry } from "../objects/ObjectTypeRegistry.js";
 import { legacyIndex, readObjectOptionValue, readObjectTransform } from "../objects/objectGraph.js";
 import { GROUP_TYPE_ID } from "../objects/types/group.js";
@@ -38,6 +39,7 @@ export const SECTION_IDS = Object.freeze({
     TRANSFORM: "transform",
     OPTIONS: "options",
     SCRIPTS: "scripts",
+    RIGID_BODY: "rigid-body",
     UNSUPPORTED: "unsupported",
 });
 
@@ -193,6 +195,9 @@ export function defaultInspectorSections(ctx, { objectRegistry = objectTypeRegis
     if (definition.options) {
         const { fields, values } = readObjectFieldValues(record, ctx.document, { objectRegistry, sky: ctx.sky ?? null });
         if (fields.length > 0) sections.push({ id: SECTION_IDS.OPTIONS, title: "Options", kind: "options", fields, values });
+    }
+    if (RIGID_BODY_HOSTS.has(record.typeId)) {
+        sections.push({ id: SECTION_IDS.RIGID_BODY, title: "Rigid Body", kind: "rigid-body", record });
     }
     sections.push({ id: SECTION_IDS.SCRIPTS, title: "Scripts", kind: "scripts", record });
     return sections;

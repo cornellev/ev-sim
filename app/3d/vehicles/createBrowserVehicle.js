@@ -32,6 +32,7 @@ export function createBrowserVehicle(db, {
     unresolvedPluginPlant = false,
     plantPluginId = "",
     plantRuntimeHash = "",
+    plantModel = "",
     plants = undefined,
 } = {}) {
     const resolvedType = type || "big-car";
@@ -56,6 +57,7 @@ export function createBrowserVehicle(db, {
         unresolvedPluginPlant,
         plantPluginId,
         plantRuntimeHash,
+        plantModel,
         plants,
     });
 }

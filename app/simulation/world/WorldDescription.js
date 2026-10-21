@@ -17,6 +17,7 @@ import { validateAssetMetricsDomain } from "../../editor-assets/AssetMetricSnaps
 import { assetBindingRevisionVersion, readAssetBinding } from "../../editor-assets/AssetBackedObject.js";
 import { normalizePerceptionClassName } from "../../autonomy/PerceptionLabelCatalog.js";
 import { compilePrimitiveSolid, SCENE_PRIMITIVE_POLICY } from "./PrimitiveSolids.js";
+import { compileRigidBodies } from "./RigidBodyRecords.js";
 import { FLOOR_OBJECT_ID, FLOOR_PLANE_Y } from "./PrimitiveRecords.js";
 
 export const WORLD_DESCRIPTION_KIND = "cev-sim.world-description";
@@ -749,6 +750,12 @@ export function createWorldDescriptionV3(value = {}) {
     });
 }
 
+function withRigidBodies(description, document) {
+    const rigidBodies = compileRigidBodies(document);
+    if (rigidBodies.length === 0) return description;
+    return canonicalizeSimulationValue({ ...description, rigidBodies });
+}
+
 export function createWorldDescription(value = {}) {
     const manifest = sourceManifest(value) ?? {};
     const document = manifest.document ?? {};
@@ -772,15 +779,17 @@ export function createWorldDescription(value = {}) {
     if (!base) throw new TypeError(`Unsupported road geometry version: ${String(geometryVersion)}.`);
     const solids = compileScenePrimitives(document);
     const floorOn = document.floor?.enabled === true;
-    if (solids.length === 0 && !floorOn) return base;
-    return canonicalizeSimulationValue({
-        ...base,
-        version: WORLD_DESCRIPTION_V4,
-        primitivePolicy: { ...SCENE_PRIMITIVE_POLICY },
-        primitives: solids,
-        ...(floorOn ? { groundPlane: { id: FLOOR_OBJECT_ID, y: FLOOR_PLANE_Y } } : {}),
-        ...(solids.length > 0 ? { bounds: boundsWithPoints(base.bounds, solids) } : {}),
-    });
+    const described = solids.length === 0 && !floorOn
+        ? base
+        : canonicalizeSimulationValue({
+            ...base,
+            version: WORLD_DESCRIPTION_V4,
+            primitivePolicy: { ...SCENE_PRIMITIVE_POLICY },
+            primitives: solids,
+            ...(floorOn ? { groundPlane: { id: FLOOR_OBJECT_ID, y: FLOOR_PLANE_Y } } : {}),
+            ...(solids.length > 0 ? { bounds: boundsWithPoints(base.bounds, solids) } : {}),
+        });
+    return withRigidBodies(described, document);
 }
 
 export function hashWorldDescription(description) {

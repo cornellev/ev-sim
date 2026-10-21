@@ -26,6 +26,7 @@ export class HeadlessVehicleManager {
                     createVehiclePlantDefinition(entry, dependency, {
                         plantPluginId: mount.plantPluginId,
                         plantRuntimeHash: mount.plantRuntimeHash,
+                        plantModel: mount.plantModel,
                     }),
                     { stepper: mount.plantStepper ?? null, unresolved: mount.unresolvedPluginPlant === true },
                 );

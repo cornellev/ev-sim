@@ -74,6 +74,7 @@ export function createVehiclePlantDefinition(entry = {}, dependency = null, opti
                 id: pluginPlantId,
                 pluginId: String(options.plantPluginId || ""),
                 runtimeHash: String(options.plantRuntimeHash || ""),
+                ...(options.plantModel ? { model: String(options.plantModel) } : {}),
             },
         } : {}),
         ...(motionModel === "dynamic-bicycle" ? {
@@ -91,6 +92,10 @@ function lerpAngle(left, right, alpha) {
     const tau = Math.PI * 2;
     const delta = ((right - left + Math.PI) % tau + tau) % tau - Math.PI;
     return left + delta * alpha;
+}
+
+function isDynamicPlugin(plant) {
+    return plant?.motionModel === "plugin" && plant.definition?.plant?.model === DYNAMIC_BICYCLE_MODEL;
 }
 
 function packPlantState(plant, target) {
@@ -120,6 +125,41 @@ function unpackPlantState(plant, state) {
     plant.velocity.x = state[6];
     plant.velocity.y = state[7];
     plant.velocity.z = state[8];
+    plant.acceleration.x = state[9];
+    plant.acceleration.y = state[10];
+    plant.acceleration.z = state[11];
+    plant.steeringAngle = state[12];
+}
+
+function packDynamicPlantState(plant, target) {
+    target[0] = plant.position.x;
+    target[1] = plant.position.y;
+    target[2] = plant.position.z;
+    target[3] = plant.rotation.x;
+    target[4] = plant.rotation.y;
+    target[5] = plant.rotation.z;
+    target[6] = plant.velocity.x;
+    target[7] = plant.lateralVelocity;
+    target[8] = plant.yawRate;
+    target[9] = plant.axCommand;
+    target[10] = 0;
+    target[11] = 0;
+    target[12] = plant.steeringAngle;
+    return target;
+}
+
+function unpackDynamicPlantState(plant, state) {
+    plant.position.x = state[0];
+    plant.position.y = state[1];
+    plant.position.z = state[2];
+    plant.rotation.x = state[3];
+    plant.rotation.y = state[4];
+    plant.rotation.z = state[5];
+    plant.velocity.x = state[6];
+    plant.velocity.y = 0;
+    plant.velocity.z = 0;
+    plant.lateralVelocity = state[7];
+    plant.yawRate = state[8];
     plant.acceleration.x = state[9];
     plant.acceleration.y = state[10];
     plant.acceleration.z = state[11];
@@ -210,7 +250,7 @@ export class KinematicVehiclePlant {
         this.yawRate = 0;
         this.axCommand = 0;
         this.longitudinal = { mode: "hold" };
-        if (this.motionModel === "dynamic-bicycle") {
+        if (this.motionModel === "dynamic-bicycle" || isDynamicPlugin(this)) {
             this.velocity.y = 0;
             this.velocity.z = 0;
         }
@@ -261,9 +301,8 @@ export class KinematicVehiclePlant {
     update(deltaTime) {
         const dt = finite(deltaTime);
         if (dt < 0) throw new RangeError("Vehicle plant delta time cannot be negative.");
-        if (this.motionModel === "dynamic-bicycle") {
-            const axle = this.definition.axle ?? deriveAxleDistances([], this.kinematics.wheelbase);
-            const dynamics = this.definition.dynamics ?? {};
+        const dynamicPlugin = isDynamicPlugin(this);
+        if (this.motionModel === "dynamic-bicycle" || dynamicPlugin) {
             this.axCommand = longitudinalCommand({
                 mode: this.longitudinal?.mode || "hold",
                 speedMps: this.longitudinal?.speedMps,
@@ -275,6 +314,10 @@ export class KinematicVehiclePlant {
                 maxDeceleration: finite(this.kinematics.maxDeceleration, 5),
                 maxJerk: finite(this.kinematics.maxJerk, 10),
             });
+        }
+        if (this.motionModel === "dynamic-bicycle") {
+            const axle = this.definition.axle ?? deriveAxleDistances([], this.kinematics.wheelbase);
+            const dynamics = this.definition.dynamics ?? {};
             const maximum = Math.min(finite(this.kinematics.maxSteeringAngle, 0.6), Math.PI * 0.49);
             const steering = Math.max(-maximum, Math.min(maximum, this.steeringAngle));
             // Explicit Euler: forces at the old state, translation at the old yaw.
@@ -315,8 +358,12 @@ export class KinematicVehiclePlant {
         }
         if (this.motionModel === "plugin") {
             if (this.unresolvedPluginPlant || !this.stepper) return;
-            const next = this.stepper.step(packPlantState(this, this.stateBuffer), dt);
-            unpackPlantState(this, next);
+            const next = this.stepper.step(
+                dynamicPlugin ? packDynamicPlantState(this, this.stateBuffer) : packPlantState(this, this.stateBuffer),
+                dt,
+            );
+            if (dynamicPlugin) unpackDynamicPlantState(this, next);
+            else unpackPlantState(this, next);
             this.drapeToGround();
             return;
         }
@@ -377,7 +424,7 @@ export class KinematicVehiclePlant {
             velocity: vec3(this.velocity),
             acceleration: vec3(this.acceleration),
             steeringAngle: finite(this.steeringAngle),
-            ...(this.motionModel === "dynamic-bicycle" ? {
+            ...(this.motionModel === "dynamic-bicycle" || isDynamicPlugin(this) ? {
                 lateralVelocity: finite(this.lateralVelocity),
                 yawRate: finite(this.yawRate),
             } : {}),

@@ -1,0 +1,42 @@
+{
+  "kind": "cev-sim.plugin",
+  "api": 1,
+  "id": "acme.dynamics.longitudinal",
+  "version": "1.0.0",
+  "engines": {
+    "cevSim": ">=0.2.0 <0.3.0"
+  },
+  "capabilities": [
+    "plant.step"
+  ],
+  "units": [],
+  "systems": [],
+  "plants": [
+    {
+      "id": "acme.dynamics.longitudinal.bicycle",
+      "abi": 1,
+      "module": "plant.wasm",
+      "model": "dynamic-bicycle-v1",
+      "parameters": [
+        {
+          "key": "wheelbase",
+          "source": "kinematics.wheelbase"
+        },
+        {
+          "key": "maxSteeringAngle",
+          "source": "kinematics.maxSteeringAngle"
+        },
+        {
+          "key": "mass",
+          "source": "default",
+          "default": 1500
+        },
+        {
+          "key": "rollingResistance",
+          "source": "default",
+          "default": 0.015
+        }
+      ]
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { promises as fs } from "node:fs";
+import { promises as fs, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -38,17 +38,23 @@ export function parseCreatePluginArgs(argv = process.argv.slice(2)) {
             verify: { type: "boolean", default: true },
             "no-verify": { type: "boolean", default: false },
             kind: { type: "string", default: "unit" },
+            model: { type: "string" },
             help: { type: "boolean", default: false },
         },
         allowPositionals: false,
     });
     const kind = values.kind || "unit";
     if (kind !== "unit" && kind !== "plant") throw new Error("--kind must be unit or plant.");
+    if (values.model && kind !== "plant") throw new Error("--model is only valid for --kind plant.");
+    if (values.model && values.model !== "dynamic-bicycle") {
+        throw new Error("--model must be dynamic-bicycle.");
+    }
     return {
         id: values.id,
         out: values.out,
         name: values.name,
         kind,
+        model: values.model,
         category: values.category,
         withUi: values["no-ui"] === true ? false : values["with-ui"] !== false,
         verify: values["no-verify"] === true ? false : values.verify !== false,
@@ -73,10 +79,24 @@ function crateName(pluginId) {
     return pluginId.replaceAll(".", "_").replaceAll("-", "_");
 }
 
+const DYNAMIC_BICYCLE_PARAMETERS = [
+    { key: "wheelbase", source: "kinematics.wheelbase" },
+    { key: "maxSteeringAngle", source: "kinematics.maxSteeringAngle" },
+    { key: "mass", source: "default", default: 1500 },
+    { key: "yawInertia", source: "default", default: 2250 },
+    { key: "corneringStiffnessFront", source: "default", default: 80000 },
+    { key: "corneringStiffnessRear", source: "default", default: 80000 },
+    { key: "frictionMu", source: "default", default: 0.9 },
+    { key: "rollingResistance", source: "default", default: 0.015 },
+];
+
 export function scaffoldPlantFiles({
     id,
     simulatorVersion = PACKAGE_JSON.version,
+    model,
 } = {}) {
+    const dynamicBicycle = model === "dynamic-bicycle";
+    if (model && !dynamicBicycle) throw new Error("--model must be dynamic-bicycle.");
     const pluginId = assertPluginScaffoldId(id);
     const plantId = `${pluginId}.bicycle`;
     const crate = crateName(pluginId);
@@ -93,7 +113,8 @@ export function scaffoldPlantFiles({
             id: plantId,
             abi: 1,
             module: "plant.wasm",
-            parameters: [
+            ...(dynamicBicycle ? { model: "dynamic-bicycle-v1" } : {}),
+            parameters: dynamicBicycle ? DYNAMIC_BICYCLE_PARAMETERS : [
                 { key: "wheelbase", source: "kinematics.wheelbase" },
                 { key: "maxSteeringAngle", source: "kinematics.maxSteeringAngle" },
             ],
@@ -131,6 +152,9 @@ pub fn step(state: &mut PlantState, params: &[f64], dt: f64) -> i32 {
     0
 }
 `;
+    const plantLib = dynamicBicycle
+        ? readFileSync(path.join(REPO_ROOT, "examples/plugins/acme.dynamics.bicycle/src/lib.rs"), "utf8")
+        : lib;
     const abi = `use crate::{step, PlantState};
 
 const STATE_LEN: usize = 13;
@@ -210,7 +234,7 @@ version = "1.0.0"
 channel = "1.81.0"
 targets = ["wasm32-unknown-unknown"]
 `,
-            "src/lib.rs": lib,
+            "src/lib.rs": plantLib,
             "src/abi.rs": abi,
             ".gitignore": "/target/\n*.wasm\n",
         },
@@ -224,8 +248,9 @@ export function scaffoldPluginFiles({
     category = "math",
     withUi = true,
     simulatorVersion = PACKAGE_JSON.version,
+    model,
 } = {}) {
-    if (kind === "plant") return scaffoldPlantFiles({ id, simulatorVersion });
+    if (kind === "plant") return scaffoldPlantFiles({ id, simulatorVersion, model });
     const pluginId = assertPluginScaffoldId(id);
     const catalogName = String(name || titleFromId(pluginId)).trim();
     const unitType = `${pluginId}.ScaleBlock`;
@@ -425,6 +450,7 @@ Options:
   --name        Catalog display name
   --category    Catalog category (default: math)
   --kind        unit (default) or plant
+  --model       Plant model. dynamic-bicycle emits the built-in dynamic bicycle
   --with-ui     Include a UI entry and generic SettingsForm view (default)
   --no-ui       Runtime-only package
   --verify      Load the package after writing (default)

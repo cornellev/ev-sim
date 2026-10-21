@@ -53,6 +53,7 @@ export class ManifestVehicle extends PhysicalVehicle {
         }, { manifest: this.manifest }, {
             plantPluginId: options.plantPluginId,
             plantRuntimeHash: options.plantRuntimeHash,
+            plantModel: options.plantModel,
             stepper: options.plantStepper ?? null,
             unresolved: Boolean(this.manifest.dynamics?.plant)
                 && !options.plantStepper

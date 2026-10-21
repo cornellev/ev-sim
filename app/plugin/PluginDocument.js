@@ -7,7 +7,12 @@ import { PLUGIN_PORT_TYPES } from "../plugin-api/ports.js";
 import { clonePluginJson } from "./PluginJson.js";
 import { PLUGIN_ERROR_CODES, pluginError } from "./PluginErrors.js";
 import { normalizePluginSensorDescriptor } from "./PluginSensorContract.js";
-import { PLANT_ABI_VERSION, PLANT_PARAMETER_SOURCES, PLANT_STEP_CAPABILITY } from "./PlantModule.js";
+import {
+    PLANT_ABI_VERSION,
+    PLANT_DYNAMIC_BICYCLE_MODEL,
+    PLANT_PARAMETER_SOURCES,
+    PLANT_STEP_CAPABILITY,
+} from "./PlantModule.js";
 import { assertPluginSettingValue, normalizePluginUnitState } from "./PluginValues.js";
 
 export const PLUGIN_DOCUMENT_KIND = "cev-sim.plugin";
@@ -151,7 +156,7 @@ function normalizePlantParameter(value, path) {
 
 function normalizePlant(value, pluginId, path) {
     const source = object(value, path);
-    exactKeys(source, ["id", "abi", "module", "parameters"], path);
+    exactKeys(source, ["id", "abi", "module", "model", "parameters"], path);
     const id = text(source.id, `${path}.id`);
     if (!id.startsWith(`${pluginId}.`) || id.length === pluginId.length + 1) {
         throw new Error(`${path}.id must start with "${pluginId}."`);
@@ -166,7 +171,15 @@ function normalizePlant(value, pluginId, path) {
     if (new Set(parameters.map((entry) => entry.key)).size !== parameters.length) {
         throw new Error(`${path}.parameters contains duplicate keys.`);
     }
-    return { id, abi: PLANT_ABI_VERSION, module: modulePath, parameters };
+    const plant = { id, abi: PLANT_ABI_VERSION, module: modulePath, parameters };
+    if (source.model !== undefined) {
+        const model = text(source.model, `${path}.model`);
+        if (model !== PLANT_DYNAMIC_BICYCLE_MODEL) {
+            throw new Error(`${path}.model must be "${PLANT_DYNAMIC_BICYCLE_MODEL}".`);
+        }
+        plant.model = model;
+    }
+    return plant;
 }
 
 function normalizeSystem(value, pluginId, path) {

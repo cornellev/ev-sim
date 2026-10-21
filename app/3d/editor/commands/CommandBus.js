@@ -33,7 +33,7 @@ import {
 export const DEFAULT_HISTORY_LIMIT = 200;
 
 export function validateEnvironmentDocument(document, registry, sky, options = {}) {
-    const objectValidation = validateObjectRecords(document.objects, document.index(), registry, { sky });
+    const objectValidation = validateObjectRecords(document.objects, document.index(), registry, { sky, assetMetrics: document.assetMetrics });
     const roadValidation = validateRoadDomain(document.roads);
     const issues = [...objectValidation.issues, ...roadValidation.issues, ...validateAssetMetricsDomain(document)];
     if (!options.transient && roadValidation.ok && roadGeometryVersionOf(document) === 2) {

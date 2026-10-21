@@ -265,6 +265,10 @@ export class SimulationKernel {
                 resetSeed,
                 episodeLidarPrimitives: this.context.episodeOverlay?.toLidarPrimitives?.() ?? [],
             });
+            this.context.devices.applyRigidBodyPoses?.(this.context.physics.rigidBodyPoses?.());
+        } else if ((this.context.physics.rigidBodyPoses?.() ?? []).length > 0) {
+            this.context.physics.resetRun({ resetSeed });
+            this.context.devices.applyRigidBodyPoses?.(this.context.physics.rigidBodyPoses?.());
         }
         this.scenarioRuntime?.reset?.({ resetSeed });
 
@@ -653,6 +657,7 @@ export class SimulationKernel {
         });
 
         const sensorUpdate = phase("sensors", () => {
+            this.context.devices.applyRigidBodyPoses?.(this.context.physics.rigidBodyPoses?.());
             if (this.modules.sensors) {
                 return asyncSensors && this.context.devices.updateAsync
                     ? this.context.devices.updateAsync(dt, { step: this.steps, timeNs: this.timeNs })

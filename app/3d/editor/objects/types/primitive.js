@@ -185,6 +185,7 @@ export function createPrimitiveType() {
         catalog: { label: "Primitive", kind: "primitive", layer: "props" },
         legacy: { domain: "primitives", idField: "id" },
         options,
+        components: Object.freeze(["rigidBody"]),
         capabilities: { selectable: true, transformable: true, deletable: true, groupable: true, hasOptions: true },
         create(input = {}) {
             const normalized = options.normalize({

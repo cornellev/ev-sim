@@ -63,6 +63,7 @@ export function resolveVehiclePlantMount(manifest, plants, compiled = null) {
         plantStepper: createPlantStepper(wasmModule, record, manifest),
         plantPluginId: record.ownership?.pluginId || "",
         plantRuntimeHash: record.ownership?.runtimeHash || "",
+        plantModel: record.model || "",
     };
 }
 

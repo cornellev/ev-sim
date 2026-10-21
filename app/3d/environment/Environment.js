@@ -178,6 +178,7 @@ export class Environment {
     setWorldDescription(description, hash) {
         this.worldDescription = description ? structuredClone(description) : null;
         this.worldHash = hash ?? null;
+        this.data?.simulation?.()?.syncEditorRigidBodies?.();
     }
 
     getWorldDescription() {

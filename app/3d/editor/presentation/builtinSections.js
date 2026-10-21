@@ -27,6 +27,7 @@ export const SECTION_KINDS = Object.freeze({
     SKY_PREVIEW: "sky-local-preview",
     ASSET_REVISION: "asset-revision",
     SCRIPTS: "scripts",
+    RIGID_BODY: "rigid-body",
 });
 
 /**

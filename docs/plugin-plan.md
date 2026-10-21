@@ -29,6 +29,7 @@ from [`docs/plugin-api.md`](plugin-api.md) rather than this roadmap.
 | PLG-06b: supervisor-owned live UDP transport | Complete | Verified | Merged |
 | PLG-07: custom sensor authoring and UI | Complete | Verified | Merged |
 | PLG-08: declarative dynamics plants | Complete | Verified | Unmerged |
+| PLG-09: dynamic bicycle plant packages | Complete | `tests/dynamic-bicycle-step-oracle.test.js`; `tests/dynamic-bicycle-plant-plugin.test.js`; `cargo test --locked` in the three example crates | Unmerged |
 
 Only a merged change may be marked merged. A milestone is verified only when
 all of its acceptance commands and evidence entries are present in this
@@ -599,6 +600,10 @@ evidence obligations and is not a headless PR 13.
 | Repository lint and full Node suite | `npm run lint`; `npm test`; `git diff --check` | Node 1,978 passed, 0 failed, 7 skipped, then the added plant catalog route test passed in `tests/plugin-api-routes.test.js` (4/4). The real Cargo verify is one of the skips unless `CEV_PLANT_CARGO=1` and the wasm32 target is installed. ESLint had zero errors and three pre-existing warnings in `MapSurface.js` and `MarketplaceWorkspace.js`. Whitespace check passed. |
 | Browser authoring | Vehicle Editor Wheels tab on the running dev server | The Dynamics control renders and defaults to Built-in bicycle when no plant is installed. The grant action is covered by the lock/stamp Node test. The already-running dev process predates the catalog route, so that process 404s until restart. A production Playwright install-and-run pass was not run. |
 
+### PLG-09 — Dynamic bicycle plant packages
+
+A plant may set optional `model` to `dynamic-bicycle-v1`. Omitted `model` stays the kinematic ABI, so existing package hashes stay put. The host then packs lateral speed and yaw rate, writes the existing speed loop into `ax_cmd`, projects a shortened obstacle step, and lets IMU and wheel odometry read that body. The JavaScript plant remains the built-in model. Three standalone crates copy it in stages: grade and rolling, then linear axle forces, then the friction circle. `lf` and `lr` are half the wheelbase. `tests/fixtures/plugins/test.plant-fixture` stays the kinematic pin.
+
 ## PLG-01 evidence ledger
 
 | Gate | Evidence | Result / limitation |
@@ -758,6 +763,11 @@ change the outstanding PR-12 hosted, soak, NVIDIA x64, or Jetson ARM64 gates.
 
 ## Decision log
 
+- **2026-10-20 — PLG-09 dynamic bicycle packages.** Optional plant `model`
+  `dynamic-bicycle-v1` reuses ABI 1 for the built-in dynamic bicycle. The host
+  feeds `ax_cmd`, lateral speed, and yaw rate, and sensors read them. The
+  kinematic fixture and both characterization tapes stay pinned. JavaScript
+  remains the built-in implementation.
 - **2026-10-15 — Local Reimport adopts a new package into saved authoring documents.**
   The plugin menu Reimport packs or rebuilds the selected `plugins/` directory,
   replaces other manual library rows for that plugin id, and rewrites saved

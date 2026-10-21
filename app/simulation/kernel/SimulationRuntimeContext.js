@@ -1,5 +1,6 @@
 import { EpisodeOverlay } from "../episode/EpisodeOverlay.js";
 import { euler, finiteOr, vec3 } from "../../util/plainGeometry.js";
+import { dynamicBicycleBody } from "../vehicles/dynamicBicycle.js";
 import { applyManualDrive, syncVehicleFromPlant } from "../../3d/vehicles/VehiclePlantAdapter.js";
 
 function resolve(source) {
@@ -298,6 +299,9 @@ export function createSimulationRuntimeContext(options = {}) {
             getDeterministicState() {
                 return manager(options.devices)?.getDeterministicState?.() ?? [];
             },
+            applyRigidBodyPoses(poses) {
+                return manager(options.devices)?.applyRigidBodyPoses?.(poses);
+            },
             nativePacketSink() {
                 return options.nativePacketSink ?? null;
             },
@@ -341,6 +345,9 @@ export function createSimulationRuntimeContext(options = {}) {
             getDeterministicState() {
                 return manager(options.physics)?.getDeterministicState?.() ?? null;
             },
+            rigidBodyPoses() {
+                return manager(options.physics)?.rigidBodyPoses?.() ?? [];
+            },
         },
         scenarios: options.scenarios ?? null,
         controls: {
@@ -352,8 +359,7 @@ export function createSimulationRuntimeContext(options = {}) {
                     const vehicle = vehicles.find((candidate) => candidate.telemetryId === vehicleId)
                         ?? (vehicleId === "ego" ? vehicles[0] : null);
                     if (!vehicle) continue;
-                    const dynamic = vehicle.plant?.motionModel === "dynamic-bicycle"
-                        || vehicle.motionModel === "dynamic-bicycle";
+                    const dynamic = dynamicBicycleBody(vehicle);
                     applyManualDrive(vehicle, dynamic ? {
                         mode: setpoint.command?.mode || "velocity",
                         speedMps: setpoint.speedMps,

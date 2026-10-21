@@ -179,6 +179,8 @@ State layout `cev-sim.plant-state@1`, Three.js frame:
 | 9..11 | acceleration |
 | 12 | steering, radians, already written by controls |
 
+Optional `model` is omitted or `dynamic-bicycle-v1`. Omitted plants keep the layout above. `dynamic-bicycle-v1` uses the same 13 floats for the built-in dynamic bicycle: `velocity[1]` is right-positive lateral speed, `velocity[2]` is yaw rate, and `acceleration[0]` is the speed-loop `ax_cmd` on the way in and body `ax` on the way out. `acceleration[1]` comes back as body `ay`. The host still drapes pitch into `rotation[2]` after the step, and it clears Three.js `velocity.y` and `velocity.z` so lateral speed is not height rate. Parameters carry the built-in defaults (`mass` 1500, `yawInertia` 2250, `corneringStiffnessFront` and `corneringStiffnessRear` 80000, `frictionMu` 0.9, `rollingResistance` 0.015) plus wheelbase and maximum steer. `lf` and `lr` are half that wheelbase inside the crate. A plugin plant still cannot be combined with vehicle `dynamics.model`.
+
 After a successful step the host drapes the vehicle onto the road: it overwrites `y`, `rotation.x`, and `rotation.z`. Physics may still clamp position. A nonzero return or a non-finite output is `PLUGIN_EXECUTION` with `requiresReset`. The kernel does not fall back to the built-in bicycle. A fresh WebAssembly instance is created on reset so hidden module state does not survive.
 
 `src/lib.rs` exposes `pub fn step(state, params, dt) -> i32` for a native caller. `src/abi.rs` is the generated WASM export. A Zenoh driver is a sibling crate outside the plant crate, and it calls `step` directly. Install builds only `cargo build --release --lib --locked --target wasm32-unknown-unknown`. The source fingerprint covers `plugin.json`, `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, and `src/**`, so a Zenoh-only commit does not look like a plant update.
@@ -193,6 +195,8 @@ Scaffold a plant with:
 node --experimental-default-type=module scripts/create-cev-plugin.mjs \
   --id acme.dynamics --kind plant --out plugins/acme.dynamics --no-verify
 ```
+
+`--model dynamic-bicycle` emits the built-in dynamic bicycle instead of the kinematic plant. The committed copies are `examples/plugins/acme.dynamics.longitudinal`, `examples/plugins/acme.dynamics.cornering`, and `examples/plugins/acme.dynamics.bicycle`.
 
 The committed bicycle fixture is `tests/fixtures/plugins/test.plant-fixture/`. `npm run fixtures:plant` rewrites it from the deterministic encoder so CI does not need Rust. `CEV_PLANT_CARGO=1` opts into a real `cargo` verify when the `wasm32-unknown-unknown` target is installed.
 

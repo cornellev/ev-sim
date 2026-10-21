@@ -1,4 +1,4 @@
-import { DEFAULT_DYNAMIC_BICYCLE } from "../../vehicles/VehicleManifest.js";
+import { DEFAULT_DYNAMIC_BICYCLE, DYNAMIC_BICYCLE_MODEL } from "../../vehicles/VehicleManifest.js";
 
 export const GRAVITY = 9.81;
 
@@ -190,13 +190,20 @@ export function projectPlanarVelocity(vx, vy, yaw, from = {}, to = {}) {
     };
 }
 
+/** The dynamic body, either the built-in plant or a plugin that copies it. */
+export function dynamicBicycleBody(vehicle) {
+    if (vehicle?.motionModel === "dynamic-bicycle") return vehicle;
+    if (vehicle?.plant?.motionModel === "dynamic-bicycle") return vehicle.plant;
+    if (vehicle?.motionModel === "plugin" && vehicle.definition?.plant?.model === DYNAMIC_BICYCLE_MODEL) return vehicle;
+    if (vehicle?.plant?.motionModel === "plugin" && vehicle.plant.definition?.plant?.model === DYNAMIC_BICYCLE_MODEL) {
+        return vehicle.plant;
+    }
+    return null;
+}
+
 /** Write a shortened pose back onto a dynamic bicycle and strip into-wall speed. */
 export function absorbDynamicClamp(vehicle, clamped, from, attempted) {
-    const plant = vehicle?.motionModel === "dynamic-bicycle"
-        ? vehicle
-        : vehicle?.plant?.motionModel === "dynamic-bicycle"
-            ? vehicle.plant
-            : null;
+    const plant = dynamicBicycleBody(vehicle);
     if (!plant || !clamped) return;
     plant.position.x = num(clamped.x);
     plant.position.y = num(clamped.y);

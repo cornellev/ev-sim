@@ -72,7 +72,7 @@ test("ED-02 the presentation registry falls back to capability-driven defaults a
     assert.ok(roadMenu.some((option) => option.id === MENU_OPTION_IDS.DRAPE_TO_GLB));
 
     const sections = fallback.getInspectorSections({ record, document, sky: null });
-    assert.deepEqual(sections.map((section) => section.id), [SECTION_IDS.OBJECT, SECTION_IDS.TRANSFORM, SECTION_IDS.OPTIONS, SECTION_IDS.SCRIPTS]);
+    assert.deepEqual(sections.map((section) => section.id), [SECTION_IDS.OBJECT, SECTION_IDS.TRANSFORM, SECTION_IDS.OPTIONS, SECTION_IDS.RIGID_BODY, SECTION_IDS.SCRIPTS]);
     assert.deepEqual(sections[1].transform.position, { x: 60, y: 0, z: 44 });
     assert.equal(sections[1].editable, false);
     assert.equal(sections[2].fields.some((entry) => entry.path[0] === "assetId"), true);

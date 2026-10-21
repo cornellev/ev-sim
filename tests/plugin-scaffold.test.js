@@ -61,6 +61,16 @@ test("plant scaffold writes a wasm crate and no JavaScript entry", async (t) => 
     assert.match(await fs.readFile(path.join(root, "acme.dynamics", "src", "lib.rs"), "utf8"), /pub fn step/);
 });
 
+test("dynamic bicycle scaffold matches the committed bicycle package", async () => {
+    const files = scaffoldPlantFiles({ id: "acme.dynamics.bicycle", model: "dynamic-bicycle" });
+    const root = path.resolve("examples/plugins/acme.dynamics.bicycle");
+    for (const name of ["plugin.json", "Cargo.toml", "Cargo.lock", "src/lib.rs", "src/abi.rs", "rust-toolchain.toml", ".gitignore"]) {
+        assert.equal(await fs.readFile(path.join(root, name), "utf8"), files.files[name], name);
+    }
+    assert.equal(files.document.plants[0].model, "dynamic-bicycle-v1");
+    assert.equal(scaffoldPlantFiles({ id: "acme.dynamics" }).document.plants[0].model, undefined);
+});
+
 test("scaffold rejects reserved plugin ids", () => {
     assert.throws(() => scaffoldPluginFiles({ id: "cev.demo" }), /reserved cev namespace/);
 });

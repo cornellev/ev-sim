@@ -5,6 +5,7 @@ import {
     sensorTypeRegistry,
     validateVehicleSensorDefinition,
 } from "../simulation/sensors/SensorTypeRegistry.js";
+import { PLANT_DYNAMIC_BICYCLE_MODEL } from "../plugin/PlantModule.js";
 import {
     collectVehiclePluginLockIssues,
     reconcileVehiclePluginLocks,
@@ -52,7 +53,7 @@ export const DEFAULT_ACTUATOR_LIMITS = Object.freeze({
 });
 
 export const KINEMATIC_BICYCLE_MODEL = "kinematic-bicycle-v1";
-export const DYNAMIC_BICYCLE_MODEL = "dynamic-bicycle-v1";
+export const DYNAMIC_BICYCLE_MODEL = PLANT_DYNAMIC_BICYCLE_MODEL;
 
 /** Defaults for `dynamic-bicycle-v1`. `lf`/`lr` are derived, not stored. */
 export const DEFAULT_DYNAMIC_BICYCLE = Object.freeze({

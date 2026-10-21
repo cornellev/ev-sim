@@ -132,6 +132,10 @@ export class HeadlessCpuLidarSensorManager {
         return source?.vehicles ?? [];
     }
 
+    applyRigidBodyPoses(poses) {
+        this.scene?.setRigidBodyPoses?.(poses ?? []);
+    }
+
     async configureFromManifest(sensorRig = {}, options = {}) {
         this.disposeRun();
         const configs = (Array.isArray(sensorRig.sensors) ? sensorRig.sensors : [])

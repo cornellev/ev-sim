@@ -137,7 +137,7 @@ export function createAssetInstanceType(version = 1) {
         catalog: { label: "Asset instance", kind: "asset-instance", layer: "props" },
         legacy: null,
         options,
-        components: Object.freeze(["asset"]),
+        components: Object.freeze(["asset", "rigidBody"]),
         capabilities: { selectable: true, transformable: true, deletable: true, groupable: true, hasOptions: true },
         create(input = {}) {
             const asset = options.normalize(input.asset ?? input);

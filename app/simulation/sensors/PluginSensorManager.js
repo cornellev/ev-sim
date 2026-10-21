@@ -27,6 +27,10 @@ export class PluginSensorManager {
         return source?.vehicles ?? source ?? [];
     }
 
+    applyRigidBodyPoses(poses) {
+        this.scene?.setRigidBodyPoses?.(poses ?? []);
+    }
+
     async configure(admission, options = {}) {
         this.disposeRun();
         const records = (admission?.sensors ?? [])

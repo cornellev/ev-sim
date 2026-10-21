@@ -14,6 +14,7 @@ import * as assetCommands from "./assetCommands.js";
 import * as importCommands from "./importCommands.js";
 import * as georegistrationCommands from "./georegistrationCommands.js";
 import * as scriptAttachmentCommands from "./scriptAttachmentCommands.js";
+import * as rigidBodyCommands from "./rigidBodyCommands.js";
 
 export const commandFactories = Object.freeze({
     ...legacyCommands,
@@ -23,6 +24,7 @@ export const commandFactories = Object.freeze({
     ...importCommands,
     ...georegistrationCommands,
     ...scriptAttachmentCommands,
+    ...rigidBodyCommands,
 });
 
 /**

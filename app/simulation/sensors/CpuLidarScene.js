@@ -17,6 +17,8 @@ import { BOX_FACES } from "./BoxFaces.js";
 
 export const CPU_LIDAR_NEAR_METERS = 1e-4;
 
+const UNIT_SCALE = new Vector3(1, 1, 1);
+
 function boxVertices(primitive) {
     const { center, size } = primitive;
     const hx = size.x * 0.5;
@@ -84,7 +86,7 @@ function vehicleMatrix(vehicle) {
         Number(rotation.z) || 0,
         rotation.order || "XYZ",
     ));
-    return new Matrix4().compose(position, quaternion, new Vector3(1, 1, 1));
+    return new Matrix4().compose(position, quaternion, UNIT_SCALE);
 }
 
 export function lidarSensorWorldPose(vehicle, pose) {
@@ -107,7 +109,7 @@ function sensorMatrix(vehicle, pose) {
             converted.rotation.z,
             converted.rotation.order || "XYZ",
         )),
-        new Vector3(1, 1, 1),
+        UNIT_SCALE,
     );
     return vehicleMatrix(vehicle).multiply(local);
 }
@@ -137,24 +139,73 @@ function raycastPlanes(planes, ray, range, near = CPU_LIDAR_NEAR_METERS) {
     return hits;
 }
 
-function raycastIndex(index, ray, range, near = CPU_LIDAR_NEAR_METERS) {
-    if (!index) return [];
-    return index.bvh.raycast(ray, DoubleSide, near, range)
-        .map((hit) => {
-            const metadata = index.faces[hit.faceIndex];
-            const normal = metadata.normal.clone();
-            return {
-                ...metadata,
-                distance: hit.distance,
-                incidence: Math.abs(normal.dot(ray.direction)),
-            };
-        })
-        .filter((hit) => hit.distance >= near && hit.distance <= range);
+function hitFromFace(index, faceIndex, ray, distance) {
+    const metadata = index.faces[faceIndex];
+    return {
+        primitiveId: metadata.primitiveId,
+        triangleIndex: metadata.triangleIndex,
+        semanticId: metadata.semanticId,
+        instanceId: metadata.instanceId,
+        distance,
+        incidence: Math.abs(metadata.normal.dot(ray.direction)),
+    };
+}
+
+function nearestIndexHit(index, ray, near, far) {
+    if (!index) return null;
+    const first = index.bvh.raycastFirst(ray, DoubleSide, near, far);
+    if (!first) return null;
+    const ties = index.bvh.raycast(ray, DoubleSide, first.distance, first.distance);
+    let best = null;
+    for (const hit of ties) {
+        const candidate = hitFromFace(index, hit.faceIndex, ray, hit.distance);
+        if (!best || hitOrder(candidate, best) < 0) best = candidate;
+    }
+    return best ?? hitFromFace(index, first.faceIndex, ray, first.distance);
+}
+
+function poseMoved(pose) {
+    const position = pose?.position;
+    const spawn = pose?.spawnPosition;
+    const rotation = pose?.rotation;
+    const spawnRotation = pose?.spawnRotation;
+    if (!position || !spawn || !rotation || !spawnRotation) return false;
+    return Math.abs(position.x - spawn.x) > 1e-6
+        || Math.abs(position.y - spawn.y) > 1e-6
+        || Math.abs(position.z - spawn.z) > 1e-6
+        || Math.abs(rotation.x - spawnRotation.x) > 1e-6
+        || Math.abs(rotation.y - spawnRotation.y) > 1e-6
+        || Math.abs(rotation.z - spawnRotation.z) > 1e-6
+        || Math.abs(rotation.w - spawnRotation.w) > 1e-6;
+}
+
+// Authored point p maps to livePose * inverse(spawnPose) * p, so the ray uses the inverse.
+function authoredRayInverse(pose) {
+    const spawnPosition = pose.spawnPosition;
+    const position = pose.position;
+    const spawnRotation = pose.spawnRotation;
+    const rotation = pose.rotation;
+    const spawn = new Matrix4().compose(
+        new Vector3(spawnPosition.x, spawnPosition.y, spawnPosition.z),
+        new Quaternion(spawnRotation.x, spawnRotation.y, spawnRotation.z, spawnRotation.w),
+        UNIT_SCALE,
+    );
+    const live = new Matrix4().compose(
+        new Vector3(position.x, position.y, position.z),
+        new Quaternion(rotation.x, rotation.y, rotation.z, rotation.w),
+        UNIT_SCALE,
+    );
+    return spawn.multiply(live.invert());
+}
+
+function disposeIndex(index) {
+    index?.geometry.dispose();
 }
 
 export class CpuLidarScene {
     constructor(resource) {
         const description = assertLidarGeometryResource(resource);
+        this.authoredPrimitives = description.staticPrimitives;
         this.staticIndex = createIndex(description.staticPrimitives);
         this.planes = description.planes ?? [];
         this.actorIndexes = new Map(description.actors.map((actor) => [
@@ -162,13 +213,91 @@ export class CpuLidarScene {
             createIndex(actor.primitives),
         ]));
         this.episodeIndex = null;
+        this._rigidBodyIndexes = new Map();
+        this._rigidBodyPoses = [];
+        this._rigidBodySplitKey = "";
+        this._localRay = new Ray();
         this.disposed = false;
+    }
+
+    setRigidBodyPoses(poses = []) {
+        if (this.disposed) throw new Error("CPU LiDAR scene is disposed.");
+        const byId = new Map();
+        for (const pose of Array.isArray(poses) ? poses : []) {
+            if (pose?.id == null || pose.id === "") continue;
+            byId.set(String(pose.id), pose);
+        }
+        const ids = [...byId.keys()].sort(compareUtf8);
+        const key = ids.join("\0");
+        if (key !== this._rigidBodySplitKey) {
+            this._splitRigidBodies(ids);
+            this._rigidBodySplitKey = key;
+        }
+        this._rigidBodyPoses = ids.map((id) => byId.get(id));
+    }
+
+    _splitRigidBodies(ids) {
+        for (const index of this._rigidBodyIndexes.values()) disposeIndex(index);
+        disposeIndex(this.staticIndex);
+        const grouped = new Map(ids.map((id) => [id, []]));
+        const staticPrimitives = [];
+        for (const primitive of this.authoredPrimitives) {
+            const bucket = grouped.get(String(primitive.sourceId));
+            if (bucket) bucket.push(primitive);
+            else staticPrimitives.push(primitive);
+        }
+        this.staticIndex = createIndex(staticPrimitives);
+        this._rigidBodyIndexes = new Map(ids.map((id) => [id, createIndex(grouped.get(id))]));
     }
 
     setEpisodePrimitives(primitives = []) {
         if (this.disposed) throw new Error("CPU LiDAR scene is disposed.");
-        this.episodeIndex?.geometry.dispose();
+        disposeIndex(this.episodeIndex);
         this.episodeIndex = createIndex(Array.isArray(primitives) ? primitives : []);
+    }
+
+    _movers(parentId, vehicles) {
+        const movers = [];
+        for (const [actorId, index] of this.actorIndexes) {
+            if (actorId === parentId || !index) continue;
+            const actor = vehicles.find((entry) => (entry.telemetryId || entry.id) === actorId);
+            if (!actor) continue;
+            movers.push({ index, inverse: vehicleMatrix(actor).invert() });
+        }
+        for (const pose of this._rigidBodyPoses) {
+            const index = this._rigidBodyIndexes.get(String(pose.id));
+            if (!index) continue;
+            movers.push({ index, inverse: poseMoved(pose) ? authoredRayInverse(pose) : null });
+        }
+        return movers;
+    }
+
+    _nearestHit(worldRay, near, far, movers) {
+        const candidates = [];
+        const consider = (index, ray) => {
+            const hit = nearestIndexHit(index, ray, near, far);
+            if (hit) candidates.push(hit);
+        };
+        consider(this.staticIndex, worldRay);
+        consider(this.episodeIndex, worldRay);
+        for (const mover of movers) {
+            if (!mover.inverse) {
+                consider(mover.index, worldRay);
+                continue;
+            }
+            consider(mover.index, this._localRay.copy(worldRay).applyMatrix4(mover.inverse));
+        }
+        candidates.push(...raycastPlanes(this.planes, worldRay, far, near));
+        candidates.sort(hitOrder);
+        return candidates[0] ?? null;
+    }
+
+    _writeHit(buffer, offset, hit) {
+        if (!hit) return;
+        buffer[offset] = hit.distance;
+        buffer[offset + 1] = hit.incidence;
+        buffer[offset + 2] = hit.semanticId;
+        buffer[offset + 3] = hit.instanceId;
     }
 
     _captureExplicitLayout(config, vehicles, vehicle) {
@@ -182,6 +311,7 @@ export class CpuLidarScene {
         const maxRange = Number(layout.maxRangeM);
         const buffer = new Float32Array(width * height * 4);
         const worldRay = new Ray(origin, new Vector3());
+        const movers = this._movers(config.parentId, vehicles);
 
         for (let channelIndex = 0; channelIndex < height; channelIndex += 1) {
             const channel = layout.channels[channelIndex];
@@ -194,26 +324,11 @@ export class CpuLidarScene {
                     Math.sin(phi),
                     cosPhi * Math.sin(theta),
                 ).applyQuaternion(sensorQuaternion).normalize();
-                const candidates = [
-                    ...raycastIndex(this.staticIndex, worldRay, maxRange, minRange),
-                    ...raycastIndex(this.episodeIndex, worldRay, maxRange, minRange),
-                    ...raycastPlanes(this.planes, worldRay, maxRange, minRange),
-                ];
-                for (const [actorId, index] of this.actorIndexes) {
-                    if (actorId === config.parentId || !index) continue;
-                    const actor = vehicles.find((entry) => (entry.telemetryId || entry.id) === actorId);
-                    if (!actor) continue;
-                    const actorTransform = vehicleMatrix(actor);
-                    const localRay = worldRay.clone().applyMatrix4(actorTransform.clone().invert());
-                    candidates.push(...raycastIndex(index, localRay, maxRange, minRange));
-                }
-                const hit = candidates.sort(hitOrder)[0];
-                if (!hit) continue;
-                const offset = (channelIndex * width + azimuthIndex) * 4;
-                buffer[offset] = hit.distance;
-                buffer[offset + 1] = hit.incidence;
-                buffer[offset + 2] = hit.semanticId;
-                buffer[offset + 3] = hit.instanceId;
+                this._writeHit(
+                    buffer,
+                    (channelIndex * width + azimuthIndex) * 4,
+                    this._nearestHit(worldRay, minRange, maxRange, movers),
+                );
             }
         }
         return buffer;
@@ -236,6 +351,7 @@ export class CpuLidarScene {
         const range = Number(config.calibration.range);
         const buffer = new Float32Array(width * height * 4);
         const worldRay = new Ray(origin, new Vector3());
+        const movers = this._movers(config.parentId, vehicles);
 
         for (let elevationIndex = 0; elevationIndex < height; elevationIndex += 1) {
             const phi = (elevation.startDeg + elevationIndex * elevation.stepDeg) * Math.PI / 180;
@@ -247,39 +363,25 @@ export class CpuLidarScene {
                     Math.sin(phi),
                     cosPhi * Math.sin(theta),
                 ).applyQuaternion(sensorQuaternion).normalize();
-                const candidates = [
-                    ...raycastIndex(this.staticIndex, worldRay, range),
-                    ...raycastIndex(this.episodeIndex, worldRay, range),
-                    ...raycastPlanes(this.planes, worldRay, range),
-                ];
-                for (const [actorId, index] of this.actorIndexes) {
-                    if (actorId === config.parentId || !index) continue;
-                    const actor = vehicles.find((entry) => (entry.telemetryId || entry.id) === actorId);
-                    if (!actor) continue;
-                    const actorTransform = vehicleMatrix(actor);
-                    const localRay = worldRay.clone().applyMatrix4(actorTransform.clone().invert());
-                    const hits = raycastIndex(index, localRay, range);
-                    candidates.push(...hits);
-                }
-                const hit = candidates.sort(hitOrder)[0];
-                if (!hit) continue;
-                const offset = (elevationIndex * width + azimuthIndex) * 4;
-                buffer[offset] = hit.distance;
-                buffer[offset + 1] = hit.incidence;
-                buffer[offset + 2] = hit.semanticId;
-                buffer[offset + 3] = hit.instanceId;
+                this._writeHit(
+                    buffer,
+                    (elevationIndex * width + azimuthIndex) * 4,
+                    this._nearestHit(worldRay, CPU_LIDAR_NEAR_METERS, range, movers),
+                );
             }
         }
         return buffer;
     }
 
     dispose() {
-        this.staticIndex?.geometry.dispose();
-        this.episodeIndex?.geometry.dispose();
-        for (const index of this.actorIndexes.values()) index?.geometry.dispose();
+        disposeIndex(this.staticIndex);
+        disposeIndex(this.episodeIndex);
+        for (const index of this.actorIndexes.values()) disposeIndex(index);
+        for (const index of this._rigidBodyIndexes.values()) disposeIndex(index);
         this.staticIndex = null;
         this.episodeIndex = null;
         this.actorIndexes.clear();
+        this._rigidBodyIndexes.clear();
         this.disposed = true;
     }
 }

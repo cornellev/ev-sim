@@ -350,6 +350,7 @@ export class PluginHost {
                 abi: plant.abi,
                 module: plant.module,
                 parameters: plant.parameters,
+                ...(plant.model ? { model: plant.model } : {}),
                 moduleBytes: fileBytes?.get(plant.module) ?? null,
                 ownership,
             }))),

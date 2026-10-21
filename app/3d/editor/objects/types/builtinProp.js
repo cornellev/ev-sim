@@ -232,6 +232,7 @@ export function createBuiltinPropType() {
         catalog: { label: "Prop", kind: "prop", layer: "props" },
         legacy: { domain: "features", idField: "id" },
         options,
+        components: Object.freeze(["rigidBody"]),
         capabilities: { selectable: true, transformable: true, deletable: true, groupable: true, hasOptions: true },
         create(input = {}) {
             const requestedAssetId = input.assetId ?? input.type;

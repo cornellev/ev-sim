@@ -9,6 +9,7 @@ import {
     threeToRep103Vector,
 } from "./CoordinateFrames.js";
 import { enuOffsetToWgs84 } from "./Geodesy.js";
+import { dynamicBicycleBody } from "../simulation/vehicles/dynamicBicycle.js";
 
 const GRAVITY = 9.80665;
 const UNAVAILABLE_COVARIANCE = -1;
@@ -129,9 +130,7 @@ export function rep103BodyVelocity(vehicle) {
 }
 
 function dynamicBicycleSource(vehicle) {
-    if (vehicle?.motionModel === "dynamic-bicycle") return vehicle;
-    if (vehicle?.plant?.motionModel === "dynamic-bicycle") return vehicle.plant;
-    return null;
+    return dynamicBicycleBody(vehicle);
 }
 
 export function captureVehicleSnapshot(vehicle, captureTimeNs, previous = null, stepNs = 16_666_667) {

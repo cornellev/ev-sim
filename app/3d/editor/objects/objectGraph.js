@@ -9,6 +9,7 @@
  * issues and never mutates its input. Kernel-safe.
  */
 
+import { rigidBodyFieldIssues, rigidBodyShapeIssue } from "../../../simulation/world/RigidBodyRecords.js";
 import { hasErrorIssue, isPlainObject, issue, text, OPTIONS_ISSUE_CODES } from "./ObjectOptions.js";
 import { objectTypeRegistry } from "./ObjectTypeRegistry.js";
 import { TRANSFORM_ISSUE_CODES } from "./transformDelta.js";
@@ -226,7 +227,23 @@ export function describeObjectSupport(record, registry = objectTypeRegistry) {
     return OBJECT_SUPPORT.SUPPORTED;
 }
 
-function validateComponents(record, definition, base) {
+function validateRigidBody(record, base, index, context) {
+    const value = record.components?.rigidBody;
+    if (value === undefined) return [];
+    const tag = { objectId: record.id };
+    const messages = [
+        ...rigidBodyFieldIssues(value),
+        rigidBodyShapeIssue({
+            primitives: index?.primitives,
+            features: index?.features,
+            assetMetrics: context?.assetMetrics,
+            objects: [record],
+        }, record),
+    ].filter(Boolean);
+    return messages.map((message) => issue([...base, "components", "rigidBody"], OBJECT_ISSUE_CODES.COMPONENTS_INVALID, message, tag));
+}
+
+function validateComponents(record, definition, base, index, context) {
     const issues = [];
     const components = record.components;
     if (components === undefined) return issues;
@@ -251,6 +268,9 @@ function validateComponents(record, definition, base) {
     }
     issues.push(...validateScripts(components.scripts, base, tag));
     issues.push(...validateAuthoredBy(components.authoredBy, base, tag));
+    if (components.rigidBody !== undefined && allowed.includes("rigidBody")) {
+        issues.push(...validateRigidBody(record, base, index, context));
+    }
     return issues;
 }
 
@@ -372,7 +392,7 @@ export function validateObjectRecords(records, index, registry = objectTypeRegis
         }
         if (!definition) return;
 
-        issues.push(...validateComponents(record, definition, base));
+        issues.push(...validateComponents(record, definition, base, index, context));
         if (!id) return;
 
         const impliedTypeId = legacyTypeIdFor(index, id);

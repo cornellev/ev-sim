@@ -1,7 +1,15 @@
 import { assertPhysicsBackendSelection, PHYSICS_BACKEND_CONFIG } from "./PhysicsBackend.js";
 import { absorbDynamicClamp } from "../simulation/vehicles/dynamicBicycle.js";
+import { worldSweepMesh } from "../simulation/world/RigidBodyRecords.js";
 import { compareUtf8 } from "../simulation/world/WorldDescription.js";
 import { boxSupportRadius, obbAsConvex, orientedBoxCenter, sweepAabbConvex, sweepObbConvex } from "./SweptConvex.js";
+
+const DYNAMIC_GROUP = 0x0002;
+const FLOOR_GROUP = 0x0008;
+
+function collisionGroups(membership, filter) {
+    return ((membership & 0xffff) << 16) | (filter & 0xffff);
+}
 
 function vector(value = {}) {
     return { x: Number(value.x || 0), y: Number(value.y || 0), z: Number(value.z || 0) };
@@ -208,6 +216,13 @@ function vehicleHalfExtents(vehicle) {
     };
 }
 
+function rigidBodyOwnsEntry(entry, ids) {
+    if (!ids?.size) return false;
+    if (ids.has(String(entry.contactId)) || ids.has(String(entry.id))) return true;
+    const sourceId = entry.obstacle?.sourceId;
+    return sourceId !== undefined && ids.has(String(sourceId));
+}
+
 function stableVehicleId(vehicle, index) {
     return String(vehicle.telemetryId || vehicle.manifestId || `vehicle-${String(index + 1).padStart(4, "0")}`);
 }
@@ -242,6 +257,11 @@ export class PhysicsEngine {
         this.rigidbodies = [];
         this.staticColliders = [];
         this.vehicleStates = [];
+        this.rigidBodyStates = [];
+        this.rigidBodyById = new Map();
+        this._rigidBodyPoses = [];
+        this.forceQueue = [];
+        this._pushes = [];
         this.activeContacts = new Set();
         this.pendingContacts = new Set();
         this.episodeObstacles = [];
@@ -258,6 +278,9 @@ export class PhysicsEngine {
         this.rigidbodies = [];
         this.staticColliders = [];
         this.vehicleStates = [];
+        this.rigidBodyStates = [];
+        this.rigidBodyById = new Map();
+        this._rigidBodyPoses = [];
         if (!world) return;
         if (typeof world.removeRigidBody === "function") {
             for (const body of bodies) {
@@ -364,7 +387,9 @@ export class PhysicsEngine {
                     .sort((left, right) => JSON.stringify(left.bounds).localeCompare(JSON.stringify(right.bounds))),
                 ...episodeEntries,
             ];
+        const rigidIds = new Set((this.preparedWorldDescription?.rigidBodies ?? []).map((body) => String(body.id)));
         this.staticColliders = entries
+            .filter((entry) => !rigidBodyOwnsEntry(entry, rigidIds))
             .sort((left, right) => compareUtf8(left.id, right.id))
             .map((entry) => {
             const center = {
@@ -399,6 +424,160 @@ export class PhysicsEngine {
         });
     }
 
+    _rigidBodyCollider(part) {
+        let descriptor;
+        if (part.kind === "cuboid") descriptor = this.RAPIER.ColliderDesc.cuboid(part.half.x, part.half.y, part.half.z);
+        else if (part.kind === "ball") descriptor = this.RAPIER.ColliderDesc.ball(part.radius);
+        else {
+            const points = new Float32Array(part.vertices.length * 3);
+            part.vertices.forEach((vertex, index) => {
+                points[index * 3] = vertex[0];
+                points[index * 3 + 1] = vertex[1];
+                points[index * 3 + 2] = vertex[2];
+            });
+            descriptor = this.RAPIER.ColliderDesc.convexHull(points);
+            if (!descriptor) throw new TypeError("Rigid body convex hull failed.");
+        }
+        descriptor.setDensity(0);
+        const offset = part.offset ?? { x: 0, y: 0, z: 0 };
+        if (offset.x || offset.y || offset.z) descriptor.setTranslation(offset.x, offset.y, offset.z);
+        descriptor.setCollisionGroups(collisionGroups(DYNAMIC_GROUP, 0xffff));
+        return descriptor;
+    }
+
+    _buildFloorCollider() {
+        const plane = this.preparedWorldDescription?.groundPlane;
+        const y = Number(plane?.y);
+        if (!Number.isFinite(y)) return;
+        const body = this.world.createRigidBody(this.RAPIER.RigidBodyDesc.fixed().setTranslation(0, y - 0.5, 0));
+        const descriptor = this.RAPIER.ColliderDesc.cuboid(5000, 0.5, 5000);
+        descriptor.setCollisionGroups(collisionGroups(FLOOR_GROUP, DYNAMIC_GROUP));
+        this.world.createCollider(descriptor, body);
+        this.rigidbodies.push(body);
+    }
+
+    _buildRigidBodies() {
+        this.rigidBodyStates = [];
+        this.rigidBodyById = new Map();
+        this._rigidBodyPoses = [];
+        const specs = this.preparedWorldDescription?.rigidBodies ?? [];
+        if (!this.world || specs.length === 0) return;
+        this._buildFloorCollider();
+        for (const spec of specs) {
+            const dynamic = spec.bodyType !== "kinematic";
+            const descriptor = (dynamic ? this.RAPIER.RigidBodyDesc.dynamic() : this.RAPIER.RigidBodyDesc.kinematicPositionBased())
+                .setTranslation(spec.position.x, spec.position.y, spec.position.z)
+                .setRotation(spec.rotation)
+                .setLinearDamping(spec.linearDamping)
+                .setAngularDamping(spec.angularDamping)
+                .setGravityScale(dynamic && spec.useGravity ? 1 : 0)
+                .setCcdEnabled(dynamic);
+            const body = this.world.createRigidBody(descriptor);
+            for (const part of spec.parts) this.world.createCollider(this._rigidBodyCollider(part), body);
+            body.setAdditionalMass(spec.mass, true);
+            body.recomputeMassPropertiesFromColliders?.();
+            this.rigidbodies.push(body);
+            const state = {
+                id: spec.id,
+                host: spec.host,
+                spec,
+                body,
+                parts: spec.parts,
+                spawnPosition: spec.position,
+                spawnRotation: spec.rotation,
+            };
+            this.rigidBodyStates.push(state);
+            this.rigidBodyById.set(spec.id, state);
+        }
+        this._publishRigidBodyPoses();
+    }
+
+    _rigidBodyObstacles() {
+        return this.rigidBodyStates.flatMap((state) => {
+            const mesh = worldSweepMesh(state.parts, state.body.translation(), state.body.rotation());
+            if (mesh.vertices.length < 4) return [];
+            return [{ id: state.id, contactId: state.id, convex: mesh, bounds: mesh.bounds }];
+        });
+    }
+
+    // shortcut: hull backoff leaves no penetration, so the kinematic car does not push; match its approach speed.
+    _queueRigidBodyPush(vehicleState, candidate, deltaTime, hits, impact) {
+        if (!this.rigidBodyStates.length || !deltaTime) return;
+        const previous = vehicleState.previous;
+        const velocity = { x: (candidate.x - previous.x) / deltaTime, z: (candidate.z - previous.z) / deltaTime };
+        const origin = vector(vehicleState.vehicle.position);
+        for (const hit of hits) {
+            if (hit.time > impact + 1e-12) continue;
+            const state = this.rigidBodyById.get(hit.id);
+            if (!state || state.spec.bodyType !== "dynamic") continue;
+            const pose = state.body.translation();
+            let nx = pose.x - origin.x;
+            let nz = pose.z - origin.z;
+            const length = Math.hypot(nx, nz);
+            if (length <= 1e-8) continue;
+            nx /= length;
+            nz /= length;
+            const into = velocity.x * nx + velocity.z * nz;
+            if (into <= 0) continue;
+            this._pushes.push({
+                id: state.id,
+                impulse: { x: nx * state.spec.mass * into, y: 0, z: nz * state.spec.mass * into },
+            });
+        }
+    }
+
+    _stepRigidBodies() {
+        if (!this.rigidBodyStates.length) return;
+        for (const state of this.rigidBodyStates) {
+            if (state.spec.bodyType === "kinematic") {
+                state.body.setNextKinematicTranslation?.(state.spawnPosition);
+                state.body.setNextKinematicRotation?.(state.spawnRotation);
+                continue;
+            }
+            state.body.resetForces?.(true);
+            const force = state.spec.constantForce;
+            if (force && (force.x || force.y || force.z)) state.body.addForce(force, true);
+        }
+        for (const entry of this.forceQueue.splice(0)) {
+            const state = this.rigidBodyById.get(entry.id);
+            if (!state || state.spec.bodyType !== "dynamic") continue;
+            if (entry.kind === "impulse") state.body.applyImpulse(entry.value, true);
+            else state.body.addForce(entry.value, true);
+        }
+        for (const push of this._pushes.splice(0)) {
+            const state = this.rigidBodyById.get(push.id);
+            if (!state || state.spec.bodyType !== "dynamic") continue;
+            state.body.applyImpulse(push.impulse, true);
+        }
+    }
+
+    _publishRigidBodyPoses() {
+        this._rigidBodyPoses = this.rigidBodyStates.map((state) => {
+            const translation = state.body.translation();
+            const rotation = state.body.rotation();
+            return {
+                id: state.id,
+                host: state.host,
+                position: { x: translation.x, y: translation.y, z: translation.z },
+                rotation: { x: rotation.x, y: rotation.y, z: rotation.z, w: rotation.w },
+                spawnPosition: { ...state.spawnPosition },
+                spawnRotation: { ...state.spawnRotation },
+            };
+        }).sort((left, right) => compareUtf8(left.id, right.id));
+    }
+
+    applyForce(id, force) {
+        this.forceQueue.push({ id: String(id), kind: "force", value: vector(force) });
+    }
+
+    applyImpulse(id, impulse) {
+        this.forceQueue.push({ id: String(id), kind: "impulse", value: vector(impulse) });
+    }
+
+    rigidBodyPoses() {
+        return this._rigidBodyPoses ?? [];
+    }
+
     beginStep() {
         for (const state of this.vehicleStates) state.previous = vector(state.vehicle.position);
     }
@@ -406,11 +585,15 @@ export class PhysicsEngine {
     step(deltaTime) {
         if (!this.world) return;
         this.pendingContacts = new Set();
+        this._pushes = [];
+        const obstacles = this.rigidBodyStates.length
+            ? [...this.staticColliders, ...this._rigidBodyObstacles()]
+            : this.staticColliders;
         for (const state of this.vehicleStates) {
             const candidate = vector(state.vehicle.position);
             const box = vehicleBox(state.vehicle);
             const hits = [];
-            for (const obstacle of this.staticColliders) {
+            for (const obstacle of obstacles) {
                 const time = sweepVehicleObstacle(state.previous, candidate, box, obstacle);
                 if (time === null) continue;
                 hits.push({ id: obstacle.contactId ?? obstacle.id, time });
@@ -433,6 +616,7 @@ export class PhysicsEngine {
                 if (!state.vehicle.updatePosition && state.vehicle.position) Object.assign(state.vehicle.position, clamped);
                 absorbDynamicClamp(state.vehicle, clamped, state.previous, candidate);
             }
+            this._queueRigidBodyPush(state, candidate, deltaTime, hits, impact);
             const plane = this.preparedWorldDescription?.groundPlane;
             if (plane && Number.isFinite(Number(plane.y))) {
                 const current = vector(state.vehicle.position);
@@ -498,8 +682,10 @@ export class PhysicsEngine {
             const position = vector(state.vehicle.position);
             state.body.setNextKinematicTranslation(position);
         }
+        this._stepRigidBodies();
         this.world.timestep = deltaTime;
         this.world.step();
+        this._publishRigidBodyPoses();
     }
 
     syncAndPublishContacts({ step = 0, timeNs = 0 } = {}) {
@@ -523,9 +709,12 @@ export class PhysicsEngine {
     }
 
     resetRun() {
+        this.forceQueue = [];
+        this._pushes = [];
         if (this.RAPIER) {
             this._buildStaticColliders();
             this._buildVehicleStates();
+            this._buildRigidBodies();
         }
         this.activeContacts.clear();
         this.pendingContacts.clear();
@@ -543,6 +732,7 @@ export class PhysicsEngine {
                 id: state.id,
                 previous: vector(state.previous),
             })),
+            ...(this.rigidBodyStates.length > 0 ? { rigidBodies: this._rigidBodyPoses } : {}),
         };
     }
 
@@ -559,6 +749,8 @@ export class PhysicsEngine {
         this.preparedWorldDescription = null;
         this.preparedBackendSelection = null;
         this.episodeObstacles = [];
+        this.forceQueue = [];
+        this._pushes = [];
     }
 
     async stop() {}

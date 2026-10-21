@@ -140,6 +140,23 @@ stay pinned. A plugin `dynamics.plant` remains an override of the built-in plant
 Update the progress and decision log in `docs/physics-plan.md` whenever a PHY
 milestone changes a contract, hash, acceptance criterion, or milestone status.
 
+## Rigid-body roadmap
+
+Before changing object rigid bodies, Rapier dynamic colliders, or the
+environment-editor rigid-body component, read:
+
+1. [`docs/rigid-body-plan.md`](docs/rigid-body-plan.md)
+2. [`docs/physics-plan.md`](docs/physics-plan.md)
+3. [`docs/environment-editor.md`](docs/environment-editor.md)
+4. [`docs/architecture.md`](docs/architecture.md)
+
+This is a separate program from `PHY-*`. The bicycle plant stays kinematic or
+dynamic-bicycle. Rapier gravity stays off the vehicle. Worlds with no rigid
+body keep their current `worldHash`.
+
+Update the progress and decision log in `docs/rigid-body-plan.md` whenever this
+program changes a contract, hash, acceptance criterion, or milestone status.
+
 ## Architectural invariants
 
 - JavaScript remains the single authoritative simulator implementation.

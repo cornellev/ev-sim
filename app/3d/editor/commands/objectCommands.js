@@ -120,7 +120,7 @@ function parentOutsideGenerated(byId, record) {
 }
 
 function commitCandidate(ctx, candidate) {
-    const validation = validateObjectRecords(candidate, ctx.document.index(), ctx.registry, { sky: ctx.sky });
+    const validation = validateObjectRecords(candidate, ctx.document.index(), ctx.registry, { sky: ctx.sky, assetMetrics: ctx.document.assetMetrics });
     if (!validation.ok) return { ok: false, issues: errorIssues(validation.issues) };
     ctx.document.replaceObjectGraph(candidate, { notify: false });
     return { ok: true, issues: [] };

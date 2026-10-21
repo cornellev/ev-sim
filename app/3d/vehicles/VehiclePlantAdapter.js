@@ -1,3 +1,4 @@
+import { dynamicBicycleBody } from "../../simulation/vehicles/dynamicBicycle.js";
 import {
     createVehiclePlantDefinition,
     KinematicVehiclePlant,
@@ -44,16 +45,10 @@ export function syncPlantFromVehicle(vehicle) {
     vehicle.plant.steeringAngle = Number(vehicle.steeringAngle) || 0;
 }
 
-function dynamicBody(vehicle) {
-    if (vehicle?.plant?.motionModel === "dynamic-bicycle") return vehicle.plant;
-    if (vehicle?.motionModel === "dynamic-bicycle") return vehicle;
-    return null;
-}
-
 /** Drive inputs belong on the plant; the Three view is a follower. */
 export function applyManualDrive(vehicle, { speedMps, steeringRad, accelerationX, mode } = {}) {
     const plant = vehicle.plant || null;
-    const dynamic = dynamicBody(vehicle);
+    const dynamic = dynamicBicycleBody(vehicle);
     if (dynamic) {
         if (mode === "hold") dynamic.longitudinal = { mode: "hold" };
         else if (mode === "stop") dynamic.longitudinal = { mode: "stop" };

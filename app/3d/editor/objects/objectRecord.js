@@ -8,6 +8,7 @@
  * `tile` records exist without a legacy counterpart. Geometry never lives here.
  */
 
+import { normalizeRigidBody } from "../../../simulation/world/RigidBodyRecords.js";
 import { boolean, isPlainObject, stringList } from "./ObjectOptions.js";
 
 export const OBJECT_GRAPH_VERSION = 1;
@@ -76,7 +77,7 @@ export function normalizeObjectRecord(raw = {}) {
     if (components.authoredBy !== undefined) normalizedComponents.authoredBy = normalizeAuthoredBy(components.authoredBy);
     for (const key of Object.keys(components)) {
         if (STANDARD_COMPONENT_KEYS.includes(key)) continue;
-        normalizedComponents[key] = cloneUnknown(components[key]);
+        normalizedComponents[key] = key === "rigidBody" ? normalizeRigidBody(components[key]) : cloneUnknown(components[key]);
     }
     const name = typeof source.name === "string" ? source.name.trim() : "";
     return {

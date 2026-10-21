@@ -1,0 +1,378 @@
+{
+  "rows": [
+    {
+      "id": "stick-on-grade",
+      "match": [
+        "longitudinal",
+        "cornering",
+        "bicycle"
+      ],
+      "input": {
+        "x": 10,
+        "z": -4,
+        "yaw": 0.3,
+        "vx": 0,
+        "vy": 0,
+        "r": 0,
+        "pitch": 0.01,
+        "delta": 0,
+        "axCommand": 0,
+        "dt": 0.02,
+        "wheelbase": 1.5,
+        "maxSteeringAngle": 0.6,
+        "mass": 1500,
+        "yawInertia": 2250,
+        "corneringStiffnessFront": 80000,
+        "corneringStiffnessRear": 80000,
+        "frictionMu": 0.9,
+        "rollingResistance": 0.015
+      },
+      "expect": {
+        "x": 10,
+        "z": -4,
+        "yaw": 0.3,
+        "vx": 0,
+        "vy": 0,
+        "r": 0,
+        "ax": 0,
+        "ay": 0
+      }
+    },
+    {
+      "id": "slide-on-grade",
+      "match": [
+        "longitudinal",
+        "cornering",
+        "bicycle"
+      ],
+      "input": {
+        "x": 10,
+        "z": -4,
+        "yaw": 0.3,
+        "vx": 0,
+        "vy": 0,
+        "r": 0,
+        "pitch": 0.2,
+        "delta": 0,
+        "axCommand": 0,
+        "dt": 0.02,
+        "wheelbase": 1.5,
+        "maxSteeringAngle": 0.6,
+        "mass": 1500,
+        "yawInertia": 2250,
+        "corneringStiffnessFront": 80000,
+        "corneringStiffnessRear": 80000,
+        "frictionMu": 0.9,
+        "rollingResistance": 0.015
+      },
+      "expect": {
+        "x": 9.9993103504841,
+        "z": -3.9997866664052064,
+        "yaw": 0.3,
+        "vx": -0.03609458676340424,
+        "vy": 0,
+        "r": 0,
+        "ax": -1.804729338170212,
+        "ay": 0
+      }
+    },
+    {
+      "id": "drive-flat",
+      "match": [
+        "longitudinal",
+        "cornering",
+        "bicycle"
+      ],
+      "input": {
+        "x": 10,
+        "z": -4,
+        "yaw": 0.3,
+        "vx": 5,
+        "vy": 0,
+        "r": 0,
+        "pitch": 0,
+        "delta": 0,
+        "axCommand": 1.5,
+        "dt": 0.02,
+        "wheelbase": 1.5,
+        "maxSteeringAngle": 0.6,
+        "mass": 1500,
+        "yawInertia": 2250,
+        "corneringStiffnessFront": 80000,
+        "corneringStiffnessRear": 80000,
+        "frictionMu": 0.9,
+        "rollingResistance": 0.015
+      },
+      "expect": {
+        "x": 10.096050619700286,
+        "z": -4.029711938470767,
+        "yaw": 0.3,
+        "vx": 5.027057,
+        "vy": 0,
+        "r": 0,
+        "ax": 1.35285,
+        "ay": 0
+      }
+    },
+    {
+      "id": "coast-uphill",
+      "match": [
+        "longitudinal",
+        "cornering",
+        "bicycle"
+      ],
+      "input": {
+        "x": 10,
+        "z": -4,
+        "yaw": 0.3,
+        "vx": 8,
+        "vy": 0,
+        "r": 0,
+        "pitch": 0.02,
+        "delta": 0,
+        "axCommand": 0,
+        "dt": 0.02,
+        "wheelbase": 1.5,
+        "maxSteeringAngle": 0.6,
+        "mass": 1500,
+        "yawInertia": 2250,
+        "corneringStiffnessFront": 80000,
+        "corneringStiffnessRear": 80000,
+        "frictionMu": 0.9,
+        "rollingResistance": 0.015
+      },
+      "expect": {
+        "x": 10.152722648590748,
+        "z": -4.04724265134551,
+        "yaw": 0.3,
+        "vx": 7.993133850175148,
+        "vy": 0,
+        "r": 0,
+        "ax": -0.3433074912425845,
+        "ay": 0
+      }
+    },
+    {
+      "id": "reverse-roll",
+      "match": [
+        "longitudinal",
+        "cornering",
+        "bicycle"
+      ],
+      "input": {
+        "x": 10,
+        "z": -4,
+        "yaw": 0.3,
+        "vx": -3,
+        "vy": 0,
+        "r": 0,
+        "pitch": 0,
+        "delta": 0,
+        "axCommand": 0,
+        "dt": 0.02,
+        "wheelbase": 1.5,
+        "maxSteeringAngle": 0.6,
+        "mass": 1500,
+        "yawInertia": 2250,
+        "corneringStiffnessFront": 80000,
+        "corneringStiffnessRear": 80000,
+        "frictionMu": 0.9,
+        "rollingResistance": 0.015
+      },
+      "expect": {
+        "x": 9.942736041758213,
+        "z": -3.9822861819196835,
+        "yaw": 0.3,
+        "vx": -2.997057,
+        "vy": 0,
+        "r": 0,
+        "ax": 0.14715,
+        "ay": 0
+      }
+    },
+    {
+      "id": "stop-before-reverse",
+      "match": [
+        "longitudinal",
+        "cornering",
+        "bicycle"
+      ],
+      "input": {
+        "x": 10,
+        "z": -4,
+        "yaw": 0.3,
+        "vx": 0.002,
+        "vy": 0,
+        "r": 0,
+        "pitch": 0,
+        "delta": 0,
+        "axCommand": 0,
+        "dt": 0.05,
+        "wheelbase": 1.5,
+        "maxSteeringAngle": 0.6,
+        "mass": 1500,
+        "yawInertia": 2250,
+        "corneringStiffnessFront": 80000,
+        "corneringStiffnessRear": 80000,
+        "frictionMu": 0.9,
+        "rollingResistance": 0.015
+      },
+      "expect": {
+        "x": 10,
+        "z": -4,
+        "yaw": 0.3,
+        "vx": 0,
+        "vy": 0,
+        "r": 0,
+        "ax": -0.14715,
+        "ay": 0
+      }
+    },
+    {
+      "id": "gentle-turn",
+      "match": [
+        "cornering",
+        "bicycle"
+      ],
+      "input": {
+        "x": 10,
+        "z": -4,
+        "yaw": 0.3,
+        "vx": 8,
+        "vy": 0.05,
+        "r": 0.02,
+        "pitch": 0.02,
+        "delta": 0.04,
+        "axCommand": 0.4,
+        "dt": 0.02,
+        "wheelbase": 1.5,
+        "maxSteeringAngle": 0.6,
+        "mass": 1500,
+        "yawInertia": 2250,
+        "corneringStiffnessFront": 80000,
+        "corneringStiffnessRear": 80000,
+        "frictionMu": 0.9,
+        "rollingResistance": 0.015
+      },
+      "expect": {
+        "x": 10.15239945052867,
+        "z": -4.048738080547548,
+        "yaw": 0.3007874075587084,
+        "vx": 7.999792182420959,
+        "vy": 0.07620748208543875,
+        "r": 0.03937037793542242,
+        "ax": -0.01039087895208965,
+        "ay": 1.3103741042719372
+      }
+    },
+    {
+      "id": "rest-kills-lateral",
+      "match": [
+        "cornering",
+        "bicycle"
+      ],
+      "input": {
+        "x": 10,
+        "z": -4,
+        "yaw": 0.3,
+        "vx": 0.0001,
+        "vy": 0.4,
+        "r": 0.3,
+        "pitch": 0,
+        "delta": 0.2,
+        "axCommand": 0,
+        "dt": 0.02,
+        "wheelbase": 1.5,
+        "maxSteeringAngle": 0.6,
+        "mass": 1500,
+        "yawInertia": 2250,
+        "corneringStiffnessFront": 80000,
+        "corneringStiffnessRear": 80000,
+        "frictionMu": 0.9,
+        "rollingResistance": 0.015
+      },
+      "expect": {
+        "x": 9.997635841892953,
+        "z": -4.007642680448967,
+        "yaw": 0.306,
+        "vx": 0,
+        "vy": 0.3999994,
+        "r": 0.3,
+        "ax": 0.12,
+        "ay": -0.00003
+      }
+    },
+    {
+      "id": "hard-turn",
+      "match": [
+        "bicycle"
+      ],
+      "input": {
+        "x": 10,
+        "z": -4,
+        "yaw": 0.3,
+        "vx": 12,
+        "vy": 1.2,
+        "r": 0.6,
+        "pitch": 0.01,
+        "delta": 0.5,
+        "axCommand": 4,
+        "dt": 0.02,
+        "wheelbase": 1.5,
+        "maxSteeringAngle": 0.6,
+        "mass": 1500,
+        "yawInertia": 2250,
+        "corneringStiffnessFront": 80000,
+        "corneringStiffnessRear": 80000,
+        "frictionMu": 0.9,
+        "rollingResistance": 0.015
+      },
+      "expect": {
+        "x": 10.223140046834432,
+        "z": -4.0913608453934085,
+        "yaw": 0.3134405795432905,
+        "vx": 12.008640241877261,
+        "vy": 1.0668978263376776,
+        "r": 0.6720289771645267,
+        "ax": 0.43201209386308254,
+        "ay": -6.655108683116116
+      }
+    },
+    {
+      "id": "friction-limit",
+      "match": [
+        "bicycle"
+      ],
+      "input": {
+        "x": 10,
+        "z": -4,
+        "yaw": 0.3,
+        "vx": 5,
+        "vy": 0,
+        "r": 0,
+        "pitch": 0,
+        "delta": 0,
+        "axCommand": 12,
+        "dt": 0.02,
+        "wheelbase": 1.5,
+        "maxSteeringAngle": 0.6,
+        "mass": 1500,
+        "yawInertia": 2250,
+        "corneringStiffnessFront": 80000,
+        "corneringStiffnessRear": 80000,
+        "frictionMu": 0.9,
+        "rollingResistance": 0.015
+      },
+      "expect": {
+        "x": 10.098907515257556,
+        "z": -4.030595679827979,
+        "yaw": 0.3,
+        "vx": 5.17658,
+        "vy": 0,
+        "r": 0,
+        "ax": 8.829,
+        "ay": 0
+      }
+    }
+  ]
+}

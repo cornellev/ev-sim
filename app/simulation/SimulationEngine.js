@@ -12,6 +12,8 @@ import { createSimulationRuntimeContext } from "./kernel/SimulationRuntimeContex
 import { BrowserPluginModuleSource } from "../plugin/browser/BrowserPluginModuleSource.js";
 import { PluginRunSession, pluginRuntimeCapabilitiesForRun } from "../plugin/PluginRunSession.js";
 import { browserSimulationPerformance } from "./performance/BrowserSimulationPerformance.js";
+import { createPhysicsBackendSelection } from "../physics/PhysicsBackend.js";
+import { applyRigidBodyViewportPoses } from "../3d/editor/projection/applyRigidBodyPoses.js";
 
 const KERNEL_PROPERTIES = [
     "stepNs",
@@ -107,6 +109,8 @@ export class SimulationEngine {
         this._presentationRequestGeneration = 0;
         this._presentationServiceQueued = false;
         this._renderPresentationUnsubscribe = null;
+        this._editorRigidBodyHash = null;
+        this._editorPhysicsSync = Promise.resolve();
 
         this.scenarioDiagnostics = new ScenarioDiagnostics();
         this.autonomyOverlay = new AutonomyOverlay();
@@ -581,10 +585,40 @@ export class SimulationEngine {
     }
 
     play() {
+        this.syncEditorRigidBodies();
         this.startLoop();
         this.kernel.play();
         this._syncEpisodeOverlayMeshes();
         this._emit();
+    }
+
+    // A resolved run keeps the world it was prepared with. Editor play uses the
+    // live description so a rigid body falls without a managed run.
+    syncEditorRigidBodies() {
+        if (this.resolvedRun) return;
+        const environment = this.data?.environment?.();
+        const description = environment?.getWorldDescription?.() ?? null;
+        const hash = description?.rigidBodies?.length ? environment.worldHash ?? "" : null;
+        const physics = this.data?.physics?.();
+        if (!physics) return;
+        if (hash === this._editorRigidBodyHash && (hash === null || physics.world)) return;
+        this._editorRigidBodyHash = hash;
+        const captured = description;
+        this._editorPhysicsSync = this._editorPhysicsSync.then(async () => {
+            if (this.resolvedRun || this._editorRigidBodyHash !== hash) return;
+            if (!hash) {
+                if (physics.preparedWorldDescription) physics.disposeRun();
+                return;
+            }
+            await physics.configureRun({
+                manifest: null,
+                worldDescription: captured,
+                backendSelection: createPhysicsBackendSelection(captured),
+            });
+        }).catch((error) => {
+            this._editorRigidBodyHash = null;
+            console.warn("[simulation] rigid body world sync failed:", error);
+        });
     }
 
     pause() {
@@ -608,6 +642,7 @@ export class SimulationEngine {
         this.kernel.stop({ reset, dispatchEpisode });
         if (reset) this.autonomyOverlay?.clear?.();
         this._syncEpisodeOverlayMeshes();
+        this._applyRigidBodyPoses();
         this.render();
         this._emit();
     }
@@ -623,6 +658,7 @@ export class SimulationEngine {
         this._resetPacingState();
         this.kernel.reset(episodeSpec);
         this.autonomyOverlay?.clear?.();
+        this._applyRigidBodyPoses();
         this._emit();
         return this.getSnapshot();
     }
@@ -1003,6 +1039,11 @@ export class SimulationEngine {
                 actorPoses: this.kernel.actorPoses(),
             });
         }
+        this._applyRigidBodyPoses();
+    }
+
+    _applyRigidBodyPoses() {
+        applyRigidBodyViewportPoses(this.data, this.kernel.context.physics.rigidBodyPoses?.() ?? []);
     }
 
     // Compatibility delegates for existing tests and integrations that use

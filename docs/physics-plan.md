@@ -3,7 +3,9 @@
 The `PHY-*` program adds a built-in JavaScript dynamic bicycle: gravity along
 the road and tire friction at the two axles. It is not headless PR 13, and it
 does not renumber the headless, visual-layer, environment-editor, plugin,
-marketplace, or planner programs.
+marketplace, or planner programs. Object rigid bodies live in
+[`docs/rigid-body-plan.md`](rigid-body-plan.md) and leave this bicycle and the
+kinematic characterization tape unchanged.
 
 This revision (2026-10-19) replaces an earlier PHY-01–07 ladder. The product
 ask is only to model gravity and friction at the two bicycle axles. Do not
@@ -184,7 +186,9 @@ adds a second characterization tape and does not overwrite the first.
 ### PHY-D01 — JavaScript built-in, plugin override
 
 The dynamic bicycle is a built-in JavaScript plant. `dynamics.plant` remains
-an override. It is not the implementation of this model.
+an override. It is not the implementation of this model. A plugin may copy
+the same equations by setting plant `model` to `dynamic-bicycle-v1`. That
+copy does not replace either characterization tape.
 
 ### PHY-D02 — Manifest identity, unchanged protobuf
 
@@ -214,6 +218,14 @@ PHY-03 runs browser/headless plant parity at the existing `1e-9` tolerance and
 writes a second characterization tape.
 
 ## Progress and decision log
+
+### 2026-10-20 — Plugin copy of the dynamic bicycle
+
+`examples/plugins/acme.dynamics.longitudinal`, `acme.dynamics.cornering`, and
+`acme.dynamics.bicycle` copy this plant in stages. The last one matches
+`stepDynamicBicycle` when `lf` and `lr` are half the wheelbase. The JavaScript
+plant stays the built-in model. `characterization.v1.json` and
+`characterization.dynamic-bicycle.v1.json` stay pinned.
 
 ### 2026-10-19 — PHY-01
 
