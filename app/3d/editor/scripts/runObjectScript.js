@@ -61,7 +61,7 @@ function finiteScale(value, fallback = 1) {
     return Number.isFinite(numeric) && numeric > 0 ? numeric : fallback;
 }
 
-/** Snapshot a prop or asset instance so Clone Object can place copies. */
+/** Snapshot a prop, asset instance, or primitive so Clone Object can place copies. */
 export function lookupCloneSource(document, objectId) {
     const id = String(objectId ?? "").trim();
     const record = document?.getObject?.(id) ?? null;
@@ -101,12 +101,31 @@ export function lookupCloneSource(document, objectId) {
             },
         };
     }
+    if (record.typeId === "primitive") {
+        const primitive = (document.primitives ?? []).find((entry) => entry.id === record.id);
+        if (!primitive?.shape) return null;
+        return {
+            typeId: "primitive",
+            name: record.name || primitive.shape,
+            primitive: {
+                shape: String(primitive.shape),
+                size: {
+                    x: finiteScale(primitive.size?.x),
+                    y: finiteScale(primitive.size?.y),
+                    z: finiteScale(primitive.size?.z),
+                },
+                color: typeof primitive.color === "string" ? primitive.color : undefined,
+                tags: Array.isArray(primitive.tags) ? [...primitive.tags] : [],
+            },
+        };
+    }
     return null;
 }
 
 function authoredIdKind(op) {
     if (op?.op === "create-group") return "group";
     if (op?.op === "clone-object" && op.spec?.typeId === "asset-instance") return "asset";
+    if (op?.op === "clone-object" && op.spec?.typeId === "primitive") return "primitive";
     return "feature";
 }
 
@@ -160,6 +179,12 @@ export function runObjectScript({
             random: () => rng.next(),
             author,
             lookupObject: (objectId) => lookupCloneSource(document, objectId),
+            findSceneObject: (objectId) => {
+                const id = String(objectId ?? "").trim();
+                if (!id) return null;
+                if (document?.getObject?.(id)) return id;
+                return ops.some((op) => op.id === id) ? id : null;
+            },
             scriptId: artifact.name ?? "",
         },
     });

@@ -53,6 +53,27 @@ function applyClone(run, op) {
         });
         return;
     }
+    if (spec.typeId === "primitive") {
+        const size = spec.primitive?.size ?? {};
+        run("addPrimitive", {
+            id: op.id,
+            shape: spec.primitive?.shape,
+            x: op.x,
+            y: op.y ?? 0,
+            z: op.z,
+            rotationY: op.rotationY ?? 0,
+            size: {
+                x: size.x ?? 1,
+                y: size.y ?? 1,
+                z: size.z ?? 1,
+            },
+            color: spec.primitive?.color,
+            tags: spec.primitive?.tags,
+            name: spec.name,
+            parentId: op.parentId ?? null,
+        });
+        return;
+    }
     throw new TypeError(`Cannot clone "${spec.typeId || "object"}".`);
 }
 

@@ -6,6 +6,12 @@ import { EnvironmentDocument, resetDocumentIdCounter } from "../app/3d/editor/do
 import { applyObjectScript } from "../app/3d/editor/scripts/applyObjectScript.js";
 import { buildPropsAlongRoadDocument } from "../app/3d/editor/scripts/propsAlongRoadTemplate.js";
 import { runObjectScript } from "../app/3d/editor/scripts/runObjectScript.js";
+import { ScriptManager } from "../app/scripting/ScriptManager.js";
+import { registerBuiltInBlocks } from "../app/scripting/registerBuiltInBlocks.js";
+import { ObjectIdToSceneObjectBlock } from "../app/scripting/units/conversions/Conversions.block.js";
+import { StringBlock } from "../app/scripting/units/objects/String.block.js";
+import { OutputNodeBlock, ProgramInputBlock } from "../app/scripting/units/program/ProgramIO.block.js";
+import { SequenceBlock } from "../app/scripting/units/statements/Unit.block.js";
 import { CLONE_OBJECT_HOST_ERROR, PLACE_FEATURE_HOST_ERROR } from "../app/scripting/units/world/AuthoringBlocks.block.js";
 import { CloneObjectBlock, PlaceFeatureBlock } from "../app/scripting/units/world/AuthoringBlocks.block.js";
 import { GeneralAttachmentBlock, RoadAttachmentBlock } from "../app/scripting/units/world/DeriveFromAttachment.block.js";
@@ -396,4 +402,195 @@ test("Clone Object refuses to write without an editor host", () => {
     block.getInput = () => "";
     block.setManager({ getRuntimeContext: () => ({}) });
     assert.throws(() => block.execute(), new RegExp(CLONE_OBJECT_HOST_ERROR));
+});
+
+function connectScript(manager, from, output, to, input) {
+    const result = manager.connectUnitsDetailed(from, output, to, input);
+    assert.equal(result.ok, true, result.error);
+}
+
+function addProgramInput(manager, uuid, label, type, defaultValue) {
+    const block = new ProgramInputBlock(uuid);
+    const config = { label, type, defaultValue };
+    block.hydrateState(config);
+    manager.addUnit(block);
+    manager.storeData(uuid, config);
+}
+
+function addUnitHead(manager) {
+    const config = { outputs: [{ id: "output", label: "then", type: "unit" }] };
+    const head = new OutputNodeBlock("head");
+    head.hydrateState(config);
+    manager.addUnit(head);
+    manager.storeData("head", config);
+    manager.setHead("head");
+}
+
+test("object id converts to a scene object when the document or this run contains it", () => {
+    resetDocumentIdCounter();
+    registerBuiltInBlocks();
+    const document = new EnvironmentDocument({ environmentId: "yard" });
+    const service = createEnvironmentCommandService({ document });
+    const group = service.run("createObject", { typeId: "group", name: "Bin" });
+    assert.equal(group.ok, true, JSON.stringify(group.issues));
+    const groupId = group.result.objectId;
+    const record = document.getObject(groupId);
+
+    const lookup = new ScriptManager();
+    addUnitHead(lookup);
+    addProgramInput(lookup, "in-id", "objectId", "string", "");
+    addProgramInput(lookup, "in-pose", "pose", "pose3d", "0");
+    lookup.addUnit(new StringBlock("asset"));
+    lookup.storeData("asset", "barrel");
+    lookup.addUnit(new ObjectIdToSceneObjectBlock("convert"));
+    lookup.addUnit(new PlaceFeatureBlock("place"));
+    connectScript(lookup, "in-id", "input", "convert", "objectId");
+    connectScript(lookup, "convert", "out", "place", "parentId");
+    connectScript(lookup, "in-pose", "input", "place", "pose");
+    connectScript(lookup, "asset", "out", "place", "assetId");
+    connectScript(lookup, "place", "then", "head", "output");
+    const lookupArtifact = lookup.compile("lookup");
+
+    const found = runObjectScript({
+        artifact: lookupArtifact,
+        record,
+        document,
+        parameters: { objectId: `  ${groupId}  ` },
+    });
+    assert.equal(found.ok, true, found.error);
+    assert.equal(found.ops[0].parentId, groupId);
+
+    const missing = runObjectScript({
+        artifact: lookupArtifact,
+        record,
+        document,
+        parameters: { objectId: "missing" },
+    });
+    assert.equal(missing.ok, true, missing.error);
+    assert.equal(missing.ops[0].parentId, null);
+
+    const chain = new ScriptManager();
+    addUnitHead(chain);
+    addProgramInput(chain, "in-root", "root", "scene_object", "");
+    addProgramInput(chain, "in-pose", "pose", "pose3d", "0");
+    chain.addUnit(new StringBlock("asset"));
+    chain.storeData("asset", "barrel");
+    chain.addUnit(new PlaceFeatureBlock("place-a"));
+    chain.addUnit(new ObjectIdToSceneObjectBlock("convert"));
+    chain.addUnit(new PlaceFeatureBlock("place-b"));
+    chain.addUnit(new SequenceBlock("sequence"));
+    connectScript(chain, "asset", "out", "place-a", "assetId");
+    connectScript(chain, "in-pose", "input", "place-a", "pose");
+    connectScript(chain, "in-root", "input", "place-a", "parentId");
+    connectScript(chain, "place-a", "id", "convert", "objectId");
+    connectScript(chain, "convert", "out", "place-b", "parentId");
+    connectScript(chain, "asset", "out", "place-b", "assetId");
+    connectScript(chain, "in-pose", "input", "place-b", "pose");
+    connectScript(chain, "place-a", "then", "sequence", "first");
+    connectScript(chain, "place-b", "then", "sequence", "second");
+    connectScript(chain, "sequence", "then", "head", "output");
+    const chained = runObjectScript({
+        artifact: chain.compile("chain"),
+        record,
+        document,
+    });
+    assert.equal(chained.ok, true, chained.error);
+    assert.equal(chained.ops.length, 2);
+    assert.equal(chained.ops[0].parentId, null);
+    assert.equal(chained.ops[1].parentId, chained.ops[0].id);
+});
+
+test("Clone Object copies a primitive's shape, size, color, and tags onto the pose", () => {
+    resetDocumentIdCounter();
+    registerBuiltInBlocks();
+    const document = new EnvironmentDocument({ environmentId: "yard" });
+    const service = createEnvironmentCommandService({ document });
+    const group = service.run("createObject", { typeId: "group", name: "Bin" });
+    assert.equal(group.ok, true, JSON.stringify(group.issues));
+    const groupId = group.result.objectId;
+    const source = service.run("addPrimitive", {
+        shape: "box",
+        x: 1,
+        y: 2,
+        z: 3,
+        rotationY: 0.2,
+        size: { x: 0.4, y: 1.5, z: 2 },
+        color: "#112233",
+        tags: ["marker", "solid"],
+        name: "Post",
+        parentId: groupId,
+    });
+    assert.equal(source.ok, true, JSON.stringify(source.issues));
+    const sourceId = source.result.objectId;
+
+    const manager = new ScriptManager();
+    addUnitHead(manager);
+    addProgramInput(manager, "in-source", "source", "scene_object", "");
+    addProgramInput(manager, "in-pose", "pose", "pose3d", "0");
+    addProgramInput(manager, "in-parent", "parent", "scene_object", "");
+    manager.addUnit(new CloneObjectBlock("clone"));
+    connectScript(manager, "in-source", "input", "clone", "sourceId");
+    connectScript(manager, "in-pose", "input", "clone", "pose");
+    connectScript(manager, "in-parent", "input", "clone", "parentId");
+    connectScript(manager, "clone", "then", "head", "output");
+    const artifact = manager.compile("clone primitive");
+    const pose = {
+        position: { x: 8, y: 0.75, z: -2 },
+        rotation: { x: 0, y: 1.2, z: 0, order: "XYZ" },
+    };
+    const ran = runObjectScript({
+        artifact,
+        record: document.getObject(groupId),
+        document,
+        parameters: { source: sourceId, pose, parent: groupId },
+    });
+    assert.equal(ran.ok, true, ran.error);
+    assert.equal(ran.ops[0].spec.typeId, "primitive");
+    assert.equal(ran.ops[0].spec.primitive.shape, "box");
+    const applied = applyObjectScript(service, {
+        attachmentId: "attachment-1",
+        scriptId: "script-1",
+        ops: ran.ops,
+    });
+    assert.equal(applied.ok, true, JSON.stringify(applied.issues));
+
+    const clone = document.primitives.find((entry) => entry.id !== sourceId);
+    assert.equal(clone.shape, "box");
+    assert.deepEqual(clone.size, { x: 0.4, y: 1.5, z: 2 });
+    assert.equal(clone.color, "#112233");
+    assert.deepEqual(clone.tags, ["marker", "solid"]);
+    assert.deepEqual(clone.position, { x: 8, y: 0.75, z: -2 });
+    assert.equal(clone.rotationY, 1.2);
+    const copy = document.getObject(clone.id);
+    assert.equal(copy.name, "Post");
+    assert.equal(copy.parentId, groupId);
+    assert.equal(copy.typeId, "primitive");
+    assert.equal(copy.components.authoredBy.attachmentId, "attachment-1");
+    assert.equal(document.primitives.find((entry) => entry.id === sourceId).position.y, 2);
+    assert.equal(document.getObject(sourceId).components.authoredBy, undefined);
+
+    const again = runObjectScript({
+        artifact,
+        record: document.getObject(groupId),
+        document,
+        parameters: { source: sourceId, pose, parent: groupId },
+    });
+    assert.equal(again.ok, true, again.error);
+    const replaced = applyObjectScript(service, {
+        attachmentId: "attachment-1",
+        scriptId: "script-1",
+        ops: again.ops,
+    });
+    assert.equal(replaced.ok, true, JSON.stringify(replaced.issues));
+    assert.equal(document.primitives.some((entry) => entry.id === clone.id), false);
+    assert.equal(document.primitives.filter((entry) => entry.id !== sourceId).length, 1);
+
+    const refused = runObjectScript({
+        artifact,
+        record: document.getObject(groupId),
+        document,
+        parameters: { source: groupId, pose, parent: "" },
+    });
+    assert.equal(refused.ok, false);
+    assert.match(refused.error, /prop, an asset instance, or a primitive/);
 });

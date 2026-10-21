@@ -506,7 +506,10 @@ export function validateObjectGraph(snapshot = {}, registry = objectTypeRegistry
             `Unsupported object graph version ${snapshot.objectGraphVersion}; expected ${OBJECT_GRAPH_VERSION}.`,
         ));
     }
-    const result = validateObjectRecords(snapshot.objects ?? [], legacyIndex(snapshot), registry, context);
+    const result = validateObjectRecords(snapshot.objects ?? [], legacyIndex(snapshot), registry, {
+        ...context,
+        assetMetrics: context.assetMetrics ?? snapshot.assetMetrics,
+    });
     issues.push(...result.issues);
     return { ok: !hasErrorIssue(issues), issues };
 }

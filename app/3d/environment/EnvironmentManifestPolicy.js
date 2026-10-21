@@ -278,7 +278,10 @@ export function serializeEnvironmentManifest(manifest, {
         : resolveReferenceField(manifest, current, "evidence", "reportHash");
     const source = manifest.document ?? current?.document ?? null;
     const document = target >= ENVIRONMENT_OBJECT_SCHEMA_VERSION
-        ? withObjectGraph(source, current, registry, { sky: manifest.sky ?? current?.sky ?? null })
+        ? withObjectGraph(source, current, registry, {
+            sky: manifest.sky ?? current?.sky ?? null,
+            assetMetrics: source?.assetMetrics ?? current?.document?.assetMetrics ?? null,
+        })
         : omitObjectGraph(source);
     return omitLegacyConcurrency({
         ...manifest,

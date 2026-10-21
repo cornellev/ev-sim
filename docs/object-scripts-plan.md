@@ -1,13 +1,13 @@
 # Object scripts
 
-Editor objects can carry a visual script. Run writes permanent groups, props, and asset copies into the environment document. Spawn Prop and Scatter Features stay on the episode overlay and do not do this.
+Editor objects can carry a visual script. Run writes permanent groups, props, asset copies, and primitive copies into the environment document. Spawn Prop and Scatter Features stay on the episode overlay and do not do this.
 
 Attachments live on the schema-v4 object graph, not on legacy feature records.
 
 - `components.scripts`: `{ id, scriptId, parameters, seed }[]`
 - `components.authoredBy`: `null` or `{ attachmentId, scriptId }`
 
-Both keys are omitted when absent. They do not enter `worldHash`. Features, groups, and asset instances the script creates do.
+Both keys are omitted when absent. They do not enter `worldHash`. Features, groups, asset instances, and primitives the script creates do.
 
 ## Packages
 
@@ -24,10 +24,12 @@ Both keys are omitted when absent. They do not enter `worldHash`. Features, grou
 
 The inspector Run button, and `environment_run_object_script`, load `latestValidArtifact` and call `runObjectScript`. The runner refuses a host mismatch, a missing required `scene_object`, and a failed script. On failure it discards ops, because `author` may already have recorded some.
 
+`Object ID to Scene Object` calls `runtimeContext.findSceneObject`. That lookup hits `document.getObject`, and also ids this run has already authored. A miss emits an empty `scene_object` and `found:false`.
+
 `applyObjectScript` then, in one `CommandBus` transaction:
 
 1. Deletes objects whose `authoredBy.attachmentId` matches. `deleteObjects` removes the descendant closure. A locked owned object fails the whole transaction.
-2. Creates each group, builtin prop, or cloned asset instance.
+2. Creates each group, builtin prop, cloned asset instance, or cloned primitive.
 3. Sets `authoredBy` on each created record.
 
 Re-run replaces that attachment's output. It does not match by name. Bake (`clearAuthoredBy`) leaves the objects and the next Run adds a new set.

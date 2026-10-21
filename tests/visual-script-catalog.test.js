@@ -115,6 +115,7 @@ test("conversion string json and array blocks are placeable and searchable", () 
     assert.equal(UNIT_CATALOG_META.find((entry) => entry.type === "Float64ToInt32Block")?.placeable, true);
     assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "FloorToIntBlock").keywords.includes("floor"));
     assert.ok(conversions.some((entry) => entry.type === "StringToRoadIdBlock"));
+    assert.ok(conversions.some((entry) => entry.type === "ObjectIdToSceneObjectBlock"));
     assert.ok(conversions.some((entry) => entry.type === "ToStringBlock"));
     assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "ToStringBlock").keywords.includes("stringify"));
     assert.ok(conversions.some((entry) => entry.type === "RoadIdToStringBlock"));

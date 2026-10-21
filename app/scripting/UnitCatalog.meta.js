@@ -22,6 +22,7 @@ import {
     StringToBooleanBlock,
     StringToFloatBlock,
     StringToIntBlock,
+    ObjectIdToSceneObjectBlock,
     StringToRoadIdBlock,
     StringToTextureIdBlock,
     TextureIdToStringBlock,
@@ -546,6 +547,9 @@ export const UNIT_CATALOG_META = [
     entry("RoadIdToStringBlock", "Road ID to String", "conversions", RoadIdToStringBlock, ["road", "id", "string", "convert"]),
     entry("StringToTextureIdBlock", "String to Texture ID", "conversions", StringToTextureIdBlock, ["string", "texture", "id", "convert"]),
     entry("TextureIdToStringBlock", "Texture ID to String", "conversions", TextureIdToStringBlock, ["texture", "id", "string", "convert"]),
+    entry("ObjectIdToSceneObjectBlock", "Object ID to Scene Object", "conversions", ObjectIdToSceneObjectBlock, ["object", "id", "scene", "convert", "found"], {
+        notes: "Looks up objectId while an object script runs. found is true when that id is already in the document or was authored earlier in this run. A miss emits an empty scene_object and found:false. Branch on found before using out as a parent: an empty scene_object parent is the hierarchy root.",
+    }),
     entry("StringBlock", "String", "objects", StringBlock, ["string", "text", "constant"], { settings: STRING_SETTINGS }),
     entry("TextureImportBlock", "Texture Import", "objects", TextureImportBlock, ["texture", "import", "asset", "id"], { settings: STRING_SETTINGS }),
     entry("ConcatStringBlock", "Concat String", "strings", ConcatStringBlock, ["concat", "join", "string"]),
@@ -669,9 +673,9 @@ export const UNIT_CATALOG_META = [
         authoring: true,
         notes: "Writes a permanent builtin prop through the editor script host. Throws if runtimeContext.author is missing. Does not use the episode overlay.",
     }),
-    entry("CloneObjectBlock", "Clone Object", "simulator", CloneObjectBlock, ["clone", "obstacle", "copy", "prop", "asset", "permanent"], {
+    entry("CloneObjectBlock", "Clone Object", "simulator", CloneObjectBlock, ["clone", "obstacle", "copy", "prop", "asset", "primitive", "permanent"], {
         authoring: true,
-        notes: "Copies a prop or asset instance to a pose through the editor script host. Yaw and position come from the pose. Scale, asset pin, and prop type come from the source. Throws if runtimeContext.author or lookupObject is missing.",
+        notes: "Copies a prop, asset instance, or primitive to a pose through the editor script host. Yaw and position come from the pose. Scale, asset pin, prop type, and primitive shape, size, color, and tags come from the source. Throws if runtimeContext.author or lookupObject is missing.",
     }),
     entry("CreateGroupBlock", "Create Group", "simulator", CreateGroupBlock, ["group", "subgroup", "create", "permanent"], {
         authoring: true,

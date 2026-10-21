@@ -37,6 +37,7 @@ export const StringToRoadIdUnit = staticPortsUnit("String to Road ID", CONVERSIO
 export const RoadIdToStringUnit = staticPortsUnit("Road ID to String", CONVERSION_BLOCK_PORTS.RoadIdToStringBlock);
 export const StringToTextureIdUnit = staticPortsUnit("String to Texture ID", CONVERSION_BLOCK_PORTS.StringToTextureIdBlock);
 export const TextureIdToStringUnit = staticPortsUnit("Texture ID to String", CONVERSION_BLOCK_PORTS.TextureIdToStringBlock);
+export const ObjectIdToSceneObjectUnit = staticPortsUnit("Object ID to Scene Object", CONVERSION_BLOCK_PORTS.ObjectIdToSceneObjectBlock);
 
 export function ToStringUnit({ _uuid, portTypes = {} }) {
     const valueType = portTypes.inputs?.value || "generic";
@@ -70,6 +71,7 @@ export {
     StringToIntBlock,
     StringToRoadIdBlock,
     StringToTextureIdBlock,
+    ObjectIdToSceneObjectBlock,
     TextureIdToStringBlock,
     ToStringBlock,
     TruncateToIntBlock,

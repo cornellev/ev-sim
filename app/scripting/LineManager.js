@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { TYPES } from "./Constants";
 import { isEditableTarget } from "./canvas/CanvasViewport";
-import { baseTypeName, portsCompatible } from "./types/PortTypes";
+import { REPEAT_REF_TYPE, baseTypeName, portsCompatible } from "./types/PortTypes";
 
 function bezierMidpoint(start, end) {
     const dx = end.x - start.x;
@@ -47,6 +47,7 @@ export function Line({
     const c2 = { x: end.x - dx * 0.25, y: end.y };
     const path = `M ${start.x},${start.y} C ${c1.x},${c1.y} ${c2.x},${c2.y} ${end.x},${end.y}`;
     const midpoint = bezierMidpoint(start, end);
+    const reference = baseTypeName(type) === REPEAT_REF_TYPE;
 
     const selectLine = (event) => {
         event.stopPropagation();
@@ -73,6 +74,8 @@ export function Line({
                     strokeWidth="6"
                     fill="none"
                     strokeOpacity={selected ? "0.2" : "0"}
+                    strokeDasharray={reference ? "0 8" : undefined}
+                    strokeLinecap={reference ? "round" : undefined}
                     pointerEvents="stroke"
                     onMouseDown={(event) => event.stopPropagation()}
                     onClick={selectLine}
@@ -82,6 +85,9 @@ export function Line({
                     stroke={color}
                     strokeWidth="2"
                     fill="none"
+                    strokeOpacity={reference ? "0.4" : undefined}
+                    strokeDasharray={reference ? "0 8" : undefined}
+                    strokeLinecap={reference ? "round" : undefined}
                 />
             </svg>
             {selected && type ? (

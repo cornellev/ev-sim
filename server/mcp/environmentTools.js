@@ -643,7 +643,10 @@ export function registerEnvironmentTools(server, storage) {
         async ({ environmentId }) => {
             try {
                 const { manifest, document } = await loadDocument(storage, environmentId);
-                const graph = validateObjectGraph(document.snapshot(), objectTypeRegistry, { sky: manifest.sky ?? null });
+                const graph = validateObjectGraph(document.snapshot(), objectTypeRegistry, {
+                    sky: manifest.sky ?? null,
+                    assetMetrics: document.assetMetrics,
+                });
                 // The same road-domain checks the CommandBus applies to every edit.
                 const roadValidation = validateRoadDomain(document.roads);
                 const roadIssues = [...roadValidation.issues];

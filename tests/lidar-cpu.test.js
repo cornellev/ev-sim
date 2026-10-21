@@ -419,3 +419,42 @@ test("a rotated rigid body matches triangles baked with the same pose", () => {
     scene.dispose();
     bakedScene.dispose();
 });
+
+test("a rigid body at spawn uses the full static index and a moved body uses the reduced one", () => {
+    const box = createBoxLidarTwin({
+        id: "crate",
+        sourceId: "crate",
+        center: { x: 5, y: 0.5, z: 0 },
+        size: { x: 1, y: 1, z: 1 },
+        tags: ["obstacle"],
+        semanticId: 2,
+        instanceId: 51,
+    });
+    const scene = new CpuLidarScene(resource([box]));
+    const full = scene.fullStaticIndex;
+    const before = scene.capture(sensor(), [ego]);
+    const identity = { x: 0, y: 0, z: 0, w: 1 };
+    const at = (y) => ({
+        id: "crate",
+        position: { x: 5, y, z: 0 },
+        rotation: identity,
+        spawnPosition: { x: 5, y: 0.5, z: 0 },
+        spawnRotation: identity,
+    });
+    scene.setRigidBodyPoses([at(0.5)]);
+    assert.equal(scene._bodyIndex, null);
+    assert.deepEqual(scene.capture(sensor(), [ego]), before);
+    assert.equal(scene._bodyIndex, null);
+    assert.equal(scene._activeStaticIndex, full);
+    assert.equal(scene.fullStaticIndex, full);
+    scene.setRigidBodyPoses([at(4)]);
+    scene.capture(sensor(), [ego]);
+    assert.ok(scene._bodyIndex);
+    assert.equal(scene._activeStaticIndex, scene.staticIndex);
+    assert.notEqual(scene._activeStaticIndex, full);
+    scene.setRigidBodyPoses([at(0.5)]);
+    assert.deepEqual(scene.capture(sensor(), [ego]), before);
+    assert.equal(scene._activeStaticIndex, full);
+    assert.equal(scene.fullStaticIndex, full);
+    scene.dispose();
+});

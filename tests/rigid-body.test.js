@@ -8,9 +8,15 @@ import { PHYSICS_CAPABILITY_ID_V2, createPhysicsBackendSelection } from "../app/
 import { PhysicsEngine } from "../app/physics/PhysicsEngine.js";
 import { SimulationKernel } from "../app/simulation/kernel/SimulationKernel.js";
 import { SimulationEngine } from "../app/simulation/SimulationEngine.js";
-import { createLidarGeometryResource, hashLidarGeometry } from "../app/simulation/lidar/LidarGeometry.js";
+import {
+    createBoxLidarTwin,
+    createLidarGeometryResource,
+    hashLidarGeometry,
+    LIDAR_GEOMETRY_KIND,
+    LIDAR_GEOMETRY_VERSION,
+} from "../app/simulation/lidar/LidarGeometry.js";
 import { CpuLidarScene } from "../app/simulation/sensors/CpuLidarScene.js";
-import { createWorldDescription, createWorldResource } from "../app/simulation/world/WorldDescription.js";
+import { compareUtf8, createWorldDescription, createWorldResource } from "../app/simulation/world/WorldDescription.js";
 
 const METRIC = {
     version: 1,
@@ -279,6 +285,62 @@ test("CPU LiDAR hits a moved primitive at its live pose and misses the spawn pos
     assert.notEqual(scene.staticIndex, splitIndex);
     assert.deepEqual(scene.capture(horizontal, [ego]), spawned);
     assert.equal(hashLidarGeometry(resource.description), resource.hash);
+    scene.dispose();
+});
+
+test("moved rigid bodies share one index until a pose changes", () => {
+    const boxes = [0, 1].map((index) => createBoxLidarTwin({
+        id: `box-${index}`,
+        sourceId: `box-${index}`,
+        center: { x: 4 + index * 3, y: 0.5, z: 0 },
+        size: { x: 1, y: 1, z: 1 },
+        tags: ["obstacle"],
+        semanticId: 2,
+        instanceId: 21 + index,
+    }));
+    const description = {
+        kind: LIDAR_GEOMETRY_KIND,
+        version: LIDAR_GEOMETRY_VERSION,
+        coordinateFrame: { units: "meters", upAxis: "+Y", forwardAxis: "+X" },
+        staticPrimitives: [...boxes].sort((left, right) => compareUtf8(left.id, right.id)),
+        actors: [],
+    };
+    const scene = new CpuLidarScene({ description, hash: hashLidarGeometry(description) });
+    const identity = { x: 0, y: 0, z: 0, w: 1 };
+    const pose = (id, x, y) => ({
+        id,
+        position: { x, y, z: 0 },
+        rotation: identity,
+        spawnPosition: { x, y: 0.5, z: 0 },
+        spawnRotation: identity,
+    });
+    const moved = [pose("box-0", 4, 3), pose("box-1", 7, 3)];
+    scene.setRigidBodyPoses(moved);
+    assert.equal(scene._bodyIndex, null);
+    const sensor = {
+        id: "lidar",
+        parentId: "ego",
+        pose: { position: { x: 0, y: 0, z: 0 }, rotation: {} },
+        calibration: {
+            range: 20,
+            azimuth: { startDeg: 0, endDeg: 1, stepDeg: 1 },
+            elevation: { startDeg: 0, endDeg: 1, stepDeg: 1 },
+        },
+    };
+    const ego = { id: "ego", position: { x: 0, y: 0.5, z: 0 }, rotation: {} };
+    scene.capture(sensor, [ego]);
+    const shared = scene._bodyIndex;
+    const reduced = scene.staticIndex;
+    assert.ok(shared);
+    assert.equal(scene._activeStaticIndex, reduced);
+    scene.setRigidBodyPoses(moved.map((entry) => ({ ...entry, position: { ...entry.position } })));
+    scene.capture(sensor, [ego]);
+    assert.equal(scene._bodyIndex, shared);
+    assert.equal(scene.staticIndex, reduced);
+    scene.setRigidBodyPoses([pose("box-0", 4, 5), pose("box-1", 7, 3)]);
+    scene.capture(sensor, [ego]);
+    assert.notEqual(scene._bodyIndex, shared);
+    assert.equal(scene.staticIndex, reduced);
     scene.dispose();
 });
 

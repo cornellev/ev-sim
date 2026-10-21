@@ -97,7 +97,7 @@ export const CloneObjectBlock = defineBlock({
         const sourceId = String(this.getInput("sourceId") ?? "").trim();
         const spec = context.lookupObject(sourceId);
         if (!spec) {
-            throw new TypeError(`Cannot clone "${sourceId || "object"}". Choose a prop or an asset instance.`);
+            throw new TypeError(`Cannot clone "${sourceId || "object"}". Choose a prop, an asset instance, or a primitive.`);
         }
         const pose = normalizePose3d(this.getInput("pose"));
         const id = author({

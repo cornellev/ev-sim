@@ -41,9 +41,10 @@ speed as an impulse.
 Editor Play, when no run is resolved, steps that live world description. A
 resolved run keeps the world it was prepared with.
 
-CPU LiDAR keeps one fixed triangle index per rigid body and transforms the
-ray into that body's authored frame. The resolved lidar resource and
-`lidarGeometryHash` stay the authored geometry. GPU LiDAR and photoreal
+CPU LiDAR keeps body triangles in the authored static index until a body
+leaves its spawn pose. A capture then bakes every rigid body into one
+world-space index and queries that index once. The resolved lidar resource
+and `lidarGeometryHash` stay the authored geometry. GPU LiDAR and photoreal
 cameras keep the authored pose.
 
 ## Progress and decision log
@@ -61,3 +62,12 @@ inverts that body's pose once and transforms the ray. The static index is
 rebuilt only when the set of body ids changes. Each index returns its nearest
 hit, and an exact distance tie still uses primitive id then triangle index.
 The LiDAR buffer, the resolved resource, and `lidarGeometryHash` are unchanged.
+
+### 2026-10-21 — one rigid-body index per scan
+
+Moved bodies are baked into a single world-space index when a capture runs,
+and that index is reused while the poses stay the same. A scan whose bodies
+are all still at spawn queries the original static index. On a 32 by 1024
+scan over 1,000 triangles, four moving boxes dropped from 25.6 ms to 17.0 ms.
+The same four boxes at spawn take 12.7 ms, and a scene with no rigid body
+takes 10.8 ms. The LiDAR buffer is unchanged.

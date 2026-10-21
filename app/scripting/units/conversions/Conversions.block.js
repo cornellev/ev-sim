@@ -98,6 +98,13 @@ const TO_STRING = freezePorts(
     [{ label: "value", type: GENERIC_TYPE }],
     [{ label: "out", type: "string" }],
 );
+const OBJECT_ID_TO_SCENE_OBJECT = freezePorts(
+    [{ label: "objectId", type: "string" }],
+    [
+        { label: "out", type: "scene_object" },
+        { label: "found", type: "boolean" },
+    ],
+);
 const TO_STRING_SCHEME = Object.freeze({
     variables: Object.freeze({
         T: Object.freeze({
@@ -276,6 +283,17 @@ export const ToStringBlock = defineBlock({
     },
 });
 
+export const ObjectIdToSceneObjectBlock = defineBlock({
+    type: "ObjectIdToSceneObjectBlock",
+    ports: OBJECT_ID_TO_SCENE_OBJECT,
+    execute() {
+        const id = String(this.getInput("objectId") ?? "").trim();
+        const finder = this.manager?.getRuntimeContext?.()?.findSceneObject;
+        const found = id.length > 0 && typeof finder === "function" && Boolean(finder(id));
+        return new BlockOutput().set("out", found ? id : "").set("found", found);
+    },
+});
+
 export const CONVERSION_BLOCKS = Object.freeze({
     FloorToIntBlock,
     CeilToIntBlock,
@@ -298,6 +316,7 @@ export const CONVERSION_BLOCKS = Object.freeze({
     StringToTextureIdBlock,
     TextureIdToStringBlock,
     ToStringBlock,
+    ObjectIdToSceneObjectBlock,
 });
 
 export const CONVERSION_BLOCK_PORTS = Object.freeze({
@@ -322,4 +341,5 @@ export const CONVERSION_BLOCK_PORTS = Object.freeze({
     StringToTextureIdBlock: STRING_TO_TEXTURE_ID,
     TextureIdToStringBlock: TEXTURE_ID_TO_STRING,
     ToStringBlock: TO_STRING,
+    ObjectIdToSceneObjectBlock: OBJECT_ID_TO_SCENE_OBJECT,
 });

@@ -12,6 +12,7 @@ import { MeshBVH } from "three-mesh-bvh";
 
 import { rep103PoseToThree } from "../../autonomy/CoordinateFrames.js";
 import { compareUtf8 } from "../world/WorldDescription.js";
+import { transformRigidBodyPoint } from "../world/RigidBodyRecords.js";
 import { assertLidarGeometryResource } from "../lidar/LidarGeometry.js";
 import { BOX_FACES } from "./BoxFaces.js";
 
@@ -179,23 +180,25 @@ function poseMoved(pose) {
         || Math.abs(rotation.w - spawnRotation.w) > 1e-6;
 }
 
-// Authored point p maps to livePose * inverse(spawnPose) * p, so the ray uses the inverse.
-function authoredRayInverse(pose) {
-    const spawnPosition = pose.spawnPosition;
+function movePrimitive(primitive, pose) {
+    if (primitive.shape === "box" && primitive.center) {
+        return { ...primitive, center: transformRigidBodyPoint(primitive.center, pose) };
+    }
+    if (!Array.isArray(primitive.vertices)) return primitive;
+    return {
+        ...primitive,
+        vertices: primitive.vertices.map((vertex) => transformRigidBodyPoint(vertex, pose)),
+    };
+}
+
+function poseKey(pose) {
     const position = pose.position;
-    const spawnRotation = pose.spawnRotation;
     const rotation = pose.rotation;
-    const spawn = new Matrix4().compose(
-        new Vector3(spawnPosition.x, spawnPosition.y, spawnPosition.z),
-        new Quaternion(spawnRotation.x, spawnRotation.y, spawnRotation.z, spawnRotation.w),
-        UNIT_SCALE,
-    );
-    const live = new Matrix4().compose(
-        new Vector3(position.x, position.y, position.z),
-        new Quaternion(rotation.x, rotation.y, rotation.z, rotation.w),
-        UNIT_SCALE,
-    );
-    return spawn.multiply(live.invert());
+    return [
+        pose.id,
+        position.x, position.y, position.z,
+        rotation.x, rotation.y, rotation.z, rotation.w,
+    ].join(",");
 }
 
 function disposeIndex(index) {
@@ -206,16 +209,21 @@ export class CpuLidarScene {
     constructor(resource) {
         const description = assertLidarGeometryResource(resource);
         this.authoredPrimitives = description.staticPrimitives;
-        this.staticIndex = createIndex(description.staticPrimitives);
+        this.fullStaticIndex = createIndex(description.staticPrimitives);
+        this.staticIndex = this.fullStaticIndex;
         this.planes = description.planes ?? [];
         this.actorIndexes = new Map(description.actors.map((actor) => [
             actor.actorId,
             createIndex(actor.primitives),
         ]));
         this.episodeIndex = null;
-        this._rigidBodyIndexes = new Map();
+        this._bodyGroups = new Map();
+        this._bodyIndex = null;
+        this._bodyBakeKey = "";
         this._rigidBodyPoses = [];
         this._rigidBodySplitKey = "";
+        this._activeStaticIndex = this.fullStaticIndex;
+        this._queryBodyIndex = null;
         this._localRay = new Ray();
         this.disposed = false;
     }
@@ -236,9 +244,21 @@ export class CpuLidarScene {
         this._rigidBodyPoses = ids.map((id) => byId.get(id));
     }
 
+    _dropBodyIndex() {
+        disposeIndex(this._bodyIndex);
+        this._bodyIndex = null;
+        this._bodyBakeKey = "";
+        this._queryBodyIndex = null;
+    }
+
     _splitRigidBodies(ids) {
-        for (const index of this._rigidBodyIndexes.values()) disposeIndex(index);
-        disposeIndex(this.staticIndex);
+        this._dropBodyIndex();
+        if (this.staticIndex !== this.fullStaticIndex) disposeIndex(this.staticIndex);
+        if (ids.length === 0) {
+            this.staticIndex = this.fullStaticIndex;
+            this._bodyGroups = new Map();
+            return;
+        }
         const grouped = new Map(ids.map((id) => [id, []]));
         const staticPrimitives = [];
         for (const primitive of this.authoredPrimitives) {
@@ -246,8 +266,31 @@ export class CpuLidarScene {
             if (bucket) bucket.push(primitive);
             else staticPrimitives.push(primitive);
         }
+        this._bodyGroups = grouped;
         this.staticIndex = createIndex(staticPrimitives);
-        this._rigidBodyIndexes = new Map(ids.map((id) => [id, createIndex(grouped.get(id))]));
+    }
+
+    _syncRigidBodyQuery() {
+        const poses = this._rigidBodyPoses;
+        if (!poses.some(poseMoved)) {
+            this._activeStaticIndex = this.fullStaticIndex;
+            this._queryBodyIndex = null;
+            return;
+        }
+        const key = poses.map(poseKey).join("\n");
+        if (key !== this._bodyBakeKey) {
+            disposeIndex(this._bodyIndex);
+            const baked = [];
+            for (const pose of poses) {
+                for (const primitive of this._bodyGroups.get(String(pose.id)) ?? []) {
+                    baked.push(poseMoved(pose) ? movePrimitive(primitive, pose) : primitive);
+                }
+            }
+            this._bodyIndex = createIndex(baked);
+            this._bodyBakeKey = key;
+        }
+        this._activeStaticIndex = this.staticIndex;
+        this._queryBodyIndex = this._bodyIndex;
     }
 
     setEpisodePrimitives(primitives = []) {
@@ -264,11 +307,6 @@ export class CpuLidarScene {
             if (!actor) continue;
             movers.push({ index, inverse: vehicleMatrix(actor).invert() });
         }
-        for (const pose of this._rigidBodyPoses) {
-            const index = this._rigidBodyIndexes.get(String(pose.id));
-            if (!index) continue;
-            movers.push({ index, inverse: poseMoved(pose) ? authoredRayInverse(pose) : null });
-        }
         return movers;
     }
 
@@ -278,8 +316,9 @@ export class CpuLidarScene {
             const hit = nearestIndexHit(index, ray, near, far);
             if (hit) candidates.push(hit);
         };
-        consider(this.staticIndex, worldRay);
+        consider(this._activeStaticIndex, worldRay);
         consider(this.episodeIndex, worldRay);
+        consider(this._queryBodyIndex, worldRay);
         for (const mover of movers) {
             if (!mover.inverse) {
                 consider(mover.index, worldRay);
@@ -311,6 +350,7 @@ export class CpuLidarScene {
         const maxRange = Number(layout.maxRangeM);
         const buffer = new Float32Array(width * height * 4);
         const worldRay = new Ray(origin, new Vector3());
+        this._syncRigidBodyQuery();
         const movers = this._movers(config.parentId, vehicles);
 
         for (let channelIndex = 0; channelIndex < height; channelIndex += 1) {
@@ -351,6 +391,7 @@ export class CpuLidarScene {
         const range = Number(config.calibration.range);
         const buffer = new Float32Array(width * height * 4);
         const worldRay = new Ray(origin, new Vector3());
+        this._syncRigidBodyQuery();
         const movers = this._movers(config.parentId, vehicles);
 
         for (let elevationIndex = 0; elevationIndex < height; elevationIndex += 1) {
@@ -374,14 +415,19 @@ export class CpuLidarScene {
     }
 
     dispose() {
-        disposeIndex(this.staticIndex);
+        disposeIndex(this.fullStaticIndex);
+        if (this.staticIndex !== this.fullStaticIndex) disposeIndex(this.staticIndex);
         disposeIndex(this.episodeIndex);
+        disposeIndex(this._bodyIndex);
         for (const index of this.actorIndexes.values()) disposeIndex(index);
-        for (const index of this._rigidBodyIndexes.values()) disposeIndex(index);
+        this.fullStaticIndex = null;
         this.staticIndex = null;
+        this._activeStaticIndex = null;
+        this._bodyIndex = null;
+        this._queryBodyIndex = null;
         this.episodeIndex = null;
         this.actorIndexes.clear();
-        this._rigidBodyIndexes.clear();
+        this._bodyGroups.clear();
         this.disposed = true;
     }
 }

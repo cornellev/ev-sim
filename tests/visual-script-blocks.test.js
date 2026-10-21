@@ -618,6 +618,7 @@ const STDLIB_EXECUTE_CASES = [
     { type: "RoadIdToStringBlock", inputs: { value: "e0" }, outputs: { out: "e0" } },
     { type: "StringToTextureIdBlock", inputs: { value: "  abc  " }, outputs: { out: "abc" } },
     { type: "TextureIdToStringBlock", inputs: { value: "abc" }, outputs: { out: "abc" } },
+    { type: "ObjectIdToSceneObjectBlock", inputs: { objectId: "missing" }, outputs: { out: "", found: false } },
     { type: "ConcatStringBlock", inputs: { a: "", b: "" }, outputs: { out: "" } },
     { type: "ConcatStringBlock", inputs: { a: "a", b: "b" }, outputs: { out: "ab" } },
     { type: "StringLengthBlock", inputs: { value: "" }, outputs: { length: 0 } },
@@ -702,6 +703,26 @@ test("stdlib conversion string json and array blocks execute table", () => {
 
     const literal = configuredBlock(ArrayLiteralBlock, {}, { storedData: [0, 2], state: { itemType: "float64" } });
     assert.deepEqual(literal.execute().get("out"), [0, 2]);
+});
+
+test("object id converts to a scene object only when the host scene contains it", () => {
+    const present = configuredBlock(CONVERSION_BLOCKS.ObjectIdToSceneObjectBlock, { objectId: "  group-1  " }, {
+        runtimeContext: { findSceneObject: (id) => (id === "group-1" ? id : null) },
+    }).execute();
+    assert.equal(present.get("found"), true);
+    assert.equal(present.get("out"), "group-1");
+
+    const absent = configuredBlock(CONVERSION_BLOCKS.ObjectIdToSceneObjectBlock, { objectId: "nope" }, {
+        runtimeContext: { findSceneObject: () => null },
+    }).execute();
+    assert.equal(absent.get("found"), false);
+    assert.equal(absent.get("out"), "");
+
+    const blank = configuredBlock(CONVERSION_BLOCKS.ObjectIdToSceneObjectBlock, { objectId: "   " }, {
+        runtimeContext: { findSceneObject: () => "   " },
+    }).execute();
+    assert.equal(blank.get("found"), false);
+    assert.equal(blank.get("out"), "");
 });
 
 test("json and array writes clone inputs and leave out-of-range arrays unchanged", () => {
