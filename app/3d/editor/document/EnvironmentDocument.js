@@ -24,7 +24,7 @@ import {
     isEmptyChangeSet,
 } from "./ChangeSet.js";
 import { createGeoFrame } from "../../earth/GeoFrame.js";
-import { normalizePrimitiveRecord } from "../../../simulation/world/PrimitiveRecords.js";
+import { normalizeFloor, normalizePrimitiveRecord } from "../../../simulation/world/PrimitiveRecords.js";
 
 const DEFAULT_ROAD_EDGE = Object.freeze({
     bidirectional: true,
@@ -83,7 +83,7 @@ export class EnvironmentDocument {
             ? options.primitives.map((record, index) => normalizePrimitiveRecord(record, index))
             : [];
         /** Support plane. Null while disabled; omitted from snapshots in that state. */
-        this.floor = options.floor?.enabled === true ? { enabled: true } : null;
+        this.floor = normalizeFloor(options.floor);
         /** @type {EarthSourceRecord|null} */
         this.earth = options.earth ? cloneEarthSource(options.earth) : null;
         /** ED-08: optional, versioned geospatial frame. Absence is the legacy Mercator frame. */
@@ -134,7 +134,7 @@ export class EnvironmentDocument {
             ...(this.primitives.length > 0
                 ? { primitives: this.primitives.map((record, index) => normalizePrimitiveRecord(record, index)) }
                 : {}),
-            ...(this.floor?.enabled === true ? { floor: { enabled: true } } : {}),
+            ...(this.floor ? { floor: normalizeFloor(this.floor) } : {}),
             earth: this.earth ? cloneEarthSource(this.earth) : null,
             ...(this.geoFrame ? { geoFrame: createGeoFrame(this.geoFrame) } : {}),
             ...(this.objects.length > 0
@@ -175,7 +175,7 @@ export class EnvironmentDocument {
         this.primitives = Array.isArray(manifest.primitives)
             ? manifest.primitives.map((record, index) => normalizePrimitiveRecord(record, index))
             : [];
-        this.floor = manifest.floor?.enabled === true ? { enabled: true } : null;
+        this.floor = normalizeFloor(manifest.floor);
         this.earth = manifest.earth ? cloneEarthSource(manifest.earth) : null;
         this.geoFrame = manifest.geoFrame ? createGeoFrame(manifest.geoFrame) : null;
         this.objects = Array.isArray(manifest.objects) ? manifest.objects.map(cloneObjectRecord) : [];
@@ -237,7 +237,7 @@ export class EnvironmentDocument {
             if (value === null || value === undefined || version === 1) delete this.roads.geometryVersion;
             else this.roads.geometryVersion = version;
         }
-        else if (name === "floor") this.floor = value?.enabled === true ? { enabled: true } : null;
+        else if (name === "floor") this.floor = normalizeFloor(value);
         else if (name === "assetMetricsVersion") {
             if (value === null || value === undefined) this.assetMetrics = null;
             else {

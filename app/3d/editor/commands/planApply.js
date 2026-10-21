@@ -16,6 +16,7 @@ import {
 } from "../document/documentMutations.js";
 import { setObjectComponent } from "./objectMutations.js";
 import { cloneRoadGeometry } from "../../../roads/RoadGeometryRecord.js";
+import { normalizeFloor } from "../../../simulation/world/PrimitiveRecords.js";
 
 export const PLAN_STEP_OPS = Object.freeze([
     "move-node",
@@ -108,7 +109,7 @@ export function applyPlanSteps(document, steps, runtime = { notify: false }) {
                 result = { ok: true };
             }
         } else if (step.op === "set-floor") {
-            document.setScalar("floor", step.enabled === true ? { enabled: true } : null, { notify: false });
+            document.setScalar("floor", normalizeFloor({ enabled: step.enabled === true, collider: step.collider !== false }), { notify: false });
             result = { ok: true };
         }
         if (!result?.ok) {

@@ -11,6 +11,7 @@ import { LoadedVisualScript } from "../../../scripting/ScriptRuntime.js";
 import { assertSupportedArtifact } from "../../../scripting/runtime/Artifact.js";
 import { parseValueByType } from "../../../scripting/units/program/ProgramTypes.js";
 import { hostTypePhrase, programInputHostTypes, scriptHostType } from "../../../scripting/units/world/attachmentHosts.js";
+import { normalizeRigidBody } from "../../../simulation/world/RigidBodyRecords.js";
 
 export function attachmentContext(record, document) {
     const feature = document?.getFeature?.(record?.id) ?? null;
@@ -167,9 +168,24 @@ export function runObjectScript({
 
     const ops = [];
     const author = (op) => {
+        if (op?.op === "put-rigid-body") {
+            const objectId = String(op.objectId ?? "");
+            ops.push({ op: "put-rigid-body", objectId, rigidBody: normalizeRigidBody(op.rigidBody) });
+            return objectId;
+        }
         const id = createId(authoredIdKind(op));
         ops.push({ ...op, id });
         return id;
+    };
+    const readRigidBody = (objectId) => {
+        const id = String(objectId ?? "").trim();
+        if (!id) return null;
+        for (let index = ops.length - 1; index >= 0; index -= 1) {
+            const op = ops[index];
+            if (op.op === "put-rigid-body" && op.objectId === id) return normalizeRigidBody(op.rigidBody);
+        }
+        const body = document?.getObject?.(id)?.components?.rigidBody;
+        return body == null ? null : normalizeRigidBody(body);
     };
     const rng = new SeededRNG(seed ?? 1);
     const script = new LoadedVisualScript(artifact, {
@@ -178,6 +194,7 @@ export function runObjectScript({
             world: worldFor(document, world),
             random: () => rng.next(),
             author,
+            readRigidBody,
             lookupObject: (objectId) => lookupCloneSource(document, objectId),
             findSceneObject: (objectId) => {
                 const id = String(objectId ?? "").trim();

@@ -262,6 +262,29 @@ test("parseValueByType normalizes actor_command payloads", () => {
     );
 });
 
+test("parseValueByType keeps invalid rigidbody_config numbers", () => {
+    const defaults = {
+        bodyType: "dynamic",
+        mass: 1,
+        useGravity: true,
+        linearDamping: 0,
+        angularDamping: 0,
+        constantForce: { x: 0, y: 0, z: 0 },
+    };
+    assert.equal(SUPPORTED_TYPES.includes("rigidbody_config"), true);
+    assert.equal(normalizeType("rigidbody_config"), "rigidbody_config");
+    assert.deepEqual(parseValueByType(undefined, "rigidbody_config"), defaults);
+    assert.deepEqual(parseValueByType("", "rigidbody_config"), defaults);
+    assert.deepEqual(
+        parseValueByType('{"mass":0,"bodyType":"static","extra":true}', "rigidbody_config"),
+        { ...defaults, mass: 0, bodyType: "static" },
+    );
+    assert.deepEqual(
+        parseValueByType({ mass: 2, constantForce: { x: 1, y: "nope", z: 0 }, extra: 1 }, "rigidbody_config"),
+        { ...defaults, mass: 2, constantForce: { x: 1, y: "nope", z: 0 } },
+    );
+});
+
 test("parseValueByType normalizes opaque road and texture ids", () => {
     assert.equal(SUPPORTED_TYPES.includes(ROAD_ID_TYPE), true);
     assert.equal(SUPPORTED_TYPES.includes(TEXTURE_ID_TYPE), true);

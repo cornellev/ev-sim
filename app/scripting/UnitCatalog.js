@@ -215,6 +215,12 @@ import {
     RoadAttachmentUnit,
 } from "./units/world/DeriveFromAttachment";
 import { CloneObjectUnit, CreateGroupUnit, PlaceFeatureUnit } from "./units/world/AuthoringBlocks";
+import {
+    AddRigidBodyUnit,
+    GetRigidBodyUnit,
+    MakeRigidBodyUnit,
+    SplitRigidBodyUnit,
+} from "./units/world/RigidBodyBlocks";
 import { MakeActorCommandUnit, SplitActorCommandUnit } from "./units/mission/ActorCommand";
 import {
     DistanceToRouteEndUnit,
@@ -494,6 +500,10 @@ const COMPONENT_BY_TYPE = new Map([
     ["PlaceFeatureBlock", PlaceFeatureUnit],
     ["CloneObjectBlock", CloneObjectUnit],
     ["CreateGroupBlock", CreateGroupUnit],
+    ["MakeRigidBodyBlock", MakeRigidBodyUnit],
+    ["SplitRigidBodyBlock", SplitRigidBodyUnit],
+    ["GetRigidBodyBlock", GetRigidBodyUnit],
+    ["AddRigidBodyBlock", AddRigidBodyUnit],
     ["WaypointListBlock", WaypointListUnit],
     ["CurrentWaypointBlock", CurrentWaypointUnit],
     ["AdvanceWaypointBlock", AdvanceWaypointUnit],

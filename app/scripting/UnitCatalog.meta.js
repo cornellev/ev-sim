@@ -147,6 +147,12 @@ import {
     RoadAttachmentBlock,
 } from "./units/world/DeriveFromAttachment.block.js";
 import { CloneObjectBlock, CreateGroupBlock, PlaceFeatureBlock } from "./units/world/AuthoringBlocks.block.js";
+import {
+    AddRigidBodyBlock,
+    GetRigidBodyBlock,
+    MakeRigidBodyBlock,
+    SplitRigidBodyBlock,
+} from "./units/world/RigidBodyBlocks.block.js";
 import { ATTACHMENT_HOST_TYPE_IDS } from "./units/world/attachmentHosts.js";
 import { MaskBlock } from "./units/math/tex/Mask.block.js";
 import { IfBlock } from "./units/statements/If.block.js";
@@ -680,6 +686,19 @@ export const UNIT_CATALOG_META = [
     entry("CreateGroupBlock", "Create Group", "simulator", CreateGroupBlock, ["group", "subgroup", "create", "permanent"], {
         authoring: true,
         notes: "Creates an empty group through the editor script host and returns its id. Throws if runtimeContext.author is missing.",
+    }),
+    entry("MakeRigidBodyBlock", "Make Rigid Body", "simulator", MakeRigidBodyBlock, ["rigid", "body", "mass", "gravity", "config"], {
+        notes: "Builds a rigidbody_config. Unwired fields use the inspector default. Invalid mass, damping, or bodyType fails the script.",
+    }),
+    entry("SplitRigidBodyBlock", "Split Rigid Body", "simulator", SplitRigidBodyBlock, ["rigid", "body", "split", "force"], {
+        notes: "Unpacks rigidbody_config. The force port is constantForce.",
+    }),
+    entry("GetRigidBodyBlock", "Get Rigid Body", "simulator", GetRigidBodyBlock, ["rigid", "body", "copy", "read"], {
+        notes: "Copies components.rigidBody from a scene_object. found is false when that object has no body, and config is then the default. Branch on found before Add.",
+    }),
+    entry("AddRigidBodyBlock", "Add Rigid Body", "simulator", AddRigidBodyBlock, ["rigid", "body", "add", "permanent"], {
+        authoring: true,
+        notes: "Writes rigidbody_config onto a scene_object through the editor script host. Replaces an existing body. Throws if runtimeContext.author is missing or the object is missing.",
     }),
     entry("WaypointListBlock", "Waypoint List", "mission", WaypointListBlock, ["waypoint", "route", "list"]),
     entry("CurrentWaypointBlock", "Current Waypoint", "mission", CurrentWaypointBlock, ["waypoint", "current", "mission"]),

@@ -30,7 +30,7 @@ import { BUILTIN_PROP_TYPE_ID } from "../objects/types/builtinProp.js";
 import { FLOOR_TYPE_ID } from "../objects/types/floor.js";
 import { PRIMITIVE_TYPE_ID } from "../objects/types/primitive.js";
 import { ROAD_TYPE_ID } from "../objects/types/road.js";
-import { FLOOR_OBJECT_ID } from "../../../simulation/world/PrimitiveRecords.js";
+import { FLOOR_OBJECT_ID, normalizeFloor } from "../../../simulation/world/PrimitiveRecords.js";
 import { COMMAND_ISSUE_CODES, commandFailure, commandIssue, commandSuccess } from "./commandIssues.js";
 import { ensureObjectRecord, removeObjectRecords } from "./objectMutations.js";
 
@@ -128,12 +128,13 @@ export function addPrimitive({
     };
 }
 
-export function setFloor({ enabled = false, label = enabled ? "Enable floor" : "Disable floor" } = {}) {
+export function setFloor({ enabled = false, collider, label = enabled ? "Enable floor" : "Disable floor" } = {}) {
     return {
         id: "set-floor",
         label,
         run(ctx) {
-            ctx.document.setScalar("floor", enabled === true ? { enabled: true } : null, { notify: false });
+            const nextCollider = collider ?? ctx.document.floor?.collider !== false;
+            ctx.document.setScalar("floor", normalizeFloor({ enabled, collider: nextCollider }), { notify: false });
             if (enabled !== true) {
                 removeObjectRecords(ctx.document, [FLOOR_OBJECT_ID], { notify: false });
             } else {

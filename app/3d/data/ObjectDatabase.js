@@ -344,28 +344,30 @@ export class ObjectDatabase extends Database {
     /**
      * Replace one authored triangle domain (roads or one building) in place and
      * rebuild the existing GPU texture buffers without swapping texture objects.
+     * Pass `{ rebuild: false }` when a following replace will rebuild once.
      */
-    replaceTriangles(predicate, triangles = []) {
+    replaceTriangles(predicate, triangles = [], { rebuild = true } = {}) {
         this.objects = this.objects.filter(
             (object) => !(object instanceof Triangle && predicate(object)),
         );
         for (const triangle of triangles) {
             this.addObject(triangle);
         }
-        this.rebuildTextureData();
+        if (rebuild) this.rebuildTextureData();
     }
 
     /**
      * Replace one sphere domain and rebuild the GPU buffers.
      * @param {(sphere: Sphere) => boolean} predicate
      * @param {Sphere[]} spheres
+     * @param {{ rebuild?: boolean }} [options]
      */
-    replaceSpheres(predicate, spheres = []) {
+    replaceSpheres(predicate, spheres = [], { rebuild = true } = {}) {
         this.objects = this.objects.filter(
             (object) => !(object instanceof Sphere && predicate(object)),
         );
         for (const sphere of spheres) this.addObject(sphere);
-        this.rebuildTextureData();
+        if (rebuild) this.rebuildTextureData();
     }
 
     rebuildTextureData() {

@@ -18,7 +18,7 @@ import { assetBindingRevisionVersion, readAssetBinding } from "../../editor-asse
 import { normalizePerceptionClassName } from "../../autonomy/PerceptionLabelCatalog.js";
 import { compilePrimitiveSolid, SCENE_PRIMITIVE_POLICY } from "./PrimitiveSolids.js";
 import { compileRigidBodies } from "./RigidBodyRecords.js";
-import { FLOOR_OBJECT_ID, FLOOR_PLANE_Y } from "./PrimitiveRecords.js";
+import { FLOOR_OBJECT_ID, FLOOR_PLANE_Y, normalizeFloor } from "./PrimitiveRecords.js";
 
 export const WORLD_DESCRIPTION_KIND = "cev-sim.world-description";
 export const WORLD_DESCRIPTION_VERSION = 1;
@@ -557,23 +557,32 @@ function compileAssetProxyChannel(records, instance, instanceId, channel) {
     }).sort((left, right) => compareUtf8(left.id, right.id));
 }
 
+function assetMetricIndex(document) {
+    return new Map((document.assetMetrics?.definitions ?? []).map((entry) => [`${entry.assetId}@${entry.revision}`, entry]));
+}
+
+/** One v2 instance's collision and LiDAR proxies, or null when it has neither. */
+export function compileAssetProxy(document, record, metrics = assetMetricIndex(document)) {
+    if (assetBindingRevisionVersion(record) !== 2) return null;
+    const instance = readAssetBinding(record);
+    const metric = metrics.get(`${instance.assetId}@${instance.revision}`);
+    if (!metric) {
+        throw new TypeError(`Asset metric definition "${instance.assetId}@${instance.revision}" is missing.`);
+    }
+    const id = String(record.id);
+    const collision = compileAssetProxyChannel(metric.collision, instance, id, "collision");
+    const lidar = compileAssetProxyChannel(metric.lidar, instance, id, "lidar");
+    if (collision.length === 0 && lidar.length === 0) return null;
+    return { id, sourceId: id, collision, lidar };
+}
+
 function compileAssetProxies(document) {
     const issues = validateAssetMetricsDomain(document);
     if (issues.length > 0) throw Object.assign(new TypeError(issues[0].message), { issues });
-    const metrics = new Map((document.assetMetrics?.definitions ?? []).map((entry) => [`${entry.assetId}@${entry.revision}`, entry]));
+    const metrics = assetMetricIndex(document);
     return (document.objects ?? [])
-        .filter((record) => assetBindingRevisionVersion(record) === 2)
-        .map((record) => {
-            const instance = readAssetBinding(record);
-            const metric = metrics.get(`${instance.assetId}@${instance.revision}`);
-            return {
-                id: String(record.id),
-                sourceId: String(record.id),
-                collision: compileAssetProxyChannel(metric.collision, instance, String(record.id), "collision"),
-                lidar: compileAssetProxyChannel(metric.lidar, instance, String(record.id), "lidar"),
-            };
-        })
-        .filter((entry) => entry.collision.length > 0 || entry.lidar.length > 0)
+        .map((record) => compileAssetProxy(document, record, metrics))
+        .filter(Boolean)
         .sort((left, right) => compareUtf8(left.id, right.id));
 }
 
@@ -778,15 +787,20 @@ export function createWorldDescription(value = {}) {
                 : null;
     if (!base) throw new TypeError(`Unsupported road geometry version: ${String(geometryVersion)}.`);
     const solids = compileScenePrimitives(document);
-    const floorOn = document.floor?.enabled === true;
-    const described = solids.length === 0 && !floorOn
+    const floor = normalizeFloor(document.floor);
+    const groundPlane = !floor
+        ? null
+        : floor.collider === false
+            ? { id: FLOOR_OBJECT_ID, y: FLOOR_PLANE_Y, collider: false }
+            : { id: FLOOR_OBJECT_ID, y: FLOOR_PLANE_Y };
+    const described = solids.length === 0 && !floor
         ? base
         : canonicalizeSimulationValue({
             ...base,
             version: WORLD_DESCRIPTION_V4,
             primitivePolicy: { ...SCENE_PRIMITIVE_POLICY },
             primitives: solids,
-            ...(floorOn ? { groundPlane: { id: FLOOR_OBJECT_ID, y: FLOOR_PLANE_Y } } : {}),
+            ...(groundPlane ? { groundPlane } : {}),
             ...(solids.length > 0 ? { bounds: boundsWithPoints(base.bounds, solids) } : {}),
         });
     return withRigidBodies(described, document);
@@ -882,8 +896,10 @@ function assertScenePrimitives(description) {
     }
     if (description.groundPlane !== undefined) {
         const plane = description.groundPlane;
-        if (plane?.id !== FLOOR_OBJECT_ID || plane?.y !== FLOOR_PLANE_Y || Object.keys(plane).length !== 2) {
-            throw new TypeError("World v4 groundPlane must be { id: \"floor\", y: 0 }.");
+        const keys = Object.keys(plane);
+        const colliderOff = plane.collider === false && keys.length === 3;
+        if (plane?.id !== FLOOR_OBJECT_ID || plane?.y !== FLOOR_PLANE_Y || (keys.length !== 2 && !colliderOff)) {
+            throw new TypeError("World v4 groundPlane must be { id: \"floor\", y: 0 } or the same with collider: false.");
         }
     }
     const expectedBounds = description.primitives.length > 0

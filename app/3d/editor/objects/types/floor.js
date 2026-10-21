@@ -1,6 +1,7 @@
 /**
  * The single Floor object. Its metric value is the document scalar
  * `document.floor`, omitted while disabled so untouched worlds stay unchanged.
+ * `collider: false` is stored only when the Rapier plane is off.
  */
 
 import { ObjectOptions, field, validateFieldConstraints } from "../ObjectOptions.js";
@@ -11,11 +12,12 @@ export const FLOOR_TYPE_ID = "floor";
 
 const FLOOR_FIELDS = Object.freeze([
     field({ path: ["enabled"], label: "Enabled", control: "toggle", group: "Floor" }),
+    field({ path: ["collider"], label: "Collider", control: "toggle", group: "Floor" }),
 ]);
 
 export class FloorOptions extends ObjectOptions {
     getDefaults() {
-        return { enabled: false };
+        return { enabled: false, collider: true };
     }
 
     getFields() {
@@ -23,7 +25,8 @@ export class FloorOptions extends ObjectOptions {
     }
 
     normalize(value = {}) {
-        return { enabled: value?.enabled === true };
+        const enabled = value?.enabled === true;
+        return { enabled, collider: enabled && value?.collider !== false };
     }
 
     validate(value = {}) {
@@ -50,8 +53,9 @@ export function createFloorType() {
             return { id: FLOOR_OBJECT_ID, name: "Floor" };
         },
         planOptions(_record, value) {
+            const enabled = value.enabled === true;
             return {
-                steps: [{ op: "set-floor", enabled: value.enabled === true }],
+                steps: [{ op: "set-floor", enabled, collider: enabled && value.collider !== false }],
                 issues: [],
             };
         },

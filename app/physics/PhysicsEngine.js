@@ -447,6 +447,7 @@ export class PhysicsEngine {
 
     _buildFloorCollider() {
         const plane = this.preparedWorldDescription?.groundPlane;
+        if (plane?.collider === false) return;
         const y = Number(plane?.y);
         if (!Number.isFinite(y)) return;
         const body = this.world.createRigidBody(this.RAPIER.RigidBodyDesc.fixed().setTranslation(0, y - 0.5, 0));

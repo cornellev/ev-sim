@@ -83,7 +83,7 @@ The compiler rejects missing ports, type mismatches, duplicate input edges, and 
 - `sceneType`: optional, only on `scene_object` program inputs. One of `road`, `group`, `building`, `intersection`, `builtin-prop`, `asset-instance`. Omitted means any object. An empty id is the hierarchy root only when `sceneType` and `sceneTypes` are both omitted.
 - `sceneTypes`: optional array of those same host ids when one input accepts more than one type. A single allowed type stays on `sceneType`. An empty id is not the root when `sceneTypes` is set.
 
-Program input/output labels must be unique within each role. Exported `type` values are concrete strings from `SUPPORTED_TYPES`, including `unit` and `actor_command`. They must never be `generic`.
+Program input/output labels must be unique within each role. Exported `type` values are concrete strings from `SUPPORTED_TYPES`, including `unit`, `actor_command`, and `rigidbody_config`. They must never be `generic`. `rigidbody_config` is `{ bodyType, mass, useGravity, linearDamping, angularDamping, constantForce: { x, y, z } }`. Invalid numbers are preserved.
 
 ## Evaluation Policy
 

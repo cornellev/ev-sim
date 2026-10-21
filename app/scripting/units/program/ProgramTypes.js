@@ -21,9 +21,11 @@ import {
     VEC2_TYPE,
     VEC3_TYPE,
 } from "../../types/PortTypes.js";
+import { normalizeRigidBody } from "../../../simulation/world/RigidBodyRecords.js";
 import { hostTypeList, normalizeHostType } from "../world/attachmentHosts.js";
 
 export const SCENE_OBJECT_TYPE = "scene_object";
+export const RIGID_BODY_CONFIG_TYPE = "rigidbody_config";
 
 export const SUPPORTED_TYPES = [
     "float64",
@@ -46,6 +48,7 @@ export const SUPPORTED_TYPES = [
     "lane_ref",
     "road_id",
     "scene_object",
+    RIGID_BODY_CONFIG_TYPE,
     "sim_event",
     "tex1d",
     "texture_id",
@@ -64,6 +67,22 @@ export const OUTPUT_NODE_MAX_OUTPUTS = 8;
 export function normalizeType(type) {
     if (SUPPORTED_TYPES.includes(type)) return type;
     return "float64";
+}
+
+function parseRigidBodyConfig(value) {
+    if (value === null || value === undefined) return normalizeRigidBody({});
+    if (typeof value === "string") {
+        const trimmed = value.trim();
+        if (trimmed.length === 0) return normalizeRigidBody({});
+        try {
+            const parsed = JSON.parse(trimmed);
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return normalizeRigidBody(parsed);
+        } catch {
+            return value;
+        }
+        return value;
+    }
+    return normalizeRigidBody(value);
 }
 
 function arrayMemberType(type) {
@@ -120,6 +139,10 @@ export function parseValueByType(value, type) {
 
     if (normalizedType === POSE3D_TYPE) {
         return normalizePose3d(value);
+    }
+
+    if (normalizedType === RIGID_BODY_CONFIG_TYPE) {
+        return parseRigidBodyConfig(value);
     }
 
     if (normalizedType === ROAD_ID_TYPE || normalizedType === TEXTURE_ID_TYPE || normalizedType === SCENE_OBJECT_TYPE) {

@@ -16,7 +16,7 @@ import {
     LIDAR_GEOMETRY_VERSION,
 } from "../app/simulation/lidar/LidarGeometry.js";
 import { CpuLidarScene } from "../app/simulation/sensors/CpuLidarScene.js";
-import { compareUtf8, createWorldDescription, createWorldResource } from "../app/simulation/world/WorldDescription.js";
+import { assertWorldResource, compareUtf8, createWorldDescription, createWorldResource } from "../app/simulation/world/WorldDescription.js";
 
 const METRIC = {
     version: 1,
@@ -69,6 +69,28 @@ async function startPhysics(document, vehicles = []) {
 function poseOf(physics, id) {
     return physics.rigidBodyPoses().find((pose) => pose.id === id);
 }
+
+test("putRigidBody replaces a body and rejects a group", () => {
+    const { document, service } = yard();
+    const group = service.run("createObject", { typeId: "group", name: "Group" });
+    assert.equal(service.run("addPrimitive", { id: "box", shape: "box", x: 0, y: 1, z: 0, size: { x: 1, y: 1, z: 1 } }).ok, true);
+    const created = service.run("putRigidBody", { objectId: "box", rigidBody: { mass: 9, bodyType: "kinematic" } });
+    assert.equal(created.ok, true, JSON.stringify(created.issues));
+    assert.equal(document.getObject("box").components.rigidBody.mass, 9);
+    assert.equal(document.getObject("box").components.rigidBody.bodyType, "kinematic");
+    assert.equal(document.getObject("box").components.rigidBody.useGravity, true);
+    const replaced = service.run("putRigidBody", {
+        objectId: "box",
+        rigidBody: { mass: 2, useGravity: false, constantForce: { x: 3, y: 0, z: 0 } },
+    });
+    assert.equal(replaced.ok, true, JSON.stringify(replaced.issues));
+    assert.equal(document.getObject("box").components.rigidBody.mass, 2);
+    assert.equal(document.getObject("box").components.rigidBody.useGravity, false);
+    assert.equal(document.getObject("box").components.rigidBody.constantForce.x, 3);
+    assert.equal(service.run("putRigidBody", { objectId: "box", rigidBody: { mass: 0 } }).ok, false);
+    assert.equal(document.getObject("box").components.rigidBody.mass, 2);
+    assert.equal(service.run("putRigidBody", { objectId: group.result.objectId, rigidBody: { mass: 2 } }).ok, false);
+});
 
 test("rigid body commands reject bad hosts and fields, and round-trip undo without changing a body-free hash", () => {
     const { document, service } = yard();
@@ -227,6 +249,36 @@ test("dynamic bodies fall onto the floor, take forces, stack, and stop the vehic
     const empty = await startPhysics(new EnvironmentDocument({ environmentId: "empty" }));
     assert.equal(Object.hasOwn(empty.getDeterministicState(), "rigidBodies"), false);
     empty.disposeRun();
+});
+
+test("the floor collider is on until the floor inspector turns it off", async () => {
+    const { document, service } = yard();
+    assert.equal(service.run("setFloor", { enabled: true }).ok, true);
+    assert.deepEqual(document.floor, { enabled: true });
+    const described = worldOf(document);
+    assert.deepEqual(described.groundPlane, { id: "floor", y: 0 });
+    const onHash = worldHash(document);
+    const lidarOn = createLidarGeometryResource(createWorldResource(described)).hash;
+    const toggled = service.run("setObjectOptions", { objectId: "floor", patch: { collider: false } });
+    assert.equal(toggled.ok, true, JSON.stringify(toggled.issues));
+    assert.deepEqual(document.floor, { enabled: true, collider: false });
+    const off = worldOf(document);
+    assert.equal(off.groundPlane.collider, false);
+    assert.equal(assertWorldResource(createWorldResource(off)).groundPlane.collider, false);
+    assert.notEqual(worldHash(document), onHash);
+    assert.equal(createLidarGeometryResource(createWorldResource(off)).hash, lidarOn);
+    assert.equal(service.run("addPrimitive", { id: "box", shape: "box", x: 0, y: 2, z: 0, size: { x: 1, y: 1, z: 1 } }).ok, true);
+    assert.equal(service.run("addRigidBody", { objectId: "box" }).ok, true);
+    const falling = await startPhysics(document);
+    const dt = 1 / 60;
+    for (let step = 0; step < 60; step += 1) falling.step(dt);
+    assert.ok(poseOf(falling, "box").position.y < 0, `y ${poseOf(falling, "box").position.y}`);
+    falling.disposeRun();
+    assert.equal(service.bus.undo().ok, true);
+    assert.equal(service.bus.undo().ok, true);
+    assert.equal(service.bus.undo().ok, true);
+    assert.deepEqual(document.floor, { enabled: true });
+    assert.equal(worldHash(document), onHash);
 });
 
 test("CPU LiDAR hits a moved primitive at its live pose and misses the spawn pose", () => {

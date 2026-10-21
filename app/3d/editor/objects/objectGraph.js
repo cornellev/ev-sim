@@ -32,7 +32,7 @@ import { PRIMITIVE_TYPE_ID } from "./types/primitive.js";
 import { ROAD_TYPE_ID } from "./types/road.js";
 import { SKYBOX_TYPE_ID } from "./types/skybox.js";
 import { TILE_TYPE_ID } from "./types/tile.js";
-import { primitiveLabel } from "../../../simulation/world/PrimitiveRecords.js";
+import { normalizeFloor, primitiveLabel } from "../../../simulation/world/PrimitiveRecords.js";
 
 export const OBJECT_ISSUE_CODES = Object.freeze({
     GRAPH_VERSION: "graph.version.unsupported",
@@ -112,6 +112,7 @@ export function legacyIndex(snapshot = {}) {
         primitives,
         degree,
         earth: isPlainObject(snapshot.earth) ? snapshot.earth : null,
+        floor: normalizeFloor(snapshot.floor),
         floorEnabled: snapshot.floor?.enabled === true,
     };
 }
@@ -134,7 +135,7 @@ export function legacyRecordFor(index, definition, id, context = {}) {
         case "primitives":
             return index.primitives?.get(id) ?? null;
         case "floor":
-            return id === FLOOR_OBJECT_ID && index.floorEnabled ? { enabled: true } : null;
+            return id === FLOOR_OBJECT_ID ? (index.floor ?? null) : null;
         default:
             return null;
     }

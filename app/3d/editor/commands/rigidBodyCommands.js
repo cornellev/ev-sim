@@ -56,6 +56,25 @@ export function removeRigidBody({ objectId, label = "Remove rigid body" } = {}) 
     };
 }
 
+export function putRigidBody({ objectId, rigidBody, label = "Set rigid body" } = {}) {
+    return {
+        id: "put-rigid-body",
+        label,
+        run(ctx) {
+            const { id, record, failure } = recordOf(ctx, objectId);
+            if (failure) return failure;
+            const next = normalizeRigidBody(rigidBody);
+            const fieldIssue = rigidBodyFieldIssues(next)[0];
+            if (fieldIssue) return commandFailure(commandIssue(COMMAND_ISSUE_CODES.ARGUMENT_INVALID, fieldIssue, { objectId: id }));
+            const shapeIssue = rigidBodyShapeIssue(ctx.document, record);
+            if (shapeIssue) return commandFailure(commandIssue(COMMAND_ISSUE_CODES.ARGUMENT_INVALID, shapeIssue, { objectId: id }));
+            const failed = writeBody(ctx, id, next);
+            if (failed) return failed;
+            return commandSuccess({ objectId: id, rigidBody: next });
+        },
+    };
+}
+
 export function setRigidBody({ objectId, patch = {}, label = "Edit rigid body" } = {}) {
     return {
         id: "set-rigid-body",

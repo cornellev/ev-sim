@@ -82,6 +82,11 @@ function applySteps(run, document, { attachmentId, scriptId, ops }) {
     if (owned.length > 0) run("deleteObjects", { objectIds: owned });
     const created = [];
     for (const op of ops) {
+        // shortcut: a body on an object this script did not create stays after the block is removed; re-run only replaces it. Upgrade when component writes need delete-and-replace authorship.
+        if (op.op === "put-rigid-body") {
+            run("putRigidBody", { objectId: op.objectId, rigidBody: op.rigidBody });
+            continue;
+        }
         if (op.op === "create-group") {
             run("createObject", {
                 typeId: "group",

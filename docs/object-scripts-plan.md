@@ -26,15 +26,18 @@ The inspector Run button, and `environment_run_object_script`, load `latestValid
 
 `Object ID to Scene Object` calls `runtimeContext.findSceneObject`. That lookup hits `document.getObject`, and also ids this run has already authored. A miss emits an empty `scene_object` and `found:false`.
 
+`Get Rigid Body` calls `runtimeContext.readRigidBody`. That reads a `put-rigid-body` op from earlier in this run, then `components.rigidBody`. A miss emits the default config and `found:false`.
+
 `applyObjectScript` then, in one `CommandBus` transaction:
 
 1. Deletes objects whose `authoredBy.attachmentId` matches. `deleteObjects` removes the descendant closure. A locked owned object fails the whole transaction.
-2. Creates each group, builtin prop, cloned asset instance, or cloned primitive.
-3. Sets `authoredBy` on each created record.
+2. Walks the ops in order. A create op adds a group, builtin prop, cloned asset instance, or cloned primitive, then sets `authoredBy`. A `put-rigid-body` op calls `putRigidBody` and does not create an object or set `authoredBy`.
 
 Re-run replaces that attachment's output. It does not match by name. Bake (`clearAuthoredBy`) leaves the objects and the next Run adds a new set.
 
-`script_lint` and `binding_create` add a warning only when the artifact contains Place Feature, Clone Object, or Create Group. Those scripts run from an object attachment, not from a simulation binding.
+`put-rigid-body` writes `components.rigidBody` on an object that already exists or was created earlier in that run. Re-run replaces the component. A body written onto an object this script did not create stays if the block is later removed.
+
+`script_lint` and `binding_create` add a warning only when the artifact contains Place Feature, Clone Object, Create Group, or Add Rigid Body. Those scripts run from an object attachment, not from a simulation binding.
 
 **Obstacles along road** attaches to a road. `obstacle` is a prop or an asset instance. `count` is the number of stations from the start of the road to the end. `clearance` is metres past the shoulder. Run creates an Obstacles group under `group` and clones the source on both outer edges. Copies use the road heading. Prop type, asset pin, and scale come from the source.
 

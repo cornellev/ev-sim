@@ -165,7 +165,7 @@ test("primitive solids and asset lidar proxies upload without the floor or colli
         scene,
         document,
         changeSet: { domains: { primitives: true } },
-        transient: true,
+        transient: false,
         data: { objects: () => database },
     };
     solids.apply(context);
@@ -237,6 +237,187 @@ test("primitive solids and asset lidar proxies upload without the floor or colli
     assets.reset();
     assert.equal(database.triangles().filter((triangle) => triangle.environmentGeometryType === "asset-lidar").length, 0);
     assert.equal(database.triangles().some((triangle) => triangle.environmentGeometryType === "road"), true);
+});
+
+function boxRecord(id, x, shape = "box") {
+    return {
+        id,
+        shape,
+        position: { x, y: 0.5, z: 0 },
+        rotationY: 0,
+        size: { x: 1, y: 1, z: 1 },
+        color: "#a3a3a3",
+        tags: ["unknown"],
+    };
+}
+
+function primitiveChange(before, after) {
+    return {
+        domains: {
+            primitives: {
+                before: new Map(before.map((record) => [record.id, record])),
+                after: new Map(after.map((entry) => Array.isArray(entry) ? entry : [entry.id, entry])),
+            },
+        },
+    };
+}
+
+test("a primitive drag keeps LiDAR until commit and then updates that solid only", async () => {
+    const { ObjectDatabase } = await openObjectDatabase();
+    const database = new ObjectDatabase({});
+    const road = new Triangle(new THREE.Vector3(0, 0, 0), new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0, 1));
+    road.environmentGeometryType = "road";
+    road.environmentSourceId = "road-1";
+    database.addObject(road);
+
+    const kept = boxRecord("b", 10);
+    const moved = boxRecord("a", 0);
+    const document = { environmentId: "yard", primitives: [moved, kept], floor: { enabled: true }, objects: [] };
+    const scene = new THREE.Scene();
+    const solids = createSolidsProjector();
+    const apply = (changeSet, transient) => solids.apply({
+        scene,
+        document,
+        changeSet,
+        transient,
+        data: { objects: () => database },
+    });
+    const of = (id) => database.triangles().filter((triangle) => triangle.environmentSourceId === id);
+
+    apply({ domains: { primitives: true } }, false);
+    const keptTriangles = of("b");
+    const roadTriangle = database.triangles().find((triangle) => triangle.environmentSourceId === "road-1");
+    const startX = of("a")[0].a.x;
+    assert.ok(keptTriangles.length > 0);
+
+    const shifted = boxRecord("a", 4);
+    document.primitives = [shifted, kept];
+    apply(primitiveChange([moved], [shifted]), true);
+    assert.equal(of("a")[0].a.x, startX);
+    assert.equal(of("b")[0], keptTriangles[0]);
+    assert.equal(database.triangles().includes(roadTriangle), true);
+
+    apply(primitiveChange([moved], [shifted]), false);
+    assert.notEqual(of("a")[0].a.x, startX);
+    assert.equal(of("b")[0], keptTriangles[0]);
+    assert.equal(database.triangles().includes(roadTriangle), true);
+
+    const sphere = boxRecord("a", 4, "sphere");
+    document.primitives = [sphere, kept];
+    apply(primitiveChange([shifted], [sphere]), false);
+    assert.equal(of("a").length, 0);
+    assert.equal(database.spheres().filter((entry) => entry.environmentSourceId === "a").length, 1);
+    assert.equal(of("b")[0], keptTriangles[0]);
+
+    document.primitives = [kept];
+    apply(primitiveChange([sphere], [["a", null]]), false);
+    assert.equal(of("a").length, 0);
+    assert.equal(database.spheres().length, 0);
+    assert.equal(of("b")[0], keptTriangles[0]);
+    assert.equal(database.triangles().includes(roadTriangle), true);
+
+    apply({
+        domains: {
+            objects: {
+                before: new Map([["prop", { id: "prop" }]]),
+                after: new Map([["prop", { id: "prop", name: "renamed" }]]),
+            },
+        },
+    }, false);
+    assert.equal(of("b")[0], keptTriangles[0]);
+    assert.equal(database.triangles().includes(roadTriangle), true);
+});
+
+function assetInstance(id, assetId, x) {
+    return {
+        id,
+        typeId: "asset-instance",
+        typeVersion: 2,
+        name: id,
+        parentId: null,
+        order: 0,
+        components: {
+            tags: [],
+            locked: false,
+            editorHidden: false,
+            asset: {
+                assetId,
+                revision: 2,
+                position: { x, y: 0, z: 0 },
+                rotationY: 0,
+                scale: { x: 1, y: 1, z: 1 },
+                overrides: {},
+            },
+        },
+    };
+}
+
+test("an asset drag keeps LiDAR until commit and then updates that instance only", async () => {
+    const { ObjectDatabase } = await openObjectDatabase();
+    const database = new ObjectDatabase({});
+    const compiled = compiledFixture();
+    const definitionFor = (assetId) => ({
+        assetId,
+        revision: 2,
+        metricHash: compiled.metricHash,
+        collision: compiled.metric.collision,
+        lidar: compiled.metric.lidar,
+    });
+    const crate = assetInstance("crate-a", "crate", 0);
+    const other = assetInstance("crate-b", "other", 8);
+    const document = {
+        environmentId: "ed07-world",
+        roads: {
+            nodes: [{ id: "start-node", x: -20, y: 0, z: 0 }, { id: "finish-node", x: 20, y: 0, z: 0 }],
+            edges: [{ id: "road", startNodeId: "start-node", endNodeId: "finish-node", width: 8, laneCount: 2, bidirectional: true }],
+        },
+        buildings: [],
+        features: [],
+        objects: [crate, other],
+        primitives: [],
+        assetMetrics: { version: 1, definitions: [definitionFor("crate"), definitionFor("other")] },
+        snapshot() { return this; },
+    };
+    const assets = createAssetMetricsProjector();
+    const context = { document, data: { objects: () => database } };
+    assets.sync(context);
+    const of = (id) => database.triangles().filter((triangle) => triangle.environmentGeometryType === "asset-lidar" && triangle.environmentSourceId === id);
+    const kept = of("crate-b");
+    const startX = of("crate-a")[0].a.x;
+    assert.ok(kept.length > 0);
+
+    const shifted = assetInstance("crate-a", "crate", 3);
+    document.objects = [shifted, other];
+    const objects = {
+        before: new Map([["crate-a", crate]]),
+        after: new Map([["crate-a", shifted]]),
+    };
+    assets.apply({ ...context, transient: true, changeSet: { domains: { objects } } });
+    assert.equal(of("crate-a")[0].a.x, startX);
+    assert.equal(of("crate-b")[0], kept[0]);
+
+    assets.apply({ ...context, transient: false, changeSet: { domains: { objects } } });
+    assert.notEqual(of("crate-a")[0].a.x, startX);
+    assert.equal(of("crate-b")[0], kept[0]);
+
+    const movedTriangle = of("crate-a")[0];
+    const lidar = structuredClone(document.assetMetrics.definitions[0].lidar);
+    lidar[0].vertices[0][0] += 1;
+    document.assetMetrics.definitions[0] = { ...document.assetMetrics.definitions[0], lidar };
+    assets.apply({
+        ...context,
+        transient: false,
+        changeSet: {
+            domains: {
+                "assetMetrics.definitions": {
+                    before: new Map([["crate@2", definitionFor("crate")]]),
+                    after: new Map([["crate@2", document.assetMetrics.definitions[0]]]),
+                },
+            },
+        },
+    });
+    assert.notEqual(of("crate-a")[0], movedTriangle);
+    assert.equal(of("crate-b")[0], kept[0]);
 });
 
 test("triangle and sphere uploads stop at the texture capacity", async () => {

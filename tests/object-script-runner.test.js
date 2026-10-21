@@ -11,9 +11,18 @@ import { registerBuiltInBlocks } from "../app/scripting/registerBuiltInBlocks.js
 import { ObjectIdToSceneObjectBlock } from "../app/scripting/units/conversions/Conversions.block.js";
 import { StringBlock } from "../app/scripting/units/objects/String.block.js";
 import { OutputNodeBlock, ProgramInputBlock } from "../app/scripting/units/program/ProgramIO.block.js";
-import { SequenceBlock } from "../app/scripting/units/statements/Unit.block.js";
-import { CLONE_OBJECT_HOST_ERROR, PLACE_FEATURE_HOST_ERROR } from "../app/scripting/units/world/AuthoringBlocks.block.js";
+import { NumberUnitClass } from "../app/scripting/units/math/Number.block.js";
+import { IfBlock } from "../app/scripting/units/statements/If.block.js";
+import { PassthroughBlock, SequenceBlock } from "../app/scripting/units/statements/Unit.block.js";
+import { authoringBindingWarnings, CLONE_OBJECT_HOST_ERROR, PLACE_FEATURE_HOST_ERROR } from "../app/scripting/units/world/AuthoringBlocks.block.js";
 import { CloneObjectBlock, PlaceFeatureBlock } from "../app/scripting/units/world/AuthoringBlocks.block.js";
+import {
+    ADD_RIGID_BODY_HOST_ERROR,
+    AddRigidBodyBlock,
+    GET_RIGID_BODY_HOST_ERROR,
+    GetRigidBodyBlock,
+    MakeRigidBodyBlock,
+} from "../app/scripting/units/world/RigidBodyBlocks.block.js";
 import { GeneralAttachmentBlock, RoadAttachmentBlock } from "../app/scripting/units/world/DeriveFromAttachment.block.js";
 import { scriptHostType } from "../app/scripting/units/world/attachmentHosts.js";
 import { buildObstaclesAlongRoadDocument } from "../app/3d/editor/scripts/obstaclesAlongRoadTemplate.js";
@@ -593,4 +602,326 @@ test("Clone Object copies a primitive's shape, size, color, and tags onto the po
     });
     assert.equal(refused.ok, false);
     assert.match(refused.error, /prop, an asset instance, or a primitive/);
+});
+
+function addBox(service, id) {
+    const added = service.run("addPrimitive", {
+        id,
+        shape: "box",
+        x: 0,
+        y: 1,
+        z: 0,
+        size: { x: 1, y: 1, z: 1 },
+    });
+    assert.equal(added.ok, true, JSON.stringify(added.issues));
+}
+
+function applyScript(service, ops, attachmentId = "attachment-1") {
+    return applyObjectScript(service, {
+        attachmentId,
+        scriptId: "script-1",
+        ops,
+    });
+}
+
+test("Get Rigid Body copies a component and branches when the object has none", () => {
+    resetDocumentIdCounter();
+    registerBuiltInBlocks();
+    const document = new EnvironmentDocument({ environmentId: "yard" });
+    const service = createEnvironmentCommandService({ document });
+    addBox(service, "heavy");
+    addBox(service, "plain");
+    addBox(service, "from-body");
+    addBox(service, "from-miss");
+    assert.equal(service.run("addRigidBody", { objectId: "heavy" }).ok, true);
+    assert.equal(service.run("setRigidBody", {
+        objectId: "heavy",
+        patch: { mass: 4, constantForce: { x: 1, y: 2, z: 3 } },
+    }).ok, true);
+
+    const manager = new ScriptManager();
+    addUnitHead(manager);
+    addProgramInput(manager, "in-source", "source", "scene_object", "");
+    addProgramInput(manager, "in-target", "target", "scene_object", "");
+    manager.addUnit(new NumberUnitClass("miss-mass"));
+    manager.storeData("miss-mass", 9);
+    manager.addUnit(new GetRigidBodyBlock("get"));
+    manager.addUnit(new MakeRigidBodyBlock("miss"));
+    manager.addUnit(new IfBlock("choose"));
+    manager.addUnit(new AddRigidBodyBlock("add"));
+    connectScript(manager, "in-source", "input", "get", "object");
+    connectScript(manager, "miss-mass", "number", "miss", "mass");
+    connectScript(manager, "get", "found", "choose", "condition");
+    connectScript(manager, "get", "config", "choose", "true value");
+    connectScript(manager, "miss", "config", "choose", "false value");
+    connectScript(manager, "in-target", "input", "add", "object");
+    connectScript(manager, "choose", "out", "add", "config");
+    connectScript(manager, "add", "then", "head", "output");
+    const artifact = manager.compile("get rigid body");
+    const record = document.getObject("heavy");
+
+    const hit = runObjectScript({
+        artifact,
+        record,
+        document,
+        parameters: { source: "heavy", target: "from-body" },
+    });
+    assert.equal(hit.ok, true, hit.error);
+    assert.equal(applyScript(service, hit.ops).ok, true);
+    assert.equal(document.getObject("from-body").components.rigidBody.mass, 4);
+    assert.equal(document.getObject("from-body").components.rigidBody.constantForce.x, 1);
+    assert.equal(document.getObject("heavy").components.rigidBody.mass, 4);
+
+    const miss = runObjectScript({
+        artifact,
+        record,
+        document,
+        parameters: { source: "plain", target: "from-miss" },
+    });
+    assert.equal(miss.ok, true, miss.error);
+    assert.equal(applyScript(service, miss.ops, "attachment-2").ok, true);
+    assert.equal(document.getObject("from-miss").components.rigidBody.mass, 9);
+    assert.equal(document.getObject("plain").components.rigidBody, undefined);
+});
+
+test("Get Rigid Body sees a body added earlier in the same run", () => {
+    resetDocumentIdCounter();
+    registerBuiltInBlocks();
+    const document = new EnvironmentDocument({ environmentId: "yard" });
+    const service = createEnvironmentCommandService({ document });
+    addBox(service, "first");
+    addBox(service, "second");
+    const record = document.getObject("first");
+
+    const manager = new ScriptManager();
+    addUnitHead(manager);
+    addProgramInput(manager, "in-first", "first", "scene_object", "");
+    addProgramInput(manager, "in-second", "second", "scene_object", "");
+    manager.addUnit(new NumberUnitClass("mass"));
+    manager.storeData("mass", 6);
+    manager.addUnit(new MakeRigidBodyBlock("make"));
+    manager.addUnit(new AddRigidBodyBlock("add-first"));
+    manager.addUnit(new GetRigidBodyBlock("get"));
+    manager.addUnit(new PassthroughBlock("after-add"));
+    manager.addUnit(new AddRigidBodyBlock("add-second"));
+    connectScript(manager, "mass", "number", "make", "mass");
+    connectScript(manager, "in-first", "input", "add-first", "object");
+    connectScript(manager, "make", "config", "add-first", "config");
+    connectScript(manager, "in-first", "input", "get", "object");
+    connectScript(manager, "add-first", "then", "after-add", "then");
+    connectScript(manager, "get", "config", "after-add", "value");
+    connectScript(manager, "in-second", "input", "add-second", "object");
+    connectScript(manager, "after-add", "value", "add-second", "config");
+    connectScript(manager, "add-second", "then", "head", "output");
+    const artifact = manager.compile("pending rigid body");
+    const ran = runObjectScript({
+        artifact,
+        record,
+        document,
+        parameters: { first: "first", second: "second" },
+    });
+    assert.equal(ran.ok, true, ran.error);
+    assert.equal(ran.ops.length, 2);
+    assert.equal(ran.ops[0].objectId, "first");
+    assert.equal(ran.ops[1].rigidBody.mass, 6);
+    const applied = applyScript(service, ran.ops);
+    assert.equal(applied.ok, true, JSON.stringify(applied.issues));
+    assert.equal(document.getObject("first").components.rigidBody.mass, 6);
+    assert.equal(document.getObject("second").components.rigidBody.mass, 6);
+    assert.equal(document.getObject("first").components.authoredBy, undefined);
+
+    const again = runObjectScript({
+        artifact,
+        record,
+        document,
+        parameters: { first: "first", second: "second" },
+    });
+    assert.equal(applyScript(service, again.ops).ok, true);
+    assert.equal(document.getObject("first").components.rigidBody.mass, 6);
+    assert.equal(document.getObject("second").components.rigidBody.mass, 6);
+});
+
+test("Add Rigid Body writes a config onto a cloned primitive and replaces that clone on the next run", () => {
+    resetDocumentIdCounter();
+    registerBuiltInBlocks();
+    const document = new EnvironmentDocument({ environmentId: "yard" });
+    const service = createEnvironmentCommandService({ document });
+    const group = service.run("createObject", { typeId: "group", name: "Bin" });
+    assert.equal(group.ok, true, JSON.stringify(group.issues));
+    const groupId = group.result.objectId;
+    const source = service.run("addPrimitive", {
+        shape: "box",
+        x: 1,
+        y: 2,
+        z: 3,
+        size: { x: 1, y: 1, z: 1 },
+        name: "Post",
+        parentId: groupId,
+    });
+    assert.equal(source.ok, true, JSON.stringify(source.issues));
+    const sourceId = source.result.objectId;
+    const pose = {
+        position: { x: 8, y: 0.75, z: -2 },
+        rotation: { x: 0, y: 1.2, z: 0, order: "XYZ" },
+    };
+
+    const manager = new ScriptManager();
+    addUnitHead(manager);
+    addProgramInput(manager, "in-source", "source", "scene_object", "");
+    addProgramInput(manager, "in-pose", "pose", "pose3d", "0");
+    addProgramInput(manager, "in-parent", "parent", "scene_object", "");
+    manager.addUnit(new NumberUnitClass("mass"));
+    manager.storeData("mass", 6);
+    manager.addUnit(new CloneObjectBlock("clone"));
+    manager.addUnit(new ObjectIdToSceneObjectBlock("convert"));
+    manager.addUnit(new MakeRigidBodyBlock("make"));
+    manager.addUnit(new AddRigidBodyBlock("add"));
+    connectScript(manager, "in-source", "input", "clone", "sourceId");
+    connectScript(manager, "in-pose", "input", "clone", "pose");
+    connectScript(manager, "in-parent", "input", "clone", "parentId");
+    connectScript(manager, "clone", "id", "convert", "objectId");
+    connectScript(manager, "mass", "number", "make", "mass");
+    connectScript(manager, "convert", "out", "add", "object");
+    connectScript(manager, "make", "config", "add", "config");
+    connectScript(manager, "add", "then", "head", "output");
+    const artifact = manager.compile("clone rigid body");
+    const run = (doc) => runObjectScript({
+        artifact,
+        record: doc.getObject(groupId),
+        document: doc,
+        parameters: { source: sourceId, pose, parent: groupId },
+    });
+    const ran = run(document);
+    assert.equal(ran.ok, true, ran.error);
+    assert.equal(ran.ops[0].op, "clone-object");
+    assert.equal(ran.ops[1].op, "put-rigid-body");
+    assert.equal(ran.ops[1].objectId, ran.ops[0].id);
+    assert.equal(ran.ops[1].id, undefined);
+    assert.equal(ran.ops[1].rigidBody.mass, 6);
+    const applied = applyScript(service, ran.ops);
+    assert.equal(applied.ok, true, JSON.stringify(applied.issues));
+    assert.deepEqual(applied.result.created, [ran.ops[0].id]);
+    const clone = document.getObject(ran.ops[0].id);
+    assert.equal(clone.components.rigidBody.mass, 6);
+    assert.equal(clone.components.rigidBody.bodyType, "dynamic");
+    assert.equal(clone.components.authoredBy.attachmentId, "attachment-1");
+    assert.equal(document.getObject(sourceId).components.rigidBody, undefined);
+
+    const again = run(document);
+    assert.equal(again.ok, true, again.error);
+    const replaced = applyScript(service, again.ops);
+    assert.equal(replaced.ok, true, JSON.stringify(replaced.issues));
+    assert.equal(document.getObject(ran.ops[0].id), null);
+    const next = document.getObject(again.ops[0].id);
+    assert.equal(next.components.rigidBody.mass, 6);
+    assert.equal(document.primitives.filter((entry) => entry.id !== sourceId).length, 1);
+});
+
+test("Add Rigid Body on a group rolls the run back", () => {
+    resetDocumentIdCounter();
+    registerBuiltInBlocks();
+    const document = new EnvironmentDocument({ environmentId: "yard" });
+    const service = createEnvironmentCommandService({ document });
+    const group = service.run("createObject", { typeId: "group", name: "Bin" });
+    const groupId = group.result.objectId;
+    const before = document.features.length;
+
+    const manager = new ScriptManager();
+    addUnitHead(manager);
+    addProgramInput(manager, "in-object", "object", "scene_object", "");
+    addProgramInput(manager, "in-pose", "pose", "pose3d", "0");
+    addProgramInput(manager, "in-parent", "parent", "scene_object", "");
+    manager.addUnit(new StringBlock("asset"));
+    manager.storeData("asset", "barrel");
+    manager.addUnit(new PlaceFeatureBlock("place"));
+    manager.addUnit(new MakeRigidBodyBlock("make"));
+    manager.addUnit(new AddRigidBodyBlock("add"));
+    manager.addUnit(new SequenceBlock("sequence"));
+    connectScript(manager, "asset", "out", "place", "assetId");
+    connectScript(manager, "in-pose", "input", "place", "pose");
+    connectScript(manager, "in-parent", "input", "place", "parentId");
+    connectScript(manager, "in-object", "input", "add", "object");
+    connectScript(manager, "make", "config", "add", "config");
+    connectScript(manager, "place", "then", "sequence", "first");
+    connectScript(manager, "add", "then", "sequence", "second");
+    connectScript(manager, "sequence", "then", "head", "output");
+    const ran = runObjectScript({
+        artifact: manager.compile("group rigid body"),
+        record: document.getObject(groupId),
+        document,
+        parameters: { object: groupId, parent: "" },
+    });
+    assert.equal(ran.ok, true, ran.error);
+    assert.equal(ran.ops[1].op, "put-rigid-body");
+    assert.equal(ran.ops[1].objectId, groupId);
+    const applied = applyScript(service, ran.ops);
+    assert.equal(applied.ok, false);
+    assert.match(applied.error, /group/);
+    assert.equal(document.features.length, before);
+    assert.equal(document.getObject(groupId).components.rigidBody, undefined);
+});
+
+test("Add Rigid Body requires a host, and a missing object discards ops", () => {
+    const block = new AddRigidBodyBlock("add");
+    block.inputs = { object: {}, config: {} };
+    block.getInput = (label) => (label === "object" ? "box" : { mass: 1 });
+    block.setManager({ getRuntimeContext: () => ({}) });
+    assert.throws(() => block.execute(), new RegExp(ADD_RIGID_BODY_HOST_ERROR));
+
+    const reader = new GetRigidBodyBlock("get");
+    reader.inputs = { object: {} };
+    reader.getInput = () => "box";
+    reader.setManager({ getRuntimeContext: () => ({}) });
+    assert.throws(() => reader.execute(), new RegExp(GET_RIGID_BODY_HOST_ERROR));
+
+    resetDocumentIdCounter();
+    registerBuiltInBlocks();
+    const document = new EnvironmentDocument({ environmentId: "yard" });
+    const service = createEnvironmentCommandService({ document });
+    const group = service.run("createObject", { typeId: "group", name: "Bin" });
+    const groupId = group.result.objectId;
+
+    const manager = new ScriptManager();
+    addUnitHead(manager);
+    addProgramInput(manager, "in-pose", "pose", "pose3d", "0");
+    addProgramInput(manager, "in-parent", "parent", "scene_object", "");
+    manager.addUnit(new StringBlock("asset"));
+    manager.storeData("asset", "barrel");
+    manager.addUnit(new StringBlock("missing"));
+    manager.storeData("missing", "no-such-object");
+    manager.addUnit(new ObjectIdToSceneObjectBlock("convert"));
+    manager.addUnit(new PlaceFeatureBlock("place"));
+    manager.addUnit(new MakeRigidBodyBlock("make"));
+    manager.addUnit(new AddRigidBodyBlock("add"));
+    manager.addUnit(new SequenceBlock("sequence"));
+    connectScript(manager, "asset", "out", "place", "assetId");
+    connectScript(manager, "in-pose", "input", "place", "pose");
+    connectScript(manager, "in-parent", "input", "place", "parentId");
+    connectScript(manager, "missing", "out", "convert", "objectId");
+    connectScript(manager, "convert", "out", "add", "object");
+    connectScript(manager, "make", "config", "add", "config");
+    connectScript(manager, "place", "then", "sequence", "first");
+    connectScript(manager, "add", "then", "sequence", "second");
+    connectScript(manager, "sequence", "then", "head", "output");
+    const ran = runObjectScript({
+        artifact: manager.compile("missing rigid body"),
+        record: document.getObject(groupId),
+        document,
+        parameters: { parent: "" },
+    });
+    assert.equal(ran.ok, false);
+    assert.match(ran.error, /does not exist/);
+    assert.deepEqual(ran.ops, []);
+    assert.equal(document.features.length, 0);
+});
+
+test("Add Rigid Body warns on a simulation binding", () => {
+    assert.equal(authoringBindingWarnings({ nodes: [{ type: "AddRigidBodyBlock" }] }).length, 1);
+    assert.deepEqual(authoringBindingWarnings({
+        nodes: [
+            { type: "MakeRigidBodyBlock" },
+            { type: "SplitRigidBodyBlock" },
+            { type: "GetRigidBodyBlock" },
+        ],
+    }), []);
 });

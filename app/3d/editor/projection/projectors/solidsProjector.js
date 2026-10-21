@@ -195,12 +195,40 @@ function syncFloor(context) {
     group.add(mesh);
 }
 
-function syncLidarSolids(context) {
+function changedKeys(domain) {
+    if (!domain || domain === true) return null;
+    if (!(domain.before instanceof Map) && !(domain.after instanceof Map)) return null;
+    const ids = new Set();
+    for (const id of domain.before?.keys() ?? []) ids.add(String(id));
+    for (const id of domain.after?.keys() ?? []) ids.add(String(id));
+    return ids;
+}
+
+/** `null` rebuilds every primitive. `undefined` leaves LiDAR triangles alone. */
+function affectedPrimitiveIds(context) {
+    const primitiveDomain = context.changeSet?.domains?.primitives;
+    const objectDomain = context.changeSet?.domains?.objects;
+    if (primitiveDomain && changedKeys(primitiveDomain) === null) return null;
+    const ids = changedKeys(primitiveDomain) ?? new Set();
+    const known = new Set([...(context.document.primitives ?? []).map((record) => String(record.id)), ...ids]);
+    const objectIds = changedKeys(objectDomain);
+    if (objectDomain && objectIds === null) {
+        if ((context.document.primitives ?? []).length > 0) return null;
+    } else if (objectIds) {
+        for (const id of objectIds) if (known.has(id)) ids.add(id);
+    }
+    if (ids.size === 0) return undefined;
+    return ids;
+}
+
+function syncLidarSolids(context, ids = null) {
     const objects = context.data?.objects?.();
     if (typeof objects?.replaceTriangles !== "function" || typeof objects?.replaceSpheres !== "function") return;
+    const selected = (record) => ids === null || ids.has(String(record.id));
     const triangles = [];
     const spheres = [];
     for (const record of context.document.primitives ?? []) {
+        if (!selected(record)) continue;
         const normalized = normalizePrimitiveRecord(record);
         if (normalized.shape === "sphere") {
             spheres.push(sphereFromPrimitive(record, context.document));
@@ -212,21 +240,17 @@ function syncLidarSolids(context) {
             sourceId: normalized.id,
         }));
     }
-    objects.replaceTriangles(
-        (triangle) => triangle.environmentGeometryType === PRIMITIVE_LIDAR_TYPE,
-        triangles,
-    );
-    objects.replaceSpheres(
-        (sphere) => sphere.environmentGeometryType === PRIMITIVE_LIDAR_TYPE,
-        spheres,
-    );
+    const owns = (solid) => solid.environmentGeometryType === PRIMITIVE_LIDAR_TYPE
+        && (ids === null || ids.has(String(solid.environmentSourceId)));
+    objects.replaceTriangles(owns, triangles, { rebuild: false });
+    objects.replaceSpheres(owns, spheres);
 }
 
 function sync(context, { publish = false } = {}) {
     if (!context.scene || !context.document) return;
     syncPrimitives(context);
     syncFloor(context);
-    syncLidarSolids(context);
+    syncLidarSolids(context, null);
     if (publish) publishWorld(context);
 }
 
@@ -238,9 +262,14 @@ export function createSolidsProjector() {
             const primitives = changeSet?.domains?.primitives;
             const floor = changeSet?.scalars?.floor;
             const objects = changeSet?.domains?.objects;
-            const relevant = Boolean(primitives || floor || (objects && (context.document.primitives.length > 0 || context.document.floor?.enabled)));
-            if (!relevant) return;
-            sync(context, { publish: !context.transient });
+            const relevant = Boolean(primitives || floor || (objects && ((context.document.primitives ?? []).length > 0 || context.document.floor?.enabled)));
+            if (!relevant || !context.scene || !context.document) return;
+            syncPrimitives(context);
+            syncFloor(context);
+            if (context.transient) return;
+            const ids = affectedPrimitiveIds(context);
+            if (ids !== undefined) syncLidarSolids(context, ids);
+            publishWorld(context);
         },
         rebuildAll(context) {
             sync(context, { publish: false });

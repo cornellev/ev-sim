@@ -10,6 +10,15 @@ export const DEFAULT_PRIMITIVE_COLOR = "#a3a3a3";
 export const FLOOR_OBJECT_ID = "floor";
 export const FLOOR_PLANE_Y = 0;
 
+/**
+ * Null while the floor is off. The collider stays on unless the record says
+ * otherwise, and that default is omitted so existing snapshots stay `{ enabled: true }`.
+ */
+export function normalizeFloor(floor) {
+    if (floor?.enabled !== true) return null;
+    return floor.collider === false ? { enabled: true, collider: false } : { enabled: true };
+}
+
 const SHAPE_SET = new Set(PRIMITIVE_SHAPES);
 
 export function defaultPrimitiveSize(shape) {

@@ -81,7 +81,7 @@ ED PR changes a contract, hash, gate, or milestone status.
   that revision and assign one existing perception class. LiDAR authoring
   supports generated meshes and editable primitives.
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-10-14 — scene primitives and the support-plane floor**.
+- Last updated: **2026-10-21 — floor collider toggle**.
 
 ## Normative contracts
 
@@ -1035,6 +1035,10 @@ Record in the ledger: focused-suite pass counts, `npm run lint` result,
   `6ca2ece3d5266822a2ceabba72e5f7dd9514789e76757e86f6aedd2730ab9a6a`.
 
 ## Decision log
+
+### 2026-10-21 — The floor collider can be turned off
+
+The Floor inspector's Collider toggle is on unless `document.floor` stores `collider: false`. That flag is omitted while the collider stays on, so an enabled floor keeps its snapshot and `worldHash`. Turning it off copies `collider: false` onto world v4 `groundPlane` and removes the Rapier plane dynamic bodies land on. The checker, the LiDAR plane, and the vehicle support constraint stay. This is not an ED milestone.
 
 ### 2026-10-15 — Catalog meshes stay visible in Simulation
 

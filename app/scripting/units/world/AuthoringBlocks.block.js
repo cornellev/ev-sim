@@ -4,7 +4,12 @@ import { BUILTIN_PROP_IDS } from "../../../3d/editor/objects/types/builtinProp.j
 import { freezePorts, defineBlock } from "../defineBlock.js";
 import { UNIT, UNIT_TYPE } from "../../types/PortTypes.js";
 
-export const AUTHORING_BLOCK_TYPES = Object.freeze(["PlaceFeatureBlock", "CreateGroupBlock", "CloneObjectBlock"]);
+export const AUTHORING_BLOCK_TYPES = Object.freeze([
+    "PlaceFeatureBlock",
+    "CreateGroupBlock",
+    "CloneObjectBlock",
+    "AddRigidBodyBlock",
+]);
 export const PLACE_FEATURE_HOST_ERROR = "Place Feature requires an editor script host.";
 export const CREATE_GROUP_HOST_ERROR = "Create Group requires an editor script host.";
 export const CLONE_OBJECT_HOST_ERROR = "Clone Object requires an editor script host.";

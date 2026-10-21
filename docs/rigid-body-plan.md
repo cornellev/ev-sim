@@ -33,7 +33,8 @@ proxy. A world with none of these keeps its previous description and
 Dynamic bodies use the existing Rapier world gravity. Kinematic bodies and
 `useGravity: false` set gravity scale to 0. `applyForce` and `applyImpulse`
 queue until the next physics step. The floor collider, when the document floor
-is enabled, collides with dynamic bodies and not with the vehicle. The vehicle
+is enabled and its collider is not turned off, collides with dynamic bodies
+and not with the vehicle. The vehicle
 hull sweep treats a rigid body as another obstacle. Because that sweep stops
 short of penetration, a dynamic body also receives the vehicle's approach
 speed as an impulse.
@@ -71,3 +72,15 @@ are all still at spawn queries the original static index. On a 32 by 1024
 scan over 1,000 triangles, four moving boxes dropped from 25.6 ms to 17.0 ms.
 The same four boxes at spawn take 12.7 ms, and a scene with no rigid body
 takes 10.8 ms. The LiDAR buffer is unchanged.
+
+### 2026-10-21 — floor collider toggle
+
+The Floor inspector can turn the Rapier floor collider off. The document
+stores `collider: false` only in that case, and `groundPlane` carries the
+same flag, so that world's `worldHash` changes. LiDAR, the checker, and the
+vehicle support plane stay. An enabled floor with the collider left on keeps
+its previous description and hash.
+
+### 2026-10-21 — object scripts write the component
+
+Make, Split, Get, and Add Rigid Body are scripting canvas blocks. Add records a `put-rigid-body` op. `putRigidBody` writes the same `components.rigidBody` the inspector writes. The component schema and the kinematic characterization tape are unchanged.

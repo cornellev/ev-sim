@@ -155,7 +155,7 @@ test("control temporal and controller blocks are placeable and searchable", () =
 
 test("simulator adapters and texture ops are placeable and searchable", () => {
     const simulator = UNIT_CATALOG_META.filter((entry) => entry.category === "simulator" && entry.placeable);
-    assert.equal(simulator.length, 27);
+    assert.equal(simulator.length, 31);
     assert.ok(simulator.some((entry) => entry.type === "VehicleStateBlock"));
     assert.ok(simulator.some((entry) => entry.type === "SpawnPropBlock"));
     assert.ok(simulator.some((entry) => entry.type === "ScatterFeaturesBlock"));
@@ -176,6 +176,11 @@ test("simulator adapters and texture ops are placeable and searchable", () => {
     assert.equal(UNIT_CATALOG_META.find((entry) => entry.type === "PlaceFeatureBlock")?.authoring, true);
     assert.equal(UNIT_CATALOG_META.find((entry) => entry.type === "CreateGroupBlock")?.authoring, true);
     assert.equal(UNIT_CATALOG_META.find((entry) => entry.type === "CloneObjectBlock")?.authoring, true);
+    assert.equal(UNIT_CATALOG_META.find((entry) => entry.type === "AddRigidBodyBlock")?.authoring, true);
+    for (const type of ["MakeRigidBodyBlock", "SplitRigidBodyBlock", "GetRigidBodyBlock"]) {
+        assert.equal(UNIT_CATALOG_META.find((entry) => entry.type === type)?.authoring, undefined, type);
+        assert.ok(simulator.some((entry) => entry.type === type), type);
+    }
     assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "RoadCrossSectionBlock").keywords.includes("shoulder"));
     assert.ok(UNIT_CATALOG_META.find((entry) => entry.type === "GetNearestRoadBlock").keywords.includes("nearest"));
     assert.equal(UNIT_CATALOG_META.find((entry) => entry.type === "TextureImportBlock")?.category, "objects");

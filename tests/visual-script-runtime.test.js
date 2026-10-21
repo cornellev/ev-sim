@@ -68,6 +68,9 @@ import {
 import { SpawnPropBlock } from "../app/scripting/units/world/WorldBlocks.block.js";
 import { EpisodeOverlay } from "../app/simulation/episode/EpisodeOverlay.js";
 import { ACTOR_COMMAND_TYPE, UNIT, UNIT_TYPE } from "../app/scripting/types/PortTypes.js";
+import { MakeVec3Block } from "../app/scripting/units/geometry/GeometryBlocks.block.js";
+import { MakeRigidBodyBlock, SplitRigidBodyBlock } from "../app/scripting/units/world/RigidBodyBlocks.block.js";
+import { defaultRigidBody } from "../app/simulation/world/RigidBodyRecords.js";
 import {
     assertSupportedArtifact,
     SUPPORTED_ARTIFACT_VERSIONS,
@@ -2741,6 +2744,48 @@ test("repeat_ref connects only to repeat_ref", () => {
     manager.addUnit(new SequenceBlock("sequence"));
     assert.equal(manager.connectUnitsDetailed("repeat", "repeat", "pass", "value").ok, false);
     assert.equal(manager.connectUnitsDetailed("repeat", "repeat", "sequence", "first").ok, false);
+});
+
+test("Make Rigid Body defaults, rejects mass 0, and Split round-trips force", () => {
+    const bare = new ScriptManager();
+    bare.addUnit(new MakeRigidBodyBlock("make"));
+    bare.addUnit(new OutputBlock("output", "config", "rigidbody_config"));
+    connect(bare, "make", "config", "output", "output");
+    const bareRun = bare.executeProgram();
+    assert.equal(bareRun.status, "success", bareRun.e?.message);
+    assert.deepEqual(bareRun.outputs.config, defaultRigidBody());
+    assert.equal(bare.units.find((unit) => unit.uuid === "make").valid(), true);
+
+    const bad = new ScriptManager();
+    bad.addUnit(new ConstBlock("mass", 0));
+    bad.addUnit(new MakeRigidBodyBlock("make"));
+    bad.addUnit(new OutputBlock("output", "config", "rigidbody_config"));
+    connect(bad, "mass", "out", "make", "mass");
+    connect(bad, "make", "config", "output", "output");
+    const badRun = bad.executeProgram();
+    assert.equal(badRun.status, "failure");
+    assert.match(badRun.e.message, /mass/);
+
+    const manager = new ScriptManager();
+    manager.addUnit(new ConstBlock("x", 1));
+    manager.addUnit(new ConstBlock("y", 2));
+    manager.addUnit(new ConstBlock("z", 3));
+    manager.addUnit(new MakeVec3Block("vec"));
+    manager.addUnit(new MakeRigidBodyBlock("make"));
+    manager.addUnit(new SplitRigidBodyBlock("split"));
+    manager.addUnit(new OutputBlock("force-out", "force", "vec3"));
+    manager.addUnit(new OutputBlock("mass-out", "mass", "float64"));
+    connect(manager, "x", "out", "vec", "x");
+    connect(manager, "y", "out", "vec", "y");
+    connect(manager, "z", "out", "vec", "z");
+    connect(manager, "vec", "out", "make", "force");
+    connect(manager, "make", "config", "split", "config");
+    connect(manager, "split", "force", "force-out", "output");
+    connect(manager, "split", "mass", "mass-out", "output");
+    const run = manager.executeProgram();
+    assert.equal(run.status, "success", run.e?.message);
+    assert.deepEqual(run.outputs.force, { x: 1, y: 2, z: 3 });
+    assert.equal(run.outputs.mass, 1);
 });
 
 test("Pass returns its input unchanged and infers the wired type", () => {
