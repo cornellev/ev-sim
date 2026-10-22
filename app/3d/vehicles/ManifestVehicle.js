@@ -18,7 +18,20 @@ import { resetEgoPresentation, updateEgoPresentation } from "./EgoPresentation.j
 
 export { applyModelPlacement } from "./ModelPlacement.js";
 
+function cloneEstimateNode(source, material) {
+    const clone = source.clone(true);
+    clone.traverse((node) => {
+        if (!node.isMesh) return;
+        node.geometry = node.geometry.clone();
+        node.material = material;
+        node.castShadow = false;
+        node.receiveShadow = false;
+    });
+    return clone;
+}
+
 const POSE_EPSILON = 1e-6;
+const ESTIMATE_CLONE_COLOR = 0xf97316;
 
 /**
  * A vehicle instantiated entirely from a `cev-sim.vehicle` manifest: visual
@@ -69,6 +82,8 @@ export class ManifestVehicle extends PhysicalVehicle {
         this._ownsModelLoader = this.modelLoader == null;
         this._modelLoadToken = 0;
         this._modelLease = null;
+        this._bodyRoot = null;
+        this._visualReady = false;
 
         /** @type {{ pivot: THREE.Group, steerable: boolean }[]} */
         this._wheels = [];
@@ -105,6 +120,8 @@ export class ManifestVehicle extends PhysicalVehicle {
     }
 
     async addToScene(scene) {
+        this._visualReady = false;
+        this._bodyRoot = null;
         this.sceneObject = new THREE.Group();
         this.sceneObject.position.copy(this.position);
         this.sceneObject.rotation.copy(this.rotation);
@@ -133,10 +150,10 @@ export class ManifestVehicle extends PhysicalVehicle {
                 }
                 if (!lease?.root || lease.stale || lease.aborted) {
                     lease?.dispose?.();
-                    sceneObject.add(this._buildPlaceholderBody());
+                    this._addBody(this._buildPlaceholderBody());
                 } else {
                     this._modelLease = lease;
-                    sceneObject.add(lease.root);
+                    this._addBody(lease.root);
                     if (this.manifest.version === 3 && lease.glbBytes) {
                         try {
                             this._presentCanonicalModel(lease, sceneObject);
@@ -147,10 +164,10 @@ export class ManifestVehicle extends PhysicalVehicle {
                 }
             } catch (error) {
                 console.warn(`Could not load model for vehicle "${this.vehicleManifestId}":`, error);
-                if (token === this._modelLoadToken) sceneObject.add(this._buildPlaceholderBody());
+                if (token === this._modelLoadToken) this._addBody(this._buildPlaceholderBody());
             }
         } else if (token === this._modelLoadToken) {
-            sceneObject.add(this._buildPlaceholderBody());
+            this._addBody(this._buildPlaceholderBody());
         }
 
         if (token !== this._modelLoadToken) return;
@@ -177,6 +194,36 @@ export class ManifestVehicle extends PhysicalVehicle {
                 device._sceneReady = true;
             }
         }
+        this._visualReady = true;
+    }
+
+    /**
+     * One orange copy of the body mesh and wheel pivots. Sensors, the origin
+     * marker, and the lidar zone stay on the live vehicle. Returns null until
+     * that body exists.
+     */
+    cloneVisualBody() {
+        if (!this._visualReady || !this._bodyRoot) return null;
+        const material = new THREE.MeshBasicMaterial({
+            color: ESTIMATE_CLONE_COLOR,
+            transparent: true,
+            opacity: 0.45,
+            depthTest: false,
+            depthWrite: false,
+        });
+        const group = new THREE.Group();
+        group.name = "estimate-clone";
+        group.add(cloneEstimateNode(this._bodyRoot, material));
+        for (const wheel of this._wheels) {
+            if (wheel?.pivot) group.add(cloneEstimateNode(wheel.pivot, material));
+        }
+        return group;
+    }
+
+    _addBody(object) {
+        this.sceneObject.add(object);
+        this._bodyRoot = object;
+        return object;
     }
 
     _presentCanonicalModel(lease, parent) {
@@ -209,6 +256,7 @@ export class ManifestVehicle extends PhysicalVehicle {
             new THREE.BoxGeometry(size.x, size.y, size.z),
             new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.7, metalness: 0.15 }),
         );
+        mesh.name = "vehicle-body";
         mesh.position.set(center.x, center.y, center.z);
         mesh.castShadow = true;
         return mesh;

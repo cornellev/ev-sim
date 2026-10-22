@@ -198,6 +198,12 @@ export function SimulationMenu({
                                         onChange={(value) => sim?.setAutonomyOverlayEnabled?.({ ekf: value })}
                                     />
                                     <MenuToggle
+                                        label="Estimate clone"
+                                        icon={<FaCube className="h-3 w-3" />}
+                                        checked={simState?.autonomyOverlay?.estimateClone !== false}
+                                        onChange={(value) => sim?.setAutonomyOverlayEnabled?.({ estimateClone: value })}
+                                    />
+                                    <MenuToggle
                                         label="Lane overlays"
                                         icon={<FaGlobe className="h-3 w-3" />}
                                         checked={simState?.autonomyOverlay?.lanes !== false}

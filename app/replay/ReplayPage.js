@@ -19,6 +19,7 @@ import {
     IconView360,
     IconX,
 } from "@tabler/icons-react";
+import { formatHeadingError, formatPositionError } from "../autonomy/AutonomyVisualizationModel.js";
 import ReplayScene from "./ReplayScene";
 import SpatialLogViewer from "../spatial/SpatialLogViewer.js";
 import { deleteLog, getLogDownloadUrl, importLog, listLogs, updateLog } from "../logging/LogClient.js";
@@ -334,11 +335,10 @@ export default function ReplayPage({ initialLogId, mcpCommand, onOpenAnalysis, o
                                     {" · "}lanes {autonomySnap?.perception?.lanes?.length || 0}
                                     {" · "}EKF {autonomySnap?.localization?.estimate ? "yes" : "no"}
                                 </p>
-                                {autonomySnap?.localization?.error && (
-                                    <p className={styles.muted}>
-                                        |err| {Number(autonomySnap.localization.error.positionM || 0).toFixed(3)} m
-                                    </p>
-                                )}
+                                <p className={styles.muted}>
+                                    |err| {formatPositionError(autonomySnap?.localization?.error)}
+                                    {" · "}heading {formatHeadingError(autonomySnap?.localization?.error)}
+                                </p>
                             </div>
                             <div className={styles.inspectorSection}><p className={styles.sectionLabel}>Nearby events</p>{nearbyEvents.length === 0 ? <p className={styles.muted}>No events within ±0.75 s</p> : nearbyEvents.map((event, index) => <button key={`${event.id || "event"}-${event.timeUs}-${index}`} onClick={() => timeline.seek(event.timeUs)} className={styles.eventRow}><code>{formatTime(event.timeUs)}</code><span>{event.category} / {event.name}</span></button>)}</div>
                         </aside>

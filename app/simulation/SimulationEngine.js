@@ -125,6 +125,7 @@ export class SimulationEngine {
             oracle: true,
             candidate: true,
             ekf: true,
+            estimateClone: true,
             lanes: true,
             controls: true,
         };
@@ -651,6 +652,7 @@ export class SimulationEngine {
         this._resetPacingState();
         if (reset) this.frames = 0;
         this.kernel.stop({ reset, dispatchEpisode });
+        this.autonomyOverlay?.disposeEstimateClone?.();
         if (reset) this.autonomyOverlay?.clear?.();
         this._syncEpisodeOverlayMeshes();
         this._applyRigidBodyPoses();
@@ -735,7 +737,19 @@ export class SimulationEngine {
             ...this._autonomyOverlayEnabled,
             ...patch,
         };
-        this.autonomyOverlay?.setLayers?.(this._autonomyOverlayEnabled);
+        if (this.candidateOutputRuntime || this.controlRuntime) {
+            this.autonomyOverlay?.updateFromRuntime?.(
+                this.candidateOutputRuntime,
+                this._autonomyOverlayEnabled,
+                {
+                    controlRuntime: this.controlRuntime,
+                    vehiclePose: this.kernel.targetVehiclePose?.(),
+                    estimateVehicle: this._estimateVehicle(),
+                },
+            );
+        } else {
+            this.autonomyOverlay?.setLayers?.(this._autonomyOverlayEnabled);
+        }
         this.render();
         this._emit();
     }
@@ -1041,6 +1055,7 @@ export class SimulationEngine {
             {
                 controlRuntime: this.controlRuntime,
                 vehiclePose: this.kernel.targetVehiclePose(),
+                estimateVehicle: this._estimateVehicle(),
             },
         );
         if (this.modules.baking) this.data.baking()?.update?.(dt);
@@ -1051,6 +1066,12 @@ export class SimulationEngine {
             });
         }
         this._applyRigidBodyPoses();
+    }
+
+    _estimateVehicle() {
+        const targetId = this.resolvedRun?.manifest?.controls?.targetVehicleId || "ego";
+        const vehicles = this.kernel.context?.vehicles?.list?.() || [];
+        return vehicles.find((candidate) => (candidate.telemetryId || candidate.id) === targetId) ?? vehicles[0] ?? null;
     }
 
     _applyRigidBodyPoses() {

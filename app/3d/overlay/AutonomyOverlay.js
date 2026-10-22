@@ -6,6 +6,7 @@ import {
     updateControlsPathRibbon,
 } from "../../autonomy/ControlsPathArc.js";
 import { rep103SteeringToThree } from "../../autonomy/ControlCommandAdapter.js";
+import { rep103OrientationToThreeEuler } from "../../autonomy/CoordinateFrames.js";
 
 export const AUTONOMY_OVERLAY_LAYER = SCENARIO_DIAGNOSTIC_LAYER;
 
@@ -147,9 +148,11 @@ export class AutonomyOverlay {
             oracle: true,
             candidate: true,
             ekf: true,
+            estimateClone: true,
             lanes: true,
             controls: true,
         };
+        this._estimateClone = null;
         this._boxes = new THREE.Group();
         this._lanes = new THREE.Group();
         this._ekf = new THREE.Group();
@@ -176,6 +179,10 @@ export class AutonomyOverlay {
         this._lanes.visible = this.layers.lanes;
         this._ekf.visible = this.layers.ekf;
         this._controls.visible = !this._predictedPathHidden && this.layers.controls !== false;
+        if (this._estimateClone) {
+            this._estimateClone.visible = this.layers.estimateClone !== false
+                && this._estimateClone.userData.estimateCurrent === true;
+        }
     }
 
     /** Hide the steering prediction ribbons while a vehicle camera fills the view. */
@@ -185,6 +192,7 @@ export class AutonomyOverlay {
     }
 
     clear() {
+        this.disposeEstimateClone();
         for (const group of [this._boxes, this._lanes, this._ekf, this._controls]) {
             for (const child of [...group.children]) {
                 child.traverse(disposeObject);
@@ -194,7 +202,7 @@ export class AutonomyOverlay {
         this._contentKey = null;
     }
 
-    updateFromRuntime(runtime, layers = null, { controlRuntime = null, vehiclePose = null } = {}) {
+    updateFromRuntime(runtime, layers = null, { controlRuntime = null, vehiclePose = null, estimateVehicle = null } = {}) {
         if (layers) this.setLayers(layers);
         if (!runtime && !controlRuntime) {
             this.clear();
@@ -207,10 +215,10 @@ export class AutonomyOverlay {
             perception,
             localization,
             controls: controlRuntime?.getSnapshot?.() || null,
-        }, vehiclePose);
+        }, vehiclePose, estimateVehicle);
     }
 
-    updateFromSnapshot({ perception, localization, controls, vehiclePose } = {}, layers = null) {
+    updateFromSnapshot({ perception, localization, controls, vehiclePose, estimateVehicle } = {}, layers = null) {
         if (layers) this.setLayers(layers);
         const nextKey = snapshotContentKey({ perception, localization, controls });
         if (nextKey === this._contentKey) {
@@ -220,10 +228,10 @@ export class AutonomyOverlay {
             return;
         }
         this._contentKey = nextKey;
-        this._syncSnapshotContent({ perception, localization, controls }, vehiclePose);
+        this._syncSnapshotContent({ perception, localization, controls }, vehiclePose, estimateVehicle);
     }
 
-    _syncSnapshotContent({ perception, localization, controls }, vehiclePose = null) {
+    _syncSnapshotContent({ perception, localization, controls }, vehiclePose = null, estimateVehicle = null) {
         this._clearGroup(this._boxes);
         this._clearGroup(this._lanes);
         this._clearGroup(this._ekf);
@@ -237,8 +245,11 @@ export class AutonomyOverlay {
             this._syncBoxes(perception?.detections3d || [], "candidate");
             if (this.layers.lanes) this._syncLanes(perception?.lanes || [], "candidate");
         }
+        this._syncEstimateClone(localization || {}, estimateVehicle);
         if (this.layers.ekf) {
             this._syncEstimate(localization || {});
+        } else {
+            hideExtra(this._ekf, 0);
         }
         if (this.layers.controls !== false && controls) {
             this._syncControls(controls, vehiclePose);
@@ -450,8 +461,10 @@ export class AutonomyOverlay {
             z: 0 - (estimate.position?.y || 0),
         };
         let index = 0;
+        const cloneActive = this.layers.estimateClone !== false && this._estimateClone?.visible === true;
         const ghost = this._ensureEkfGhost(index, color);
         ghost.position.set(pos.x, pos.y + 0.35, pos.z);
+        ghost.visible = !cloneActive;
         index += 1;
 
         const sigmaX = Math.max(0.05, Number(estimate.covarianceEllipse?.sigmaX || 0.05));
@@ -482,6 +495,54 @@ export class AutonomyOverlay {
             index += 1;
         }
         hideExtra(this._ekf, index);
+    }
+
+    disposeEstimateClone() {
+        if (!this._estimateClone) return;
+        this._estimateClone.traverse(disposeObject);
+        this._estimateClone.removeFromParent();
+        this._estimateClone = null;
+        const marker = this._ekf.children[0];
+        if (marker?.isMesh && this.layers.ekf !== false) marker.visible = true;
+    }
+
+    _syncEstimateClone(localization, vehicle) {
+        const estimate = localization?.estimate;
+        const enabled = this.layers.estimateClone !== false;
+        if (!estimate || !enabled) {
+            if (this._estimateClone) {
+                this._estimateClone.visible = false;
+                this._estimateClone.userData.estimateCurrent = false;
+            }
+            return;
+        }
+        if (!this._estimateClone && typeof vehicle?.cloneVisualBody === "function") {
+            const clone = vehicle.cloneVisualBody();
+            if (clone) this._mountEstimateClone(clone);
+        }
+        if (!this._estimateClone) return;
+        this._poseEstimateClone(this._estimateClone, estimate);
+        this._estimateClone.userData.estimateCurrent = true;
+        this._estimateClone.visible = true;
+    }
+
+    _mountEstimateClone(clone) {
+        clone.traverse((node) => {
+            disableRaycast(node);
+        });
+        this._estimateClone = clone;
+        this.group.add(clone);
+    }
+
+    _poseEstimateClone(clone, estimate) {
+        const pos = estimate.threePosition || {
+            x: estimate.position?.x || 0,
+            y: estimate.position?.z || 0,
+            z: 0 - (estimate.position?.y || 0),
+        };
+        clone.position.set(pos.x, pos.y, pos.z);
+        const euler = rep103OrientationToThreeEuler(estimate.orientation || {});
+        clone.rotation.set(euler.x, euler.y, euler.z, euler.order || "XYZ");
     }
 
     _ensureEkfGhost(index, color) {

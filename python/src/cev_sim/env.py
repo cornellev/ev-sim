@@ -125,6 +125,58 @@ def resolve_session_paths(
     return output_dir, target, launch, artifact_policy or ArtifactPolicy(), temporary_output
 
 
+class LocalizationClone:
+    """Whether the planner plot draws the estimate footprint. On by default."""
+
+    def __init__(self, localization: LocalizationView) -> None:
+        self._localization = localization
+        self._enabled = True
+
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
+    @enabled.setter
+    def enabled(self, value: bool) -> None:
+        if type(value) is not bool:
+            raise CevSimConfigurationError("localization.clone.enabled must be true or false")
+        self._enabled = value
+        self._localization._redraw()
+
+
+class LocalizationView:
+    """Estimate footprint for the planner plot. It does not move the 3D car."""
+
+    def __init__(self, env: CevSimEnv) -> None:
+        self._env = env
+        self.clone = LocalizationClone(self)
+        self._pose: np.ndarray[Any, Any] | None = None
+
+    @property
+    def pose(self) -> np.ndarray[Any, Any] | None:
+        return None if self._pose is None else self._pose.copy()
+
+    def update(self, pose: Any) -> None:
+        """Store an estimate as ``(x, z, yaw)``, the same frame as ``env.pose()``."""
+        try:
+            array = np.asarray(pose, dtype=np.float64).reshape(3)
+        except (TypeError, ValueError) as error:
+            raise CevSimConfigurationError("localization pose must be (x, z, yaw)") from error
+        if not np.all(np.isfinite(array)):
+            raise CevSimConfigurationError("localization pose must be finite (x, z, yaw)")
+        self._pose = array
+        self._redraw()
+
+    def clear(self) -> None:
+        """Drop the stored pose. ``clone.enabled`` stays as the caller left it."""
+        self._pose = None
+
+    def _redraw(self) -> None:
+        env = self._env
+        if env.render_mode == "human" and env._viewer is not None and env._last_observation is not None:
+            env.render()
+
+
 class CevSimEnv(gym.Env[dict[str, np.ndarray[Any, Any]], np.ndarray[Any, Any]]):
     """One Gymnasium environment backed by a protocol 1.2–1.5 supervisor batch."""
 
@@ -150,6 +202,7 @@ class CevSimEnv(gym.Env[dict[str, np.ndarray[Any, Any]], np.ndarray[Any, Any]]):
             raise CevSimConfigurationError("render_mode must be human, rgb_array, or omitted")
         self.render_mode = render_mode
         self.bundle = bundle
+        self.localization = LocalizationView(self)
         if default_reset_options is not None and not isinstance(default_reset_options, Mapping):
             raise CevSimConfigurationError("default_reset_options must be a mapping")
         normalize_reset_options(None if not default_reset_options else dict(default_reset_options))
@@ -211,6 +264,7 @@ class CevSimEnv(gym.Env[dict[str, np.ndarray[Any, Any]], np.ndarray[Any, Any]]):
         overrides = normalize_reset_options(merge_reset_options(self._default_reset_options, options))
         if seed is not None and (type(seed) is not int or not 0 <= seed <= 0xFFFF_FFFF_FFFF_FFFF):
             raise CevSimConfigurationError("Gymnasium reset seed must be a uint64")
+        self.localization.clear()
         super().reset(seed=seed)
         reset_seed = self._reset_seed(seed)
         try:
@@ -250,6 +304,8 @@ class CevSimEnv(gym.Env[dict[str, np.ndarray[Any, Any]], np.ndarray[Any, Any]]):
         self._temporary_output = None
         if getattr(self, "clock", None) is not None:
             self.clock.clear()
+        if getattr(self, "localization", None) is not None:
+            self.localization.clear()
         try:
             try:
                 batch and batch.close(finalize_active_episodes=True)
@@ -337,7 +393,8 @@ class CevSimEnv(gym.Env[dict[str, np.ndarray[Any, Any]], np.ndarray[Any, Any]]):
 
         if self._viewer is None:
             self._viewer = PlanningRenderer(self.bundle, mode=self.render_mode)
-        return self._viewer.draw(self._last_observation, self._overlay_path)
+        estimate = self.localization.pose if self.localization.clone.enabled else None
+        return self._viewer.draw(self._last_observation, self._overlay_path, estimate)
 
     def _remember(self, observation: dict[str, np.ndarray[Any, Any]], info: Mapping[str, Any]) -> None:
         self._last_observation = observation

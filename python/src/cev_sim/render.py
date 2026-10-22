@@ -26,11 +26,12 @@ class PlanningRenderer:
         self,
         observation: dict[str, np.ndarray[Any, Any]] | None,
         overlay: np.ndarray[Any, Any] | None = None,
+        estimate: np.ndarray[Any, Any] | None = None,
     ) -> np.ndarray[Any, Any] | None:
         pose = _required_pose(observation)
         if self.mode == "human":
-            return self._draw_human(pose, observation, overlay)
-        return self._draw_array(pose, observation, overlay)
+            return self._draw_human(pose, observation, overlay, estimate)
+        return self._draw_array(pose, observation, overlay, estimate)
 
     def close(self) -> None:
         if self._figure is None:
@@ -46,6 +47,7 @@ class PlanningRenderer:
         pose: np.ndarray[Any, Any],
         observation: dict[str, np.ndarray[Any, Any]] | None,
         overlay: np.ndarray[Any, Any] | None,
+        estimate: np.ndarray[Any, Any] | None,
     ) -> None:
         import matplotlib.pyplot as plt
 
@@ -56,7 +58,7 @@ class PlanningRenderer:
             if manager is not None and hasattr(manager, "set_window_title"):
                 manager.set_window_title("cev-sim planner")
         self._axes.clear()
-        _paint(self._axes, self.world, pose, observation, overlay)
+        _paint(self._axes, self.world, pose, observation, overlay, estimate)
         self._figure.canvas.draw_idle()
         plt.pause(0.001)
         return None
@@ -66,6 +68,7 @@ class PlanningRenderer:
         pose: np.ndarray[Any, Any],
         observation: dict[str, np.ndarray[Any, Any]] | None,
         overlay: np.ndarray[Any, Any] | None,
+        estimate: np.ndarray[Any, Any] | None,
     ) -> np.ndarray[Any, Any]:
         from matplotlib.backends.backend_agg import FigureCanvasAgg
         from matplotlib.figure import Figure
@@ -73,7 +76,7 @@ class PlanningRenderer:
         figure = Figure(figsize=(8, 6), dpi=100)
         FigureCanvasAgg(figure)
         axes = figure.add_subplot(111)
-        _paint(axes, self.world, pose, observation, overlay)
+        _paint(axes, self.world, pose, observation, overlay, estimate)
         figure.canvas.draw()
         image = np.asarray(figure.canvas.buffer_rgba(), dtype=np.uint8)
         return np.ascontiguousarray(image[:, :, :3])
@@ -94,6 +97,7 @@ def _paint(
     pose: np.ndarray[Any, Any],
     observation: dict[str, np.ndarray[Any, Any]] | None,
     overlay: np.ndarray[Any, Any] | None,
+    estimate: np.ndarray[Any, Any] | None = None,
 ) -> None:
     route = world.route_polyline
     if len(route):
@@ -111,13 +115,29 @@ def _paint(
     _actors(axes, observation)
     _goal(axes, observation)
     _vehicle(axes, pose, world.vehicle.length_m, world.vehicle.width_m, color="#e76f51")
+    if estimate is not None:
+        _vehicle(
+            axes,
+            estimate,
+            world.vehicle.length_m,
+            world.vehicle.width_m,
+            color="#f97316",
+            alpha=0.45,
+        )
     axes.set_aspect("equal", adjustable="datalim")
     axes.set_xlabel("x (m)")
     axes.set_ylabel("z (m)")
     axes.grid(True, linewidth=0.4, alpha=0.4)
 
 
-def _vehicle(axes: Any, pose: np.ndarray[Any, Any], length: float, width: float, color: str) -> None:
+def _vehicle(
+    axes: Any,
+    pose: np.ndarray[Any, Any],
+    length: float,
+    width: float,
+    color: str,
+    alpha: float = 0.9,
+) -> None:
     from matplotlib.patches import Polygon
 
     yaw = float(pose[2])
@@ -129,7 +149,7 @@ def _vehicle(axes: Any, pose: np.ndarray[Any, Any], length: float, width: float,
         for across in (-0.5, 0.5):
             corners.append(center + along * length * forward + across * width * right)
     order = [corners[0], corners[1], corners[3], corners[2]]
-    axes.add_patch(Polygon(order, closed=True, facecolor=color, edgecolor="#1d3557", linewidth=0.8, alpha=0.9))
+    axes.add_patch(Polygon(order, closed=True, facecolor=color, edgecolor="#1d3557", linewidth=0.8, alpha=alpha))
     nose = center + 0.5 * max(length, 0.5) * forward
     axes.plot([center[0], nose[0]], [center[1], nose[1]], color="#1d3557", linewidth=1)
 

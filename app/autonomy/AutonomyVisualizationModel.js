@@ -1,4 +1,4 @@
-import { Euler, Quaternion, Vector3 } from "three";
+import { Quaternion, Vector3 } from "three";
 /**
  * Renderer-neutral primitives for candidate/oracle perception and localization overlays.
  * Capture-time metadata travels with each snapshot so replay does not need ROS re-decode.
@@ -7,6 +7,7 @@ import { Euler, Quaternion, Vector3 } from "three";
 import {
     composeRep103Poses,
     extractHeaderCaptureTimeNs,
+    quaternionToEuler,
     rep103OrientationToThreeEuler,
     rep103PoseToThree,
     rep103ToThreeVector,
@@ -469,13 +470,25 @@ export function localizationError(estimate, truth) {
         dz,
         horizontalM: Math.hypot(dx, dy),
         positionM: Math.hypot(dx, dy, dz),
-        // Yaw (the ZYX Euler angle about +Z) of the rotation from truth to estimate, in (-pi, pi].
-        headingRad: new Euler().setFromQuaternion(
-            new Quaternion().copy(truth.orientation).invert().multiply(new Quaternion().copy(estimate.orientation)),
-            "ZYX",
-        ).z,
+        // Wrapped REP-103 yaw difference, positive when the estimate is left of truth.
+        headingRad: wrapPi(quaternionToEuler(estimate.orientation || {}).z - quaternionToEuler(truth.orientation || {}).z),
         truthCaptureTimeNs: truth.captureTimeNs ?? null,
     };
+}
+
+function wrapPi(angle) {
+    const tau = Math.PI * 2;
+    return ((angle + Math.PI) % tau + tau) % tau - Math.PI;
+}
+
+export function formatPositionError(error) {
+    return error ? `${Number(error.positionM || 0).toFixed(3)} m` : "—";
+}
+
+export function formatHeadingError(error) {
+    return error && Number.isFinite(Number(error.headingRad))
+        ? `${(Number(error.headingRad) * 180 / Math.PI).toFixed(1)}°`
+        : "—";
 }
 
 /**

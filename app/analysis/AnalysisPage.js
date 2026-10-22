@@ -22,6 +22,7 @@ import {
     IconX,
 } from "@tabler/icons-react";
 import UPlotGraph from "./UPlotGraph";
+import { formatHeadingError, formatPositionError } from "../autonomy/AutonomyVisualizationModel.js";
 import { getTelemetryStore, getTelemetryTabBridge } from "../telemetry/TelemetryRuntime.js";
 import { LogDataset } from "../logging/LogDataset.js";
 import { buildAnalysisFieldRows, formatAnalysisValue, groupAnalysisFieldRows } from "./analysisFieldRows.js";
@@ -662,7 +663,9 @@ function AutonomyDiagnosticsList({ snap }) {
                     <span>EKF estimate</span>
                     <code>{snap?.localization?.estimate ? "present" : "missing"}</code>
                     <span>|err|</span>
-                    <code>{snap?.localization?.error ? `${Number(snap.localization.error.positionM || 0).toFixed(3)} m` : "—"}</code>
+                    <code>{formatPositionError(snap?.localization?.error)}</code>
+                    <span>heading</span>
+                    <code>{formatHeadingError(snap?.localization?.error)}</code>
                 </div>
             </div>
             <div className={styles.eventRow} data-testid="controls-analysis-summary">
