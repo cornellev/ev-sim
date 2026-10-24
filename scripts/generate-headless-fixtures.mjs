@@ -2,6 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { generateContactBicycleCharacterization } from "../tests/helpers/contactBicycleCharacterization.js";
 import { generateDynamicBicycleCharacterization } from "../tests/helpers/dynamicBicycleCharacterization.js";
 import { generateHeadlessCharacterization } from "../tests/helpers/headlessCharacterization.js";
 
@@ -18,5 +19,10 @@ const dynamicPath = path.join(fixtureDirectory, "characterization.dynamic-bicycl
 const dynamic = await generateDynamicBicycleCharacterization();
 await writeFile(dynamicPath, `${JSON.stringify(dynamic, null, 2)}\n`);
 
+const contactPath = path.join(fixtureDirectory, "characterization.contact-bicycle.v1.json");
+const contact = await generateContactBicycleCharacterization();
+await writeFile(contactPath, `${JSON.stringify(contact, null, 2)}\n`);
+
 process.stdout.write(`${path.relative(root, characterizationPath)}\n`);
 process.stdout.write(`${path.relative(root, dynamicPath)}\n`);
+process.stdout.write(`${path.relative(root, contactPath)}\n`);

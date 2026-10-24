@@ -1,4 +1,5 @@
 import { CandidateOutputRuntime } from "../../autonomy/CandidateOutputRuntime.js";
+import { settleContactVehicles } from "../vehicles/contactBicycle.js";
 import { ControlRuntime } from "../../autonomy/ControlRuntime.js";
 import { getBuiltInVehicleManifest } from "../../vehicles/BuiltInVehicleManifests.js";
 import { AssertionEngine } from "../AssertionEngine.js";
@@ -629,7 +630,9 @@ export class SimulationKernel {
         });
 
         phase("physics", () => {
-            if (!scenarioPreTerminal && this.modules.physics) this.context.physics.step(dt);
+            if (scenarioPreTerminal) return;
+            if (this.modules.physics) this.context.physics.step(dt);
+            if (this.modules.vehicles) settleContactVehicles(this.context.vehicles.list());
         });
 
         if (this.controlRuntime) {

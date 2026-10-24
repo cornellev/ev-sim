@@ -16,7 +16,7 @@
       "id": "acme.dynamics.cornering.bicycle",
       "abi": 1,
       "module": "plant.wasm",
-      "model": "dynamic-bicycle-v1",
+      "model": "contact-bicycle-v1",
       "parameters": [
         {
           "key": "wheelbase",

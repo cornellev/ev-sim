@@ -1,8 +1,9 @@
 import { PLUGIN_ERROR_CODES, pluginError } from "../../plugin/PluginErrors.js";
 import { PLANT_STATE_LENGTH } from "../../plugin/PlantModule.js";
 import { getBuiltInVehicleManifest } from "../../vehicles/BuiltInVehicleManifests.js";
-import { DYNAMIC_BICYCLE_MODEL, normalizeVehicleManifest } from "../../vehicles/VehicleManifest.js";
+import { CONTACT_BICYCLE_MODEL, DYNAMIC_BICYCLE_MODEL, normalizeVehicleManifest } from "../../vehicles/VehicleManifest.js";
 import { euler, finiteOr as finite, pose, vec3 } from "../../util/plainGeometry.js";
+import { stepContactPlant } from "./contactBicycle.js";
 import { deriveAxleDistances, longitudinalCommand, stepDynamicBicycle } from "./dynamicBicycle.js";
 
 export const VEHICLE_PLANT_KIND = "cev-sim.vehicle-plant";
@@ -33,14 +34,16 @@ export function createVehiclePlantDefinition(entry = {}, dependency = null, opti
     const keyframes = normalizeKeyframes(entry.keyframes ?? options.keyframes ?? []);
     const pluginPlantId = manifest.dynamics?.plant || "";
     const dynamicBicycle = manifest.dynamics?.model === DYNAMIC_BICYCLE_MODEL;
+    const contactBicycle = manifest.dynamics?.model === CONTACT_BICYCLE_MODEL;
     let motionModel = options.motionModel;
     if (!motionModel) {
         if (pluginPlantId) motionModel = "plugin";
+        else if (contactBicycle) motionModel = "contact-bicycle";
         else if (dynamicBicycle) motionModel = "dynamic-bicycle";
         else if (type === "scenario-car") motionModel = "scenario-keyframes";
         else motionModel = "bicycle";
     }
-    if (!new Set(["bicycle", "dynamic-bicycle", "scenario-keyframes", "linear", "plugin"]).has(motionModel)) {
+    if (!new Set(["bicycle", "dynamic-bicycle", "contact-bicycle", "scenario-keyframes", "linear", "plugin"]).has(motionModel)) {
         throw new TypeError(`Unknown vehicle motion model "${motionModel}".`);
     }
     if (motionModel === "plugin" && !pluginPlantId) {
@@ -48,6 +51,9 @@ export function createVehiclePlantDefinition(entry = {}, dependency = null, opti
     }
     if (motionModel === "dynamic-bicycle" && !dynamicBicycle) {
         throw new TypeError("Dynamic bicycle motion requires manifest.dynamics.model \"dynamic-bicycle-v1\".");
+    }
+    if (motionModel === "contact-bicycle" && !contactBicycle) {
+        throw new TypeError("Contact bicycle motion requires manifest.dynamics.model \"contact-bicycle-v1\".");
     }
     return {
         kind: VEHICLE_PLANT_KIND,
@@ -77,7 +83,7 @@ export function createVehiclePlantDefinition(entry = {}, dependency = null, opti
                 ...(options.plantModel ? { model: String(options.plantModel) } : {}),
             },
         } : {}),
-        ...(motionModel === "dynamic-bicycle" ? {
+        ...(motionModel === "dynamic-bicycle" || motionModel === "contact-bicycle" ? {
             dynamics: { ...manifest.dynamics },
             axle: deriveAxleDistances(manifest.wheels, manifest.kinematics?.wheelbase),
         } : {}),
@@ -96,6 +102,14 @@ function lerpAngle(left, right, alpha) {
 
 function isDynamicPlugin(plant) {
     return plant?.motionModel === "plugin" && plant.definition?.plant?.model === DYNAMIC_BICYCLE_MODEL;
+}
+
+function isContactPlugin(plant) {
+    return plant?.motionModel === "plugin" && plant.definition?.plant?.model === CONTACT_BICYCLE_MODEL;
+}
+
+function isContactMotion(plant) {
+    return plant?.motionModel === "contact-bicycle" || isContactPlugin(plant);
 }
 
 function packPlantState(plant, target) {
@@ -222,6 +236,7 @@ export class KinematicVehiclePlant {
     }
 
     drapeToGround() {
+        if (isContactMotion(this)) return;
         if (!["bicycle", "plugin", "dynamic-bicycle"].includes(this.motionModel) || typeof this.groundSampler !== "function") return;
         const hit = this.groundSampler(this.position.x, this.position.z, this.rotation.y);
         if (!hit) return;
@@ -248,9 +263,11 @@ export class KinematicVehiclePlant {
         this.steeringAngle = finite(entry.steeringAngle, this.definition.initialSteeringAngle);
         this.lateralVelocity = 0;
         this.yawRate = 0;
+        this.verticalVelocity = 0;
+        this.onRoad = false;
         this.axCommand = 0;
         this.longitudinal = { mode: "hold" };
-        if (this.motionModel === "dynamic-bicycle" || isDynamicPlugin(this)) {
+        if (this.motionModel === "dynamic-bicycle" || isDynamicPlugin(this) || isContactMotion(this)) {
             this.velocity.y = 0;
             this.velocity.z = 0;
         }
@@ -302,7 +319,8 @@ export class KinematicVehiclePlant {
         const dt = finite(deltaTime);
         if (dt < 0) throw new RangeError("Vehicle plant delta time cannot be negative.");
         const dynamicPlugin = isDynamicPlugin(this);
-        if (this.motionModel === "dynamic-bicycle" || dynamicPlugin) {
+        const contactPlugin = isContactPlugin(this);
+        if (this.motionModel === "dynamic-bicycle" || dynamicPlugin || this.motionModel === "contact-bicycle" || contactPlugin) {
             this.axCommand = longitudinalCommand({
                 mode: this.longitudinal?.mode || "hold",
                 speedMps: this.longitudinal?.speedMps,
@@ -314,6 +332,10 @@ export class KinematicVehiclePlant {
                 maxDeceleration: finite(this.kinematics.maxDeceleration, 5),
                 maxJerk: finite(this.kinematics.maxJerk, 10),
             });
+        }
+        if (this.motionModel === "contact-bicycle" || contactPlugin) {
+            stepContactPlant(this, dt);
+            return;
         }
         if (this.motionModel === "dynamic-bicycle") {
             const axle = this.definition.axle ?? deriveAxleDistances([], this.kinematics.wheelbase);
@@ -424,10 +446,11 @@ export class KinematicVehiclePlant {
             velocity: vec3(this.velocity),
             acceleration: vec3(this.acceleration),
             steeringAngle: finite(this.steeringAngle),
-            ...(this.motionModel === "dynamic-bicycle" || isDynamicPlugin(this) ? {
+            ...(this.motionModel === "dynamic-bicycle" || isDynamicPlugin(this) || isContactMotion(this) ? {
                 lateralVelocity: finite(this.lateralVelocity),
                 yawRate: finite(this.yawRate),
             } : {}),
+            ...(isContactMotion(this) ? { verticalVelocity: finite(this.verticalVelocity) } : {}),
         };
     }
 }

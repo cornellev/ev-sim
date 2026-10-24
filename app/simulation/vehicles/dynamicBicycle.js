@@ -1,3 +1,4 @@
+import { PLANT_CONTACT_BICYCLE_MODEL } from "../../plugin/PlantModule.js";
 import { DEFAULT_DYNAMIC_BICYCLE, DYNAMIC_BICYCLE_MODEL } from "../../vehicles/VehicleManifest.js";
 
 export const GRAVITY = 9.81;
@@ -191,11 +192,15 @@ export function projectPlanarVelocity(vx, vy, yaw, from = {}, to = {}) {
 }
 
 /** The dynamic body, either the built-in plant or a plugin that copies it. */
+function isPlantModel(vehicle, model) {
+    return vehicle?.motionModel === "plugin" && vehicle.definition?.plant?.model === model;
+}
+
 export function dynamicBicycleBody(vehicle) {
-    if (vehicle?.motionModel === "dynamic-bicycle") return vehicle;
-    if (vehicle?.plant?.motionModel === "dynamic-bicycle") return vehicle.plant;
-    if (vehicle?.motionModel === "plugin" && vehicle.definition?.plant?.model === DYNAMIC_BICYCLE_MODEL) return vehicle;
-    if (vehicle?.plant?.motionModel === "plugin" && vehicle.plant.definition?.plant?.model === DYNAMIC_BICYCLE_MODEL) {
+    if (vehicle?.motionModel === "dynamic-bicycle" || vehicle?.motionModel === "contact-bicycle") return vehicle;
+    if (vehicle?.plant?.motionModel === "dynamic-bicycle" || vehicle?.plant?.motionModel === "contact-bicycle") return vehicle.plant;
+    if (isPlantModel(vehicle, DYNAMIC_BICYCLE_MODEL) || isPlantModel(vehicle, PLANT_CONTACT_BICYCLE_MODEL)) return vehicle;
+    if (isPlantModel(vehicle?.plant, DYNAMIC_BICYCLE_MODEL) || isPlantModel(vehicle?.plant, PLANT_CONTACT_BICYCLE_MODEL)) {
         return vehicle.plant;
     }
     return null;
@@ -221,6 +226,11 @@ export function absorbDynamicClamp(vehicle, clamped, from, attempted) {
         plant.velocity.z = 0;
     }
     plant.lateralVelocity = projected.vy;
+    if ((plant.motionModel === "contact-bicycle" || plant.definition?.plant?.model === PLANT_CONTACT_BICYCLE_MODEL)
+        && num(clamped.y) > num(attempted.y) + 1e-9
+        && plant.verticalVelocity < 0) {
+        plant.verticalVelocity = 0;
+    }
     if (vehicle !== plant && vehicle.velocity) {
         if (typeof vehicle.velocity.set === "function") vehicle.velocity.set(projected.vx, 0, 0);
         else {

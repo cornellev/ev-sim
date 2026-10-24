@@ -78,6 +78,25 @@ function roadSegmentTangent(point, projection, graph) {
     };
 }
 
+/** Unit road normal for a ribbon with no banking. +Y is up. */
+export function ribbonNormal(dx, dy, dz) {
+    const lateral = Math.hypot(dx, dz);
+    if (lateral <= EPSILON) return { x: 0, y: 1, z: 0 };
+    const rx = -dz / lateral;
+    const rz = dx / lateral;
+    let nx = -rz * dy;
+    let ny = rz * dx - rx * dz;
+    let nz = rx * dy;
+    const length = Math.hypot(nx, ny, nz);
+    if (length <= EPSILON) return { x: 0, y: 1, z: 0 };
+    if (ny < 0) {
+        nx = -nx;
+        ny = -ny;
+        nz = -nz;
+    }
+    return { x: nx / length, y: ny / length, z: nz / length };
+}
+
 function pitchFromSurfaceNormal(normal, yaw) {
     const ny = finiteNumber(normal?.y, 0);
     if (Math.abs(ny) <= EPSILON) return 0;
@@ -103,11 +122,17 @@ export function sampleRoadGround(position, graph, yaw = 0) {
     if (!projection) return null;
 
     if (projection.kind === "intersection") {
+        const normal = projection.surfaceNormal
+            ? {
+                x: finiteNumber(projection.surfaceNormal.x, 0),
+                y: finiteNumber(projection.surfaceNormal.y, 1),
+                z: finiteNumber(projection.surfaceNormal.z, 0),
+            }
+            : { x: 0, y: 1, z: 0 };
         return {
             y: finiteNumber(projection.y, 0),
-            pitch: projection.surfaceNormal
-                ? pitchFromSurfaceNormal(projection.surfaceNormal, yaw)
-                : 0,
+            pitch: projection.surfaceNormal ? pitchFromSurfaceNormal(normal, yaw) : 0,
+            normal,
             kind: "intersection",
             edgeId: null,
             nodeId: projection.nodeId ?? null,
@@ -118,6 +143,7 @@ export function sampleRoadGround(position, graph, yaw = 0) {
     return {
         y: finiteNumber(projection.y, finiteNumber(projection.point?.y, 0)),
         pitch: pitchFromTangent(tangent.dx, tangent.dy, tangent.dz, yaw),
+        normal: ribbonNormal(tangent.dx, tangent.dy, tangent.dz),
         kind: "road",
         edgeId: projection.edgeId ?? null,
         nodeId: null,

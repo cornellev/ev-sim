@@ -44,7 +44,7 @@ test("VEH-06c accepts a symmetric cylinder car and keeps sensors on the existing
     assert.equal(created.version, 3);
     assert.equal(created.name, "Imported");
     assert.equal(created.model.asset, accepted.patch.model.asset);
-    assert.equal(created.dynamics.model, "dynamic-bicycle-v1");
+    assert.equal(created.dynamics.model, "contact-bicycle-v1");
     assert.equal(created.dynamics.mass, 1500);
 });
 

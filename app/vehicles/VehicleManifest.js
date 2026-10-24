@@ -5,7 +5,7 @@ import {
     sensorTypeRegistry,
     validateVehicleSensorDefinition,
 } from "../simulation/sensors/SensorTypeRegistry.js";
-import { PLANT_DYNAMIC_BICYCLE_MODEL } from "../plugin/PlantModule.js";
+import { PLANT_CONTACT_BICYCLE_MODEL, PLANT_DYNAMIC_BICYCLE_MODEL } from "../plugin/PlantModule.js";
 import {
     collectVehiclePluginLockIssues,
     reconcileVehiclePluginLocks,
@@ -54,6 +54,7 @@ export const DEFAULT_ACTUATOR_LIMITS = Object.freeze({
 
 export const KINEMATIC_BICYCLE_MODEL = "kinematic-bicycle-v1";
 export const DYNAMIC_BICYCLE_MODEL = PLANT_DYNAMIC_BICYCLE_MODEL;
+export const CONTACT_BICYCLE_MODEL = PLANT_CONTACT_BICYCLE_MODEL;
 
 /** Defaults for `dynamic-bicycle-v1`. `lf`/`lr` are derived, not stored. */
 export const DEFAULT_DYNAMIC_BICYCLE = Object.freeze({
@@ -65,7 +66,8 @@ export const DEFAULT_DYNAMIC_BICYCLE = Object.freeze({
     rollingResistance: 0.015,
 });
 
-const VEHICLE_MOTION_MODELS = new Set([KINEMATIC_BICYCLE_MODEL, DYNAMIC_BICYCLE_MODEL]);
+const VEHICLE_MOTION_MODELS = new Set([KINEMATIC_BICYCLE_MODEL, DYNAMIC_BICYCLE_MODEL, CONTACT_BICYCLE_MODEL]);
+const PHYSICAL_BICYCLE_MODELS = new Set([DYNAMIC_BICYCLE_MODEL, CONTACT_BICYCLE_MODEL]);
 const DYNAMIC_BICYCLE_FIELDS = Object.freeze([
     ["mass", false],
     ["yawInertia", false],
@@ -97,17 +99,17 @@ function normalizeVehicleDynamics(value) {
     if (model && !VEHICLE_MOTION_MODELS.has(model)) {
         throw new Error(`vehicle manifest.dynamics.model "${model}" is not a known motion model.`);
     }
-    const dynamic = model === DYNAMIC_BICYCLE_MODEL;
+    const dynamic = PHYSICAL_BICYCLE_MODELS.has(model);
     if (DYNAMIC_BICYCLE_FIELDS.some(([key]) => source[key] !== undefined) && !dynamic) {
-        throw new Error("vehicle manifest.dynamics physical fields require model \"dynamic-bicycle-v1\".");
+        throw new Error("vehicle manifest.dynamics physical fields require model \"dynamic-bicycle-v1\" or \"contact-bicycle-v1\".");
     }
     if (plant && dynamic) {
-        throw new Error("vehicle manifest.dynamics.plant cannot be combined with model \"dynamic-bicycle-v1\".");
+        throw new Error(`vehicle manifest.dynamics.plant cannot be combined with model "${model}".`);
     }
     if (plant) return { plant };
     if (!dynamic) return undefined;
     return {
-        model: DYNAMIC_BICYCLE_MODEL,
+        model,
         ...Object.fromEntries(DYNAMIC_BICYCLE_FIELDS.map(([key, nonNegative]) => [
             key,
             dynamicsNumber(source, key, DEFAULT_DYNAMIC_BICYCLE[key], nonNegative),

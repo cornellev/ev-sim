@@ -2,6 +2,7 @@ import { PLUGIN_ERROR_CODES, pluginError } from "./PluginErrors.js";
 
 export const PLANT_ABI_VERSION = 1;
 export const PLANT_DYNAMIC_BICYCLE_MODEL = "dynamic-bicycle-v1";
+export const PLANT_CONTACT_BICYCLE_MODEL = "contact-bicycle-v1";
 export const PLANT_STATE_LENGTH = 13;
 export const PLANT_BUFFER_LENGTH = 45;
 export const PLANT_MODULE_MAX_BYTES = 4 * 1024 * 1024;

@@ -179,7 +179,9 @@ State layout `cev-sim.plant-state@1`, Three.js frame:
 | 9..11 | acceleration |
 | 12 | steering, radians, already written by controls |
 
-Optional `model` is omitted or `dynamic-bicycle-v1`. Omitted plants keep the layout above. `dynamic-bicycle-v1` uses the same 13 floats for the built-in dynamic bicycle: `velocity[1]` is right-positive lateral speed, `velocity[2]` is yaw rate, and `acceleration[0]` is the speed-loop `ax_cmd` on the way in and body `ax` on the way out. `acceleration[1]` comes back as body `ay`. The host still drapes pitch into `rotation[2]` after the step, and it clears Three.js `velocity.y` and `velocity.z` so lateral speed is not height rate. Parameters carry the built-in defaults (`mass` 1500, `yawInertia` 2250, `corneringStiffnessFront` and `corneringStiffnessRear` 80000, `frictionMu` 0.9, `rollingResistance` 0.015) plus wheelbase and maximum steer. `lf` and `lr` are half that wheelbase inside the crate. A plugin plant still cannot be combined with vehicle `dynamics.model`.
+Optional `model` is omitted, `dynamic-bicycle-v1`, or `contact-bicycle-v1`. Omitted plants keep the layout above. `dynamic-bicycle-v1` uses the same 13 floats for the built-in dynamic bicycle: `velocity[1]` is right-positive lateral speed, `velocity[2]` is yaw rate, and `acceleration[0]` is the speed-loop `ax_cmd` on the way in and body `ax` on the way out. `acceleration[1]` comes back as body `ay`. The host still drapes pitch into `rotation[2]` after the step, and it clears Three.js `velocity.y` and `velocity.z` so lateral speed is not height rate. Parameters carry the built-in defaults (`mass` 1500, `yawInertia` 2250, `corneringStiffnessFront` and `corneringStiffnessRear` 80000, `frictionMu` 0.9, `rollingResistance` 0.015) plus wheelbase and maximum steer. `lf` and `lr` are half that wheelbase inside the crate. A plugin plant still cannot be combined with vehicle `dynamics.model`.
+
+`contact-bicycle-v1` reuses those 13 floats for axle forces. On the way in, `velocity[0..2]` are `vx`, right-positive `vy`, and yaw rate. `acceleration[0]` is `ax_cmd`, `acceleration[1]` is `1` on the road and `0` in the air, and `acceleration[2]` is normal load in newtons. `rotation.x` and `rotation.z` are downhill pull in the car frame, in m/s², and `rotation.y` stays yaw. On the way out, `velocity[0]` and `velocity[1]` are the front axle force forward and sideways, and `acceleration[0]` and `acceleration[1]` are the rear axle force. The host ignores the plugin position and yaw, applies the forces at the axles, and adds gravity itself. Drive force is zero in the air.
 
 After a successful step the host drapes the vehicle onto the road: it overwrites `y`, `rotation.x`, and `rotation.z`. Physics may still clamp position. A nonzero return or a non-finite output is `PLUGIN_EXECUTION` with `requiresReset`. The kernel does not fall back to the built-in bicycle. A fresh WebAssembly instance is created on reset so hidden module state does not survive.
 
@@ -196,7 +198,7 @@ node --experimental-default-type=module scripts/create-cev-plugin.mjs \
   --id acme.dynamics --kind plant --out plugins/acme.dynamics --no-verify
 ```
 
-`--model dynamic-bicycle` emits the built-in dynamic bicycle instead of the kinematic plant. The committed copies are `examples/plugins/acme.dynamics.longitudinal`, `examples/plugins/acme.dynamics.cornering`, and `examples/plugins/acme.dynamics.bicycle`.
+`--model dynamic-bicycle` emits the integrating bicycle. `--model contact-bicycle` emits axle forces for the host body. The committed copies are `examples/plugins/acme.dynamics.longitudinal`, `examples/plugins/acme.dynamics.cornering`, and `examples/plugins/acme.dynamics.bicycle`.
 
 The committed bicycle fixture is `tests/fixtures/plugins/test.plant-fixture/`. `npm run fixtures:plant` rewrites it from the deterministic encoder so CI does not need Rust. `CEV_PLANT_CARGO=1` opts into a real `cargo` verify when the `wasm32-unknown-unknown` target is installed.
 

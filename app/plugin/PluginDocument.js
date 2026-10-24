@@ -9,6 +9,7 @@ import { PLUGIN_ERROR_CODES, pluginError } from "./PluginErrors.js";
 import { normalizePluginSensorDescriptor } from "./PluginSensorContract.js";
 import {
     PLANT_ABI_VERSION,
+    PLANT_CONTACT_BICYCLE_MODEL,
     PLANT_DYNAMIC_BICYCLE_MODEL,
     PLANT_PARAMETER_SOURCES,
     PLANT_STEP_CAPABILITY,
@@ -174,8 +175,8 @@ function normalizePlant(value, pluginId, path) {
     const plant = { id, abi: PLANT_ABI_VERSION, module: modulePath, parameters };
     if (source.model !== undefined) {
         const model = text(source.model, `${path}.model`);
-        if (model !== PLANT_DYNAMIC_BICYCLE_MODEL) {
-            throw new Error(`${path}.model must be "${PLANT_DYNAMIC_BICYCLE_MODEL}".`);
+        if (model !== PLANT_DYNAMIC_BICYCLE_MODEL && model !== PLANT_CONTACT_BICYCLE_MODEL) {
+            throw new Error(`${path}.model must be "${PLANT_DYNAMIC_BICYCLE_MODEL}" or "${PLANT_CONTACT_BICYCLE_MODEL}".`);
         }
         plant.model = model;
     }

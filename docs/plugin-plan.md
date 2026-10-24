@@ -602,7 +602,7 @@ evidence obligations and is not a headless PR 13.
 
 ### PLG-09 — Dynamic bicycle plant packages
 
-A plant may set optional `model` to `dynamic-bicycle-v1`. Omitted `model` stays the kinematic ABI, so existing package hashes stay put. The host then packs lateral speed and yaw rate, writes the existing speed loop into `ax_cmd`, projects a shortened obstacle step, and lets IMU and wheel odometry read that body. The JavaScript plant remains the built-in model. Three standalone crates copy it in stages: grade and rolling, then linear axle forces, then the friction circle. `lf` and `lr` are half the wheelbase. `tests/fixtures/plugins/test.plant-fixture` stays the kinematic pin.
+A plant may set optional `model` to `dynamic-bicycle-v1`. Omitted `model` stays the kinematic ABI, so existing package hashes stay put. The host then packs lateral speed and yaw rate, writes the existing speed loop into `ax_cmd`, projects a shortened obstacle step, and lets IMU and wheel odometry read that body. The JavaScript plant remains the built-in model. Three standalone crates copy it in stages: grade and rolling, then linear axle forces, then the friction circle. `lf` and `lr` are half the wheelbase. `tests/fixtures/plugins/test.plant-fixture` stays the kinematic pin. `contact-bicycle-v1` is an additional plant model on the same ABI. Those three crates now emit axle forces for it. Omitted `model` and `dynamic-bicycle-v1` keep integrate-and-drape.
 
 ## PLG-01 evidence ledger
 
@@ -763,6 +763,7 @@ change the outstanding PR-12 hosted, soak, NVIDIA x64, or Jetson ARM64 gates.
 
 ## Decision log
 
+- **2026-10-23 — Contact bicycle plant.** `contact-bicycle-v1` is an additional ABI 1 plant model. The host integrates axle forces and gravity. The three dynamics examples emit those forces. Omitted `model` and `dynamic-bicycle-v1` stay integrate-and-drape.
 - **2026-10-20 — PLG-09 dynamic bicycle packages.** Optional plant `model`
   `dynamic-bicycle-v1` reuses ABI 1 for the built-in dynamic bicycle. The host
   feeds `ax_cmd`, lateral speed, and yaw rate, and sensors read them. The

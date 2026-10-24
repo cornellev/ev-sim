@@ -162,7 +162,8 @@ enable Rapier gravity on the vehicle.
 | Id | Meaning |
 | --- | --- |
 | `kinematic-bicycle-v1` | Current built-in bicycle. Omitted `dynamics` normalizes to this. |
-| `dynamic-bicycle-v1` | This plant. Manifest physical fields are filled from the defaults above. |
+| `dynamic-bicycle-v1` | This plant. Manifest physical fields are filled from the defaults above. The plant integrates and the host drapes height and pitch. |
+| `contact-bicycle-v1` | Tire forces at the two axles. The host adds gravity, integrates the body, and lifts the car only after it has gone through the pavement. |
 
 These ids are vehicle-manifest model ids. They are not `backendSelections`
 entries, and this program does not add a protobuf backend kind. A dynamic
@@ -172,14 +173,15 @@ projection. An explicit `kinematic-bicycle-v1` hashes the same as omitted
 dynamics. `VEHICLE_PLANT_VERSION` stays 1. `PHYSICS_BACKEND_CONFIG` stays as
 it is.
 
-`dynamics.plant` and `dynamics.model: "dynamic-bicycle-v1"` cannot both be
-set. A plugin plant replaces the built-in model. The built-in model is not
-implemented as a plugin.
+`dynamics.plant` cannot be combined with `dynamic-bicycle-v1` or
+`contact-bicycle-v1`. A plugin plant replaces the built-in model. The built-in
+model is not implemented as a plugin.
 
-New editor vehicles and URDF imports use `dynamic-bicycle`.
+New editor vehicles and URDF imports use `contact-bicycle-v1`.
 `createBlankVehicleManifest()`, built-in vehicles, existing documents, received
-bundles, and `characterization.v1.json` stay on the kinematic bicycle. PHY-03
-adds a second characterization tape and does not overwrite the first.
+bundles, and `characterization.v1.json` stay on the kinematic bicycle.
+`characterization.dynamic-bicycle.v1.json` stays the draped dynamic plant.
+`characterization.contact-bicycle.v1.json` records the contact plant.
 
 ## Locked decisions
 
@@ -218,6 +220,10 @@ PHY-03 runs browser/headless plant parity at the existing `1e-9` tolerance and
 writes a second characterization tape.
 
 ## Progress and decision log
+
+### 2026-10-23 — Contact bicycle
+
+`contact-bicycle-v1` returns per-axle forces in the car frame. The host adds gravity, integrates `vx`, right-positive `vy`, yaw rate, pose, and vertical speed, then lifts the car only if the obstacle sweep left it through the pavement. Pitch follows the road ribbon. Roll stays 0. Off pavement the car keeps falling. Drive force is off in the air. `dynamic-bicycle-v1`, both older characterization tapes, and `VEHICLE_PLANT_VERSION` stay as they were. New editor vehicles and URDF imports use the contact model. The three `acme.dynamics` crates emit the same axle forces.
 
 ### 2026-10-20 — Plugin copy of the dynamic bicycle
 

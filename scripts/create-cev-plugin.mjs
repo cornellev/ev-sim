@@ -46,8 +46,8 @@ export function parseCreatePluginArgs(argv = process.argv.slice(2)) {
     const kind = values.kind || "unit";
     if (kind !== "unit" && kind !== "plant") throw new Error("--kind must be unit or plant.");
     if (values.model && kind !== "plant") throw new Error("--model is only valid for --kind plant.");
-    if (values.model && values.model !== "dynamic-bicycle") {
-        throw new Error("--model must be dynamic-bicycle.");
+    if (values.model && values.model !== "dynamic-bicycle" && values.model !== "contact-bicycle") {
+        throw new Error("--model must be dynamic-bicycle or contact-bicycle.");
     }
     return {
         id: values.id,
@@ -95,8 +95,9 @@ export function scaffoldPlantFiles({
     simulatorVersion = PACKAGE_JSON.version,
     model,
 } = {}) {
-    const dynamicBicycle = model === "dynamic-bicycle";
-    if (model && !dynamicBicycle) throw new Error("--model must be dynamic-bicycle.");
+    const contactBicycle = model === "contact-bicycle";
+    const dynamicBicycle = model === "dynamic-bicycle" || contactBicycle;
+    if (model && !dynamicBicycle) throw new Error("--model must be dynamic-bicycle or contact-bicycle.");
     const pluginId = assertPluginScaffoldId(id);
     const plantId = `${pluginId}.bicycle`;
     const crate = crateName(pluginId);
@@ -113,7 +114,8 @@ export function scaffoldPlantFiles({
             id: plantId,
             abi: 1,
             module: "plant.wasm",
-            ...(dynamicBicycle ? { model: "dynamic-bicycle-v1" } : {}),
+            ...(contactBicycle ? { model: "contact-bicycle-v1" } : {}),
+            ...(model === "dynamic-bicycle" ? { model: "dynamic-bicycle-v1" } : {}),
             parameters: dynamicBicycle ? DYNAMIC_BICYCLE_PARAMETERS : [
                 { key: "wheelbase", source: "kinematics.wheelbase" },
                 { key: "maxSteeringAngle", source: "kinematics.maxSteeringAngle" },
@@ -152,9 +154,11 @@ pub fn step(state: &mut PlantState, params: &[f64], dt: f64) -> i32 {
     0
 }
 `;
-    const plantLib = dynamicBicycle
+    const plantLib = contactBicycle
         ? readFileSync(path.join(REPO_ROOT, "examples/plugins/acme.dynamics.bicycle/src/lib.rs"), "utf8")
-        : lib;
+        : model === "dynamic-bicycle"
+            ? readFileSync(path.join(REPO_ROOT, "scripts/templates/dynamic-bicycle.lib.rs"), "utf8")
+            : lib;
     const abi = `use crate::{step, PlantState};
 
 const STATE_LEN: usize = 13;
@@ -450,7 +454,8 @@ Options:
   --name        Catalog display name
   --category    Catalog category (default: math)
   --kind        unit (default) or plant
-  --model       Plant model. dynamic-bicycle emits the built-in dynamic bicycle
+  --model       Plant model. dynamic-bicycle emits the integrating bicycle.
+                contact-bicycle emits axle forces for the host body.
   --with-ui     Include a UI entry and generic SettingsForm view (default)
   --no-ui       Runtime-only package
   --verify      Load the package after writing (default)

@@ -16,7 +16,7 @@ import {
 } from "../app/simulation/vehicles/KinematicVehiclePlant.js";
 import { buildLocalPlantPackage } from "../server/plugins/plantBuild.js";
 import { getBuiltInVehicleManifest } from "../app/vehicles/BuiltInVehicleManifests.js";
-import { DYNAMIC_BICYCLE_MODEL } from "../app/vehicles/VehicleManifest.js";
+import { CONTACT_BICYCLE_MODEL, DYNAMIC_BICYCLE_MODEL } from "../app/vehicles/VehicleManifest.js";
 
 const wasm32 = spawnSync("rustup", ["target", "list", "--installed"], { encoding: "utf8" });
 const cargoReady = wasm32.status === 0 && wasm32.stdout.includes("wasm32-unknown-unknown");
@@ -124,10 +124,10 @@ function runTape(plugin, javascript) {
     assert.equal(plugin.velocity.z, 0);
 }
 
-test("dynamic plant packages declare the model and the kinematic fixture does not", async () => {
+test("contact plant packages declare the model and the kinematic fixture does not", async () => {
     for (const id of ["longitudinal", "cornering", "bicycle"]) {
         const document = JSON.parse(await fs.readFile(`examples/plugins/acme.dynamics.${id}/plugin.json`, "utf8"));
-        assert.equal(assertPluginDocument(document).plants[0].model, DYNAMIC_BICYCLE_MODEL);
+        assert.equal(assertPluginDocument(document).plants[0].model, CONTACT_BICYCLE_MODEL);
     }
     const fixture = JSON.parse(await fs.readFile("tests/fixtures/plugins/test.plant-fixture/plugin.json", "utf8"));
     assert.equal(assertPluginDocument(fixture).plants[0].model, undefined);
@@ -146,7 +146,7 @@ test("a dynamic plugin host matches the built-in plant, imu, and obstacle clamp"
     runTape(plugin, javascript);
 });
 
-test("the compiled dynamic bicycle package matches the built-in plant", {
+test("the compiled contact bicycle package matches the built-in plant", {
     skip: process.env.CEV_PLANT_CARGO !== "1" || !cargoReady,
 }, async (t) => {
     const directory = path.resolve("examples/plugins/acme.dynamics.bicycle");
@@ -175,7 +175,7 @@ test("the compiled dynamic bicycle package matches the built-in plant", {
         resolvedVehicles: [{ actorId: entry.id, vehicleId: entry.type, manifest: pluginManifest }],
     });
     const javascript = new KinematicVehiclePlant(createVehiclePlantDefinition(entry, {
-        manifest: manifest({ model: DYNAMIC_BICYCLE_MODEL }),
+        manifest: manifest({ model: CONTACT_BICYCLE_MODEL }),
     }));
     runTape(headless.vehicles[0], javascript);
 });

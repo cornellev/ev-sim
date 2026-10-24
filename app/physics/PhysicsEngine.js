@@ -1,4 +1,5 @@
 import { assertPhysicsBackendSelection, PHYSICS_BACKEND_CONFIG } from "./PhysicsBackend.js";
+import { contactBicycleBody } from "../simulation/vehicles/contactBicycle.js";
 import { absorbDynamicClamp, dynamicBicycleBody } from "../simulation/vehicles/dynamicBicycle.js";
 import { worldSweepMesh } from "../simulation/world/RigidBodyRecords.js";
 import { compareUtf8 } from "../simulation/world/WorldDescription.js";
@@ -706,7 +707,7 @@ export class PhysicsEngine {
             this._queueRigidBodyPush(state, candidate, deltaTime, hits, impact);
             this._separateOverlaps(overlaps);
             const plane = this.preparedWorldDescription?.groundPlane;
-            if (plane && Number.isFinite(Number(plane.y))) {
+            if (plane && Number.isFinite(Number(plane.y)) && !contactBicycleBody(state.vehicle)) {
                 const current = vector(state.vehicle.position);
                 const supported = supportPlanePosition(state.previous, current, Number(plane.y));
                 if (supported.held) {

@@ -58,6 +58,8 @@ test("v1 ramp samples interpolated y and heading-aligned pitch", () => {
     assert.ok(Math.abs(mid.y - 2.5) <= 1e-9, `expected y 2.5, got ${mid.y}`);
     const expectedPitch = Math.atan2(5, 10);
     assert.ok(Math.abs(mid.pitch - expectedPitch) <= 1e-9);
+    assert.ok(mid.normal.y > 0.8);
+    assert.ok(mid.normal.x < 0, "the ribbon normal tilts back against the climb");
     const downhill = sampleRoadGround({ x: 5, z: 0 }, graph, Math.PI);
     assert.ok(Math.abs(downhill.pitch + expectedPitch) <= 1e-9);
 });
@@ -66,6 +68,7 @@ test("flat paved edge reports y 0 and pitch 0", () => {
     const graph = buildDirectedRoadGraph(v1Flat());
     const hit = sampleRoadGround({ x: 4, z: 0 }, graph, 0);
     assert.deepEqual({ y: hit.y, pitch: hit.pitch, kind: hit.kind }, { y: 0, pitch: 0, kind: "road" });
+    assert.ok(Math.abs(hit.normal.x) <= 1e-9 && Math.abs(hit.normal.y - 1) <= 1e-9 && Math.abs(hit.normal.z) <= 1e-9);
 });
 
 test("off-paved XZ returns null", () => {

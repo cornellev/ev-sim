@@ -169,7 +169,7 @@ export function captureVehicleSnapshot(vehicle, captureTimeNs, previous = null, 
         bodyAcceleration = {
             x: Number(dynamic.acceleration?.x || 0),
             y: -Number(dynamic.acceleration?.y || 0),
-            z: 0,
+            z: Number(dynamic.acceleration?.z || 0),
         };
     } else if (captureDt > 0) {
         bodyAcceleration = {

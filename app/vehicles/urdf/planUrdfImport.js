@@ -6,7 +6,7 @@
 import { canonicalFiniteNumber } from "../../simulation/kernel/SimulationHashes.js";
 import { reviewModelWheelPair } from "../axle/reviewModelWheels.js";
 import { withinPairTolerance } from "../axle/standardAxle.js";
-import { createBlankVehicleManifest, DYNAMIC_BICYCLE_MODEL, normalizeVehicleManifest } from "../VehicleManifest.js";
+import { CONTACT_BICYCLE_MODEL, createBlankVehicleManifest, normalizeVehicleManifest } from "../VehicleManifest.js";
 import { bakeUrdfGeometry } from "./bakeUrdfGeometry.js";
 import { urdfIssue } from "./issue.js";
 import { parseUrdfRobot } from "./parseUrdfRobot.js";
@@ -345,6 +345,6 @@ export function manifestFromUrdfImport(plan, accepted, { id, name } = {}) {
             ...(patch.wheelbase !== undefined ? { wheelbase: patch.wheelbase } : {}),
             ...(patch.maxSteeringAngle !== undefined ? { maxSteeringAngle: patch.maxSteeringAngle } : {}),
         },
-        dynamics: { model: DYNAMIC_BICYCLE_MODEL },
+        dynamics: { model: CONTACT_BICYCLE_MODEL },
     });
 }

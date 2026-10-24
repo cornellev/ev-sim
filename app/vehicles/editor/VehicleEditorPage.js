@@ -13,7 +13,7 @@ import { deriveCompleteWheelbase } from "../axle/standardAxle.js";
 import {
     createBlankVehicleManifest,
     deriveWheelbase,
-    DYNAMIC_BICYCLE_MODEL,
+    CONTACT_BICYCLE_MODEL,
     isValidVehicleId,
     resolveVehicleModelUrl,
 } from "../VehicleManifest.js";
@@ -743,7 +743,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                 createBlankVehicleManifest({
                     id,
                     name: baseName,
-                    dynamics: { model: DYNAMIC_BICYCLE_MODEL },
+                    dynamics: { model: CONTACT_BICYCLE_MODEL },
                 }),
                 { operationId: createVehicleOperationId() },
             );
