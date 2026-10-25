@@ -1703,7 +1703,7 @@ function WheelsTab({
         try {
         if (!value) {
             const currentPlant = draft.dynamics?.plant;
-            delete next.dynamics;
+            next.dynamics = { model: CONTACT_BICYCLE_MODEL };
             next.pluginLocks = (next.pluginLocks ?? []).flatMap((lock) => {
                 const plants = (lock.plants ?? []).filter((plantId) => plantId !== currentPlant);
                 const record = { ...lock };
@@ -1847,7 +1847,7 @@ function WheelsTab({
             <Section title="Dynamics">
                 <Field label="Plant">
                     <select aria-label="Dynamics" value={dynamicsValue} onChange={(event) => selectDynamics(event.target.value)}>
-                        <option value="">Built-in bicycle</option>
+                        <option value="">Built-in contact bicycle</option>
                         {plantCatalog.map((plant) => (
                             <option key={`${plant.packageHash}:${plant.id}`} value={`${plant.packageHash}:${plant.id}`}>{plant.id}</option>
                         ))}

@@ -6,9 +6,11 @@ import { applyManualDrive } from "../app/3d/vehicles/VehiclePlantAdapter.js";
 import { normalizeRunSensor } from "../app/simulation/sensors/SensorTypeRegistry.js";
 import {
     axleContactForces,
+    catchContactFloor,
     settleContactBody,
     tangentialGrade,
 } from "../app/simulation/vehicles/contactBicycle.js";
+import { supportPlanePosition } from "../app/physics/PhysicsEngine.js";
 import {
     createVehiclePlantDefinition,
     KinematicVehiclePlant,
@@ -250,6 +252,50 @@ test("a contact plugin force stepper matches the built-in plant", () => {
     assert.ok(Math.abs(plugin.yawRate - javascript.yawRate) < 1e-9);
     assert.ok(Math.abs(plugin.verticalVelocity - javascript.verticalVelocity) < 1e-9);
     assert.ok(plugin.position.x > 0.5);
+});
+
+test("the checker floor lifts a contact car and the next step can drive", () => {
+    const body = plant({}, { position: { y: -0.2 } });
+    body.verticalVelocity = -2;
+    body.setGroundSampler(() => null);
+    const supported = supportPlanePosition({ x: 0, y: 1, z: 0 }, body.position, 0);
+    assert.equal(supported.held, true);
+    catchContactFloor(body, 0, supported.held);
+    assert.equal(body.position.y, 0);
+    assert.equal(body.verticalVelocity, 0);
+    applyManualDrive(body, { mode: "acceleration", accelerationX: 2 });
+    body.update(DT);
+    assert.ok(body.velocity.x > 0, `vx ${body.velocity.x}`);
+    assert.ok(body.position.y >= -1e-6);
+});
+
+test("a contact car above the checker is not pulled down", () => {
+    const body = plant({}, { position: { y: 2 } });
+    body.floorSupport = { y: 0, normal: { x: 0, y: 1, z: 0 } };
+    const supported = supportPlanePosition({ x: 0, y: 2, z: 0 }, body.position, 0);
+    assert.equal(supported.held, false);
+    catchContactFloor(body, 0, supported.held);
+    assert.equal(body.floorSupport, null);
+    body.setGroundSampler(() => null);
+    body.update(DT);
+    assert.ok(body.position.y < 2);
+    assert.ok(body.position.y > 1);
+});
+
+test("a road sample beats the checker floor", () => {
+    const body = plant();
+    body.floorSupport = { y: 0, normal: { x: 0, y: 1, z: 0 } };
+    body.setGroundSampler(gradeRoad(0.1));
+    body.update(DT);
+    assert.ok(Math.abs(body.rotation.z - 0.1) < 1e-9);
+});
+
+test("no floor and no road keeps falling", () => {
+    const body = plant({}, { position: { y: 1 } });
+    body.setGroundSampler(() => null);
+    body.update(DT);
+    assert.ok(body.position.y < 1);
+    assert.equal(body.floorSupport ?? null, null);
 });
 
 test("drive force stays off while the car is in the air", () => {

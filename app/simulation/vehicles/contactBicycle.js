@@ -222,13 +222,38 @@ function readForces(plant, dt, inContact, grade, normalLoad, delta) {
     return { Fxf: next[6], Fyf: next[7], Fxr: next[9], Fyr: next[10] };
 }
 
+/** The checker floor held this car. The next step drives on it when no road is underneath. */
+export function catchContactFloor(plant, planeY, held) {
+    if (!plant) return;
+    if (!held) {
+        plant.floorSupport = null;
+        return;
+    }
+    const y = finite(planeY);
+    plant.position.y = y;
+    if (finite(plant.verticalVelocity) < 0) plant.verticalVelocity = 0;
+    plant.rotation.x = 0;
+    plant.rotation.z = 0;
+    plant.floorSupport = { y, normal: { x: 0, y: 1, z: 0 } };
+}
+
+function floorSample(plant) {
+    const support = plant.floorSupport;
+    if (!support || plant.position.y > finite(support.y) + CONTACT_SLACK) return null;
+    return {
+        y: finite(support.y),
+        pitch: 0,
+        normal: support.normal ?? { x: 0, y: 1, z: 0 },
+    };
+}
+
 /** Free motion. The road catch runs after the obstacle sweep. */
 export function stepContactPlant(plant, dt) {
     const step = Math.max(0, finite(dt));
     const yaw = finite(plant.rotation?.y);
-    const sample = typeof plant.groundSampler === "function"
+    const sample = (typeof plant.groundSampler === "function"
         ? plant.groundSampler(plant.position.x, plant.position.z, yaw)
-        : null;
+        : null) ?? floorSample(plant);
     if (sample) {
         plant.rotation.x = 0;
         plant.rotation.z = finite(sample.pitch);

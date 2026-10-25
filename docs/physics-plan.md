@@ -221,6 +221,10 @@ writes a second characterization tape.
 
 ## Progress and decision log
 
+### 2026-10-24 — Contact floor
+
+With the environment floor enabled, a contact car that falls through the checker lands on that plane and can drive. A road underneath still wins. Floor off, and no pavement, the car keeps falling.
+
 ### 2026-10-23 — Contact bicycle
 
 `contact-bicycle-v1` returns per-axle forces in the car frame. The host adds gravity, integrates `vx`, right-positive `vy`, yaw rate, pose, and vertical speed, then lifts the car only if the obstacle sweep left it through the pavement. Pitch follows the road ribbon. Roll stays 0. Off pavement the car keeps falling. Drive force is off in the air. `dynamic-bicycle-v1`, both older characterization tapes, and `VEHICLE_PLANT_VERSION` stay as they were. New editor vehicles and URDF imports use the contact model. The three `acme.dynamics` crates emit the same axle forces.

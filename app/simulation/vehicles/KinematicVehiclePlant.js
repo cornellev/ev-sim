@@ -264,6 +264,7 @@ export class KinematicVehiclePlant {
         this.lateralVelocity = 0;
         this.yawRate = 0;
         this.verticalVelocity = 0;
+        this.floorSupport = null;
         this.onRoad = false;
         this.axCommand = 0;
         this.longitudinal = { mode: "hold" };
