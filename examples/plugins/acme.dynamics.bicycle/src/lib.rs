@@ -38,11 +38,11 @@ fn scale_longitudinal(fx: f64, fy: f64, fz: f64, mu: f64) -> f64 {
 /// acceleration[0] is ax_cmd, [1] is 1 on the road, [2] is normal load.
 /// rotation[0] and [2] are downhill pull, m/s², not angles.
 /// Out: velocity[0..1] front force, acceleration[0..1] rear force.
-pub fn step(state: &mut PlantState, params: &[f64], _dt: f64) -> i32 {
+pub fn step(state: &mut PlantState, params: &[f64], dt: f64) -> i32 {
     let wheelbase = parameter(params, 0, 1.5).max(1.0e-9);
     let maximum = parameter(params, 1, 0.6).min(std::f64::consts::PI * 0.49);
     let mass = parameter(params, 2, 1500.0).max(1.0e-9);
-    let _yaw_inertia = parameter(params, 3, 2250.0).max(1.0e-9);
+    let yaw_inertia = parameter(params, 3, 2250.0).max(1.0e-9);
     let cf = parameter(params, 4, 80000.0).max(0.0);
     let cr = parameter(params, 5, 80000.0).max(0.0);
     let mu = parameter(params, 6, 0.9).max(0.0);
@@ -63,16 +63,26 @@ pub fn step(state: &mut PlantState, params: &[f64], _dt: f64) -> i32 {
     let delta = state.steering.clamp(-maximum, maximum);
     let fzf = normal_load * (half / length);
     let fzr = normal_load * (half / length);
-    let mut front_lateral = 0.0;
-    let mut rear_lateral = 0.0;
-    if vx.abs() >= VX_REST {
-        front_lateral = clip(-cf * (((vy + half * yaw_rate) / vx).atan() - delta), mu * fzf);
-        rear_lateral = clip(-cr * ((vy - half * yaw_rate) / vx).atan(), mu * fzr);
-    }
+    let (sin_delta, cos_delta) = delta.sin_cos();
+    let front_speed = vy + half * yaw_rate;
+    let front_slip = front_speed * cos_delta - vx * sin_delta;
+    let rear_slip = vy - half * yaw_rate;
+    let alpha_front = front_slip.atan2((vx * cos_delta + front_speed * sin_delta).abs().max(VX_REST));
+    let alpha_rear = rear_slip.atan2(vx.abs().max(VX_REST));
+    // Row sums of J M^-1 J^T bound the coupled lateral/yaw impulse.
+    let coupling = (cos_delta / mass - half * half * cos_delta / yaw_inertia).abs();
+    let front_inverse_mass = 1.0 / mass + (half * cos_delta).powi(2) / yaw_inertia + coupling;
+    let rear_inverse_mass = 1.0 / mass + half * half / yaw_inertia + coupling;
+    let front_limit = if dt > 0.0 { (mu * fzf).min(front_slip.abs() / (dt * front_inverse_mass)) } else { mu * fzf };
+    let rear_limit = if dt > 0.0 { (mu * fzr).min(rear_slip.abs() / (dt * rear_inverse_mass)) } else { mu * fzr };
+    let front_lateral = clip(-cf * alpha_front, front_limit);
+    let rear_lateral = clip(-cr * alpha_rear, rear_limit);
     let drive = mass * state.acceleration[0];
     let rolling_capacity = crr * normal_load;
     let net = drive + mass * state.rotation[0];
-    let rolling = if vx.abs() < VX_REST {
+    let rolling = if dt > 0.0 {
+        (-net - mass * vx / dt).clamp(-rolling_capacity, rolling_capacity)
+    } else if vx.abs() < VX_REST {
         if net.abs() <= rolling_capacity { -net } else { -js_sign(net) * rolling_capacity }
     } else {
         -vx.signum() * rolling_capacity
@@ -88,7 +98,6 @@ pub fn step(state: &mut PlantState, params: &[f64], _dt: f64) -> i32 {
             rear_long = scale_longitudinal(rear_long, rear_lateral, fzr, mu);
         }
     }
-    let (sin_delta, cos_delta) = delta.sin_cos();
     state.velocity[0] = front_long * cos_delta - front_lateral * sin_delta;
     state.velocity[1] = front_long * sin_delta + front_lateral * cos_delta;
     state.acceleration[0] = rear_long;
@@ -99,6 +108,27 @@ pub fn step(state: &mut PlantState, params: &[f64], _dt: f64) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rolling_impulse_does_not_reverse_a_small_velocity() {
+        for dt in [0.0, 0.01, 1.0 / 60.0, 0.05, 0.1] {
+            for vx in [-0.0011, 0.0011] {
+                let mut state = PlantState {
+                    position: [0.0; 3], rotation: [0.0; 3],
+                    velocity: [vx, 0.0, 0.0],
+                    acceleration: [0.01, 1.0, 1500.0 * 9.81], steering: 0.0,
+                };
+                assert_eq!(step(&mut state, &[], dt), 0);
+                let force = state.velocity[0] + state.acceleration[0];
+                assert!(force.is_finite());
+                if dt > 0.0 {
+                    let next = vx + force / 1500.0 * dt;
+                    assert!(next * vx >= -1.0e-12, "{vx}, {dt}: {next}");
+                    assert!(next.abs() <= vx.abs() + 1.0e-12);
+                }
+            }
+        }
+    }
 
     fn near(actual: f64, expected: f64) {
         let delta = (actual - expected).abs();

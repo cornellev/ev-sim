@@ -763,6 +763,42 @@ change the outstanding PR-12 hosted, soak, NVIDIA x64, or Jetson ARM64 gates.
 
 ## Decision log
 
+- **2026-10-27 — Stable contact stopping and bounded rolling impulse.** The
+  contact host uses a damped speed/stop controller shared by built-in and WASM
+  plants. All three Rust dynamics examples and the local model limit rolling
+  resistance to the remaining stopping impulse using the existing `dt` input.
+  ABI 1, buffer slots, capabilities and schemas are unchanged. The local
+  `vendor.cornellev.dynamics` package is 0.1.2. Reimport installed package
+  `343ebc956bc00ae0444a750ee89b6e8aec191e1bfbaf6cea9993fe835c9a1741`
+  with runtime `603c0b39914715417b7d3fda4691d401bbd42218862775d6d6bb5a1d81c8bb4a`
+  and updated saved locks in `merceves`, `untitled-run-4`, and `oct-31-testing`.
+  Previous package bytes and recordings remain intact. The local compiled
+  force grid includes near-zero speed, grade and zero-duration queries; the
+  full stopping replay matches JavaScript within 1e-9 and matches the browser
+  adapter exactly. The 0.1.2 kit's full native/tape/predict/wire/Zenoh/WASM
+  suite passes, as do all seven native example tests. Fresh browser floor
+  acceptance is `run-20261028T020535412Z-cd802b0c`; both releases stop
+  without reversal and the final ten seconds have zero speed and pose drift.
+  Full-suite results and the unchanged cross-slope sliding limitation are
+  recorded in the physics roadmap. The final bounded full suite is 2,415
+  passed, one existing hierarchy assertion failed, zero cancelled and eight
+  skipped. Contact canonical snapshots retain controller feedback in both
+  browser and headless contexts; legacy model snapshots stay pinned.
+- **2026-10-27 — Dissipative contact tire forces.** The contact bicycle and
+  cornering Rust examples use tire-frame forward/reverse slip and the same
+  timestep-aware lateral/yaw impulse bound as the JavaScript contact plant.
+  The longitudinal-only example retains its existing force law. Plant ABI 1
+  and its buffer layout are unchanged; the existing `dt` argument supplies
+  the bound. The local `vendor.cornellev.dynamics` package advances to 0.1.1
+  and must be rebuilt and Reimported to adopt its new package/runtime hashes.
+  Existing packages and resolved recordings retain their pinned bytes.
+  Validation includes compiled force parity across forward, reverse, zero
+  speed and multiple timesteps, plus the recorded ramp/keyboard regression.
+  The local kit full suite and both changed example crates pass. Reimport
+  installed package `9a5b248eca1fbb2b249a6098c82becf2c5fc2d7d24cdab063cb74c6c26f2206c`
+  with runtime `c4201915b467020b6b64565397529b5546023c4265823b5dbb310802744fffc9`;
+  saved `merceves`, `untitled-run-4`, and `oct-31-testing` locks now reference it.
+  Browser acceptance is recorded in the physics roadmap.
 - **2026-10-23 — Contact bicycle plant.** `contact-bicycle-v1` is an additional ABI 1 plant model. The host integrates axle forces and gravity. The three dynamics examples emit those forces. Omitted `model` and `dynamic-bicycle-v1` stay integrate-and-drape.
 - **2026-10-20 — PLG-09 dynamic bicycle packages.** Optional plant `model`
   `dynamic-bicycle-v1` reuses ABI 1 for the built-in dynamic bicycle. The host

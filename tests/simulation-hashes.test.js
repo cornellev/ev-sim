@@ -8,11 +8,13 @@ import {
     canonicalSimulationStringify,
     computeEpisodeHash,
     computeSimulationSemanticHash,
+    defaultEpisodeIdentity,
     simulationSemanticProjection,
     simulationSha256,
     TrajectoryHasher,
 } from "../app/simulation/kernel/SimulationHashes.js";
 import { computeResolvedRunHash, createDefaultRunManifest } from "../app/simulation/RunManifest.js";
+import { WORLD_BOUND_IDENTITY } from "../app/simulation/kernel/RunIdentity.js";
 
 function resolved(overrides = {}) {
     return {
@@ -56,6 +58,37 @@ test("simulation SHA-256 matches Node and canonicalizes binary values", () => {
     assert.match(canonical, /\$typedArray/);
     assert.equal(simulationSha256({ value: -0 }), simulationSha256({ value: 0 }));
     assert.throws(() => simulationSha256({ value: Number.NaN }), /finite numbers/);
+});
+
+function worldBound(overrides = {}) {
+    return {
+        ...resolved(overrides),
+        version: 11,
+        identityProfile: { ...WORLD_BOUND_IDENTITY },
+        world: { hash: "a".repeat(64), description: {} },
+    };
+}
+
+test("keyboard drive stays out of simulation and episode identity", () => {
+    const off = resolved();
+    const on = resolved({ controls: { keyboardDrive: true } });
+    const cleared = resolved({ controls: { keyboardDrive: false } });
+    assert.equal(off.manifest.controls.keyboardDrive, undefined);
+    assert.equal(cleared.manifest.controls.keyboardDrive, undefined);
+    assert.equal(on.manifest.controls.keyboardDrive, true);
+    assert.deepEqual(off.manifest.controls, cleared.manifest.controls);
+    assert.notEqual(computeResolvedRunHash(off.manifest), computeResolvedRunHash(on.manifest));
+    assert.equal(computeSimulationSemanticHash(off), computeSimulationSemanticHash(on));
+    assert.equal(
+        computeEpisodeHash(defaultEpisodeIdentity(off)),
+        computeEpisodeHash(defaultEpisodeIdentity(on)),
+    );
+    assert.equal(simulationSemanticProjection(on).resolved.manifest.controls.keyboardDrive, undefined);
+
+    const boundOff = worldBound();
+    const boundOn = worldBound({ controls: { keyboardDrive: true } });
+    assert.equal(computeSimulationSemanticHash(boundOff), computeSimulationSemanticHash(boundOn));
+    assert.equal(simulationSemanticProjection(boundOn).resolved.manifest.controls.keyboardDrive, undefined);
 });
 
 test("simulation semantic hash excludes logging and wall pacing only", () => {

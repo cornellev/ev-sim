@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Simple mode preview · cev-sim</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --slate-bg: #17181a;
+      --slate-surface-1: #1c1e20;
+      --slate-surface-2: #1f2123;
+      --slate-surface-3: #212325;
+      --slate-surface-hover: #27292b;
+      --slate-ink: #e9eaec;
+      --slate-fg: #f4f4f4;
+      --slate-fg-2: #c2c4c6;
+      --slate-muted: #8a8a8a;
+      --slate-border: rgb(255 255 255 / 0.09);
+      --slate-border-60: rgb(255 255 255 / 0.06);
+      --slate-border-70: rgb(255 255 255 / 0.08);
+      --slate-danger: #d98a8a;
+      --slate-danger-border: rgb(217 138 138 / 0.4);
+      --slate-success: #78b98d;
+      --slate-ring: rgb(255 255 255 / 0.62);
+      --slate-floating: rgb(28 30 32 / 0.94);
+      --slate-shadow-overlay: 0 18px 56px rgb(0 0 0 / 0.38);
+      --radius: 4px;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono: ui-monospace, "SFMono-Regular", Menlo, monospace;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      background: #1a1c1e;
+      color: var(--slate-fg);
+      font-family: var(--font);
+      font-size: 14px;
+    }
+    button { font: inherit; color: inherit; }
+    :focus-visible { outline: 2px solid var(--slate-ring); outline-offset: 2px; }
+    .stage { position: fixed; inset: 0; overflow: hidden; perspective: 900px; perspective-origin: 50% 42%; }
+    .sky { position: absolute; inset: 0; background: #1a1c1e; }
+    .ground {
+      position: absolute; left: -20%; right: -20%; top: 38%; height: 140%;
+      background: #2a2c28; transform: rotateX(58deg); transform-origin: center top;
+    }
+    body[data-perspective] .ground { top: 18%; transform: rotateX(72deg); }
+    .road { position: absolute; left: 50%; top: -10%; width: 220px; height: 160%; margin-left: -110px; background: #3a3c38; }
+    .road::before {
+      content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; margin-left: -1px;
+      background: repeating-linear-gradient(#c2c4c6 0 18px, transparent 18px 36px); opacity: 0.7;
+    }
+    .car {
+      position: absolute; left: 50%; top: 62%; z-index: 2; width: 44px; height: 72px; margin-left: -22px;
+      border-radius: 6px 6px 4px 4px; background: #d7d8da;
+    }
+    .car::after {
+      content: ""; position: absolute; left: 6px; right: 6px; top: 10px; height: 16px;
+      border-radius: 2px; background: #2a3340;
+    }
+    .car[data-motion="run"], .car[data-motion="paused"] { animation: drive 16s linear infinite; }
+    .car[data-motion="paused"] { animation-play-state: paused; }
+    body[data-perspective] .car { top: 58%; width: 46px; height: 78px; margin-left: -23px; }
+    body[data-replay] .car { animation: none; top: 62%; }
+    @keyframes drive { from { top: 74%; } to { top: 50%; } }
+    .block { position: absolute; background: #34362f; }
+    .block-a { left: 8%; top: 20%; width: 120px; height: 80px; }
+    .block-b { right: 10%; top: 34%; width: 90px; height: 110px; }
+    .block-c { left: 14%; top: 58%; width: 70px; height: 70px; }
+    .workspace {
+      position: fixed; top: 12px; left: 12px; z-index: 10;
+      display: inline-flex; align-items: center; gap: 10px; width: 292px; height: 38px;
+      border: 1px solid var(--slate-border); border-radius: var(--radius);
+      background: var(--slate-floating); box-shadow: var(--slate-shadow-overlay);
+      padding: 0 12px; color: var(--slate-fg-2); font-size: 12px; font-weight: 550; cursor: pointer;
+    }
+    .workspace:hover { background: var(--slate-surface-hover); color: var(--slate-fg); }
+    .note {
+      position: fixed; top: 12px; right: 12px; z-index: 30;
+      display: grid; justify-items: end; gap: 6px; color: var(--slate-muted); font-size: 11px;
+    }
+    .note p { margin: 0; }
+    .note button { border: 0; background: transparent; color: var(--slate-fg-2); font-size: 12px; cursor: pointer; }
+    .side {
+      position: fixed; z-index: 20; top: 64px; width: 220px; padding: 12px;
+      border: 1px solid var(--slate-border); border-radius: var(--radius); background: var(--slate-floating);
+    }
+    .side-left { left: 12px; }
+    .side-right { right: 12px; }
+    .side p { margin: 0 0 8px; color: var(--slate-muted); font-size: 11px; }
+    .side div { padding: 6px 0; border-top: 1px solid var(--slate-border-60); font-size: 13px; color: var(--slate-fg-2); }
+    .elsewhere {
+      position: fixed; inset: 0; z-index: 5; display: grid; place-content: center; gap: 8px;
+      text-align: center; background: var(--slate-bg);
+    }
+    .elsewhere h1 { margin: 0; font-size: 20px; font-weight: 550; }
+    .elsewhere p { margin: 0; color: var(--slate-fg-2); }
+    .replay {
+      position: fixed; top: 64px; left: 50%; z-index: 20; margin: 0; transform: translateX(-50%);
+      color: var(--slate-fg-2); font-family: var(--mono); font-size: 12px;
+    }
+    .dock { position: fixed; left: 0; right: 0; bottom: 12px; z-index: 20; display: flex; justify-content: center; }
+    .transport, .chase {
+      display: flex; align-items: center; gap: 8px; max-width: calc(100vw - 24px); padding: 8px;
+      border: 1px solid var(--slate-border); border-radius: var(--radius);
+      background: var(--slate-floating); box-shadow: var(--slate-shadow-overlay);
+    }
+    .status { display: flex; align-items: center; gap: 8px; min-width: 148px; padding: 0 8px; font-size: 12px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--slate-muted); }
+    .dot[data-on] { background: var(--slate-success); }
+    .time { font-family: var(--mono); color: var(--slate-muted); font-variant-numeric: tabular-nums; }
+    .preset { padding: 0 8px; font-size: 13px; font-weight: 550; }
+    .group { display: flex; gap: 4px; }
+    .icon {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 32px; height: 32px; padding: 0; border: 1px solid transparent; border-radius: var(--radius);
+      background: transparent; cursor: pointer;
+    }
+    .icon[data-variant="default"] { border-color: var(--slate-border-70); background: var(--slate-surface-3); color: var(--slate-fg-2); }
+    .icon[data-variant="primary"] { border-color: rgb(244 244 244 / 0.3); background: rgb(244 244 244 / 0.08); color: var(--slate-fg); }
+    .icon[data-variant="danger"] { border-color: var(--slate-danger-border); background: rgb(217 138 138 / 0.06); color: var(--slate-danger); }
+    .icon:hover { background: var(--slate-surface-hover); color: var(--slate-fg); }
+    .icon svg { width: 16px; height: 16px; }
+    .chase {
+      position: fixed; left: 50%; bottom: 16px; z-index: 20; gap: 4px; padding: 6px;
+      transform: translateX(-50%); opacity: 0; transition: opacity 180ms linear;
+    }
+    .chase[data-visible] { opacity: 1; }
+    dialog {
+      width: min(880px, calc(100vw - 32px)); height: min(640px, calc(100dvh - 32px));
+      padding: 0; border: 1px solid var(--slate-border); border-radius: var(--radius);
+      background: var(--slate-floating); color: var(--slate-fg); box-shadow: var(--slate-shadow-overlay);
+    }
+    dialog::backdrop { background: rgb(8 9 10 / 0.76); }
+    .dialog-head, .dialog-body { display: flex; }
+    .dialog-head { align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--slate-border-60); }
+    .dialog-head h2 { margin: 0; font-size: 15px; }
+    .shell { display: grid; grid-template-columns: 48px minmax(0, 1fr); height: calc(100% - 65px); }
+    .rail { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 0; border-right: 1px solid var(--slate-border-60); background: var(--slate-surface-2); }
+    .rail .icon[aria-current="page"] { background: var(--slate-surface-3); box-shadow: inset 2px 0 0 var(--slate-ink); }
+    .pane { min-width: 0; overflow: auto; padding: 10px 12px 14px; }
+    .section { padding-block: 8px; }
+    .section + .section { border-top: 1px solid var(--slate-border-60); }
+    .section h3 { margin: 0; padding: 8px 10px 6px; color: var(--slate-muted); font-size: 11px; font-weight: 500; }
+    .items { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+    .item {
+      display: grid; grid-template-columns: 28px minmax(0, 1fr); align-items: center; gap: 10px;
+      min-height: 56px; padding: 10px 12px; border: 0; border-radius: var(--radius);
+      background: transparent; color: var(--slate-fg-2); text-align: left; cursor: pointer;
+    }
+    .item[aria-current="page"] { background: var(--slate-surface-3); color: var(--slate-fg); box-shadow: inset 1px 0 0 var(--slate-ink); }
+    .item:hover { background: var(--slate-surface-2); color: var(--slate-fg); }
+    .item b { display: block; font-size: 13px; font-weight: 550; }
+    .item span { display: block; overflow: hidden; color: var(--slate-muted); font-size: 12px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
+    .switch-row {
+      display: flex; align-items: center; justify-content: space-between; gap: 16px;
+      margin: 4px 10px; padding: 7px 10px; border: 1px solid var(--slate-border-70); border-radius: var(--radius);
+      background: var(--slate-surface-2); cursor: pointer;
+    }
+    .switch-row b { display: block; font-size: 13px; font-weight: 500; }
+    .switch-row span { display: block; color: var(--slate-muted); font-size: 12px; }
+    .switch { width: 36px; height: 20px; border: 0; border-radius: 99px; background: var(--slate-bg); position: relative; cursor: pointer; }
+    .switch[aria-checked="true"] { background: var(--slate-ink); }
+    .switch::before {
+      content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+      background: var(--slate-fg); transition: transform 140ms linear;
+    }
+    .switch[aria-checked="true"]::before { transform: translateX(16px); background: var(--slate-bg); }
+    [hidden] { display: none !important; }
+    @media (prefers-reduced-motion: reduce) {
+      .car { animation: none !important; }
+      .chase, .switch::before { transition: none; }
+    }
+  </style>
+</head>
+<body data-screen="simulation">
+  <div class="stage" id="stage">
+    <div class="sky"></div>
+    <div class="ground">
+      <div class="road"></div>
+      <div class="block block-a"></div>
+      <div class="block block-b"></div>
+      <div class="block block-c"></div>
+    </div>
+    <div class="car" id="car" data-motion="idle"></div>
+  </div>
+
+  <aside class="side side-left" id="hierarchy" hidden>
+    <p>Hierarchy</p>
+    <div>ego</div><div>lidar</div><div>camera</div><div>imu</div>
+  </aside>
+  <aside class="side side-right" id="sensors" hidden>
+    <p>Sensors</p>
+    <div>Range image</div><div>IMU</div><div>GNSS</div>
+  </aside>
+
+  <div class="elsewhere" id="elsewhere" hidden>
+    <h1 id="elsewhere-title">Environment Editor</h1>
+    <p>This workspace stays in the full workbench.</p>
+  </div>
+  <p class="replay" id="replay" hidden>Last recording · IGVC drive</p>
+
+  <div class="note">
+    <p>Preview. This is not the simulator.</p>
+    <button type="button" id="compare">Compare with the full workbench</button>
+  </div>
+
+  <button type="button" class="workspace" id="open-menu">
+    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="4" y="4" width="6" height="6"></rect><rect x="14" y="4" width="6" height="6"></rect><rect x="4" y="14" width="6" height="6"></rect><rect x="14" y="14" width="6" height="6"></rect></svg>
+    <span id="workspace-label">Simulation</span>
+  </button>
+
+  <div class="dock" id="dock">
+    <div class="transport" role="toolbar" aria-label="Simulation">
+      <div class="status">
+        <i class="dot" id="dot"></i>
+        <span id="status-label">Ready</span>
+        <span class="time" id="time">00:00.0</span>
+      </div>
+      <span class="preset">IGVC drive</span>
+      <div class="group">
+        <button type="button" class="icon" id="play" data-variant="default" aria-label="Play"></button>
+        <button type="button" class="icon" id="pause" data-variant="default" aria-label="Pause"></button>
+        <button type="button" class="icon" id="stop" data-variant="danger" aria-label="Stop"></button>
+        <button type="button" class="icon classic-only" data-variant="default" aria-label="Step" hidden></button>
+        <button type="button" class="icon classic-only" data-variant="default" aria-label="Map" hidden></button>
+      </div>
+      <div class="group classic-only" id="classic-tools" hidden>
+        <button type="button" class="icon" data-variant="default" aria-label="Recording"></button>
+        <button type="button" class="icon" data-variant="default" aria-label="Engine settings"></button>
+        <button type="button" class="icon" data-variant="default" aria-label="Modules"></button>
+        <button type="button" class="icon" data-variant="default" aria-label="Views"></button>
+        <button type="button" class="icon" data-variant="default" aria-label="Hierarchy"></button>
+      </div>
+      <button type="button" class="icon" id="camera" data-variant="default" aria-label="Vehicle camera"></button>
+    </div>
+  </div>
+
+  <div class="chase" id="chase" hidden>
+    <button type="button" class="icon" id="exit-camera" data-variant="default" aria-label="Leave vehicle camera"></button>
+    <button type="button" class="icon" id="chase-play" data-variant="default" aria-label="Play"></button>
+    <button type="button" class="icon" id="chase-pause" data-variant="default" aria-label="Pause"></button>
+  </div>
+
+  <dialog id="menu" aria-labelledby="menu-title">
+    <div class="dialog-head">
+      <h2 id="menu-title">Workspaces</h2>
+      <button type="button" class="icon" id="close-menu" data-variant="default" aria-label="Close workspaces"></button>
+    </div>
+    <div class="shell">
+      <nav class="rail" aria-label="Workspace dialog sections">
+        <button type="button" class="icon" id="pane-workspaces" aria-label="Workspaces" aria-current="page"></button>
+        <button type="button" class="icon" id="pane-settings" aria-label="Settings"></button>
+      </nav>
+      <div class="pane" id="pane"></div>
+    </div>
+  </dialog>
+
+  <script>
+    const ICONS = {
+      play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5z"></path></svg>',
+      pause: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h4v14H6zm8 0h4v14h-4z"></path></svg>',
+      stop: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z"></path></svg>',
+      step: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M6 6l8 6-8 6zM16 6v12"></path></svg>',
+      map: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="8"></circle><path d="M4 12h16M12 4c2.5 2.5 2.5 13.5 0 16M12 4c-2.5 2.5-2.5 13.5 0 16"></path></svg>',
+      record: '<svg viewBox="0 0 24 24" fill="#d98a8a"><circle cx="12" cy="12" r="5"></circle></svg>',
+      sliders: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M4 8h16M4 16h16"></path><circle cx="8" cy="8" r="2" fill="currentColor"></circle><circle cx="16" cy="16" r="2" fill="currentColor"></circle></svg>',
+      modules: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"></path></svg>',
+      views: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="4" y="4" width="6" height="6"></rect><rect x="14" y="4" width="6" height="6"></rect><rect x="4" y="14" width="6" height="6"></rect><rect x="14" y="14" width="6" height="6"></rect></svg>',
+      files: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M8 7h10v12H8zM6 5h10v2"></path></svg>',
+      camera: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M4 8h4l2-2h4l2 2h4v10H4z"></path><circle cx="12" cy="13" r="3"></circle></svg>',
+      close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M6 6l12 12M18 6L6 18"></path></svg>',
+      grid: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="4" y="4" width="6" height="6"></rect><rect x="14" y="4" width="6" height="6"></rect><rect x="4" y="14" width="6" height="6"></rect><rect x="14" y="14" width="6" height="6"></rect></svg>',
+      settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="3"></circle><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6L17 7M7 17l-1.4 1.4"></path></svg>'
+    };
+
+    const LABELS = {
+      simulation: "Simulation",
+      environment: "Environment Editor",
+      vehicles: "Vehicle Editor",
+      config: "Run Configuration",
+      scenarios: "Scenarios",
+      experiments: "Experiment Suite",
+      headless: "Headless Runs",
+      scripting: "Scripting Canvas",
+      bindings: "Bindings",
+      replay: "Replay",
+      analysis: "Analysis",
+      logs: "Logs"
+    };
+    const CLASSIC = [
+      ["Build and run", [
+        ["simulation", "Run vehicles, sensors, and scenarios"],
+        ["environment", "Edit environments and scenes"],
+        ["vehicles", "Create and inspect vehicle manifests"],
+        ["config", "Edit simulation manifests"],
+        ["scenarios", "Create test scenarios"],
+        ["experiments", "Experiment with scenarios"],
+        ["headless", "Queue and monitor server runs"]
+      ]],
+      ["Logic", [
+        ["scripting", "Build simulation logic"],
+        ["bindings", "Bind scripts to signals"]
+      ]],
+      ["Inspect", [
+        ["replay", "Inspect recorded simulations"],
+        ["analysis", "Graph live data"],
+        ["logs", "Organize recorded simulations"]
+      ]]
+    ];
+    const SIMPLE = [["Run", [
+      ["simulation", "Drive the pinned run"],
+      ["replay", "Watch the last recording"]
+    ]]];
+
+    const state = { classic: false, screen: "simulation", status: "ready", elapsed: 0, perspective: false, pane: "workspaces" };
+    const car = document.getElementById("car");
+    const menu = document.getElementById("menu");
+    const pane = document.getElementById("pane");
+
+    function paintIcon(button, name) {
+      button.innerHTML = ICONS[name];
+    }
+    paintIcon(document.getElementById("play"), "play");
+    paintIcon(document.getElementById("pause"), "pause");
+    paintIcon(document.getElementById("stop"), "stop");
+    paintIcon(document.getElementById("camera"), "camera");
+    paintIcon(document.getElementById("exit-camera"), "close");
+    paintIcon(document.getElementById("chase-play"), "play");
+    paintIcon(document.getElementById("chase-pause"), "pause");
+    paintIcon(document.getElementById("close-menu"), "close");
+    paintIcon(document.getElementById("pane-workspaces"), "grid");
+    paintIcon(document.getElementById("pane-settings"), "settings");
+    ["step", "map", "record", "sliders", "modules", "views", "files"].forEach((name, index) => {
+      const button = document.querySelectorAll(".classic-only.icon, #classic-tools .icon")[index];
+      paintIcon(button, name);
+    });
+
+    function formatTime(ms) {
+      const total = Math.floor(ms / 1000);
+      return String(Math.floor(total / 60)).padStart(2, "0") + ":" + String(total % 60).padStart(2, "0") + "." + Math.floor((ms % 1000) / 100);
+    }
+
+    function render() {
+      const scene = state.screen === "simulation" || state.screen === "replay";
+      const showChrome = scene && !state.perspective;
+      document.body.dataset.screen = state.screen;
+      document.body.toggleAttribute("data-perspective", state.perspective);
+      document.body.toggleAttribute("data-replay", state.screen === "replay");
+      document.getElementById("hierarchy").hidden = !(state.classic && showChrome);
+      document.getElementById("sensors").hidden = !(state.classic && showChrome);
+      document.getElementById("elsewhere").hidden = scene;
+      document.getElementById("elsewhere-title").textContent = LABELS[state.screen] || "Workspace";
+      document.getElementById("replay").hidden = !(state.screen === "replay" && !state.perspective);
+      document.getElementById("open-menu").hidden = !showChrome;
+      document.getElementById("dock").hidden = !showChrome;
+      document.getElementById("workspace-label").textContent = LABELS[state.screen] || "Simulation";
+      document.getElementById("compare").textContent = state.classic ? "Show simple mode" : "Compare with the full workbench";
+      for (const node of document.querySelectorAll(".classic-only")) node.hidden = !state.classic;
+      const playing = state.status === "playing";
+      document.getElementById("status-label").textContent = playing ? "Running" : state.status === "paused" ? "Paused" : state.status === "stopped" ? "Stopped" : "Ready";
+      document.getElementById("dot").toggleAttribute("data-on", playing);
+      document.getElementById("time").textContent = formatTime(state.elapsed);
+      document.getElementById("play").dataset.variant = playing ? "primary" : "default";
+      document.getElementById("chase-play").dataset.variant = playing ? "primary" : "default";
+      car.dataset.motion = playing ? "run" : state.status === "paused" ? "paused" : "idle";
+      const chase = document.getElementById("chase");
+      chase.hidden = !state.perspective;
+    }
+
+    function play() { state.status = "playing"; render(); }
+    function pause() { if (state.status === "playing") state.status = "paused"; render(); }
+    function stop() {
+      state.status = "stopped";
+      state.elapsed = 0;
+      car.style.animation = "none";
+      void car.offsetWidth;
+      car.style.animation = "";
+      render();
+    }
+    function setMode(classic) {
+      state.classic = classic;
+      if (!classic && state.screen !== "simulation" && state.screen !== "replay") state.screen = "simulation";
+      render();
+      if (menu.open) paintPane();
+    }
+    function openScreen(id) {
+      if (!state.classic && id !== "simulation" && id !== "replay") return;
+      state.screen = id;
+      state.perspective = false;
+      menu.close();
+      render();
+    }
+
+    function markPane(id, on) {
+      const node = document.getElementById(id);
+      if (on) node.setAttribute("aria-current", "page");
+      else node.removeAttribute("aria-current");
+    }
+
+    function paintPane() {
+      markPane("pane-workspaces", state.pane === "workspaces");
+      markPane("pane-settings", state.pane === "settings");
+      if (state.pane === "settings") {
+        pane.innerHTML = '<section class="section"><h3>Mode</h3><label class="switch-row"><span><b>Full workbench</b><span>Show every workspace and the current simulation bar.</span></span><button type="button" class="switch" id="mode-switch" role="switch" aria-checked="' + state.classic + '" aria-label="Full workbench"></button></label></section>';
+        document.getElementById("mode-switch").addEventListener("click", () => setMode(!state.classic));
+        return;
+      }
+      const sections = state.classic ? CLASSIC : SIMPLE;
+      pane.innerHTML = sections.map(([title, items]) =>
+        '<section class="section"><h3>' + title + '</h3><div class="items">' + items.map(([id, hint]) =>
+          '<button type="button" class="item" data-screen="' + id + '"' + (state.screen === id ? ' aria-current="page"' : '') + '><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="7"></circle></svg><span><b>' + LABELS[id] + '</b><span>' + hint + '</span></span></button>'
+        ).join("") + "</div></section>"
+      ).join("");
+      pane.querySelectorAll(".item").forEach((button) => button.addEventListener("click", () => openScreen(button.dataset.screen)));
+    }
+
+    document.getElementById("play").addEventListener("click", play);
+    document.getElementById("chase-play").addEventListener("click", play);
+    document.getElementById("pause").addEventListener("click", pause);
+    document.getElementById("chase-pause").addEventListener("click", pause);
+    document.getElementById("stop").addEventListener("click", stop);
+    document.getElementById("camera").addEventListener("click", () => { state.perspective = true; revealChase(); render(); });
+    document.getElementById("exit-camera").addEventListener("click", () => { state.perspective = false; render(); });
+    document.getElementById("compare").addEventListener("click", () => setMode(!state.classic));
+    document.getElementById("open-menu").addEventListener("click", () => { state.pane = "workspaces"; paintPane(); menu.showModal(); });
+    document.getElementById("close-menu").addEventListener("click", () => menu.close());
+    document.getElementById("pane-workspaces").addEventListener("click", () => { state.pane = "workspaces"; paintPane(); });
+    document.getElementById("pane-settings").addEventListener("click", () => { state.pane = "settings"; paintPane(); });
+
+    let chaseTimer = 0;
+    function revealChase() {
+      const chase = document.getElementById("chase");
+      chase.dataset.visible = "";
+      window.clearTimeout(chaseTimer);
+      chaseTimer = window.setTimeout(() => { delete chase.dataset.visible; }, 2500);
+    }
+    window.addEventListener("pointermove", () => { if (state.perspective) revealChase(); });
+
+    window.setInterval(() => {
+      if (state.status === "playing") {
+        state.elapsed += 100;
+        document.getElementById("time").textContent = formatTime(state.elapsed);
+      }
+    }, 100);
+
+    window.addEventListener("keydown", (event) => {
+      if (event.target.closest("input, textarea, select")) return;
+      if (event.key === "Escape" && !menu.open) {
+        if (state.perspective) { state.perspective = false; render(); return; }
+        state.pane = "workspaces";
+        paintPane();
+        menu.showModal();
+      }
+      if (event.key === " " && state.screen === "simulation" && !menu.open) {
+        event.preventDefault();
+        if (state.status === "playing") pause(); else play();
+      }
+    });
+
+    render();
+  </script>
+</body>
+</html>

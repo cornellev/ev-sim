@@ -8,6 +8,7 @@ import {
     IconPlayerStop as FaStop,
     IconRestore as FaRestore,
     IconAdjustmentsHorizontal as FaSlidersH,
+    IconBox as FaBox,
     IconCube as FaCube,
     IconTool as FaTools,
     IconPencil as FaEdit,
@@ -46,6 +47,8 @@ export function SimulationMenu({
     onViewModeChange,
     lidarViewportEnabled = false,
     onLidarViewportEnabledChange,
+    colliderViewportEnabled = false,
+    onColliderViewportEnabledChange,
 }) {
     const [openPanel, setOpenPanel] = useState(null);
     const [toggles, setToggles] = useState({
@@ -274,6 +277,17 @@ export function SimulationMenu({
                                         >
                                             <FaRadar className="h-3 w-3" />
                                             LiDAR View
+                                        </MenuButton>
+                                        <MenuButton
+                                            compact
+                                            active={colliderViewportEnabled}
+                                            title={colliderViewportEnabled ? "Show the camera view" : "Show the collider view from this camera"}
+                                            ariaLabel="Collider View"
+                                            className="justify-start"
+                                            onClick={() => onColliderViewportEnabledChange?.(!colliderViewportEnabled)}
+                                        >
+                                            <FaBox className="h-3 w-3" />
+                                            Collider View
                                         </MenuButton>
                                     </div>
                                 </PanelSection>

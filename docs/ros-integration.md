@@ -13,6 +13,8 @@ flowchart LR
 
 ## Run The Orchestrator
 
+`install.sh` can clone this repo, install the virtualenv, and install the `orch` command. It asks first. The default directory is `~/cev/orchestrator`. `--orchestrator-only` installs the orchestrator without ev-sim.
+
 Standalone mode, without ROS 2:
 
 ```bash

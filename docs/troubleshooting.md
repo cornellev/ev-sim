@@ -14,6 +14,8 @@ See [Assets](assets.md).
 
 `app/3d/managers/ClientManager.js` first tries `http://localhost:8090/api/types`. If the orchestrator is not running, it logs a warning and falls back to message files under `public/messages/`.
 
+The sim server runs `orch` when that command is on PATH and port 8090 is closed, and shuts that process down with the server. An orchestrator that was already running is left alone.
+
 Start the orchestrator with:
 
 ```bash

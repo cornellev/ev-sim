@@ -33,6 +33,12 @@ curl -fsSL https://raw.githubusercontent.com/cornellev/ev-sim/main/install.sh | 
 
 # clone + install + start the dev server
 curl -fsSL https://raw.githubusercontent.com/cornellev/ev-sim/main/install.sh | bash -s -- --start
+
+# also install the orchestrator into ~/cev/orchestrator
+curl -fsSL https://raw.githubusercontent.com/cornellev/ev-sim/main/install.sh | bash -s -- --orchestrator --orchestrator-dir ~/cev/orchestrator
+
+# orchestrator only
+curl -fsSL https://raw.githubusercontent.com/cornellev/ev-sim/main/install.sh | bash -s -- --orchestrator-only
 ```
 
 `--ref` accepts a tag, branch, or commit. `--branch` remains a compatibility
@@ -41,6 +47,8 @@ alias for `--ref`.
 The installer creates `.env.local` and asks whether to enable the marketplace. Enter, `y`, or `yes` writes `CEV_SIM_MARKETPLACE_ENABLED=1`. `n` or `no` writes `0`. An existing assignment is kept unless `--marketplace` or `--no-marketplace` is passed. A run with no terminal creates the file and leaves that setting unchanged, which leaves the marketplace enabled.
 
 When `visual-source-registry.json` is absent, the installer creates it with a local `owned-lab` grant so editor Import can upload models. The default path is `server/data/visual-source-registry.json`. `CEV_SIM_VISUAL_SOURCE_REGISTRY`, or `CEV_SIM_DATA_DIR` when that registry variable is unset, selects another path from the environment or `.env.local`. An existing registry is kept.
+
+The installer then asks whether to install the ROS orchestrator. Enter, `y`, or `yes` installs it. `n` or `no` skips it. A run with no terminal skips it unless `--orchestrator` or `--orchestrator-only` is passed. The directory prompt defaults to `~/cev/orchestrator`. `--orchestrator-dir` or `EV_SIM_ORCHESTRATOR_DIR` skips that prompt. When Python 3.10–3.13 cannot create a virtualenv, the installer uses uv 0.13.5 to install Python 3.12 for that virtualenv. It then runs that checkout's `install.sh command`, which installs the `orch` command. `--orchestrator-only` installs the orchestrator and does not install ev-sim.
 
 If you already cloned the repo:
 
@@ -85,7 +93,7 @@ npm test
 
 ## Optional Orchestrator
 
-Live ROS-style topics are served by a [separate repository](https://github.com/cornellev/orchestrator):
+Live ROS-style topics are served by a [separate repository](https://github.com/cornellev/orchestrator). The installer can clone it, create the virtualenv, and install the `orch` command. You can also do that yourself:
 
 ```bash
 git clone https://github.com/cornellev/orchestrator.git
@@ -93,7 +101,8 @@ cd orchestrator
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-python main.py
+./install.sh command
+orch
 ```
 
 By default cev-sim expects:

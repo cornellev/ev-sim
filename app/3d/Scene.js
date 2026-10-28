@@ -16,6 +16,7 @@ import { TriangleOptimizer } from "../optimization/TriangleOptimizer";
 import { createBrowserVehicle } from "./vehicles/createBrowserVehicle.js";
 import { attachEgoPresentation } from "./vehicles/EgoPresentation.js";
 import { applyManualDrive, syncPlantFromVehicle } from "./vehicles/VehiclePlantAdapter.js";
+import { KEYBOARD_DRIVE_SPEED_MPS, KEYBOARD_STEER_RATE_RAD } from "../simulation/keyboardDrive.js";
 import { TrafficScenario } from "./traffic/TrafficScenario";
 import { buildRoadNetwork } from "./city/RoadNetwork";
 import { LoadRoadsFromGeoJSON } from "./city/CityBuilder";
@@ -376,34 +377,33 @@ async function setupVehicles(scene, data, camera) {
     await car.addToScene(scene);
     attachEgoPresentation(car, { playgroundDevices: true });
 
+    const playgroundDriveBlocked = () => Boolean(data.simulation()?.resolvedRun);
     disposers.push(data.keys().registerKeyDown("w", () => {
-        if (!car.controlsEnabled) return;
-        applyManualDrive(car, { speedMps: 5 });
+        if (!car.controlsEnabled || playgroundDriveBlocked()) return;
+        applyManualDrive(car, { speedMps: KEYBOARD_DRIVE_SPEED_MPS });
     }));
     disposers.push(data.keys().registerKeyDown("s", () => {
-        if (!car.controlsEnabled) return;
-        applyManualDrive(car, { speedMps: -5 });
+        if (!car.controlsEnabled || playgroundDriveBlocked()) return;
+        applyManualDrive(car, { speedMps: -KEYBOARD_DRIVE_SPEED_MPS });
     }));
     disposers.push(data.keys().registerKeyUp("w", () => {
-        if (!car.controlsEnabled) return;
+        if (!car.controlsEnabled || playgroundDriveBlocked()) return;
         applyManualDrive(car, { speedMps: 0 });
     }));
     disposers.push(data.keys().registerKeyUp("s", () => {
-        if (!car.controlsEnabled) return;
+        if (!car.controlsEnabled || playgroundDriveBlocked()) return;
         applyManualDrive(car, { speedMps: 0 });
     }));
 
-    const STEER_RATE = THREE.MathUtils.degToRad(50);
-
     disposers.push(data.keys().registerWhileDown("a", (dt) => {
-        if (!car.controlsEnabled) return;
+        if (!car.controlsEnabled || playgroundDriveBlocked()) return;
         const current = car.plant?.steeringAngle ?? car.steeringAngle ?? 0;
-        applyManualDrive(car, { steeringRad: current + STEER_RATE * dt });
+        applyManualDrive(car, { steeringRad: current + KEYBOARD_STEER_RATE_RAD * dt });
     }));
     disposers.push(data.keys().registerWhileDown("d", (dt) => {
-        if (!car.controlsEnabled) return;
+        if (!car.controlsEnabled || playgroundDriveBlocked()) return;
         const current = car.plant?.steeringAngle ?? car.steeringAngle ?? 0;
-        applyManualDrive(car, { steeringRad: current - STEER_RATE * dt });
+        applyManualDrive(car, { steeringRad: current - KEYBOARD_STEER_RATE_RAD * dt });
     }));
 
 

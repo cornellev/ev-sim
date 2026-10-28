@@ -19,6 +19,7 @@ export function SimulationChrome({ data, onOpenReplay }) {
     const [compact, setCompact] = useState(false);
     const [viewMode, setViewMode] = useState("3d");
     const [lidarViewportEnabled, setLidarViewportEnabled] = useState(false);
+    const [colliderViewportEnabled, setColliderViewportEnabled] = useState(false);
     const perspectiveView = data?.simulation?.()?.perspectiveView ?? null;
     const [perspective, setPerspective] = useState(() => perspectiveView?.getSnapshot?.() ?? INACTIVE_PERSPECTIVE);
 
@@ -53,6 +54,12 @@ export function SimulationChrome({ data, onOpenReplay }) {
         simulation?.setLidarViewportEnabled?.(lidarViewportEnabled);
         return () => simulation?.setLidarViewportEnabled?.(false);
     }, [data, lidarViewportEnabled]);
+
+    useEffect(() => {
+        const simulation = data?.simulation?.();
+        simulation?.setColliderViewportEnabled?.(colliderViewportEnabled);
+        return () => simulation?.setColliderViewportEnabled?.(false);
+    }, [data, colliderViewportEnabled]);
 
     useEffect(() => {
         if (!mapActive) return undefined;
@@ -110,7 +117,15 @@ export function SimulationChrome({ data, onOpenReplay }) {
                 viewMode={viewMode}
                 onViewModeChange={setViewMode}
                 lidarViewportEnabled={lidarViewportEnabled}
-                onLidarViewportEnabledChange={setLidarViewportEnabled}
+                onLidarViewportEnabledChange={(enabled) => {
+                    setLidarViewportEnabled(enabled);
+                    if (enabled) setColliderViewportEnabled(false);
+                }}
+                colliderViewportEnabled={colliderViewportEnabled}
+                onColliderViewportEnabledChange={(enabled) => {
+                    setColliderViewportEnabled(enabled);
+                    if (enabled) setLidarViewportEnabled(false);
+                }}
             />
         </>
     );

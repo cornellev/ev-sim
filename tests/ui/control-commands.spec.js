@@ -18,6 +18,10 @@ test.describe("control commands", () => {
         await expect(page.getByTestId("controls-config")).toContainText("Stale policy");
         await expect(page.getByTestId("controls-config")).toContainText("Max speed");
         await expect(page.getByTestId("controls-config")).toContainText("Max steer rate");
+        const keyboardDrive = page.getByRole("switch", { name: /Keyboard drive/ });
+        await expect(keyboardDrive).not.toBeChecked();
+        await keyboardDrive.click();
+        await expect(keyboardDrive).toBeChecked();
     });
 
     test("topics catalog adds controls-command not ackdrive", async ({ page }) => {

@@ -4,6 +4,7 @@ import { attachPerspectiveView, detachPerspectiveView } from "../3d/camera/persp
 import { AutonomyOverlay } from "../3d/overlay/AutonomyOverlay.js";
 import { BrowserPbrRenderRuntime } from "../3d/perception/BrowserPbrRenderRuntime.js";
 import { BrowserPbrWorkerRuntime } from "../3d/perception/BrowserPbrWorkerRuntime.js";
+import { ColliderViewportPreview } from "../3d/perception/ColliderViewportPreview.js";
 import { LidarViewportPreview } from "../3d/perception/LidarViewportPreview.js";
 import { ScenarioDiagnostics } from "../scenarios/ScenarioDiagnostics.js";
 import { ScenarioRuntime } from "../scenarios/ScenarioRuntime.js";
@@ -14,6 +15,7 @@ import { PluginRunSession, pluginRuntimeCapabilitiesForRun } from "../plugin/Plu
 import { browserSimulationPerformance } from "./performance/BrowserSimulationPerformance.js";
 import { createPhysicsBackendSelection } from "../physics/PhysicsBackend.js";
 import { applyRigidBodyViewportPoses } from "../3d/editor/projection/applyRigidBodyPoses.js";
+import { createKeyboardDriveState, stepKeyboardDrive } from "./keyboardDrive.js";
 
 const KERNEL_PROPERTIES = [
     "stepNs",
@@ -98,6 +100,7 @@ export class SimulationEngine {
         this.viewportActive = true;
         this.sceneRenderEnabled = true;
         this.lidarViewport = new LidarViewportPreview(this.data);
+        this.colliderViewport = new ColliderViewportPreview(this.data);
         this.environmentRuntime = null;
         this.renderRuntime = null;
         this.renderProviderStatus = null;
@@ -176,6 +179,7 @@ export class SimulationEngine {
         });
         this.kernel = new SimulationKernel(this.runtimeContext, options);
         exposeKernelProperties(this);
+        this._keyboardDrive = createKeyboardDriveState();
         this._episodeMeshIds = new Set();
         this._episodeMeshSync = Promise.resolve();
         this.kernel.onReset(() => this._syncEpisodeOverlayMeshes());
@@ -576,6 +580,8 @@ export class SimulationEngine {
         this.autonomyOverlay?.dispose?.();
         this.lidarViewport?.dispose();
         this.lidarViewport = null;
+        this.colliderViewport?.dispose();
+        this.colliderViewport = null;
         this.listeners.clear();
         this.scene = null;
         this.camera = null;
@@ -651,6 +657,7 @@ export class SimulationEngine {
         this.accumulatorNs = 0;
         this._resetPacingState();
         if (reset) this.frames = 0;
+        this._keyboardDrive = createKeyboardDriveState();
         this.kernel.stop({ reset, dispatchEpisode });
         this.autonomyOverlay?.disposeEstimateClone?.();
         if (reset) this.autonomyOverlay?.clear?.();
@@ -669,6 +676,7 @@ export class SimulationEngine {
         this.accumulator = 0;
         this.accumulatorNs = 0;
         this._resetPacingState();
+        this._keyboardDrive = createKeyboardDriveState();
         this.kernel.reset(episodeSpec);
         this.autonomyOverlay?.clear?.();
         this._applyRigidBodyPoses();
@@ -681,6 +689,7 @@ export class SimulationEngine {
             return this._serializeAsyncAdvance(() => this._stepAsync(count));
         }
         this.kernel.step(count, {
+            beforeStep: () => this._submitKeyboardDrive(),
             afterStep: (dt) => this._updatePresentationAfterStep(dt),
         });
         this.render();
@@ -689,6 +698,7 @@ export class SimulationEngine {
 
     async _stepAsync(count) {
         await this.kernel.stepAsync(count, {
+            beforeStep: () => this._submitKeyboardDrive(),
             afterStep: (dt) => this._updatePresentationAfterStep(dt),
         });
         this.render();
@@ -792,8 +802,17 @@ export class SimulationEngine {
 
     setLidarViewportEnabled(enabled) {
         const next = enabled === true;
+        if (next) this.colliderViewport?.setEnabled(false);
         if (!this.lidarViewport || this.lidarViewport.enabled === next) return;
         this.lidarViewport.setEnabled(next);
+        if (this.sceneRenderEnabled) this.render();
+    }
+
+    setColliderViewportEnabled(enabled) {
+        const next = enabled === true;
+        if (next) this.lidarViewport?.setEnabled(false);
+        if (!this.colliderViewport || this.colliderViewport.enabled === next) return;
+        this.colliderViewport.setEnabled(next);
         if (this.sceneRenderEnabled) this.render();
     }
 
@@ -806,6 +825,7 @@ export class SimulationEngine {
         this.accumulator = 0;
         this.accumulatorNs = 0;
         this._resetPacingState();
+        this._keyboardDrive = createKeyboardDriveState();
 
         await this.kernel.prepare(resolved, options);
         this.scenarioDiagnostics.configure(this.resolvedRun?.scenario?.scenario ?? null);
@@ -826,6 +846,7 @@ export class SimulationEngine {
 
     clearRun() {
         this.stopLoop();
+        this._keyboardDrive = createKeyboardDriveState();
         this.kernel.clearRun();
         this.autonomyOverlay?.clear?.();
         this._emit();
@@ -1005,8 +1026,32 @@ export class SimulationEngine {
         this._pacingWallMs += wallMs;
     }
 
+    _submitKeyboardDrive() {
+        const manifest = this.resolvedRun?.manifest;
+        const controls = manifest?.controls;
+        const enabled = Boolean(this.controlRuntime)
+            && controls?.keyboardDrive === true
+            && controls?.authority === "candidate"
+            && this.scenarioRuntime?.active !== true
+            && this.modules?.controls !== false;
+        const stepped = stepKeyboardDrive(this._keyboardDrive, {
+            down: this.data.keys?.()?.down,
+            dt: this.fixedDt,
+            enabled,
+        });
+        this._keyboardDrive = stepped.state;
+        if (!stepped.command || !this.controlRuntime) return;
+        this.controlRuntime.submitSiSpeedSteer(controls?.targetVehicleId || "ego", {
+            ...stepped.command,
+            captureTimeNs: this.timeNs,
+            producer: "candidate",
+            source: "keyboard",
+        });
+    }
+
     _fixedStep(dt) {
         const previousStep = this.steps;
+        this._submitKeyboardDrive();
         const shouldContinue = this.kernel.advanceStep(dt);
         if (this.steps > previousStep) this._updatePresentationAfterStep(dt);
         return shouldContinue;
@@ -1043,6 +1088,7 @@ export class SimulationEngine {
 
     async _fixedStepAsync(dt) {
         const previousStep = this.steps;
+        this._submitKeyboardDrive();
         const shouldContinue = await this.kernel.advanceStepAsync(dt);
         if (this.steps > previousStep) this._updatePresentationAfterStep(dt);
         return shouldContinue;
@@ -1161,6 +1207,11 @@ export class SimulationEngine {
             height: this.renderer.domElement?.height,
         });
         if (this.lidarViewport?.enabled && this.lidarViewport.render(this.renderer, this.camera)) {
+            this.frames += 1;
+            browserSimulationPerformance.recordPresentation();
+            return true;
+        }
+        if (this.colliderViewport?.enabled && this.colliderViewport.render(this.renderer, this.camera)) {
             this.frames += 1;
             browserSimulationPerformance.recordPresentation();
             return true;

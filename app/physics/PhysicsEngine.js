@@ -1,5 +1,5 @@
 import { assertPhysicsBackendSelection, PHYSICS_BACKEND_CONFIG } from "./PhysicsBackend.js";
-import { catchContactFloor, contactBicycleBody } from "../simulation/vehicles/contactBicycle.js";
+import { contactBicycleBody, settleContactBody } from "../simulation/vehicles/contactBicycle.js";
 import { absorbDynamicClamp, dynamicBicycleBody } from "../simulation/vehicles/dynamicBicycle.js";
 import { worldSweepMesh } from "../simulation/world/RigidBodyRecords.js";
 import { compareUtf8 } from "../simulation/world/WorldDescription.js";
@@ -189,7 +189,7 @@ function isWorldAlignedBox(box) {
         && Math.abs(box.center.z) <= ALIGNED_BOX_EPSILON;
 }
 
-function vehicleBox(vehicle) {
+export function vehicleBox(vehicle) {
     return {
         half: vehicleHalfExtents(vehicle),
         center: vector(vehicle.collisionCenter),
@@ -462,6 +462,8 @@ export class PhysicsEngine {
             .map((vehicle, index) => ({ vehicle, id: stableVehicleId(vehicle, index) }))
             .sort((left, right) => compareUtf8(left.id, right.id));
         this.vehicleStates = vehicles.map(({ vehicle, id }) => {
+            const contact = contactBicycleBody(vehicle);
+            if (contact) contact.groundPlane = this.preparedWorldDescription?.groundPlane ?? null;
             const half = vehicleHalfExtents(vehicle);
             const position = vector(vehicle.position);
             const descriptor = this.RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(position.x, position.y, position.z);
@@ -707,11 +709,8 @@ export class PhysicsEngine {
             this._queueRigidBodyPush(state, candidate, deltaTime, hits, impact);
             this._separateOverlaps(overlaps);
             const plane = this.preparedWorldDescription?.groundPlane;
-            if (plane && Number.isFinite(Number(plane.y))) {
-                const contact = contactBicycleBody(state.vehicle);
-                const current = vector(contact?.position ?? state.vehicle.position);
-                const supported = supportPlanePosition(state.previous, current, Number(plane.y));
-                if (contact) catchContactFloor(contact, Number(plane.y), supported.held);
+            if (!contactBicycleBody(state.vehicle) && plane && Number.isFinite(Number(plane.y))) {
+                const supported = supportPlanePosition(state.previous, vector(state.vehicle.position), Number(plane.y));
                 if (supported.held) {
                     state.vehicle.updatePosition?.(supported.position);
                     if (!state.vehicle.updatePosition && state.vehicle.position) Object.assign(state.vehicle.position, supported.position);
@@ -770,6 +769,15 @@ export class PhysicsEngine {
         }
 
         for (const state of this.vehicleStates) {
+            const contact = contactBicycleBody(state.vehicle);
+            if (contact) {
+                const support = settleContactBody(contact);
+                if (state.vehicle !== contact) {
+                    state.vehicle.updatePosition?.(contact.position);
+                    state.vehicle.updateRotation?.(contact.rotation);
+                }
+                if (support?.source === "floor") this.pendingContacts.add(`${state.id}|ground:floor`);
+            }
             const position = vector(state.vehicle.position);
             absorbKinematicClamp(state.vehicle, position);
             state.body.setNextKinematicTranslation(position);

@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { SignalStore } from "../app/scripting/runtime/SignalStore.js";
 import { SimulationEngine } from "../app/simulation/SimulationEngine.js";
+import { KEYBOARD_DRIVE_SPEED_MPS } from "../app/simulation/keyboardDrive.js";
 import { createDefaultRunManifest } from "../app/simulation/RunManifest.js";
 import { TopicInputQueue } from "../app/simulation/TopicInputQueue.js";
 import { PhysicsEngine, sweepAabb } from "../app/physics/PhysicsEngine.js";
@@ -38,6 +39,11 @@ function harness(options = {}) {
         step() { calls.push("physics"); },
         syncAndPublishContacts() { calls.push("contacts"); },
     };
+    const keysDown = new Set();
+    const keys = {
+        down: keysDown,
+        update: () => calls.push("keys"),
+    };
     const vehicleDatabase = {
         vehicles: [vehicle],
         update: (dt) => vehicle.update(dt),
@@ -48,13 +54,13 @@ function harness(options = {}) {
         vehicles: () => vehicleDatabase,
         devices: () => devices,
         physics: () => physics,
-        keys: () => ({ update: () => calls.push("keys") }),
+        keys: () => keys,
         client: () => ({ get: () => null }),
         baking: () => null,
         earthTilesManager: () => null,
         skyManager: () => null,
     };
-    return { engine: new SimulationEngine(data, options), data, store, runtime, vehicle, calls, vehicleConfigurations };
+    return { engine: new SimulationEngine(data, options), data, store, runtime, vehicle, calls, vehicleConfigurations, keysDown };
 }
 
 function resolved(manifest) {
@@ -811,4 +817,64 @@ test("late async advancement cannot emit state after stop invalidates its genera
         globalThis.requestAnimationFrame = originalRaf;
         globalThis.cancelAnimationFrame = originalCancel;
     }
+});
+
+function quietManifest(controls = {}) {
+    return createDefaultRunManifest({
+        controls,
+        clock: { maxSteps: 4 },
+        sensorRig: { sensors: [] },
+        assertions: [],
+    });
+}
+
+test("keyboard drive commands a prepared run and yields otherwise", async () => {
+    const driven = harness();
+    driven.keysDown.add("w");
+    await driven.engine.prepare(resolved(quietManifest({ keyboardDrive: true })));
+    driven.engine.step(1);
+    assert.equal(driven.engine.controlRuntime.getSnapshot("ego").requested.speedMps, KEYBOARD_DRIVE_SPEED_MPS);
+    assert.ok(driven.vehicle.velocity.x > 0);
+    assert.ok(driven.vehicle.velocity.x < KEYBOARD_DRIVE_SPEED_MPS);
+
+    const off = harness();
+    off.keysDown.add("w");
+    await off.engine.prepare(resolved(quietManifest()));
+    off.engine.step(1);
+    assert.equal(off.vehicle.velocity.x, 0);
+    assert.equal(off.engine.controlRuntime.getSnapshot("ego").requested, null);
+
+    const scenario = harness();
+    scenario.keysDown.add("w");
+    await scenario.engine.prepare({
+        ...resolved(quietManifest({ keyboardDrive: true })),
+        scenario: { scenario: { id: "held" } },
+    });
+    scenario.engine.step(1);
+    assert.equal(scenario.engine.scenarioRuntime.active, true);
+    assert.equal(scenario.vehicle.velocity.x, 0);
+
+    const reference = harness();
+    reference.keysDown.add("w");
+    await reference.engine.prepare(resolved(quietManifest({ keyboardDrive: true, authority: "reference" })));
+    reference.engine.step(1);
+    assert.equal(reference.vehicle.velocity.x, 0);
+
+    const controlsOff = harness();
+    controlsOff.keysDown.add("w");
+    await controlsOff.engine.prepare(resolved(quietManifest({ keyboardDrive: true })));
+    controlsOff.engine.setModule("controls", false);
+    controlsOff.engine.step(1);
+    assert.equal(controlsOff.vehicle.velocity.x, 0);
+
+    const steering = harness();
+    steering.keysDown.add("a");
+    await steering.engine.prepare(resolved(quietManifest({ keyboardDrive: true })));
+    steering.engine.step(1);
+    assert.ok(steering.vehicle.steeringAngle > 0);
+    steering.keysDown.clear();
+    steering.engine.reset();
+    assert.equal(steering.vehicle.steeringAngle, 0);
+    steering.engine.step(1);
+    assert.equal(steering.vehicle.steeringAngle, 0);
 });

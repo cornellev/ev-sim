@@ -305,11 +305,12 @@ export class SimulationKernel {
         return this.getSnapshot();
     }
 
-    step(count = 1, { afterStep = null } = {}) {
+    step(count = 1, { afterStep = null, beforeStep = null } = {}) {
         this.status = "paused";
         let shouldContinue = true;
         for (let index = 0; index < count; index += 1) {
             const previousStep = this.steps;
+            beforeStep?.();
             shouldContinue = this.advanceStep(this.fixedDt);
             if (this.steps > previousStep) afterStep?.(this.fixedDt, this.getSnapshot());
             if (shouldContinue === false) break;
@@ -318,11 +319,12 @@ export class SimulationKernel {
         return shouldContinue;
     }
 
-    async stepAsync(count = 1, { afterStep = null } = {}) {
+    async stepAsync(count = 1, { afterStep = null, beforeStep = null } = {}) {
         this.status = "paused";
         let shouldContinue = true;
         for (let index = 0; index < count; index += 1) {
             const previousStep = this.steps;
+            beforeStep?.();
             shouldContinue = await this.advanceStepAsync(this.fixedDt);
             if (this.steps > previousStep) afterStep?.(this.fixedDt, this.getSnapshot());
             if (shouldContinue === false) break;

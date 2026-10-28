@@ -1367,6 +1367,12 @@ function Controls({ draft, update }) {
                     value={controls.referenceShadow !== false}
                     onChange={(value) => update(["controls", "referenceShadow"], value)}
                 />
+                <Toggle
+                    label="Keyboard drive"
+                    description="WASD drives the target vehicle when this run has no scenario and authority is candidate. Speed ramps inside the vehicle limits. A scenario still owns the vehicle."
+                    value={controls.keyboardDrive === true}
+                    onChange={(value) => update(["controls", "keyboardDrive"], value === true)}
+                />
             </div>
             {controls.stalePolicy === "fallback" && (
                 <AdvancedFields label="SI fallback command">

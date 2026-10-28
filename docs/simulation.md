@@ -64,7 +64,7 @@ Sensor types are modular definitions rather than conditionals in manifest or edi
 
 Keep the definition registry platform-neutral because run and vehicle manifests are normalized on both the browser and server. Runtime factories may import Three.js and device classes. Unknown type IDs are preserved for forward compatibility, but validation and runtime creation reject them until both registrations exist.
 
-Managed-run control input uses `/controls/command` (`sensor_fusion_msgs/StampedAckermannDrive`) through `ControlRuntime` at fixed-step boundaries. Unmanaged scene integrations use the same SI stamped endpoint in `app/3d/Scene.js`. There is no live `/ackdrive` handler. Scenario route-follower and script baselines with `controls.authority: reference` close that loop locally; they do not need the topic advertised on the orchestrator.
+Managed-run control input uses `/controls/command` (`sensor_fusion_msgs/StampedAckermannDrive`) through `ControlRuntime` at fixed-step boundaries. Unmanaged scene integrations use the same SI stamped endpoint in `app/3d/Scene.js`. There is no live `/ackdrive` handler. Scenario route-follower and script baselines with `controls.authority: reference` close that loop locally; they do not need the topic advertised on the orchestrator. With **Controls → Keyboard drive** saved on and no scenario, the browser samples WASD each step and submits that same candidate command; headless runs ignore the switch.
 
 ### Built-in route follower
 

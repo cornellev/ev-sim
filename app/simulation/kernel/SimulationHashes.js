@@ -178,6 +178,7 @@ function legacySimulationSemanticProjection(resolved = {}) {
         // back to the prior semantic shape so otherwise-identical runs keep the
         // same simulationSemanticHash / episodeHash / trajectoryHash.
         delete projection.manifest.provenance;
+        omitKeyboardDrive(projection.manifest);
         if (Number(projection.manifest.version) === 10) {
             projection.manifest.version = 9;
         }
@@ -215,6 +216,10 @@ function inheritedSensorRigForIdentity(rig) {
     const projected = structuredClone(rig ?? null);
     omitSensorInheritance(projected);
     return projected;
+}
+
+function omitKeyboardDrive(manifest) {
+    if (manifest?.controls) delete manifest.controls.keyboardDrive;
 }
 
 function omitSensorInheritance(rig) {
@@ -322,6 +327,7 @@ export function simulationSemanticProjection(resolved = {}) {
         delete manifest.provenance;
         delete manifest.plugins;
         delete manifest.sensorTransports;
+        omitKeyboardDrive(manifest);
         if (manifest.clock) {
             delete manifest.clock.pacing;
             delete manifest.clock.speed;

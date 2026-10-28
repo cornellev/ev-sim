@@ -13,6 +13,12 @@
 #   --start                      Run npm run dev after install
 #   --marketplace                Write CEV_SIM_MARKETPLACE_ENABLED=1 to .env.local
 #   --no-marketplace             Write CEV_SIM_MARKETPLACE_ENABLED=0 to .env.local
+#   --orchestrator               Install the ROS orchestrator without asking
+#   --no-orchestrator            Skip the ROS orchestrator
+#   --orchestrator-dir DIR       Orchestrator directory (default: ~/cev/orchestrator)
+#   EV_SIM_ORCHESTRATOR_DIR      Same as --orchestrator-dir
+#   EV_SIM_ORCHESTRATOR_REPO     Override the orchestrator clone URL
+#   --orchestrator-only          Install the orchestrator and skip ev-sim
 #   -h, --help                   Show help
 #
 # Creates server/data/visual-source-registry.json with the local owned-lab
@@ -39,6 +45,24 @@ NVM_INSTALL_VERSION="v0.40.3"
 # installed: this run installed that version and made it the nvm default.
 NODE_SETUP="present"
 NODE_DEFAULT_SET=0
+# Empty means ask. 1 installs, 0 skips. --orchestrator-only forces 1.
+ORCHESTRATOR_CHOICE=""
+ORCHESTRATOR_FLAG_SET=0
+ORCHESTRATOR_ONLY=0
+ORCHESTRATOR_REPO="${EV_SIM_ORCHESTRATOR_REPO:-https://github.com/cornellev/orchestrator.git}"
+ORCHESTRATOR_DIR="${EV_SIM_ORCHESTRATOR_DIR:-}"
+ORCHESTRATOR_DIR_SET=0
+if [[ -n "$ORCHESTRATOR_DIR" ]]; then
+  ORCHESTRATOR_DIR_SET=1
+fi
+# installed or skipped. Empty until configure_orchestrator runs.
+ORCHESTRATOR_STATUS=""
+# 1 when ~/.local/bin was already on PATH. 0 when a new terminal is required.
+ORCHESTRATOR_COMMAND_ON_PATH=""
+DIR_FLAG_SET=0
+REF_FLAG_SET=0
+UV_INSTALL_VERSION="0.13.5"
+UV_PYTHON_VERSION="3.12"
 
 # ── colors ──────────────────────────────────────────────────────────────────
 if [[ -t 1 ]] && [[ "${NO_COLOR:-}" == "" ]] && [[ "${TERM:-}" != "dumb" ]]; then
@@ -78,6 +102,13 @@ Options:
   --start          Start the dev server after install
   --marketplace    Enable the marketplace in .env.local
   --no-marketplace Disable the marketplace in .env.local
+  --orchestrator   Install the ROS orchestrator without asking
+  --no-orchestrator
+                   Skip the ROS orchestrator
+  --orchestrator-dir DIR
+                   Orchestrator directory (default: ~/cev/orchestrator)
+  --orchestrator-only
+                   Install the orchestrator and skip ev-sim
   -h, --help       Show this help
 
 For a reproducible release install, pass a tag such as --ref v0.2.0.
@@ -98,18 +129,30 @@ whether to install it with nvm and make it the default.
 Enter, y, or yes installs it, including nvm ${NVM_INSTALL_VERSION} when nvm
 is missing. n or no stops. A run with no terminal stops and prints install
 instructions.
+The installer asks whether to install the ROS orchestrator. Enter, y, or yes
+installs it. n or no skips it. A run with no terminal skips it unless
+--orchestrator or --orchestrator-only is set. It then asks for a directory.
+Enter uses ~/cev/orchestrator. --orchestrator-dir or EV_SIM_ORCHESTRATOR_DIR
+skips that prompt. Relative paths resolve from the current directory.
+When Python 3.10–3.13 cannot create a virtualenv, the installer uses uv ${UV_INSTALL_VERSION}
+to install Python ${UV_PYTHON_VERSION} for that virtualenv only. It then runs
+that checkout's install.sh command target, which installs the orch command.
+--orchestrator-only
+installs the orchestrator and does not install ev-sim. It cannot be combined with
+--dir, --ref, --branch, --no-install, --build, --start, --marketplace, or --no-marketplace.
 
 Environment:
-  EV_SIM_DIR, EV_SIM_REF, EV_SIM_BRANCH, EV_SIM_REPO, NO_COLOR
+  EV_SIM_DIR, EV_SIM_REF, EV_SIM_BRANCH, EV_SIM_REPO,
+  EV_SIM_ORCHESTRATOR_DIR, EV_SIM_ORCHESTRATOR_REPO, NO_COLOR
 EOF
 }
 
 # ── args ────────────────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --dir)        INSTALL_DIR="${2:-}"; shift 2 || fail "--dir requires a path" ;;
-    --ref)        REF="${2:-}"; shift 2 || fail "--ref requires a tag, branch, or commit" ;;
-    --branch)     REF="${2:-}"; shift 2 || fail "--branch requires a name" ;;
+    --dir)        INSTALL_DIR="${2:-}"; DIR_FLAG_SET=1; shift 2 || fail "--dir requires a path" ;;
+    --ref)        REF="${2:-}"; REF_FLAG_SET=1; shift 2 || fail "--ref requires a tag, branch, or commit" ;;
+    --branch)     REF="${2:-}"; REF_FLAG_SET=1; shift 2 || fail "--branch requires a name" ;;
     --no-install) SKIP_NPM=1; shift ;;
     --build)      RUN_BUILD=1; shift ;;
     --start)      START_DEV=1; shift ;;
@@ -129,10 +172,67 @@ while [[ $# -gt 0 ]]; do
       MARKETPLACE_FLAG_SET=1
       shift
       ;;
+    --orchestrator)
+      if [[ "$ORCHESTRATOR_FLAG_SET" -eq 1 && "$ORCHESTRATOR_CHOICE" == "0" ]]; then
+        fail "Pass only one of --orchestrator or --no-orchestrator"
+      fi
+      ORCHESTRATOR_CHOICE=1
+      ORCHESTRATOR_FLAG_SET=1
+      shift
+      ;;
+    --no-orchestrator)
+      if [[ "$ORCHESTRATOR_ONLY" -eq 1 ]]; then
+        fail "Pass only one of --orchestrator-only or --no-orchestrator"
+      fi
+      if [[ "$ORCHESTRATOR_FLAG_SET" -eq 1 && "$ORCHESTRATOR_CHOICE" != "0" ]]; then
+        fail "Pass only one of --orchestrator or --no-orchestrator"
+      fi
+      ORCHESTRATOR_CHOICE=0
+      ORCHESTRATOR_FLAG_SET=1
+      shift
+      ;;
+    --orchestrator-dir)
+      ORCHESTRATOR_DIR="${2:-}"
+      if [[ -z "$ORCHESTRATOR_DIR" ]]; then
+        fail "--orchestrator-dir requires a path"
+      fi
+      ORCHESTRATOR_DIR_SET=1
+      shift 2 || fail "--orchestrator-dir requires a path"
+      ;;
+    --orchestrator-only)
+      if [[ "$ORCHESTRATOR_FLAG_SET" -eq 1 && "$ORCHESTRATOR_CHOICE" == "0" ]]; then
+        fail "Pass only one of --orchestrator-only or --no-orchestrator"
+      fi
+      ORCHESTRATOR_ONLY=1
+      ORCHESTRATOR_CHOICE=1
+      ORCHESTRATOR_FLAG_SET=1
+      shift
+      ;;
     -h|--help)    usage; exit 0 ;;
     *)            fail "Unknown option: $1 (try --help)" ;;
   esac
 done
+
+if [[ "$ORCHESTRATOR_ONLY" -eq 1 ]]; then
+  if [[ "$DIR_FLAG_SET" -eq 1 ]]; then
+    fail "--orchestrator-only cannot be combined with --dir"
+  fi
+  if [[ "$REF_FLAG_SET" -eq 1 ]]; then
+    fail "--orchestrator-only cannot be combined with --ref or --branch"
+  fi
+  if [[ "$SKIP_NPM" -eq 1 ]]; then
+    fail "--orchestrator-only cannot be combined with --no-install"
+  fi
+  if [[ "$RUN_BUILD" -eq 1 ]]; then
+    fail "--orchestrator-only cannot be combined with --build"
+  fi
+  if [[ "$START_DEV" -eq 1 ]]; then
+    fail "--orchestrator-only cannot be combined with --start"
+  fi
+  if [[ "$MARKETPLACE_FLAG_SET" -eq 1 ]]; then
+    fail "--orchestrator-only cannot be combined with marketplace options"
+  fi
+fi
 
 if [[ "$RUN_BUILD" -eq 1 && "$SKIP_NPM" -eq 1 ]]; then
   fail "--build needs dependencies installed; omit --no-install"
@@ -656,7 +756,301 @@ EOF
   VISUAL_REGISTRY_STATUS="created"
 }
 
-# Tests source this file and call configure_visual_source_registry directly.
+# ── orchestrator ────────────────────────────────────────────────────────────
+# Python 3.10–3.13, matching the repo's Python support. 3.14 is excluded.
+
+python_version_supported() {
+  "$1" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) and sys.version_info < (3, 14) else 1)' >/dev/null 2>&1
+}
+
+# Empty means ~/cev/orchestrator. ~ expands. Relative paths use the current directory.
+resolve_orchestrator_path() {
+  local value="$1"
+  if [[ -z "$value" ]]; then
+    value="~/cev/orchestrator"
+  fi
+  if [[ "$value" == "~" || "$value" == "~/"* ]]; then
+    if [[ -z "${HOME-}" ]]; then
+      fail "Cannot expand ~ in ${value}"
+    fi
+    value="${HOME}${value:1}"
+  fi
+  if [[ "$value" != /* ]]; then
+    value="${PWD%/}/${value}"
+  fi
+  printf '%s\n' "$value"
+}
+
+ask_orchestrator_dir() {
+  local answer="" default="~/cev/orchestrator"
+  if [[ "$ORCHESTRATOR_DIR_SET" -eq 1 ]]; then
+    return 0
+  fi
+  if { : >/dev/tty </dev/tty; } 2>/dev/null; then
+    printf '  Orchestrator directory [%s]: ' "$default" >/dev/tty
+    if ! IFS= read -r answer </dev/tty; then
+      answer=""
+    fi
+    while [[ "$answer" == [[:space:]]* ]]; do answer="${answer:1}"; done
+    while [[ -n "$answer" && "$answer" == *[[:space:]] ]]; do answer="${answer:0:${#answer}-1}"; done
+    if [[ -z "$answer" ]]; then
+      answer="$default"
+    fi
+    ORCHESTRATOR_DIR="$answer"
+    return 0
+  fi
+  info "No terminal — using ${default}"
+  ORCHESTRATOR_DIR="$default"
+}
+
+# uv installs CPython for this venv only. UV_NO_MODIFY_PATH keeps the shell rc unchanged.
+install_pinned_uv() {
+  local log="" bindir=""
+  if have uv; then
+    return 0
+  fi
+  if ! have curl; then
+    fail "curl is required to install uv. Install Python ${UV_PYTHON_VERSION} and re-run."
+  fi
+  if [[ -z "${HOME-}" ]]; then
+    fail "HOME is required to install uv"
+  fi
+  bindir="${HOME}/.local/bin"
+  log="$(mktemp -t ev-sim-uv.XXXXXX)"
+  spin_start "Installing uv ${UV_INSTALL_VERSION}…"
+  if curl -fsSL "https://astral.sh/uv/${UV_INSTALL_VERSION}/install.sh" | env UV_INSTALL_DIR="$bindir" UV_NO_MODIFY_PATH=1 sh >"$log" 2>&1; then
+    spin_stop ok "Installed uv ${UV_INSTALL_VERSION}"
+    rm -f "$log"
+  else
+    spin_stop quiet
+    printf '  %s✗%s  uv install failed — last lines:\n' "$RED" "$RESET" >&2
+    tail -n 20 "$log" >&2 || true
+    fail "Full log: ${log}"
+  fi
+  PATH="${bindir}:${PATH}"
+  export PATH
+  hash -r 2>/dev/null || true
+  if ! have uv; then
+    fail "uv ${UV_INSTALL_VERSION} installed, but it is not active on PATH"
+  fi
+}
+
+install_uv_python_venv() {
+  local dest="$1"
+  local log="" py=""
+  install_pinned_uv
+  log="$(mktemp -t ev-sim-python.XXXXXX)"
+  spin_start "Installing Python ${UV_PYTHON_VERSION}…"
+  if uv python install --no-bin "$UV_PYTHON_VERSION" >"$log" 2>&1; then
+    spin_stop ok "Installed Python ${UV_PYTHON_VERSION}"
+    rm -f "$log"
+  else
+    spin_stop quiet
+    printf '  %s✗%s  Python install failed — last lines:\n' "$RED" "$RESET" >&2
+    tail -n 20 "$log" >&2 || true
+    fail "Full log: ${log}"
+  fi
+  py="$(uv python find --no-project --managed-python "$UV_PYTHON_VERSION" 2>/dev/null || true)"
+  if [[ -z "$py" || ! -x "$py" ]]; then
+    fail "Python ${UV_PYTHON_VERSION} installed, but uv could not find it"
+  fi
+  log="$(mktemp -t ev-sim-venv.XXXXXX)"
+  if ! "$py" -m venv "${dest}/.venv" >"$log" 2>&1; then
+    printf '  %s✗%s  Could not create the orchestrator virtualenv — last lines:\n' "$RED" "$RESET" >&2
+    tail -n 20 "$log" >&2 || true
+    fail "Full log: ${log}"
+  fi
+  rm -f "$log"
+  if ! python_version_supported "${dest}/.venv/bin/python"; then
+    fail "Orchestrator virtualenv Python is not ${UV_PYTHON_VERSION}"
+  fi
+  ok "Created .venv with Python ${UV_PYTHON_VERSION}"
+}
+
+ensure_orchestrator_venv() {
+  local dest="$1"
+  local venv="${dest}/.venv"
+  local candidate="" log=""
+  if [[ -L "$venv" || ( -e "$venv" && ! -d "$venv" ) ]]; then
+    fail "${venv} exists and is not a directory"
+  fi
+  if [[ -x "${venv}/bin/python" ]] && python_version_supported "${venv}/bin/python"; then
+    ok "Using existing .venv ($("${venv}/bin/python" -V 2>&1))"
+    return 0
+  fi
+  if [[ -e "$venv" ]]; then
+    rm -rf -- "$venv"
+  fi
+  for candidate in python3 python; do
+    if have "$candidate" && python_version_supported "$candidate"; then
+      log="$(mktemp -t ev-sim-venv.XXXXXX)"
+      if "$candidate" -m venv "$venv" >"$log" 2>&1; then
+        rm -f "$log"
+        ok "Created .venv with $("$candidate" -V 2>&1)"
+        return 0
+      fi
+      rm -rf -- "$venv"
+      rm -f "$log"
+    fi
+  done
+  install_uv_python_venv "$dest"
+}
+
+install_orchestrator_requirements() {
+  local dest="$1"
+  local req="${dest}/requirements.txt"
+  local log=""
+  if [[ ! -f "$req" ]]; then
+    fail "Orchestrator checkout has no requirements.txt (${req})"
+  fi
+  log="$(mktemp -t ev-sim-orch-pip.XXXXXX)"
+  info "pip install -r requirements.txt  (this may take a minute)"
+  spin_start "pip install…"
+  if "${dest}/.venv/bin/python" -m pip install -r "$req" >"$log" 2>&1; then
+    spin_stop ok "Orchestrator dependencies installed"
+    rm -f "$log"
+  else
+    spin_stop quiet
+    printf '  %s✗%s  pip install failed — last lines:\n' "$RED" "$RESET" >&2
+    tail -n 20 "$log" >&2 || true
+    fail "Full log: ${log}"
+  fi
+}
+
+install_orchestrator_checkout() {
+  local dest="$1"
+  local parent="" log=""
+  if ! have git; then
+    fail "git is required. Install it, then re-run this script."
+  fi
+  if [[ -d "${dest}/.git" ]]; then
+    warn "Existing orchestrator checkout found — updating instead of cloning"
+    log="$(mktemp -t ev-sim-orch-git.XXXXXX)"
+    spin_start "Updating orchestrator…"
+    if (
+      cd "$dest"
+      git pull --ff-only --quiet
+    ) >"$log" 2>&1; then
+      spin_stop ok "Updated orchestrator in ${dest}"
+      rm -f "$log"
+    else
+      spin_stop quiet
+      printf '  %s✗%s  git pull failed — last lines:\n' "$RED" "$RESET" >&2
+      tail -n 20 "$log" >&2 || true
+      fail "Full log: ${log}"
+    fi
+  elif [[ -e "$dest" ]]; then
+    fail "Path exists and is not an orchestrator clone: ${dest}"
+  else
+    parent="$(dirname -- "$dest")"
+    mkdir -p -- "$parent" || fail "Could not create ${parent}"
+    log="$(mktemp -t ev-sim-orch-git.XXXXXX)"
+    spin_start "Cloning orchestrator…"
+    if git clone --quiet "$ORCHESTRATOR_REPO" "$dest" >"$log" 2>&1; then
+      spin_stop ok "Cloned orchestrator into ${dest}"
+      rm -f "$log"
+    else
+      spin_stop quiet
+      printf '  %s✗%s  git clone failed — last lines:\n' "$RED" "$RESET" >&2
+      tail -n 20 "$log" >&2 || true
+      fail "Full log: ${log}"
+    fi
+  fi
+  ensure_orchestrator_venv "$dest"
+  install_orchestrator_requirements "$dest"
+  install_orchestrator_command "$dest"
+}
+
+# Same command the orchestrator repo installs: ./install.sh command
+install_orchestrator_command() {
+  local dest="$1"
+  local log="" bin_dir=""
+  if [[ ! -f "${dest}/install.sh" ]]; then
+    fail "Orchestrator checkout has no install.sh (${dest}/install.sh)"
+  fi
+  if [[ -z "${HOME-}" ]]; then
+    fail "HOME is required to install the orch command"
+  fi
+  log="$(mktemp -t ev-sim-orch-cmd.XXXXXX)"
+  spin_start "Installing orch command…"
+  if bash "${dest}/install.sh" command >"$log" 2>&1; then
+    spin_stop ok "Installed orch"
+    rm -f "$log"
+  else
+    spin_stop quiet
+    printf '  %s✗%s  orch install failed — last lines:\n' "$RED" "$RESET" >&2
+    tail -n 20 "$log" >&2 || true
+    fail "Full log: ${log}"
+  fi
+  bin_dir="${ORCHESTRATOR_BIN_DIR:-${HOME}/.local/bin}"
+  if [[ ! -x "${bin_dir}/orch" ]]; then
+    fail "Orchestrator install did not create ${bin_dir}/orch"
+  fi
+  case ":${PATH}:" in
+    *":${bin_dir}:"*) ORCHESTRATOR_COMMAND_ON_PATH=1 ;;
+    *) ORCHESTRATOR_COMMAND_ON_PATH=0 ;;
+  esac
+}
+
+configure_orchestrator() {
+  step "Orchestrator"
+  if [[ "$ORCHESTRATOR_CHOICE" != "1" ]]; then
+    if [[ "$ORCHESTRATOR_FLAG_SET" -eq 0 ]]; then
+      case "$(ask_yes "Install the ROS orchestrator?")" in
+        no) ORCHESTRATOR_CHOICE=0 ;;
+        yes) ORCHESTRATOR_CHOICE=1 ;;
+        *)
+          info "No terminal — skipped the orchestrator"
+          ORCHESTRATOR_STATUS="skipped"
+          return 0
+          ;;
+      esac
+    fi
+  fi
+  if [[ "$ORCHESTRATOR_CHOICE" != "1" ]]; then
+    info "Skipped the orchestrator"
+    ORCHESTRATOR_STATUS="skipped"
+    return 0
+  fi
+  ask_orchestrator_dir
+  ORCHESTRATOR_DIR="$(resolve_orchestrator_path "$ORCHESTRATOR_DIR")"
+  info "→ ${ORCHESTRATOR_DIR}"
+  install_orchestrator_checkout "$ORCHESTRATOR_DIR"
+  ORCHESTRATOR_STATUS="installed"
+}
+
+print_orchestrator_next_steps() {
+  if [[ "$ORCHESTRATOR_STATUS" == "installed" ]]; then
+    printf '  Orchestrator is installed in %s%s%s.\n' "$BOLD" "$ORCHESTRATOR_DIR" "$RESET"
+    if [[ "$ORCHESTRATOR_COMMAND_ON_PATH" == "0" ]]; then
+      printf '  Open a new terminal, then start it with %sorch%s.\n' "$BOLD" "$RESET"
+    else
+      printf '  Start it with %sorch%s.\n' "$BOLD" "$RESET"
+    fi
+  elif [[ "$ORCHESTRATOR_STATUS" == "skipped" ]]; then
+    printf '  Orchestrator was skipped.\n'
+  fi
+}
+
+run_orchestrator_only() {
+  step "Checking prerequisites"
+  if have git; then
+    ok "git  $(git --version | awk '{print $3}')"
+  else
+    fail "git is required. Install it, then re-run this script."
+  fi
+  configure_orchestrator
+  printf '\n'
+  printf '  %s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n' "$GREEN" "$RESET"
+  printf '  %s%sOrchestrator install complete%s\n' "$GREEN" "$BOLD" "$RESET"
+  printf '\n'
+  print_orchestrator_next_steps
+  printf '  Docs → %sdocs/ros-integration.md%s\n' "$DIM" "$RESET"
+  printf '  %s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n' "$GREEN" "$RESET"
+  printf '\n'
+}
+
+# Tests source this file and call functions directly. main does not run.
 if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
   return 0
 fi
@@ -664,6 +1058,11 @@ fi
 # ── main ────────────────────────────────────────────────────────────────────
 trap cleanup EXIT INT TERM
 banner
+
+if [[ "$ORCHESTRATOR_ONLY" -eq 1 ]]; then
+  run_orchestrator_only
+  exit 0
+fi
 
 step "Checking prerequisites"
 
@@ -750,6 +1149,8 @@ configure_local_env
 
 configure_visual_source_registry
 
+configure_orchestrator
+
 if [[ "$RUN_BUILD" -eq 1 ]]; then
   step "Building"
   info "npm run build  (this may take a minute)"
@@ -807,6 +1208,7 @@ if [[ "$VISUAL_REGISTRY_STATUS" == "created" ]]; then
 elif [[ "$VISUAL_REGISTRY_STATUS" == "kept" ]]; then
   printf '  Kept the existing %svisual-source-registry.json%s.\n' "$BOLD" "$RESET"
 fi
+print_orchestrator_next_steps
 printf '  Optional: %spython -m pip install -e ./python%s (Python 3.10–3.13, docs/python-headless.md)\n' "$CYAN" "$RESET"
 printf '  Optional: %snpx cev-sim --help%s (cameras need CEV_SIM_HEADLESS_SUPERVISOR_CONFIG)\n' "$CYAN" "$RESET"
 printf '\n'

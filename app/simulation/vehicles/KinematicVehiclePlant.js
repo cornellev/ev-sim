@@ -3,7 +3,7 @@ import { PLANT_STATE_LENGTH } from "../../plugin/PlantModule.js";
 import { getBuiltInVehicleManifest } from "../../vehicles/BuiltInVehicleManifests.js";
 import { CONTACT_BICYCLE_MODEL, DYNAMIC_BICYCLE_MODEL, normalizeVehicleManifest } from "../../vehicles/VehicleManifest.js";
 import { euler, finiteOr as finite, pose, vec3 } from "../../util/plainGeometry.js";
-import { stepContactPlant } from "./contactBicycle.js";
+import { groundClearance, stepContactPlant } from "./contactBicycle.js";
 import { deriveAxleDistances, longitudinalCommand, stepDynamicBicycle } from "./dynamicBicycle.js";
 
 export const VEHICLE_PLANT_KIND = "cev-sim.vehicle-plant";
@@ -67,6 +67,12 @@ export function createVehiclePlantDefinition(entry = {}, dependency = null, opti
         initialSteeringAngle: finite(entry.steeringAngle ?? options.steeringAngle),
         dimensions: { ...vec3(manifest.boundingBox?.size) },
         boundingBoxCenter: vec3(manifest.boundingBox?.center),
+        groundClearance: groundClearance(manifest.wheels),
+        ...(motionModel === "contact-bicycle" || options.plantModel === CONTACT_BICYCLE_MODEL ? {
+            contactWheels: manifest.wheels.map((wheel) => ({
+                position: vec3(wheel.position), radius: wheel.radius, width: wheel.width, steerable: wheel.steerable,
+            })),
+        } : {}),
         kinematics: { ...manifest.kinematics },
         keyframes,
         scenario: {
@@ -204,6 +210,7 @@ export class KinematicVehiclePlant {
         this.motionModel = definition.motionModel;
         this.collisionDimensions = { ...definition.dimensions };
         this.collisionCenter = { ...vec3(definition.boundingBoxCenter) };
+        this.groundClearance = Math.max(0, finite(definition.groundClearance));
         this.dimensions = this.collisionDimensions;
         this.kinematics = { ...definition.kinematics };
         this.keyframes = definition.keyframes.map((frame) => ({ ...frame }));
@@ -265,6 +272,8 @@ export class KinematicVehiclePlant {
         this.yawRate = 0;
         this.verticalVelocity = 0;
         this.floorSupport = null;
+        this.contactNormal = null;
+        this.contactControlActive = false;
         this.onRoad = false;
         this.axCommand = 0;
         this.longitudinal = { mode: "hold" };
@@ -321,7 +330,7 @@ export class KinematicVehiclePlant {
         if (dt < 0) throw new RangeError("Vehicle plant delta time cannot be negative.");
         const dynamicPlugin = isDynamicPlugin(this);
         const contactPlugin = isContactPlugin(this);
-        if (this.motionModel === "dynamic-bicycle" || dynamicPlugin || this.motionModel === "contact-bicycle" || contactPlugin) {
+        if (this.motionModel === "dynamic-bicycle" || dynamicPlugin) {
             this.axCommand = longitudinalCommand({
                 mode: this.longitudinal?.mode || "hold",
                 speedMps: this.longitudinal?.speedMps,
@@ -451,7 +460,11 @@ export class KinematicVehiclePlant {
                 lateralVelocity: finite(this.lateralVelocity),
                 yawRate: finite(this.yawRate),
             } : {}),
-            ...(isContactMotion(this) ? { verticalVelocity: finite(this.verticalVelocity) } : {}),
+            ...(isContactMotion(this) ? {
+                verticalVelocity: finite(this.verticalVelocity),
+                axCommand: finite(this.axCommand),
+                contactControlActive: this.contactControlActive === true,
+            } : {}),
         };
     }
 }

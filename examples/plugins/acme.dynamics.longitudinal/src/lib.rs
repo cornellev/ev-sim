@@ -22,7 +22,7 @@ fn js_sign(net: f64) -> f64 {
 
 /// Drive and rolling resistance along the body. No side force.
 /// The host integrates the axle forces. See `acme.dynamics.bicycle` for the buffer overlay.
-pub fn step(state: &mut PlantState, params: &[f64], _dt: f64) -> i32 {
+pub fn step(state: &mut PlantState, params: &[f64], dt: f64) -> i32 {
     let wheelbase = parameter(params, 0, 1.5).max(1.0e-9);
     let _maximum = parameter(params, 1, 0.6).min(std::f64::consts::PI * 0.49);
     let mass = parameter(params, 2, 1500.0).max(1.0e-9);
@@ -44,7 +44,9 @@ pub fn step(state: &mut PlantState, params: &[f64], _dt: f64) -> i32 {
     let drive = mass * state.acceleration[0];
     let rolling_capacity = crr * normal_load;
     let net = drive + mass * state.rotation[0];
-    let rolling = if vx.abs() < VX_REST {
+    let rolling = if dt > 0.0 {
+        (-net - mass * vx / dt).clamp(-rolling_capacity, rolling_capacity)
+    } else if vx.abs() < VX_REST {
         if net.abs() <= rolling_capacity { -net } else { -js_sign(net) * rolling_capacity }
     } else {
         -vx.signum() * rolling_capacity
@@ -66,6 +68,27 @@ pub fn step(state: &mut PlantState, params: &[f64], _dt: f64) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rolling_impulse_does_not_reverse_a_small_velocity() {
+        for dt in [0.0, 0.01, 1.0 / 60.0, 0.05, 0.1] {
+            for vx in [-0.0011, 0.0011] {
+                let mut state = PlantState {
+                    position: [0.0; 3], rotation: [0.0; 3],
+                    velocity: [vx, 0.0, 0.0],
+                    acceleration: [0.01, 1.0, 1500.0 * 9.81], steering: 0.0,
+                };
+                assert_eq!(step(&mut state, &[], dt), 0);
+                let force = state.velocity[0] + state.acceleration[0];
+                assert!(force.is_finite());
+                if dt > 0.0 {
+                    let next = vx + force / 1500.0 * dt;
+                    assert!(next * vx >= -1.0e-12, "{vx}, {dt}: {next}");
+                    assert!(next.abs() <= vx.abs() + 1.0e-12);
+                }
+            }
+        }
+    }
 
     fn near(actual: f64, expected: f64) {
         let delta = (actual - expected).abs();

@@ -244,6 +244,179 @@ test("install script follows an empty registry assignment to the data directory"
     });
 });
 
+function runOrchestratorSource(args, { cwd, extraEnv = {}, resolve = false } = {}) {
+    const env = { ...process.env };
+    delete env.EV_SIM_ORCHESTRATOR_DIR;
+    delete env.EV_SIM_ORCHESTRATOR_REPO;
+    Object.assign(env, extraEnv);
+    const report = resolve
+        ? "printf 'ONLY=%s\\nCHOICE=%s\\nDIR_SET=%s\\nDIR=%s\\nRESOLVED=%s\\n' \"$ORCHESTRATOR_ONLY\" \"$ORCHESTRATOR_CHOICE\" \"$ORCHESTRATOR_DIR_SET\" \"$ORCHESTRATOR_DIR\" \"$(resolve_orchestrator_path \"${ORCHESTRATOR_DIR:-}\")\""
+        : "printf 'ONLY=%s\\nCHOICE=%s\\nDIR_SET=%s\\nDIR=%s\\n' \"$ORCHESTRATOR_ONLY\" \"$ORCHESTRATOR_CHOICE\" \"$ORCHESTRATOR_DIR_SET\" \"$ORCHESTRATOR_DIR\"";
+    return spawnSync(
+        "bash",
+        [
+            "-c",
+            `install_script="$1"; shift; source "$install_script"; ${report}`,
+            "bash",
+            installScript,
+            ...args,
+        ],
+        { cwd, env, encoding: "utf8" },
+    );
+}
+
+test("install script defaults the orchestrator directory to ~/cev/orchestrator", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "cev-orch-home-"));
+    try {
+        const result = runOrchestratorSource([], { extraEnv: { HOME: home }, resolve: true });
+        assertOk(result);
+        assert.match(result.stdout, /^ONLY=0$/m);
+        assert.match(result.stdout, /^CHOICE=$/m);
+        assert.match(result.stdout, /^DIR_SET=0$/m);
+        assert.match(result.stdout, /^DIR=$/m);
+        assert.match(result.stdout, new RegExp(`^RESOLVED=${home}/cev/orchestrator$`, "m"));
+    } finally {
+        await fs.rm(home, { recursive: true, force: true });
+    }
+});
+
+test("install script expands an orchestrator directory flag", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "cev-orch-home-"));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "cev-orch-cwd-"));
+    try {
+        const tilde = runOrchestratorSource(
+            ["--orchestrator-dir", "~/cev/custom"],
+            { extraEnv: { HOME: home }, resolve: true },
+        );
+        assertOk(tilde);
+        assert.match(tilde.stdout, /^DIR=~\/cev\/custom$/m);
+        assert.match(tilde.stdout, /^DIR_SET=1$/m);
+        assert.match(tilde.stdout, new RegExp(`^RESOLVED=${home}/cev/custom$`, "m"));
+
+        const relative = runOrchestratorSource(
+            ["--orchestrator-only", "--orchestrator-dir", "rel/orch"],
+            { cwd, resolve: true },
+        );
+        assertOk(relative);
+        assert.match(relative.stdout, /^ONLY=1$/m);
+        assert.match(relative.stdout, /^CHOICE=1$/m);
+        const resolvedLine = relative.stdout.split("\n").find((line) => line.startsWith("RESOLVED="));
+        assert.equal(
+            resolvedLine.slice("RESOLVED=".length),
+            path.join(await fs.realpath(cwd), "rel/orch"),
+        );
+    } finally {
+        await fs.rm(home, { recursive: true, force: true });
+        await fs.rm(cwd, { recursive: true, force: true });
+    }
+});
+
+test("install script accepts an orchestrator directory from the environment", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "cev-orch-home-"));
+    try {
+        const result = runOrchestratorSource(["--orchestrator"], {
+            extraEnv: { HOME: home, EV_SIM_ORCHESTRATOR_DIR: "~/from-env" },
+            resolve: true,
+        });
+        assertOk(result);
+        assert.match(result.stdout, /^ONLY=0$/m);
+        assert.match(result.stdout, /^CHOICE=1$/m);
+        assert.match(result.stdout, /^DIR_SET=1$/m);
+        assert.match(result.stdout, new RegExp(`^RESOLVED=${home}/from-env$`, "m"));
+    } finally {
+        await fs.rm(home, { recursive: true, force: true });
+    }
+});
+
+test("install script rejects orchestrator flags that conflict", () => {
+    const cases = [
+        [["--orchestrator-only", "--dir", "/tmp/ev-sim"], /cannot be combined with --dir/],
+        [["--orchestrator-only", "--ref", "main"], /cannot be combined with --ref or --branch/],
+        [["--orchestrator-only", "--branch", "main"], /cannot be combined with --ref or --branch/],
+        [["--orchestrator-only", "--no-install"], /cannot be combined with --no-install/],
+        [["--orchestrator-only", "--build"], /cannot be combined with --build/],
+        [["--orchestrator-only", "--start"], /cannot be combined with --start/],
+        [["--orchestrator-only", "--marketplace"], /cannot be combined with marketplace options/],
+        [["--orchestrator-only", "--no-marketplace"], /cannot be combined with marketplace options/],
+        [["--orchestrator-only", "--no-orchestrator"], /Pass only one of --orchestrator-only or --no-orchestrator/],
+        [["--no-orchestrator", "--orchestrator-only"], /Pass only one of --orchestrator-only or --no-orchestrator/],
+        [["--orchestrator", "--no-orchestrator"], /Pass only one of --orchestrator or --no-orchestrator/],
+        [["--no-orchestrator", "--orchestrator"], /Pass only one of --orchestrator or --no-orchestrator/],
+        [["--orchestrator-dir"], /--orchestrator-dir requires a path/],
+    ];
+    for (const [args, pattern] of cases) {
+        const result = runOrchestratorSource(args);
+        assert.equal(result.error, undefined);
+        assert.notEqual(result.status, 0, `args: ${args.join(" ")}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+        assert.match(result.stderr, pattern, args.join(" "));
+    }
+});
+
+test("install script installs the orch command from the orchestrator checkout", async () => {
+    await withDir(async (dir) => {
+        const home = path.join(dir, "home");
+        const dest = path.join(dir, "orchestrator");
+        const invoked = path.join(dest, "invoked");
+        await fs.mkdir(dest);
+        await fs.writeFile(path.join(dest, "install.sh"), `#!/usr/bin/env bash
+printf '%s\\n' "$1" > ${JSON.stringify(invoked)}
+mkdir -p "$HOME/.local/bin"
+printf '%s\\n' '#!/bin/sh' > "$HOME/.local/bin/orch"
+chmod +x "$HOME/.local/bin/orch"
+`);
+        const env = { ...process.env, HOME: home };
+        delete env.ORCHESTRATOR_BIN_DIR;
+        const result = spawnSync(
+            "bash",
+            [
+                "-c",
+                'install_script="$1"; dest="$2"; set --; source "$install_script"; install_orchestrator_command "$dest"',
+                "bash",
+                installScript,
+                dest,
+            ],
+            { env, encoding: "utf8" },
+        );
+        assertOk(result);
+        assert.match(result.stdout, /Installed orch/);
+        assert.equal(await fs.readFile(invoked, "utf8"), "command\n");
+        assert.equal((await fs.lstat(path.join(home, ".local", "bin", "orch"))).isFile(), true);
+    });
+});
+
+test("install script stops when the orchestrator command install fails", async () => {
+    await withDir(async (dir) => {
+        const dest = path.join(dir, "orchestrator");
+        await fs.mkdir(dest);
+        await fs.writeFile(path.join(dest, "install.sh"), "#!/usr/bin/env bash\nprintf 'boom\\n' >&2\nexit 1\n");
+        const env = { ...process.env, HOME: path.join(dir, "home") };
+        delete env.ORCHESTRATOR_BIN_DIR;
+        const result = spawnSync(
+            "bash",
+            [
+                "-c",
+                'install_script="$1"; dest="$2"; set --; source "$install_script"; install_orchestrator_command "$dest"',
+                "bash",
+                installScript,
+                dest,
+            ],
+            { env, encoding: "utf8" },
+        );
+        assert.equal(result.error, undefined);
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /orch install failed/);
+        assert.match(result.stderr, /boom/);
+    });
+});
+
+test("install script records a skipped orchestrator", () => {
+    const result = runOrchestratorSource(["--no-orchestrator"]);
+    assertOk(result);
+    assert.match(result.stdout, /^ONLY=0$/m);
+    assert.match(result.stdout, /^CHOICE=0$/m);
+    assert.match(result.stdout, /^DIR_SET=0$/m);
+});
+
 test("install script stops when .env.local has an unsupported registry path", async () => {
     await withDir(async (dir) => {
         await fs.writeFile(

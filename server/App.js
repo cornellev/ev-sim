@@ -11,6 +11,7 @@ const handle = app.getRequestHandler();
 
 // just general logging + preflight checks
 const ready = require("./startup.js").startup(REPOSITORY_ROOT, process.env);
+const orchestrator = require("./ensureOrchestrator.js").ensureOrchestrator();
 
 if (!ready) {
     process.exit(1);
@@ -167,6 +168,7 @@ app.prepare().then(async () => {
         httpServer.close();
         await marketplaceService?.close();
         await headlessExperimentService.close();
+        await orchestrator.stop();
     };
     process.once('SIGTERM', shutdown);
     process.once('SIGINT', shutdown);

@@ -1,6 +1,7 @@
 import { EpisodeOverlay } from "../episode/EpisodeOverlay.js";
 import { euler, finiteOr, vec3 } from "../../util/plainGeometry.js";
 import { dynamicBicycleBody } from "../vehicles/dynamicBicycle.js";
+import { contactBicycleBody } from "../vehicles/contactBicycle.js";
 import { applyManualDrive, syncVehicleFromPlant } from "../../3d/vehicles/VehiclePlantAdapter.js";
 
 function resolve(source) {
@@ -212,10 +213,20 @@ export function createSimulationRuntimeContext(options = {}) {
             },
             getDeterministicState() {
                 const target = manager(options.vehicles);
-                if (target?.getDeterministicState) return target.getDeterministicState();
-                return vehicleList(options.vehicles)
+                const vehicles = vehicleList(options.vehicles);
+                const states = target?.getDeterministicState ? target.getDeterministicState() : vehicles
                     .map(defaultVehicleState)
                     .sort((left, right) => left.id.localeCompare(right.id));
+                const contacts = new Map();
+                for (const vehicle of vehicles) {
+                    const state = contactBicycleBody(vehicle)?.getDeterministicState?.();
+                    if (state) contacts.set(String(vehicle.telemetryId || vehicle.id || state.id), state);
+                }
+                if (contacts.size === 0) return states;
+                return states.map((state) => {
+                    const contact = contacts.get(String(state.id));
+                    return contact ? { ...state, ...contact, id: state.id } : state;
+                });
             },
             applyInitialState(initialState = {}) {
                 const byId = new Map((initialState.vehicles || []).map((vehicle) => [vehicle.id, vehicle]));

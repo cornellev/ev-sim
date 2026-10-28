@@ -145,6 +145,7 @@ export function normalizeControlsConfig(value = {}, { targetVehicleId = "ego" } 
         fallbackCommand: stalePolicy === "fallback" ? normalizeSiCommand(source.fallbackCommand) : normalizeSiCommand(source.fallbackCommand),
         referenceSource: text(source.referenceSource, DEFAULT_CONTROLS.referenceSource) || null,
         actuatorOverrides: normalizeActuatorOverrides(source.actuatorOverrides),
+        ...(source.keyboardDrive === true ? { keyboardDrive: true } : {}),
     };
 }
 
