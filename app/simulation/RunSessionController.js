@@ -37,6 +37,7 @@ export class RunSessionController {
             pendingResolved: null,
             activeResolved: null,
             activeRunId: null,
+            manifestRevision: null,
             error: null,
             degraded: false,
             assertionResults: [],
@@ -54,11 +55,12 @@ export class RunSessionController {
         this._scenarioDiagnosticsEnabled = false;
         this._loggingPolicyOverride = null;
         this._speedOverride = null;
+        this._stopPromise = null;
     }
 
     getSnapshot() {
         // Shallow copy: activeResolved / pendingResolved stay by reference (immutable after prepare).
-        return { ...this.snapshot };
+        return { ...this.snapshot, transitioning: Boolean(this._pendingPrepare || this._stopPromise) };
     }
 
     subscribe(listener) {
@@ -132,8 +134,12 @@ export class RunSessionController {
         if (this.snapshot.pendingResolved) this._applyPending().catch(() => {});
         return () => {
             if (this.data === data) {
-                this._launchSequence += 1;
-                this._rejectPendingPrepare(new Error("Run preparation was detached from the simulation."));
+                const switchingEnvironment = this.snapshot.pendingResolved
+                    && this.snapshot.pendingResolved.manifest.environment.id !== data.environment?.()?.environmentId;
+                if (!switchingEnvironment) {
+                    this._launchSequence += 1;
+                    this._rejectPendingPrepare(new Error("Run preparation was detached from the simulation."));
+                }
                 this._unsubscribeSimulation?.();
                 this._unsubscribeSimulation = null;
                 this.data = null;
@@ -141,7 +147,7 @@ export class RunSessionController {
         };
     }
 
-    async prepare(resolved, { autoplay = false, episodePhase = "start" } = {}) {
+    async prepare(resolved, { autoplay = false, episodePhase = "start", manifestRevision = null } = {}) {
         if (!resolved?.manifest || !resolved?.resolvedHash) throw new Error("A resolved run manifest is required.");
         // Reject unsupported measured providers before replacing or stopping an
         // active browser run and before loading any environment/sensor state.
@@ -158,6 +164,7 @@ export class RunSessionController {
             const timeout = setTimeout(() => {
                 if (this._pendingPrepare?.sequence !== launchSequence) return;
                 this._pendingPrepare = null;
+                this._launchSequence += 1;
                 const error = new Error(`Timed out waiting for environment "${resolved.manifest.environment.id}" to become ready.`);
                 this._set({ status: "error", error: error.message, pendingResolved: null });
                 reject(error);
@@ -166,6 +173,7 @@ export class RunSessionController {
         });
         this._set({
             status: "preparing",
+            manifestRevision,
             selectedManifestId: resolved.manifest.id,
             pendingResolved: resolved,
             error: null,
@@ -195,6 +203,7 @@ export class RunSessionController {
             const simulation = this.data.simulation?.();
             const clientManager = this.data.client?.();
             const preflight = await clientManager?.preflight?.(resolved);
+            if (expectedSequence !== this._launchSequence) return null;
             if (preflight && preflight.ok === false) {
                 const detail = preflight.issues?.map((issue) => issue.message).join(" ") || "Run preflight failed.";
                 throw new Error(detail);
@@ -203,7 +212,7 @@ export class RunSessionController {
             this._prepareEpisodePhase = "start";
             await simulation?.applyRunManifest?.(resolved, { episodePhase });
             if (expectedSequence !== this._launchSequence) return null;
-            const runId = `run-${new Date().toISOString().replace(/[-:.]/g, "").replace("Z", "Z")}-${resolved.resolvedHash.slice(0, 8)}`;
+            const runId = `run-${new Date().toISOString().replace(/[-:.]/g, "").replace("Z", "Z")}-${resolved.resolvedHash.slice(0, 8)}-${expectedSequence}`;
             this._set({
                 status: "ready",
                 pendingResolved: null,
@@ -216,6 +225,7 @@ export class RunSessionController {
             this._resolvePendingPrepare(expectedSequence, snapshot);
             return snapshot;
         } catch (error) {
+            if (expectedSequence !== this._launchSequence) return null;
             this._set({ status: "error", error: error.message, pendingResolved: null });
             this._rejectPendingPrepare(error, expectedSequence);
             throw error;
@@ -251,9 +261,13 @@ export class RunSessionController {
         return this.getSnapshot();
     }
 
-    pause() {
-        this.data?.simulation?.()?.pause?.();
-        if (this.snapshot.activeRunId) this._set({ status: "paused" });
+    async pause() {
+        const simulation = this.data?.simulation?.();
+        const wasReady = this.snapshot.status === "ready";
+        simulation?.pause?.();
+        if (this.snapshot.activeRunId && !wasReady) this._set({ status: "paused" });
+        await simulation?.whenIdle?.();
+        return this.getSnapshot();
     }
 
     setScenarioDiagnosticsEnabled(enabled) {
@@ -309,8 +323,24 @@ export class RunSessionController {
         return this.getSnapshot();
     }
 
-    async stop({ status = "stopped" } = {}) {
+    stop(options = {}) {
+        if (this._stopPromise) return this._stopPromise;
+        if (this.snapshot.runResult?.runId && this.snapshot.runResult.runId === this.snapshot.activeRunId) {
+            return Promise.resolve(this.snapshot.runResult);
+        }
+        this._stopPromise = Promise.resolve().then(() => this._stop(options)).catch((error) => {
+            this._set({ status: "error", error: error.message });
+            throw error;
+        }).finally(() => {
+            this._stopPromise = null;
+        });
+        this.data?.simulation?.()?.pause?.();
+        return this._stopPromise;
+    }
+
+    async _stop({ status = "stopped" } = {}) {
         const simulation = this.data?.simulation?.();
+        await simulation?.whenIdle?.();
         const canFinalize = Boolean(simulation?.resolvedRun) && simulation.lifecycleState !== "disposed";
         const kernelFinalization = canFinalize ? simulation.finalize({ status }) : null;
         const finalized = kernelFinalization
@@ -423,12 +453,12 @@ export class RunSessionController {
         return runResult;
     }
 
-    async reset() {
-        const manifestId = this.snapshot.selectedManifestId || this.snapshot.activeResolved?.manifest?.id;
+    async reset(resolved = null, { manifestRevision = null } = {}) {
+        const manifestId = resolved?.manifest?.id || this.snapshot.selectedManifestId || this.snapshot.activeResolved?.manifest?.id;
         if (!manifestId) return null;
         await this.stop({ status: "reset" });
-        const resolved = await resolveRunManifest(manifestId);
-        return this.prepare(resolved, { autoplay: false, episodePhase: "stop" });
+        const next = resolved ?? await resolveRunManifest(manifestId);
+        return this.prepare(next, { autoplay: false, episodePhase: "stop", manifestRevision });
     }
 
     async _ensureRecording() {
@@ -500,6 +530,7 @@ export class RunSessionController {
             pendingResolved: null,
             activeResolved: null,
             activeRunId: null,
+            manifestRevision: null,
             error: null,
             degraded: false,
             assertionResults: [],

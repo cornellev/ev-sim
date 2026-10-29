@@ -23,6 +23,13 @@ Open **Config** from the workspace switcher. The page supports catalog create, d
 
 Stop finalizes the active result and SFLog and releases the workspace switcher. Reset does that, then resolves the newest saved revision, rebuilds run-scoped resources, and leaves the replacement run paused at step zero. If the environment changed, the workspace loads that environment before applying the pending run. Run Configuration stays available while that replacement is prepared and has not been started.
 
+External controllers can use the [browser lifecycle HTTP API](browser-sim-api.md)
+to start a saved manifest, pause/resume, stop, reset, and inspect status in an
+already-open page. Omitted browser IDs select the most recently interacted-with
+connected page. The API holds the exact server-resolved snapshot and returns
+browser acknowledgements with integer simulation time; sensor traffic keeps
+using the existing orchestrator connection.
+
 ## Portable bundles
 
 `cev-sim.run-bundle` version 1 includes the authoring manifest and its resolved environment, normalized `world: { description, hash }`, sorted backend selections, exact compiled script artifacts and bindings, ROS schemas, autonomy catalog metadata, contract endpoints, dependency hashes, full `resolvedHash`, and `simulationSemanticHash`. `dependencyHashes.world` repeats the canonical world SHA-256. Runs with enabled `lidar3d` additionally contain `lidarGeometry: { description, hash }` and `dependencyHashes.lidarGeometry`; runs with enabled cameras additionally contain `renderScene: { description, hash }` and `dependencyHashes.renderScene`. The initial scene provider is `canonical-analytic@1`, with stable material, semantic, instance, and dynamic-node IDs. Bundles without those sensors omit the corresponding conditional resources. Import verifies old and new bundles in the exact form received; old LiDAR/camera bundles must be re-resolved when their portable resources are unavailable. The additive fields do not change the v1 bundle schema. Manifest v10 adds sidecar-facing candidate-model provenance only. `resolvedHash` identifies normalized resolved content including provenance; exact byte integrity uses `bundleBytesHash`. `simulationSemanticHash` uses the world hash—not the authored environment hash—as environment identity, and projects out logging, `manifest.provenance`, artifact/resource policy, wall pacing, presentation-only settings, and the v10→v9 semantic shape before feeding `episodeHash`. Existing dependencies are reused only when hashes match; conflicting resources receive an eight-character hash suffix and all references are remapped.

@@ -555,6 +555,43 @@ test("async frame preserves every due GPU sensor substep", async () => {
     engine.dispose();
 });
 
+test("pause idle barrier finishes one active sensor step and prevents further substeps", async () => {
+    const { engine } = harness({ nowMs: () => 0, realtimeStepBudgetMs: 1000 });
+    engine.deterministic = true;
+    engine.realtime = true;
+    engine.speed = 1;
+    engine.stepNs = 20_000_000;
+    engine.fixedDt = 0.02;
+    engine.maxSubSteps = 4;
+    engine.status = "playing";
+    engine._pendingFrameNs = 80_000_000;
+    engine.autonomyOverlay.updateFromRuntime = () => {};
+    let finishCapture;
+    let captures = 0;
+    engine.kernel.advanceStepAsync = async () => {
+        captures += 1;
+        engine.steps += 1;
+        engine.timeNs = engine.steps * engine.stepNs;
+        await new Promise((resolve) => { finishCapture = resolve; });
+        return true;
+    };
+    engine._launchAsyncAdvance();
+    await Promise.resolve();
+    assert.equal(captures, 1);
+    engine.pause();
+    let idle = false;
+    const barrier = engine.whenIdle().then(() => { idle = true; });
+    await Promise.resolve();
+    assert.equal(idle, false);
+    finishCapture();
+    await barrier;
+    assert.equal(captures, 1);
+    assert.equal(engine.timeNs, 20_000_000);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(engine.timeNs, 20_000_000);
+    engine.dispose();
+});
+
 test("presentation RAF continues while one serialized worker capture is pending", async () => {
     const originalRaf = globalThis.requestAnimationFrame;
     const originalCancel = globalThis.cancelAnimationFrame;

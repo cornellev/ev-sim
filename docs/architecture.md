@@ -824,6 +824,18 @@ private operational data and enter no semantic or package identity.
 
 ## External Integration
 
+The [browser simulation lifecycle API](browser-sim-api.md) at
+`/api/browser-sim` uses one Express-owned `BrowserSimService` for page presence,
+server-ordered human activity, target selection, and bounded command receipts.
+The app-level `BrowserSimBridge` shares the existing storage SSE connection,
+recovers pending commands through heartbeats, and executes through
+`RunSessionController`. Both status and commands default to the most recently
+interacted-with connected page. Commands retain their target after admission;
+page-specific claims and acknowledgements prevent duplicate execution.
+Browser pause/stop acknowledgements wait for active asynchronous sensor work
+to settle before reporting the clock or finalizing logs. These operational
+records do not enter manifests or simulation identity.
+
 cev-sim does not embed ROS. `app/3d/managers/ClientManager.js` creates a browser client from `app/client/Client.js`, syncs message definitions from the external orchestrator Types API, then connects to the orchestrator WebSocket.
 
 Orchestrator can be found from [this repository](https://github.com/cornellev/orchestrator).

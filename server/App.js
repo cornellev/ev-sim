@@ -35,6 +35,8 @@ app.prepare().then(async () => {
     const { HEADLESS_PROTOCOL } = await import('./headless/HeadlessProtocol.js');
     const { readSupervisorConfigFromEnv } = await import('./headless/SupervisorConfig.js');
     const { createHeadlessRouter } = await import('./routes/headlessRouter.js');
+    const { BrowserSimService } = await import('./browser-sim/BrowserSimService.js');
+    const { createBrowserSimRouter } = await import('./routes/browserSimRouter.js');
     const { CosmosClipJob } = await import('./headless/CosmosClipJob.js');
     const {
         createRequestSecurityMiddleware,
@@ -130,6 +132,7 @@ app.prepare().then(async () => {
     mountStorageApi(server, storageService, { jsonParser });
     server.use('/api/scripting', jsonParser, createScriptingRouter(storageService));
     server.use('/api/headless', headlessJsonParser, createHeadlessRouter(headlessExperimentService, cosmosClipJob));
+    server.use('/api/browser-sim', headlessJsonParser, createBrowserSimRouter(new BrowserSimService(storageService)));
     if (supervisorConfigError) cosmosClipJob.rendererError = supervisorConfigError;
     // three does not export `./package.json`; resolve the pinned Basis files via
     // the exported `examples/jsm` glob instead.

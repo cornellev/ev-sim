@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { IconLayoutGrid } from '@tabler/icons-react';
 import TotalScene from './3d/Scene';
@@ -28,6 +28,7 @@ import {
 import { subscribeStorageEvents } from './client/storageEvents';
 import { getRunSessionController } from './simulation/RunSessionController';
 import { resolveRunManifest } from './simulation/RunManifestClient';
+import { BrowserSimBridge } from './simulation/BrowserSimBridge';
 import { getTelemetryTabBridge } from './telemetry/TelemetryRuntime';
 import {
     DesktopRequired,
@@ -81,7 +82,8 @@ export default function Home() {
 }
 
 function HomeContent() {
-    const { requestNavigation } = useWorkspaceNavigation();
+    const { requestNavigation, canNavigate } = useWorkspaceNavigation();
+    const browserControlContext = useRef(null);
     const [view, setView] = useState(APP_VIEWS.THREE_D);
     const [threeDMode, setThreeDMode] = useState(THREE_D_MODES.SIMULATION);
     const [menuVisible, setMenuVisible] = useState(false);
@@ -314,6 +316,23 @@ function HomeContent() {
         setThreeDMode(THREE_D_MODES.SIMULATION);
         setMenuVisible(false);
     }, [selectEnvironment]);
+
+    useEffect(() => {
+        browserControlContext.current = {
+            navigationBlocked: () => !canNavigate(),
+            openSimulation: () => requestNavigation(() => {
+                setView(APP_VIEWS.THREE_D);
+                setThreeDMode(THREE_D_MODES.SIMULATION);
+                setMenuVisible(false);
+            }, { prompt: false }),
+        };
+    }, [canNavigate, requestNavigation]);
+
+    useEffect(() => new BrowserSimBridge({
+        controller: getRunSessionController(),
+        experiment: getExperimentRunController(),
+        getContext: () => browserControlContext.current,
+    }).start(), []);
 
     useEffect(() => {
         let cancelled = false;

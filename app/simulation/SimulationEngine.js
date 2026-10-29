@@ -648,6 +648,12 @@ export class SimulationEngine {
         this._emit();
     }
 
+    /** Pause remains immediate; lifecycle acknowledgements wait for capture to settle. */
+    async whenIdle() {
+        await this._asyncAdvanceTail;
+        return this.getSnapshot();
+    }
+
     stop({ reset = true, dispatchEpisode = true } = {}) {
         this._advanceGeneration += 1;
         this._pendingFrameNs = 0;
@@ -819,6 +825,7 @@ export class SimulationEngine {
     async applyRunManifest(resolved, options = {}) {
         if (!resolved?.manifest) throw new Error("Resolved run manifest is required.");
         this.pause();
+        await this.whenIdle();
         this.scenarioDiagnostics.configure(null);
         this.autonomyOverlay?.clear?.();
         this.frames = 0;
@@ -899,7 +906,10 @@ export class SimulationEngine {
         const startMs = this._nowMs();
         const startTimeNs = this.timeNs;
         const startSteps = this.steps;
-        const pending = this._serializeAsyncAdvance(() => this._advanceSimulationAsync(frameNs / 1e9));
+        const pending = this._serializeAsyncAdvance(() => {
+            if (generation !== this._advanceGeneration) return;
+            return this._advanceSimulationAsync(frameNs / 1e9);
+        });
         this._advanceInFlight = pending;
         pending.then(() => {
             if (generation === this._advanceGeneration) {
@@ -1058,6 +1068,7 @@ export class SimulationEngine {
     }
 
     async _advanceSimulationAsync(frameDt) {
+        const generation = this._advanceGeneration;
         const scaledDt = frameDt * this.speed;
         const frameStartMs = this.realtime ? this._nowMs() : 0;
         const pacingStartMs = this._nowMs();
@@ -1080,6 +1091,7 @@ export class SimulationEngine {
             if (this.steps > previousStep) this.accumulatorNs -= this.stepNs;
             this.accumulator = this.accumulatorNs / 1e9;
             subSteps += 1;
+            if (generation !== this._advanceGeneration) break;
             if (shouldContinue === false) break;
             if (this.realtime && this._nowMs() - frameStartMs > this.realtimeStepBudgetMs) break;
         }

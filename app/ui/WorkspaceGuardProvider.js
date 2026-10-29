@@ -19,12 +19,15 @@ export function WorkspaceGuardProvider({ children }) {
         return () => guardsRef.current.delete(id);
     }, []);
 
-    const requestNavigation = useCallback((action) => {
+    const canNavigate = useCallback(() => !selectDirtyGuard(guardsRef.current.values()), []);
+
+    const requestNavigation = useCallback((action, { prompt = true } = {}) => {
         const guard = selectDirtyGuard(guardsRef.current.values());
         if (!guard) {
             action();
             return true;
         }
+        if (!prompt) return false;
         setError(null);
         setPending({ action, guard });
         return false;
@@ -45,7 +48,7 @@ export function WorkspaceGuardProvider({ children }) {
         }
     }, [busy, pending]);
 
-    const value = useMemo(() => ({ registerGuard, requestNavigation }), [registerGuard, requestNavigation]);
+    const value = useMemo(() => ({ registerGuard, requestNavigation, canNavigate }), [registerGuard, requestNavigation, canNavigate]);
 
     return (
         <WorkspaceGuardContext.Provider value={value}>

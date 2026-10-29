@@ -506,6 +506,24 @@ compared with the committed characterization.
 
 ## Decision log
 
+### 2026-10-28 — Browser lifecycle HTTP control (operational follow-on)
+
+`/api/browser-sim` adds acknowledged lifecycle commands for already-open
+browser pages. Default targeting follows server-ordered human interaction;
+sensor traffic stays on the existing orchestrator transport. The browser
+adapter now exposes an idle barrier and stops scheduling further substeps
+after pause, so pause/stop acknowledgements and SFLog finalization follow
+completion of active sensor work. RunSessionController shares concurrent stop
+finalization and accepts a pre-resolved reset snapshot. Run IDs include their
+local preparation sequence to distinguish rapid resets.
+Saved manifest revision metadata stays operational, outside the resolved
+snapshot's hash. Preparation survives the expected old-scene detach during an
+environment switch, while timed-out preflight cannot launch later.
+
+This does not change headless Protobuf, manifest/bundle formats, fixed-step
+phase ordering, semantic hash algorithms, or the characterization baseline.
+It is not PR 13 and does not alter PR 12's external acceptance evidence gates.
+
 ### 2026-10-13 — VEH-09 leaves the headless contract unchanged
 
 Vehicle-editor acceptance does not change protobuf v1, `KinematicVehiclePlant`,

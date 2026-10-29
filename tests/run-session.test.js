@@ -132,7 +132,7 @@ test("prepare waits for a switched environment to mount and apply the resolved r
             client: () => ({ preflight: async () => ({ ok: true, issues: [] }) }),
         };
     };
-    controller.attachData(makeData("yard"));
+    const detach = controller.attachData(makeData("yard"));
     let requestedEnvironment = null;
     controller.setEnvironmentHandler((environmentId) => { requestedEnvironment = environmentId; });
     const manifest = createDefaultRunManifest({ environment: { id: "igvc" }, logging: { policy: "disabled" } });
@@ -154,6 +154,7 @@ test("prepare waits for a switched environment to mount and apply the resolved r
     assert.equal(settled, false);
     assert.deepEqual(applied, []);
 
+    detach();
     controller.attachData(makeData("igvc"));
     const snapshot = await readiness;
     assert.equal(snapshot.status, "ready");
@@ -304,4 +305,97 @@ test("external-ros realtime cases force 1x regardless of speed override", () => 
     speeds.length = 0;
     controller.applyRuntimeOverrides();
     assert.deepEqual(speeds, [1]);
+});
+
+test("stop pauses immediately and waits for sensor work and logging before acknowledgement", async () => {
+    const controller = controllerFor("required", async () => {});
+    const calls = [];
+    let finishCapture;
+    let finishLog;
+    const capture = new Promise((resolve) => { finishCapture = resolve; });
+    const log = new Promise((resolve) => { finishLog = resolve; });
+    const simulation = {
+        resolvedRun: controller.snapshot.activeResolved,
+        steps: 1,
+        timeNs: 20_000_000,
+        pause() { calls.push("pause"); },
+        whenIdle() { return capture; },
+        finalize() { calls.push("finalize"); return { assertions: [] }; },
+        stop() { calls.push("stop"); },
+    };
+    controller.data.simulation = () => simulation;
+    controller._recordingRunId = "run-test";
+    controller.recording = {
+        session: { id: "log-1" },
+        addAttachment() {},
+        async stop() { calls.push("log"); return log; },
+    };
+    const pending = controller.stop();
+    assert.deepEqual(calls, ["pause"]);
+    assert.equal(controller.stop(), pending, "concurrent stops share finalization");
+    assert.equal(controller.getSnapshot().transitioning, true);
+    await Promise.resolve();
+    assert.deepEqual(calls, ["pause"]);
+    simulation.steps = 2;
+    simulation.timeNs = 40_000_000;
+    finishCapture();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(calls, ["pause", "finalize", "log"]);
+    assert.equal(controller.getSnapshot().transitioning, true);
+    finishLog({ id: "log-1" });
+    const result = await pending;
+    assert.equal(result.timeNs, 40_000_000);
+    assert.equal(result.logId, "log-1");
+    assert.equal(controller.getSnapshot().transitioning, false);
+    assert.deepEqual(calls, ["pause", "finalize", "log", "stop"]);
+    assert.equal(await controller.stop(), result, "repeated stop returns the existing result");
+    assert.equal(calls.filter((call) => call === "finalize").length, 1);
+});
+
+test("reset accepts the server-resolved snapshot and creates a fresh ready run", async () => {
+    const controller = controllerFor("disabled", async () => {});
+    controller.recording = { attachSimulation() {} };
+    const applied = [];
+    const simulation = {
+        steps: 9,
+        timeNs: 180_000_000,
+        pause() {},
+        stop() {},
+        async whenIdle() {},
+        assertionEngine: { finalize: () => ({ results: [] }) },
+        async applyRunManifest(resolved, options) {
+            applied.push([resolved, options]);
+            this.steps = 0;
+            this.timeNs = 0;
+        },
+    };
+    controller.data.simulation = () => simulation;
+    const manifest = createDefaultRunManifest({ id: "fresh", logging: { policy: "disabled" } });
+    const resolved = { ...controller.snapshot.activeResolved, manifest, resolvedHash: "server-frozen" };
+    const snapshot = await controller.reset(resolved, { manifestRevision: 7 });
+    assert.equal(snapshot.status, "ready");
+    assert.notEqual(snapshot.activeRunId, "run-test");
+    assert.equal(snapshot.activeResolved, resolved);
+    assert.equal(snapshot.manifestRevision, 7);
+    assert.equal(simulation.timeNs, 0);
+    assert.deepEqual(applied, [[resolved, { episodePhase: "stop" }]]);
+});
+
+test("a timed-out preparation cannot launch later when preflight eventually finishes", async (t) => {
+    const controller = controllerFor("disabled", async () => {});
+    controller.snapshot.activeRunId = null;
+    controller.snapshot.status = "idle";
+    let timeout;
+    let finishPreflight;
+    let applied = false;
+    t.mock.method(globalThis, "setTimeout", (callback) => { timeout = callback; return 0; });
+    controller.data.client = () => ({ preflight: () => new Promise((resolve) => { finishPreflight = resolve; }) });
+    controller.data.simulation = () => ({ async applyRunManifest() { applied = true; } });
+    const readiness = controller.prepare(controller.snapshot.activeResolved, { autoplay: true });
+    timeout();
+    await assert.rejects(readiness, /Timed out/);
+    finishPreflight({ ok: true });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(applied, false);
+    assert.equal(controller.getSnapshot().status, "error");
 });
