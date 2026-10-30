@@ -425,7 +425,7 @@ async function setupVehicles(scene, data, camera) {
             const mode = String(value.mode || "velocity");
             const speed = mode === "stop" ? 0 : Number(value.speed || 0);
             const angle = mode === "stop" ? 0 : Number(value.steering_angle || 0);
-            applyManualDrive(car, { speedMps: speed, steeringRad: -angle });
+            applyManualDrive(car, { speedMps: speed, steeringRad: angle });
         }
     }));
 

@@ -3,6 +3,8 @@ import { settleContactVehicles } from "../vehicles/contactBicycle.js";
 import { ControlRuntime } from "../../autonomy/ControlRuntime.js";
 import { getBuiltInVehicleManifest } from "../../vehicles/BuiltInVehicleManifests.js";
 import { AssertionEngine } from "../AssertionEngine.js";
+import { GoalPublisher } from "../GoalPublisher.js";
+import { createPlanningCostmapPublisher } from "../PlanningCostmapPublisher.js";
 import { createLocalizationTruthPublisher } from "../LocalizationTruthPublisher.js";
 import { TopicContractRouter } from "../TopicContractRouter.js";
 import { TopicInputQueue } from "../TopicInputQueue.js";
@@ -71,6 +73,8 @@ export class SimulationKernel {
         this.resolvedRun = null;
         this.inputQueue = new TopicInputQueue();
         this.topicRouter = null;
+        this.goalPublisher = null;
+        this.planningCostmapPublisher = null;
         this.localizationTruthPublisher = null;
         this.assertionEngine = new AssertionEngine([], this.telemetry);
         this.scenarioRuntime = runtimeContext.scenarios ?? null;
@@ -244,6 +248,7 @@ export class SimulationKernel {
         this.assertionEngine.reset();
         this.topicRouter?.reset?.();
         this.transformRuntime?.reset?.();
+        this.planningCostmapPublisher?.reset();
         this.localizationTruthPublisher?.reset?.();
         this.candidateOutputRuntime?.reset?.();
         this.controlRuntime?.reset?.();
@@ -297,6 +302,7 @@ export class SimulationKernel {
             this.lifecycleState = "prepared";
         }
         this.transformRuntime?.publishStaticTransforms?.(0);
+        if (episodePhase === "start") this.goalPublisher?.publish?.(0);
         this.emitLifecycle("reset", {
             resetSeed: String(resetSeed),
             episodeHash: this.episodeHash,
@@ -425,9 +431,17 @@ export class SimulationKernel {
             }
 
             this.inputQueue = new TopicInputQueue(manifest.topics);
+            this.planningCostmapPublisher?.dispose();
+            this.planningCostmapPublisher = createPlanningCostmapPublisher(this.resolvedRun, this.context);
             this.topicRouter = new TopicContractRouter(manifest, { telemetry: this.telemetry });
             this.localizationTruthPublisher = createLocalizationTruthPublisher(manifest, this.topicRouter);
             this.localizationTruthPublisher.stepNs = manifest.clock.stepNs;
+            this.goalPublisher = new GoalPublisher({
+                topicRouter: this.topicRouter,
+                telemetry: this.telemetry,
+                client: this.context.topics.client(),
+                resolvedRun: this.resolvedRun,
+            });
             this.transformRuntime = this.resolvedRun.calibration
                 ? new TransformRuntime(this.resolvedRun.calibration, this.topicRouter, {
                     client: this.context.topics.client(),
@@ -663,10 +677,12 @@ export class SimulationKernel {
         phase("clock", () => this.publishClock());
 
         phase("transforms", () => {
-            if (!this.transformRuntime) return;
             const vehicles = this.context.vehicles.list();
-            this.transformRuntime.publishDynamicTransforms(this.timeNs, this.steps, vehicles);
-            this.localizationTruthPublisher?.publish(this.timeNs, this.steps, vehicles);
+            if (this.transformRuntime) {
+                this.transformRuntime.publishDynamicTransforms(this.timeNs, this.steps, vehicles);
+                this.localizationTruthPublisher?.publish(this.timeNs, this.steps, vehicles);
+            }
+            this.planningCostmapPublisher?.publish(this.timeNs, vehicles);
         });
 
         const sensorUpdate = phase("sensors", () => {
@@ -1057,6 +1073,9 @@ export class SimulationKernel {
         this.inputQueue.reset();
         this.telemetry?.resetRunState?.({ preservePaths: [] });
         this.topicRouter = null;
+        this.goalPublisher = null;
+        this.planningCostmapPublisher?.dispose();
+        this.planningCostmapPublisher = null;
         this.localizationTruthPublisher = null;
         this.candidateOutputRuntime = null;
         this.controlRuntime = null;

@@ -197,6 +197,7 @@ The package contract is in [Plugin API](docs/plugin-api.md).
 - [Run manifests](docs/run-manifests.md)
 - [Headless CLI](docs/headless-cli.md)
 - [Python adapter](docs/python-headless.md)
+- [Rust browser simulation client](simcontrol/README.md)
 - [Headless release and CI gates](docs/headless-release.md)
 - [Jetson headless deployment](docs/jetson-headless.md)
 - [Plugin API](docs/plugin-api.md)
@@ -229,3 +230,10 @@ It also covers the headless npm artifact and the Python package.
 ## References
 
 [M. Althoff, M. Koschi, and S. Manzinger, "CommonRoad: Composable Benchmarks for Motion Planning on Roads," in Proc. of the IEEE Intelligent Vehicles Symposium, 2017, pp. 719-726.](http://mediatum.ub.tum.de/doc/1379638/776321.pdf)
+
+## October 31 Zenoh adapter
+
+The separately launched Python adapter connects the `oct-31-testing` browser
+run to the existing A* and pure-pursuit programs. See
+[startup and transport details](docs/oct31-zenoh-bridge.md). Reference control
+authority remains selected.

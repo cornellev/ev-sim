@@ -62,6 +62,9 @@ baking/baked
 
 tests/__pycache__
 
+# Rust browser simulation client
+/simcontrol/target/
+
 # Python headless adapter
 /python/.venv
 /python/.pytest_cache

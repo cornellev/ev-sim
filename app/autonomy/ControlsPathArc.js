@@ -1,7 +1,7 @@
 /**
  * Bicycle-model path ribbon geometry shared by live controls overlays and replay.
- * Steering uses Three.js plant convention (positive right).
- * Ribbon vertices are vehicle-local (+X forward, +Y up, +Z left); callers apply
+ * Steering uses the plant convention (positive left).
+ * Ribbon vertices are vehicle-local (+X forward, +Y up, +Z right); callers apply
  * {@link applyControlsPathRibbonPose} so elevation, yaw, and pitch follow the plant.
  */
 
@@ -18,7 +18,7 @@ function finiteOr(value, fallback) {
 
 /**
  * Ackermann centerline in vehicle-local XZ. +X is forward. Steering uses the
- * Three.js plant sign (positive right), matching {@link updateControlsPathRibbon}.
+ * Plant sign (positive left), matching {@link updateControlsPathRibbon}.
  * This function does not touch Three.js.
  * @param {number} steeringAngleRad
  * @param {{ wheelbase?: number, lookahead?: number, segments?: number }} [options]

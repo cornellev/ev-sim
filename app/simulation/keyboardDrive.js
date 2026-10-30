@@ -35,7 +35,7 @@ export function stepKeyboardDrive(state, { down, dt, enabled } = {}) {
         command: {
             mode: "velocity",
             speedMps,
-            steeringRadRep103: steeringRadThree === 0 ? 0 : -steeringRadThree,
+            steeringRadRep103: steeringRadThree,
         },
     };
 }

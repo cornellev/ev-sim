@@ -1,8 +1,7 @@
 /**
  * Validate and normalize stamped SI Ackermann commands into the simulator's
- * internal control shape. REP-103 steering (positive left) is converted to the
- * Three.js plant sign (positive right / negative left) once at the actuator
- * boundary via `rep103SteeringToThree`.
+ * internal control shape. REP-103 and the plant share a sign: positive is left
+ * (yaw increases). `rep103SteeringToThree` keeps that sign.
  */
 
 export const CONTROL_MODES = Object.freeze(["velocity", "acceleration", "stop"]);
@@ -16,14 +15,14 @@ export function isFiniteNumber(value) {
     return Number.isFinite(Number(value));
 }
 
-/** Convert REP-103 steering (positive left) to Three.js bicycle steering (positive right). */
+/** REP-103 and the plant share a sign. Positive is left. */
 export function rep103SteeringToThree(steeringRad) {
-    return -Number(steeringRad || 0);
+    return Number(steeringRad || 0);
 }
 
-/** Convert Three.js plant steering back to REP-103 for telemetry. */
+/** Plant steering back to REP-103. Same sign. */
 export function threeSteeringToRep103(steeringRad) {
-    return -Number(steeringRad || 0);
+    return Number(steeringRad || 0);
 }
 
 export function emptyInternalCommand(overrides = {}) {

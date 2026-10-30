@@ -568,8 +568,8 @@ export class ScenarioRuntime {
             steeringRep103 = value.steeringRad ?? value.steering_rad
                 ?? (value.steering_angle !== undefined ? finite(value.steering_angle) : value.steering);
         }
-        // Controller command stores Three.js plant steering (positive right).
-        this._setControllerCommand(route.actorId, finite(speed), -finite(steeringRep103));
+        // Stored plant steering matches REP-103. Positive is left.
+        this._setControllerCommand(route.actorId, finite(speed), finite(steeringRep103));
         return true;
     }
 
@@ -679,7 +679,7 @@ export class ScenarioRuntime {
             // Controllers publish as reference (authority or shadow). Disturbances use bypass.
             this.controlRuntime.submitSiSpeedSteer(actorId, {
                 speedMps: finite(speedMps),
-                steeringRadRep103: -finite(steeringRad),
+                steeringRadRep103: finite(steeringRad),
                 mode: "velocity",
                 captureTimeNs: this.timeNs,
                 producer,

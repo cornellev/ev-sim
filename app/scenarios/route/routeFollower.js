@@ -1,6 +1,6 @@
 /**
  * Built-in bicycle Pure Pursuit command for scenario route-follower.
- * Operates on a follow polyline (typically filleted); plant steering is positive right.
+ * Operates on a follow polyline (typically filleted); plant steering is positive left.
  */
 
 import {
