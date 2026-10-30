@@ -93,6 +93,7 @@ export class SensorPublisher {
         this._lastTransportNoticeNs = 0;
         this._lastTransportNoticeName = null;
         this._lastPublishedHealth = null;
+        this.intentionalFrameDrops = 0;
         this.reset();
     }
 
@@ -108,6 +109,8 @@ export class SensorPublisher {
         this.droppedFrames = 0;
         this.errors = 0;
         this._lastPublishedHealth = null;
+        this.intentionalFrameDrops = 0;
+        this.completedCaptureAttempts = 0;
         this.health = {
             captureAttempts: 0,
             capturedFrames: 0,
@@ -264,6 +267,7 @@ export class SensorPublisher {
 
     _acceptCapture(captured, context, captureStartNs, { allowOwnershipTransfer = false } = {}) {
         const result = normalizeCaptureResult(captured, context.captureTimeNs, context.sampleIndex);
+        this.completedCaptureAttempts += 1;
         const captureDurationNs = Math.max(0, this._time() - captureStartNs);
         this.health.captureTimeNs = captureDurationNs;
         this.health.captureTimeTotalNs += captureDurationNs;
@@ -302,7 +306,7 @@ export class SensorPublisher {
             }
             this.nextCaptureStep += this.periodSteps;
         }
-        browserSimulationPerformance.recordSensorState(this.config.id, this.health);
+        browserSimulationPerformance.recordSensorState(this.config.id, this.health, undefined, this.intentionalFrameDrops, this.completedCaptureAttempts);
     }
 
     async updateAsync(clock) {
@@ -330,7 +334,7 @@ export class SensorPublisher {
                 this.nextCaptureStep += this.periodSteps;
             }
         } finally {
-            browserSimulationPerformance.recordSensorState(this.config.id, this.health);
+            browserSimulationPerformance.recordSensorState(this.config.id, this.health, undefined, this.intentionalFrameDrops, this.completedCaptureAttempts);
         }
     }
 
@@ -564,7 +568,7 @@ export class SensorPublisher {
             frame.encodedByTopic = null;
         }
         this._publishHealth(clock);
-        browserSimulationPerformance.recordSensorState(this.config.id, this.health);
+        browserSimulationPerformance.recordSensorState(this.config.id, this.health, undefined, this.intentionalFrameDrops, this.completedCaptureAttempts);
         browserSimulationPerformance.recordTiming(
             "sensorDelivery",
             Number(this.health.transportTimeNs || 0) / 1e6,
@@ -800,6 +804,7 @@ export class SensorPublisher {
     }
 
     recordFrameDrop(reason = "sensor-dropout", sampleIndex = this.sampleIndex) {
+        if (String(reason).endsWith("dropout")) this.intentionalFrameDrops += 1;
         this._incrementFrameDrop();
         this._event("frame-dropped", "warning", { sampleIndex, reason });
     }

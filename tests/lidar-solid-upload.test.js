@@ -22,6 +22,31 @@ async function openObjectDatabase() {
     return import("../app/3d/data/ObjectDatabase.js");
 }
 
+test("bulk triangle replacement preserves sequential upload identities, ordering, and texture objects", async () => {
+    const { ObjectDatabase } = await openObjectDatabase();
+    const bulk = new ObjectDatabase({});
+    const sequential = new ObjectDatabase({});
+    const triangles = Array.from({ length: 160 }, (_, index) => {
+        const triangle = new Triangle(new THREE.Vector3(index, 0, 0), new THREE.Vector3(index, 1, 0), new THREE.Vector3(index, 0, 1));
+        triangle.environmentSourceId = `source-${index % 4}`;
+        return triangle;
+    });
+    const textures = { ...bulk.textures.textures };
+    sequential.addObjects(triangles);
+    sequential.rebuildTextureData();
+    const copies = triangles.map((triangle) => {
+        const copy = new Triangle(triangle.a.clone(), triangle.b.clone(), triangle.c.clone());
+        copy.environmentSourceId = triangle.environmentSourceId;
+        return copy;
+    });
+    bulk.replaceTriangles(() => false, [...copies, copies[0]]);
+    assert.deepEqual(bulk.textures.data, sequential.textures.data);
+    assert.deepEqual(bulk.lidarTwins(), sequential.lidarTwins());
+    for (const [key, texture] of Object.entries(textures)) assert.equal(bulk.textures.textures[key], texture);
+    bulk.replaceTriangles((triangle) => triangle.environmentSourceId === "source-0", []);
+    assert.equal(bulk.triangles().length, 120);
+});
+
 const USE_HASH = "a".repeat(64);
 const MODEL_GEOMETRY = { 0: { vertices: [[-1, 0, -1], [1, 0, -1], [0, 2, 0]], triangles: [[0, 1, 2]] } };
 

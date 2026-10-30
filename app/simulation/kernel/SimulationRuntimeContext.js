@@ -278,6 +278,7 @@ export function createSimulationRuntimeContext(options = {}) {
             configureFromManifest(sensorRig, runtimeOptions) {
                 return manager(options.devices)?.configureFromManifest?.(sensorRig, {
                     ...runtimeOptions,
+                    cpuLidarWorkerFactory: options.cpuLidarWorkerFactory,
                     nativePacketSink: runtimeOptions?.nativePacketSink ?? options.nativePacketSink ?? null,
                 });
             },

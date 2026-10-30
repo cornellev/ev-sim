@@ -53,6 +53,7 @@ class BrowserSimulationPerformanceMonitor {
         this.deferredPresentations = [];
         this.rendererBlocked = [];
         this.renderRuntime = { implementation: null, fallbackReason: null };
+        this.cpuLidarRuntime = { implementation: null, fallbackReason: null };
         this.timings = new Map();
         this.simulation = [];
         this.droppedDebt = [];
@@ -70,9 +71,11 @@ class BrowserSimulationPerformanceMonitor {
 
     start({ workload = null, warmupMs = 0, limits = {} } = {}) {
         const renderRuntime = this.renderRuntime;
+        const cpuLidarRuntime = this.cpuLidarRuntime;
         this.stop();
         this.reset();
         this.renderRuntime = renderRuntime;
+        this.cpuLidarRuntime = cpuLidarRuntime;
         this.active = true;
         this.startedAt = this.now();
         this.warmupMs = Math.max(0, Number(warmupMs) || 0);
@@ -148,6 +151,10 @@ class BrowserSimulationPerformanceMonitor {
         this.timings.set(name, samples);
     }
 
+    recordCpuLidarRuntime(status = {}) {
+        this.cpuLidarRuntime = { ...status };
+    }
+
     recordSimulation(advancedNs, durationMs, advancedSteps = 0, time = this.now()) {
         if (!this.active) return;
         this.simulation.push({
@@ -163,16 +170,19 @@ class BrowserSimulationPerformanceMonitor {
         this.droppedDebt.push({ time, value: Math.max(0, Number(droppedNs) || 0) });
     }
 
-    recordSensorState(sensorId, health, time = this.now()) {
+    recordSensorState(sensorId, health, time = this.now(), intentionalDrops = 0,
+        completed = (Number(health?.capturedFrames) || 0) + intentionalDrops) {
         if (!this.active || !health) return;
         const next = {
             due: Number(health.captureAttempts) || 0,
             captured: Number(health.capturedFrames) || 0,
             delivered: Number(health.deliveredFrames) || 0,
+            intentionalDrops,
+            completed,
         };
-        const previous = this.sensorTotals.get(sensorId) ?? { due: 0, captured: 0, delivered: 0 };
+        const previous = this.sensorTotals.get(sensorId) ?? { due: 0, captured: 0, delivered: 0, intentionalDrops: 0, completed: 0 };
         const delta = {};
-        for (const key of ["due", "captured", "delivered"]) {
+        for (const key of ["due", "captured", "delivered", "intentionalDrops", "completed"]) {
             delta[key] = next[key] >= previous[key] ? next[key] - previous[key] : next[key];
         }
         this.sensorTotals.set(sensorId, next);
@@ -218,7 +228,9 @@ class BrowserSimulationPerformanceMonitor {
             due: result.due + entry.due,
             captured: result.captured + entry.captured,
             delivered: result.delivered + entry.delivered,
-        }), { due: 0, captured: 0, delivered: 0 });
+            intentionalDrops: result.intentionalDrops + entry.intentionalDrops,
+            completed: result.completed + entry.completed,
+        }), { due: 0, captured: 0, delivered: 0, intentionalDrops: 0, completed: 0 });
         const simulation = this._measured(this.simulation);
         const advancedNs = simulation.reduce((sum, entry) => sum + entry.advancedNs, 0);
         const advancedSteps = simulation.reduce((sum, entry) => sum + entry.advancedSteps, 0);
@@ -247,7 +259,11 @@ class BrowserSimulationPerformanceMonitor {
             realtimeRate: realtimeRate >= this.limits.minimumRealtimeRate,
             stepsPerSecond: stepsPerSecond >= this.limits.minimumStepsPerSecond,
             longTasks: maximumLongTaskMs <= this.limits.maximumLongTaskMs,
-            scheduledSensors: counts.due === counts.captured && counts.captured === counts.delivered,
+            // A capture can straddle the warmup boundary; use the final
+            // cumulative counters after drain to judge schedule/delivery parity.
+            scheduledSensors: [...this.sensorTotals.values()].every((sensor) => (
+                sensor.due === sensor.completed && sensor.captured === sensor.delivered
+            )),
             memory: heapGrowthBytes === null || heapGrowthBytes <= this.limits.maximumHeapGrowthBytes,
         };
         return {
@@ -285,10 +301,11 @@ class BrowserSimulationPerformanceMonitor {
             },
             sensors: {
                 ...counts,
-                skipped: Math.max(0, counts.due - counts.captured),
+                skipped: Math.max(0, counts.due - counts.completed),
                 undelivered: Math.max(0, counts.captured - counts.delivered),
             },
             timings,
+            cpuLidar: { ...this.cpuLidarRuntime },
             longTasks: {
                 count: longTasks.length,
                 totalMs: longTasks.reduce((sum, entry) => sum + entry.value, 0),

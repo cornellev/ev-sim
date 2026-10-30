@@ -350,8 +350,42 @@ export class ObjectDatabase extends Database {
         this.objects = this.objects.filter(
             (object) => !(object instanceof Triangle && predicate(object)),
         );
+        const present = new Set(this.objects);
+        const counts = new Map();
+        let textureIndex = 0;
+        for (const object of this.objects) {
+            if (!(object instanceof Triangle)) continue;
+            textureIndex += 1;
+            const source = lidarSourceId(object);
+            counts.set(source, (counts.get(source) ?? 0) + 1);
+        }
         for (const triangle of triangles) {
-            this.addObject(triangle);
+            if (!(triangle instanceof Object) || present.has(triangle)) continue;
+            // Preserve addObject behavior for callers passing another shape.
+            if (!(triangle instanceof Triangle)) {
+                this.addObject(triangle);
+                present.add(triangle);
+                continue;
+            }
+            const source = lidarSourceId(triangle);
+            const index = counts.get(source) ?? 0;
+            counts.set(source, index + 1);
+            if (!triangle.lidarTwinId) {
+                triangle.lidarTwinId = `${source}:triangle:${index}`;
+                triangle.lidarTriangleIndex = index;
+            }
+            triangle.lidarInstanceId = this.lidarInstanceIdForSource(source);
+            this.objects.push(triangle);
+            present.add(triangle);
+            if (!rebuild) {
+                if (textureIndex >= MAX_TRIANGLES) warnTriangleCapacity();
+                else {
+                    triangle.setNotifyTexture(this.notifiers.triangle);
+                    writeTriangleTextureSlot(this, triangle, textureIndex);
+                    this.textures.counts.triCount += 1;
+                }
+            }
+            textureIndex += 1;
         }
         if (rebuild) this.rebuildTextureData();
     }

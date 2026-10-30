@@ -96,6 +96,22 @@ leaves unlocked vehicles unchanged.
 
 ## Simulation Layer
 
+Browser plugin CPU LiDAR uses `BrowserCpuLidarRuntime` and a dedicated module
+worker running the shared `CpuLidarScene`. The resolved bundle and sensor
+configurations are sent once; captures send plain poses and transfer the raw
+range image back. Validated host outputs make an ownership-transfer round trip
+for the unchanged canonical digest. Host noise and synchronous plugin hooks
+remain outside the worker. One serialized request, generation fencing, and
+run-owned disposal bound work and prevent stale publication. Preparation may
+select a diagnosed inline fallback; runtime failure pauses the run. CPU capture
+requirements select asynchronous browser advancement independently of PBR.
+Shared headless capture remains synchronous. SignalStore owns its ordinary
+entries, shares them internally with previous/history retention, and copies at
+input, public-read, and subscriber boundaries.
+Native-packet recording shares framing/upload work within one JavaScript turn,
+retaining every update and the existing immediate byte-limit flushes. A deferred
+flush is bound to its encoder so it cannot flush a replacement recording session.
+
 `app/3d/Scene.js` creates the Three.js scene, camera, renderer, input managers, and shared `Data` object. `Data` owns registries for vehicles, devices, objects, city data, physics, settings, the orchestrator client, the simulation engine, and (in environment mode) earth tile streaming and import controllers.
 
 `app/simulation/SimulationEngine.js` is the browser adapter for the simulation

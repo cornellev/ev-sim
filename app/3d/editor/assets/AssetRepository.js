@@ -14,6 +14,8 @@ export class AssetRepository {
         this.visualAssets = visualAssets;
         this.catalogRevision = null;
         this.subscribers = new Set();
+        this.revisions = new Map();
+        this.revisionRequests = new Map();
     }
 
     subscribe(callback) {
@@ -25,7 +27,52 @@ export class AssetRepository {
     list(query = {}, { signal } = {}) { return this.json("GET", `/?${new URLSearchParams(query)}`, undefined, signal); }
     capabilities({ signal } = {}) { return this.json("GET", "/capabilities", undefined, signal); }
     get(assetId, { signal } = {}) { return this.json("GET", `/${encodeURIComponent(assetId)}`, undefined, signal); }
-    getRevision(assetId, revision, { signal } = {}) { return this.json("GET", `/${encodeURIComponent(assetId)}/revisions/${revision}`, undefined, signal); }
+    async getRevision(assetId, revision, { signal } = {}) {
+        signal?.throwIfAborted();
+        const path = `/${encodeURIComponent(assetId)}/revisions/${revision}`;
+        if (this.revisions.has(path)) {
+            const value = this.revisions.get(path);
+            this.revisions.delete(path);
+            this.revisions.set(path, value);
+            return structuredClone(value);
+        }
+        let request = this.revisionRequests.get(path);
+        if (!request) {
+            const controller = new AbortController();
+            request = { controller, consumers: 0 };
+            request.promise = this.json("GET", path, undefined, controller.signal).then((value) => {
+                if (!controller.signal.aborted) {
+                    this.revisions.set(path, value);
+                    if (this.revisions.size > 128) this.revisions.delete(this.revisions.keys().next().value);
+                }
+                return value;
+            }).finally(() => {
+                if (this.revisionRequests.get(path) === request) this.revisionRequests.delete(path);
+            });
+            this.revisionRequests.set(path, request);
+        }
+        request.consumers += 1;
+        return new Promise((resolve, reject) => {
+            let settled = false;
+            const finish = (callback, value) => {
+                if (settled) return;
+                settled = true;
+                signal?.removeEventListener("abort", abort);
+                request.consumers -= 1;
+                callback(value);
+                if (request.consumers === 0 && this.revisionRequests.get(path) === request) {
+                    this.revisionRequests.delete(path);
+                    request.controller.abort();
+                }
+            };
+            const abort = () => finish(reject, signal.reason);
+            signal?.addEventListener("abort", abort, { once: true });
+            if (signal?.aborted) abort();
+            request.promise.then((value) => {
+                if (!settled) finish(resolve, structuredClone(value));
+            }, (error) => finish(reject, error));
+        });
+    }
     listRevisions(assetId, { signal } = {}) { return this.json("GET", `/${encodeURIComponent(assetId)}/revisions`, undefined, signal); }
     publish(draft, expectedRevision, { signal } = {}) { return this.json("POST", "/", { ...draft, expectedRevision }, signal); }
     publishRevision(assetId, draft, expectedRevision, { signal } = {}) { return this.json("POST", `/${encodeURIComponent(assetId)}/revisions`, { ...draft, expectedRevision }, signal); }

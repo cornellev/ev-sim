@@ -4,7 +4,7 @@ import { validateDeviceTelemetryId } from "./DeviceTelemetryId";
 import { createRunSensorDevice } from "../devices/SensorRuntimeRegistry.js";
 import { getDeviceTelemetrySignals } from "./DeviceTelemetrySignals.js";
 import { PluginSensorDevice } from "../../simulation/sensors/PluginSensorAdapter.js";
-import { CpuLidarScene } from "../../simulation/sensors/CpuLidarScene.js";
+import { BrowserCpuLidarRuntime } from "../devices/BrowserCpuLidarRuntime.js";
 import { SensorPublisher as BrowserSensorPublisher } from "../devices/SensorPublisher.js";
 import { encodeTopicValue, registerMsgDefinition } from "../../client/TopicCodec.js";
 import { browserSimulationPerformance } from "../../simulation/performance/BrowserSimulationPerformance.js";
@@ -42,6 +42,7 @@ export class DeviceDatabase extends Database {
         this.devices = [];
         this.renderRuntime = null;
         this.pluginSensorScene = null;
+        browserSimulationPerformance.recordCpuLidarRuntime();
 
         this.loopDisabled = false; // set to true to disable automatic execution loop (for manual control in tests, etc.)
     }
@@ -159,6 +160,7 @@ export class DeviceDatabase extends Database {
         }
         this.pluginSensorScene?.dispose();
         this.pluginSensorScene = null;
+        browserSimulationPerformance.recordCpuLidarRuntime();
         for (const device of this.devices) {
             if (!device.manifestManaged) {
                 device._legacyEnabledBeforeRun ??= device.enabled;
@@ -173,11 +175,20 @@ export class DeviceDatabase extends Database {
             .filter((entry) => entry.kind === "plugin-range-image")
             .map((entry) => [entry.sensor.id, entry]));
         if (pluginRecords.size > 0) {
-            this.pluginSensorScene = new CpuLidarScene(options.lidarGeometry);
-            for (const [type, definition] of Object.entries(options.schemas ?? {})) {
-                registerMsgDefinition(type, definition);
-            }
+            const runtime = new BrowserCpuLidarRuntime({
+                ...(options.cpuLidarWorkerFactory ? { workerFactory: options.cpuLidarWorkerFactory } : {}),
+            });
+            this.pluginSensorScene = runtime;
+            return runtime.prepare(options.resolvedRun ?? { lidarGeometry: options.lidarGeometry },
+                [...pluginRecords.values()].map((entry) => entry.sensor)).then(() => {
+                for (const [type, definition] of Object.entries(options.schemas ?? {})) registerMsgDefinition(type, definition);
+                return this._createManifestDevices(sensorRig, options, pluginRecords, byId);
+            });
         }
+        return this._createManifestDevices(sensorRig, options, pluginRecords, byId);
+    }
+
+    _createManifestDevices(sensorRig, options, pluginRecords, byId) {
         for (const config of [...(sensorRig.sensors || [])].sort((left, right) => left.id.localeCompare(right.id))) {
             if (config.enabled === false) continue;
             const deviceOptions = config.type === "camera" && this.renderRuntime
@@ -224,6 +235,7 @@ export class DeviceDatabase extends Database {
 
     resetSchedule(runtimeOptions = {}) {
         this.renderRuntime?.reset?.();
+        this.pluginSensorScene?.reset();
         for (const device of this.devices) {
             device.resetRunState?.(runtimeOptions);
             if ("measurementState" in device) device.measurementState = null;
@@ -233,6 +245,10 @@ export class DeviceDatabase extends Database {
 
     resetRun(runtimeOptions = {}) {
         this.resetSchedule(runtimeOptions);
+    }
+
+    get requiresAsyncCapture() {
+        return this.pluginSensorScene?.requiresAsyncCapture === true;
     }
 
     update(dt, clock = null) {

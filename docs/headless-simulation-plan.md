@@ -506,6 +506,82 @@ compared with the committed characterization.
 
 ## Decision log
 
+### 2026-10-29 — CPU LiDAR browser performance maintenance
+
+The shared CPU backend uses one public BVH shapecast with exact canonical
+face-order ties and cached double-precision scan directions. Canonical geometry
+validation compares canonical content directly and retains the same resource
+SHA-256; managers no longer repeat scene-constructor validation.
+
+Browser plugin range-image capture prepares one run-owned module worker from
+the resolved bundle. Pose snapshots and transferred buffers cross the worker
+boundary; host noise, synchronous plugin hooks, validation, scheduling, and
+delivery remain authoritative. The worker also computes the existing capture
+digest over validated outputs and transfers their buffers back. CPU-only runs
+select the existing serialized async advancement path, allowing presentation
+while a scheduled capture is pending. Generation cancellation, bounded requests,
+timeouts, and infrastructure failures prevent stale or substituted products.
+An operationally diagnosed inline fallback is selected only before preparation
+completes. Headless execution retains its synchronous path and backend identity.
+
+`benchmark:browser-simulation -- --workload cpu-lidar` accepts
+`--resolved-bundle-file` and `--save-resolved-bundle` for repeatable inputs and
+reports capture/digest/round-trip timings, preparation, revision requests, and
+the selected implementation. `--cpu-profile` writes a Chromium CPU profile;
+`--angle` uses the same explicit ANGLE selection as hosted renderer diagnostics.
+Seeded frame dropout is reported separately from
+missing scheduled captures. This is maintenance, not PR 13; schemas, hashes,
+characterization fixtures, and outstanding PR-12 release evidence are unchanged.
+Tests compare raw bytes, seeded plugin packets/observations, reset trajectories,
+worker failures/cancellation, and CPU-only asynchronous pause/drain behavior.
+The real Chromium module-worker test verifies byte equivalence while animation
+frames continue. Completed captures without configured publication are counted
+separately from accepted output frames, so benchmark scheduling does not mistake
+an unpublished camera capture for missing sensor work.
+
+Verification: production build, lint (three existing warnings), and the PR-12
+parity report pass. The full Node suite with four test processes reports 2,458 passes, eight skips, and
+three pre-existing failures at baseline `fd2258b`: the action-tape fixture has
+steering signs opposite the current runtime, the plan-view control arc expects
+the old steering sign, and a vehicle hierarchy assertion rejects the existing
+LiDAR-zone row. A load hook rerunning committed HEAD modules reproduces all
+three. The generated action-tape trajectory hash remains
+`4c97b79ceafdfa1e6ab158a216c2e3cbd0550a604adcd9eddd408c7826bd5200`
+before and after this maintenance; the pinned fixture is unchanged. The existing
+PBR fallback UI spec also expects the old diagnostic code; its current
+`PBR_WORKER_UNAVAILABLE` result comes from unchanged PBR code.
+
+The frozen local candidate's first production profile exposed native-packet
+recording as the next bottleneck: each small packet forced a separate flush,
+overflow recovery repeatedly encoded schemas, and upload/framing dominated the
+main thread. Recording now flushes small heavy records once per JavaScript turn
+while retaining immediate byte-limit flushes. Every record, payload byte, cycle,
+and timestamp is preserved; only operational batch boundaries change. A decoded
+150-packet burst and the full SFLog/PCAP suite verify this behavior. SFLog format,
+logging policies, queue limits, simulation scheduling, and identities are unchanged.
+
+The original trace's frozen bundle and production-hardware acceptance report
+are still required to claim its real-time/frame-rate and startup targets.
+
+Local candidate evidence uses an isolated copy of `first-demo` with Helios
+enabled. Its original 30-second completion condition invalidated a 30-second
+measurement after warmup by including paused time; the benchmark now explicitly
+rejects early episode completion. A separately resolved temporary 300-second
+limit permits continuous measurement without changing saved authoring records.
+Three continuous 30-second Metal/Chromium measurements achieve 58.5–59.8 steps/s,
+0.975–0.997 real-time rate, about 100–103 displayed FPS, and no skipped captures.
+Every run fetches the shared asset revision once. A 90-second continuous soak
+achieves 59.7 steps/s / 0.995 real time with no skipped captures. The strict
+acceptance gate remains incomplete: p95 frame intervals are about 24.4–24.6 ms,
+maximum main-thread tasks are 62–96 ms, and soak heap growth is approximately
+61 MB (the existing history window is 120 seconds). No frame-spacing, long-task,
+or memory acceptance is claimed, and no policy/retention limit is relaxed.
+
+Isolated same-process Node comparisons preserve all raw scan bytes while
+reducing a 57,600-ray capture from 50.3 to 43.0 ms. The 6,318 asset-triangle
+upload drops from 205.9 to 39.7 ms with identical texture bytes. These local
+measurements are maintenance diagnostics, not PR-12 hardware release evidence.
+
 ### 2026-10-28 — Browser lifecycle HTTP control (operational follow-on)
 
 `/api/browser-sim` adds acknowledged lifecycle commands for already-open

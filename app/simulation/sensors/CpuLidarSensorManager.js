@@ -1,7 +1,6 @@
 import { cloneJson } from "../../util/cloneJson.js";
 import { SensorPublisher } from "./SensorPublisher.js";
 import { compareUtf8 } from "../world/WorldDescription.js";
-import { assertLidarGeometryResource } from "../lidar/LidarGeometry.js";
 import { assertCpuLidarBackendSelection } from "./CpuLidarBackend.js";
 import { buildLidarCapture } from "./LidarProducts.js";
 import { reduceLidarOccupancy } from "../occupancy/reduceLidarOccupancy.js";
@@ -143,7 +142,6 @@ export class HeadlessCpuLidarSensorManager {
             .sort((left, right) => compareUtf8(left.id, right.id));
         if (configs.length === 0 || options.enabled === false) return this.devices;
         assertCpuLidarBackendSelection(options.backendSelection);
-        assertLidarGeometryResource(options.lidarGeometry);
         this.seed = String(options.seed ?? "0");
         this.transformRuntime = options.transformRuntime ?? null;
         const messageCodec = options.messageCodec ?? this.messageCodec;

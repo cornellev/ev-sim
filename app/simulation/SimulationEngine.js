@@ -78,6 +78,8 @@ export class SimulationEngine {
         this._displayPixelRatio = null;
         this.pbrWorkerEnabled = options.pbrWorkerEnabled !== false;
         this.pbrWorkerFactory = options.pbrWorkerFactory;
+        this.cpuLidarWorkerEnabled = options.cpuLidarWorkerEnabled !== false;
+        this.cpuLidarWorkerFactory = options.cpuLidarWorkerFactory;
         this.pbrInlineFactory = options.pbrInlineFactory
             ?? ((runtimeOptions) => new BrowserPbrRenderRuntime(runtimeOptions));
 
@@ -142,6 +144,11 @@ export class SimulationEngine {
             scripts: () => this.data.bindings?.(),
             vehicles: () => this.data.vehicles?.(),
             devices: () => this.data.devices?.(),
+            cpuLidarWorkerFactory: () => {
+                if (!this.cpuLidarWorkerEnabled) return null;
+                return this.cpuLidarWorkerFactory ? this.cpuLidarWorkerFactory()
+                    : new Worker(new URL("../3d/devices/cpuLidarCapture.worker.js", import.meta.url), { type: "module" });
+            },
             physics: () => this.data.physics?.(),
             scenarios: scenarioRuntime,
             vehicleScene: () => this.scene,
@@ -402,6 +409,7 @@ export class SimulationEngine {
         }
 
         const persistence = this.environmentRuntime?.persistence;
+        const start = browserSimulationPerformance.now();
         await persistence?.suspendAutosave?.();
         try {
             const manifest = structuredClone(frozenManifest);
@@ -436,12 +444,14 @@ export class SimulationEngine {
             });
         } finally {
             persistence?.resumeAutosave?.();
+            browserSimulationPerformance.recordTiming("environmentApply", browserSimulationPerformance.now() - start);
         }
     }
 
     getSnapshot() {
         return {
             ...this.kernel.getSnapshot(),
+            cpuLidar: this.data.devices?.()?.pluginSensorScene?.status ?? null,
             frames: this.frames,
             droppedDebtNs: this.droppedDebtNs,
             effectiveRealtimeRate: this._effectiveRealtimeRate(),
@@ -520,6 +530,7 @@ export class SimulationEngine {
                 terminal: scenarioRuntime.terminal,
             } : null,
             renderProvider: this.renderProviderStatus,
+            cpuLidar: this.data.devices?.()?.pluginSensorScene?.status ?? null,
             frames: this.frames,
             droppedDebtNs: this.droppedDebtNs,
             effectiveRealtimeRate: this._effectiveRealtimeRate(),
@@ -691,7 +702,7 @@ export class SimulationEngine {
     }
 
     step(count = 1) {
-        if (this.renderRuntime) {
+        if (this._usesAsyncSensors()) {
             return this._serializeAsyncAdvance(() => this._stepAsync(count));
         }
         this.kernel.step(count, {
@@ -878,7 +889,7 @@ export class SimulationEngine {
         }
 
         if (this.status === "playing") {
-            if (this.renderRuntime) {
+            if (this._usesAsyncSensors()) {
                 this._clearDueAdvance();
                 this._accruePendingFrame(frameDt);
                 this._launchAsyncAdvance();
@@ -959,7 +970,7 @@ export class SimulationEngine {
      */
     _armDueAdvance() {
         this._clearDueAdvance();
-        if (!this.looping || this.status !== "playing" || !this.renderRuntime) return;
+        if (!this.looping || this.status !== "playing" || !this._usesAsyncSensors()) return;
         if (!this.realtime || !this.deterministic || !(this.stepNs > 0)) return;
         if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
         if (typeof setTimeout !== "function") return;
@@ -989,6 +1000,11 @@ export class SimulationEngine {
     _handleAdvanceError(error) {
         this.kernel.pause();
         this._pendingFrameNs = 0;
+        if (String(error.code || "").startsWith("CPU_LIDAR_")) {
+            this.kernel.emitLifecycle("sensor-runtime-failed", { code: error.code, message: error.message });
+            this._emit();
+            return;
+        }
         if (this.renderProviderStatus?.state === "error") return;
         this.renderProviderStatus = {
             ...(this.renderProviderStatus ?? {}),
@@ -1027,6 +1043,10 @@ export class SimulationEngine {
             }
         }
         this._recordPacingWindow(pacingStartNs, pacingStartMs);
+    }
+
+    _usesAsyncSensors() {
+        return Boolean(this.renderRuntime || this.data.devices?.()?.requiresAsyncCapture);
     }
 
     _recordPacingWindow(startTimeNs, startWallMs) {

@@ -37,6 +37,34 @@ import { createPluginPcapHeadlessBundle } from "./helpers/headlessRunnerBundle.j
 import { fixturePcapHostConfig, parseClassicPcapIndependently } from "./helpers/sensorTransportFixtures.js";
 import { measuredPerceptionProfileRef } from "../app/simulation/headless/ProfileRegistry.js";
 
+test("native packet bursts share a bounded log flush without losing record order or bytes", async () => {
+    const controller = new RecordingController({ store: new SignalStore() });
+    controller.encoder = new SFLogBatchEncoder();
+    controller.profile = builtInProfile(SIMULATION_RUN_SENSOR_PROFILE.id);
+    controller.session = { id: "packet-burst" };
+    controller.status = "recording";
+    const batches = [];
+    controller._enqueueBatch = (batch) => { batches.push(batch); return true; };
+    for (let index = 0; index < 150; index += 1) {
+        controller._capture({
+            kind: "update", path: "devices.lidar.packets.packets.msop", timeUs: 1000, cycle: 7,
+            entry: { type: "bytes", value: new Uint8Array([index, 255 - index]), timeUs: 1000 },
+            descriptor: { path: "devices.lidar.packets.packets.msop", type: "bytes", logClass: "heavy" },
+        });
+    }
+    assert.equal(batches.length, 0);
+    await Promise.resolve();
+    assert.equal(batches.length, 1);
+    const { updates } = decodeRecordStream(batches[0].bytes);
+    assert.equal(updates.length, 150);
+    for (let index = 0; index < updates.length; index += 1) {
+        assert.deepEqual(updates[index].value, new Uint8Array([index, 255 - index]));
+        assert.equal(updates[index].timeUs, 1000);
+        assert.equal(updates[index].cycle, 7);
+    }
+    assert.equal(controller.encoder.pendingRecordCount, 0);
+});
+
 test("SFLog JSON decoding never resolves typed-array names through globalThis", () => {
     let constructed = 0;
     const original = globalThis.WebSocket;

@@ -1039,6 +1039,7 @@ export default function TotalScene({
             benchmarkRuntime = Object.freeze({
                 prepare: (resolved, { forceInline = false } = {}) => {
                     sceneData.simulation().pbrWorkerEnabled = forceInline !== true;
+                    sceneData.simulation().cpuLidarWorkerEnabled = forceInline !== true;
                     return controller.prepare(resolved, { autoplay: false });
                 },
                 play: () => controller.play(),

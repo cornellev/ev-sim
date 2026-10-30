@@ -48,6 +48,46 @@ function sensor(overrides = {}) {
 
 const ego = { id: "ego", position: { x: 0, y: 0, z: 0 }, rotation: {} };
 
+test("episode triangle ties use triangle index even when authored order differs", () => {
+    const scene = new CpuLidarScene(resource());
+    const triangle = (triangleIndex, semanticId) => createTriangleLidarTwin({
+        id: "episode", sourceId: "episode", triangleIndex, semanticId, instanceId: 1,
+        vertices: [{ x: 5, y: -2, z: -2 }, { x: 5, y: 2, z: -2 }, { x: 5, y: 0, z: 2 }],
+    });
+    scene.setEpisodePrimitives([triangle(7, 7), triangle(2, 2)]);
+    assert.deepEqual(Array.from(scene.capture(sensor(), [ego])), [5, 1, 2, 1]);
+    scene.dispose();
+});
+
+test("single traversal is byte-identical to all-hits for varied poses, UTF-8 ties, edges, and range boundaries", () => {
+    const primitives = ["z", "é", "😀", "a"].map((id, index) => createBoxLidarTwin({
+        id, sourceId: id, center: { x: 5, y: 0, z: 0 }, size: { x: 2, y: 2, z: 2 },
+        semanticId: index, instanceId: index + 1,
+    }));
+    for (let index = 0; index < 40; index += 1) primitives.push(createBoxLidarTwin({
+        id: `box-${index}`, sourceId: `box-${index}`, center: { x: (index % 8) * 4 - 16, y: index % 3, z: Math.floor(index / 8) * 4 - 8 },
+        size: { x: 1, y: 2, z: 2 }, instanceId: index + 100,
+    }));
+    const scene = new CpuLidarScene(resource(primitives));
+    try {
+        for (const near of [0.0001, 4, 4.000001]) for (const far of [4, 4.000001, 80]) {
+            if (far < near) continue;
+            const channels = [-45, 0, 30].map((elevationDeg) => ({ elevationDeg, azimuthOffsetDeg: 0 }));
+            const azimuthsDeg = Array.from({ length: 72 }, (_, index) => index * 5);
+            const config = sensor({ calibration: { scanLayout: { channels, azimuthsDeg, minRangeM: near, maxRangeM: far } } });
+            for (const yaw of [0, 0.1, -0.7]) {
+                const vehicles = [{ id: "ego", position: { x: 0, y: 0, z: 0 }, rotation: { y: yaw } }];
+                const actual = scene.capture(config, vehicles);
+                const expected = legacyCapture(scene, config, vehicles, near, far, {
+                    width: azimuthsDeg.length, height: channels.length,
+                    at(row, column) { return { phi: channels[row].elevationDeg * Math.PI / 180, theta: azimuthsDeg[column] * Math.PI / 180 }; },
+                });
+                assert.deepEqual(new Uint8Array(actual.buffer), new Uint8Array(expected.buffer));
+            }
+        }
+    } finally { scene.dispose(); }
+});
+
 test("CPU BVH LiDAR resolves nearest deterministic labels and all-zero no-hit sentinels", () => {
     const far = createTriangleLidarTwin({
         id: "z-far", sourceId: "far", vertices: [{ x: 8, y: -2, z: -2 }, { x: 8, y: 2, z: -2 }, { x: 8, y: 0, z: 2 }],

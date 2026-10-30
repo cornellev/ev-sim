@@ -3,10 +3,12 @@
 import { assetBindingRevisionVersion, readAssetBinding } from "../../../../editor-assets/AssetBackedObject.js";
 import { compileAssetProxy, createWorldDescription } from "../../../../simulation/world/WorldDescription.js";
 import { ASSET_LIDAR_TYPE, trianglesFromSolid } from "../lidarSolidTriangles.js";
+import { browserSimulationPerformance } from "../../../../simulation/performance/BrowserSimulationPerformance.js";
 
 function uploadAssetLidar(context, entries, ids = null) {
     const objects = context?.data?.objects?.();
     if (typeof objects?.replaceTriangles !== "function") return;
+    const start = browserSimulationPerformance.now();
     const selected = ids === null ? [...entries.values()] : [...ids].map((id) => entries.get(String(id))).filter(Boolean);
     const triangles = [];
     for (const entry of selected) {
@@ -24,6 +26,7 @@ function uploadAssetLidar(context, entries, ids = null) {
             && (idSet === null || idSet.has(String(triangle.environmentSourceId))),
         triangles,
     );
+    browserSimulationPerformance.recordTiming("assetLidarUpload", browserSimulationPerformance.now() - start);
 }
 
 function entityId(objectId) {

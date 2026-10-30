@@ -1,7 +1,7 @@
 import { deepFreeze } from "../../util/cloneJson.js";
 import { clonePluginJson } from "../../plugin/PluginJson.js";
 import { PLUGIN_ERROR_CODES, assertSynchronous, pluginError } from "../../plugin/PluginErrors.js";
-import { simulationSha256 } from "../kernel/SimulationHashes.js";
+import { lidarCaptureDigest } from "./CpuLidarWorkerService.js";
 import { buildMeasuredRangeImage } from "./LidarProducts.js";
 import { buildPointCloud2, sensorHeader } from "./SensorMessages.js";
 import { SensorPublisher } from "./SensorPublisher.js";
@@ -326,32 +326,42 @@ export class PluginSensorDevice {
                 return { messages: [], nativePackets: [], rng: context.deliveryRng };
             }
             const raw = this.scene.capture(this.config, vehicleList);
-            const measured = buildMeasuredRangeImage({
-                buffer: raw,
-                config: this.config,
-                rng: context.measurementRng,
-                publisher: this.contractPublisher,
-            });
-            const pluginBuffer = new Float32Array(measured);
-            const captured = callHook(this.instance, this.factory, this.id, "captureAt", Object.freeze({
-                buffer: pluginBuffer,
-                calibration: this.calibration,
-                captureTimeNs: context.captureTimeNs,
-                sampleIndex: context.sampleIndex,
-                scanDurationNs: context.scanDurationNs,
-                rng: rngFacade(context.pluginRng),
-                sampling: this._sampling(pluginBuffer, context.captureTimeNs),
-            }));
-            const validated = this._validateCapture(captured, context);
-            this.lastCaptureDigest = simulationSha256({
-                messages: validated.messages,
-                nativePackets: validated.nativePackets.map((packet) => ({ ...packet, payload: packet.payload })),
-                observation: validated.observation,
-            });
-            return { ...validated, rng: context.deliveryRng };
+            if (raw?.then) {
+                return raw.then((buffer) => this._finishCapture(buffer, context)).catch((error) => {
+                    throw wrapError(error, this.factory, this.id, error?.hook ?? "captureAt");
+                });
+            }
+            return this._finishCapture(raw, context);
         } catch (error) {
             throw wrapError(error, this.factory, this.id, error?.hook ?? "captureAt");
         }
+    }
+
+    _finishCapture(raw, context) {
+        const measured = buildMeasuredRangeImage({
+            buffer: raw,
+            config: this.config,
+            rng: context.measurementRng,
+            publisher: this.contractPublisher,
+        });
+        const pluginBuffer = new Float32Array(measured);
+        const captured = callHook(this.instance, this.factory, this.id, "captureAt", Object.freeze({
+            buffer: pluginBuffer,
+            calibration: this.calibration,
+            captureTimeNs: context.captureTimeNs,
+            sampleIndex: context.sampleIndex,
+            scanDurationNs: context.scanDurationNs,
+            rng: rngFacade(context.pluginRng),
+            sampling: this._sampling(pluginBuffer, context.captureTimeNs),
+        }));
+        const validated = this._validateCapture(captured, context);
+        const result = this.scene.digestCapture?.(validated)
+            ?? { capture: validated, digest: lidarCaptureDigest(validated) };
+        const finish = ({ capture, digest }) => {
+            this.lastCaptureDigest = digest;
+            return { ...capture, rng: context.deliveryRng };
+        };
+        return result?.then ? result.then(finish) : finish(result);
     }
 
     onDeliveredObservation(observation, metadata) {

@@ -9,10 +9,15 @@ function options(argv) {
         url: "http://127.0.0.1:3100",
         manifest: null,
         manifestFile: null,
+        resolvedBundleFile: null,
+        saveResolvedBundle: null,
+        workload: "pbr-camera",
         durationMs: 30_000,
         warmupMs: 5_000,
         output: null,
+        cpuProfile: null,
         headed: false,
+        angle: null,
         forceInline: false,
     };
     for (let index = 0; index < argv.length; index += 1) {
@@ -22,12 +27,36 @@ function options(argv) {
         else if (name === "--url") result.url = argv[++index];
         else if (name === "--manifest") result.manifest = argv[++index];
         else if (name === "--manifest-file") result.manifestFile = argv[++index];
+        else if (name === "--resolved-bundle-file") result.resolvedBundleFile = argv[++index];
+        else if (name === "--save-resolved-bundle") result.saveResolvedBundle = argv[++index];
+        else if (name === "--workload") result.workload = argv[++index];
         else if (name === "--duration-ms") result.durationMs = Number(argv[++index]);
         else if (name === "--warmup-ms") result.warmupMs = Number(argv[++index]);
         else if (name === "--output") result.output = argv[++index];
+        else if (name === "--cpu-profile") result.cpuProfile = argv[++index];
+        else if (name === "--angle") result.angle = argv[++index];
         else throw new Error(`Unknown option ${name}.`);
     }
+    if (!["pbr-camera", "cpu-lidar"].includes(result.workload)) throw new Error("Unknown benchmark workload.");
     return result;
+}
+
+function lidarWorkload(resolved) {
+    const sensors = (resolved?.manifest?.sensorRig?.sensors ?? []).filter((sensor) => (
+        sensor.enabled !== false && sensor.calibration?.scanLayout
+    ));
+    if (!sensors.length || Number(resolved.manifest.clock?.stepNs) !== 16_666_667 || !resolved.lidarGeometry) return null;
+    return {
+        kind: "cpu-lidar", fixedStepHz: 60, stepNs: resolved.manifest.clock.stepNs,
+        sensors: sensors.map((sensor) => ({
+            id: sensor.id, rateHz: sensor.rateHz,
+            rays: sensor.calibration.scanLayout.channels.length * sensor.calibration.scanLayout.azimuthsDeg.length,
+            products: sensor.calibration.products,
+            dropoutProbability: sensor.noise?.dropoutProbability ?? 0,
+        })),
+        lidarGeometryHash: resolved.lidarGeometry.hash,
+        resolvedHash: resolved.resolvedHash,
+    };
 }
 
 function cameraWorkload(resolved) {
@@ -99,37 +128,56 @@ async function main() {
     const manifestOverride = config.manifestFile
         ? JSON.parse(await fs.readFile(config.manifestFile, "utf8"))
         : null;
+    const frozen = config.resolvedBundleFile ? JSON.parse(await fs.readFile(config.resolvedBundleFile, "utf8")) : null;
     const browser = await chromium.launch({
         headless: !config.headed,
-        args: ["--enable-precise-memory-info"],
+        args: ["--enable-precise-memory-info", ...(config.angle ? [`--use-angle=${config.angle}`] : [])],
     });
     try {
         const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+        const revisionRequests = new Map();
+        page.on("request", (request) => {
+            if (request.method() === "GET" && /\/editor-assets\/[^/]+\/revisions\/\d+(?:\?|$)/.test(request.url())) {
+                revisionRequests.set(request.url(), (revisionRequests.get(request.url()) ?? 0) + 1);
+            }
+        });
         page.on("pageerror", (error) => process.stderr.write(`[browser] ${error.stack || error.message}\n`));
         page.on("console", (message) => {
             if (message.type() === "error") process.stderr.write(`[browser console] ${message.text()}\n`);
         });
         await page.goto(`${config.url.replace(/\/$/, "")}/?browserPerformance=1`, { waitUntil: "domcontentloaded" });
         await page.waitForFunction(() => globalThis.__cevSimBenchmarkRuntime, null, { timeout: 60_000 });
-        const candidates = await resolveCandidate(page, config.manifest, manifestOverride);
-        const selected = candidates.map((resolved) => ({ resolved, workload: cameraWorkload(resolved) }))
+        const candidates = frozen ? [frozen.resolved ?? frozen] : await resolveCandidate(page, config.manifest, manifestOverride);
+        const workload = config.workload === "cpu-lidar" ? lidarWorkload : cameraWorkload;
+        const selected = candidates.map((resolved) => ({ resolved, workload: workload(resolved) }))
             .find((entry) => entry.workload);
         if (!selected) {
             throw new Error(
-                "No run manifest matches the 60 Hz / one 320x180 30 Hz zero-latency PBR camera workload. "
+                `No run manifest matches the ${config.workload} workload. `
                 + "Create that manifest or pass its id with --manifest.",
             );
         }
-        await page.evaluate(async ({ resolved, workload, warmupMs, forceInline }) => {
+        if (config.saveResolvedBundle) await fs.writeFile(config.saveResolvedBundle, `${JSON.stringify(selected.resolved)}\n`);
+        const startup = await page.evaluate(async ({ resolved, workload, warmupMs, forceInline }) => {
+            const start = performance.now();
+            globalThis.__cevSimBrowserPerformance.start({ workload });
             await globalThis.__cevSimBenchmarkRuntime.prepare(resolved, { forceInline });
+            const preparation = globalThis.__cevSimBrowserPerformance.stop();
+            const prepareMs = performance.now() - start;
             globalThis.__cevSimBrowserPerformance.start({ workload, warmupMs });
             await globalThis.__cevSimBenchmarkRuntime.play();
+            return { prepareMs, timings: preparation.timings, longTasks: preparation.longTasks };
         }, {
             resolved: selected.resolved,
             workload: selected.workload,
             warmupMs: config.warmupMs,
             forceInline: config.forceInline,
         });
+        const profiler = config.cpuProfile ? await page.context().newCDPSession(page) : null;
+        if (profiler) {
+            await profiler.send("Profiler.enable");
+            await profiler.send("Profiler.start");
+        }
         await page.waitForTimeout(config.warmupMs + config.durationMs);
         const result = await page.evaluate(async () => {
             await globalThis.__cevSimBenchmarkRuntime.pause();
@@ -137,6 +185,18 @@ async function main() {
             const report = globalThis.__cevSimBrowserPerformance.stop();
             return { ...report, runtime };
         });
+        result.startup = { ...startup, assetRevisionRequests: Object.fromEntries(revisionRequests) };
+        const simulation = result.runtime?.simulation;
+        result.gates.continuousSimulation = !simulation?.scenario?.terminal
+            && !(simulation?.maxSteps != null && simulation.steps >= simulation.maxSteps);
+        if (!result.gates.continuousSimulation) {
+            result.measurement.invalidReason = "The episode completed before measurement ended; use a longer scenario or step budget.";
+            result.passed = false;
+        }
+        if (profiler) {
+            const { profile } = await profiler.send("Profiler.stop");
+            await fs.writeFile(config.cpuProfile, JSON.stringify(profile));
+        }
         const json = `${JSON.stringify(result, null, 2)}\n`;
         if (config.output) await fs.writeFile(config.output, json);
         else process.stdout.write(json);

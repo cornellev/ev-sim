@@ -1,5 +1,4 @@
 import { compareUtf8 } from "../world/WorldDescription.js";
-import { assertLidarGeometryResource } from "../lidar/LidarGeometry.js";
 import {
     CPU_LIDAR_EXPLICIT_LAYOUT_BACKEND_VERSION,
     assertCpuLidarBackendSelection,
@@ -41,7 +40,6 @@ export class PluginSensorManager {
         if (String(selection.version) !== CPU_LIDAR_EXPLICIT_LAYOUT_BACKEND_VERSION) {
             throw new Error("Plugin range-image sensors require deterministic-cpu-bvh-lidar version 2.");
         }
-        assertLidarGeometryResource(options.lidarGeometry);
         const messageCodec = options.messageCodec ?? this.options.messageCodec;
         if (typeof messageCodec?.encodeTopicValue !== "function"
             || typeof messageCodec?.registerMsgDefinition !== "function") {

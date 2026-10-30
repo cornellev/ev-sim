@@ -9,6 +9,8 @@ import { createPluginPackage, verifyPluginPackage } from "../app/plugin/PluginPa
 import { createPluginSensorsResource } from "../app/plugin/PluginSensorIdentity.js";
 import { HeadlessEpisode } from "../app/simulation/headless/HeadlessEpisode.js";
 import { measuredPerceptionProfileRef } from "../app/simulation/headless/ProfileRegistry.js";
+import { BrowserCpuLidarRuntime } from "../app/3d/devices/BrowserCpuLidarRuntime.js";
+import { createCpuLidarTestWorker } from "./helpers/cpuLidarWorker.js";
 import { unpackTensor } from "../app/simulation/headless/TensorProtocol.js";
 import {
     decodeNativeSensorPacket,
@@ -114,6 +116,41 @@ async function fixtureEpisode(bundle, t) {
         pluginModuleSource: new NodePluginModuleSource({ runtimeRoot }),
     });
 }
+
+test("browser CPU worker preserves seeded plugin packets, observations, and trajectory hashes across resets", async (t) => {
+    const { bundle } = await fixtureBundle(null, {
+        noise: { model: "gaussian", bias: 0.01, standardDeviation: 0.02, dropoutProbability: 0.2, pointDropoutProbability: 0.1 },
+    });
+    const inline = await fixtureEpisode(bundle, t);
+    const threaded = await fixtureEpisode(bundle, t);
+    t.after(() => inline.disposeAsync());
+    t.after(() => threaded.disposeAsync());
+    for (const episode of [inline, threaded]) {
+        await episode.prepare(bundle.resolved, { actionRepeat: 1, observationProfile: measuredPerceptionProfileRef() });
+    }
+    const manager = threaded.runtime.devices.plugin;
+    const runtime = new BrowserCpuLidarRuntime({ workerFactory: createCpuLidarTestWorker });
+    await runtime.prepare(bundle.resolved, manager.devices.map((device) => device.config));
+    assert.equal(runtime.status.implementation, "worker");
+    manager.scene.dispose();
+    manager.scene = runtime;
+    for (const device of manager.devices) device.scene = runtime;
+    const inlinePackets = [];
+    const workerPackets = [];
+    inline.runtime.devices.plugin.devices[0].contractPublisher.nativePacketSink = { enqueueBatch: (batch) => inlinePackets.push(structuredClone(batch)) };
+    manager.devices[0].contractPublisher.nativePacketSink = { enqueueBatch: (batch) => workerPackets.push(structuredClone(batch)) };
+    for (let cycle = 0; cycle < 8; cycle += 1) {
+        inline.reset(); threaded.reset();
+        for (let step = 0; step < 4; step += 1) {
+            const expected = await inline.stepAsync([0, 0]);
+            const actual = await threaded.stepAsync([0, 0]);
+            assert.deepEqual(actual, expected);
+            assert.deepEqual(manager.getDeterministicState(), inline.runtime.devices.plugin.getDeterministicState());
+        }
+    }
+    assert.ok(inlinePackets.length > 0);
+    assert.deepEqual(workerPackets, inlinePackets);
+});
 
 test("plugin range-image sensors expose point dropout on the run form", async () => {
     const verified = verifyPluginPackage(await fixtureResource());

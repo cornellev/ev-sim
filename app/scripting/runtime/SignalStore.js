@@ -553,7 +553,7 @@ export class SignalStore {
             const previous = this._committed.get(path);
             const heavy = isHeavyDescriptor(this._descriptors.get(path)) || isHeavyValue(entry?.value);
             if (previous && !heavy) {
-                this._previous.set(path, cloneValue(previous));
+                this._previous.set(path, previous);
             } else if (heavy) {
                 this._previous.delete(path);
             }
@@ -647,7 +647,7 @@ export class SignalStore {
         const previous = this._committed.get(normalizedPath);
         const trackPrevious = retention !== "none" && options.history !== false;
         if (previous && !heavy && trackPrevious) {
-            this._previous.set(normalizedPath, cloneValue(previous));
+            this._previous.set(normalizedPath, previous);
         } else if (heavy) {
             this._previous.delete(normalizedPath);
         }
@@ -673,9 +673,9 @@ export class SignalStore {
             path,
             timeUs: entry.timeUs ?? this.getTimeUs(),
             cycle: entry.cycle ?? null,
-            entry: heavy ? entry : cloneValue(entry),
+            entry,
             previous: heavy || !previous ? null : previous,
-            descriptor: this.descriptor(path),
+            descriptor: heavy ? this.descriptor(path) : this._descriptors.get(path) ?? null,
         });
     }
 
@@ -862,13 +862,13 @@ export class SignalStore {
 
         if (heavy || limit === 1) {
             // Reuse the same ring object — allocating {items,head} every tick was a heap storm.
-            buffer.items[0] = heavy ? entry : cloneValue(entry);
+            buffer.items[0] = entry;
             if (buffer.items.length !== 1) buffer.items.length = 1;
             buffer.head = 0;
             return;
         }
 
-        buffer.items.push(cloneValue(entry));
+        buffer.items.push(entry);
         const newestTimeUs = entry?.timeUs ?? this.getTimeUs();
         const oldestTimeUs = Math.max(0, newestTimeUs - this.historyDurationUs);
         while (buffer.head < buffer.items.length) {

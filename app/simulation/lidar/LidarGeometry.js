@@ -1,7 +1,7 @@
 import { featureSemanticLabel } from "../../3d/editor/objects/types/builtinProp.js";
 import { perceptionClassId } from "../../autonomy/PerceptionLabelCatalog.js";
 import { compareUtf8 } from "../world/WorldDescription.js";
-import { canonicalFiniteNumber, canonicalizeSimulationValue, simulationSha256 } from "../kernel/SimulationHashes.js";
+import { canonicalFiniteNumber, canonicalizeSimulationValue, canonicalSimulationStringify, simulationSha256 } from "../kernel/SimulationHashes.js";
 import { allocateLidarInstanceIds, stableInstanceIdFromSource } from "./LidarInstanceIds.js";
 
 export const LIDAR_GEOMETRY_KIND = "cev-sim.lidar-geometry";
@@ -391,7 +391,7 @@ export function assertLidarGeometryDescription(description) {
         const rebuilt = primitive.shape === "box"
             ? createBoxLidarTwin(primitive)
             : createTriangleLidarTwin(primitive);
-        if (simulationSha256(rebuilt) !== simulationSha256(primitive)) {
+        if (canonicalSimulationStringify(rebuilt) !== canonicalSimulationStringify(primitive)) {
             throw new TypeError(`LiDAR primitive "${primitive.id}" is not canonical.`);
         }
     }
@@ -418,15 +418,15 @@ export function assertLidarGeometryDescription(description) {
     if ([...staticIds].sort(compareUtf8).some((id, index) => id !== staticIds[index])) {
         throw new TypeError("Static LiDAR primitives are not in canonical UTF-8 order.");
     }
-    const rebuiltDescription = canonicalizeSimulationValue({
+    const rebuiltDescription = {
         kind: LIDAR_GEOMETRY_KIND,
         version: LIDAR_GEOMETRY_VERSION,
         coordinateFrame: description.coordinateFrame,
         staticPrimitives: description.staticPrimitives,
         actors: description.actors,
         ...(description.planes !== undefined ? { planes: description.planes } : {}),
-    });
-    if (simulationSha256(rebuiltDescription) !== simulationSha256(description)) {
+    };
+    if (canonicalSimulationStringify(rebuiltDescription) !== canonicalSimulationStringify(description)) {
         throw new TypeError("LiDAR geometry contains non-canonical fields.");
     }
     return description;

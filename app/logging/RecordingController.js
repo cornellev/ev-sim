@@ -107,6 +107,7 @@ export class RecordingController {
         this.timeBase = "wall";
         this._unsubscribe = null;
         this._flushTimer = null;
+        this._heavyFlushEncoder = null;
         this._uploadChain = Promise.resolve();
         this._lastValues = new Map();
         this._lastSamples = new Map();
@@ -338,8 +339,18 @@ export class RecordingController {
             this.encoder.addCheckpoint(lightSnapshot(this.store), this.store.descriptors(), recordingTimeUs);
             this.lastCheckpointUs = recordingTimeUs;
         }
-        // Flush heavy frames immediately so encoder queue bytes stay bounded.
-        if (heavy || this.encoder.byteEstimate >= TARGET_LOG_BATCH_BYTES) this._flush();
+        if (this.encoder.byteEstimate >= TARGET_LOG_BATCH_BYTES) this._flush();
+        else if (heavy && this._heavyFlushEncoder !== this.encoder) {
+            // A native scan publishes many small packets in one turn. Preserve
+            // every record while sharing upload/framing work within that turn.
+            const encoder = this.encoder;
+            this._heavyFlushEncoder = encoder;
+            queueMicrotask(() => {
+                if (this._heavyFlushEncoder !== encoder) return;
+                this._heavyFlushEncoder = null;
+                if (this.encoder === encoder) this._flush();
+            });
+        }
     }
 
     _recordingTimeUs(value) {

@@ -520,6 +520,7 @@ export class SimulationKernel {
                     ?? this.resolvedRun.backendSelections
                     ?? [],
                 lidarGeometry: this.resolvedRun.lidarGeometry ?? null,
+                resolvedRun: this.resolvedRun,
                 renderScene: this.resolvedRun.renderScene ?? null,
                 renderRuntime,
                 perceptionObservations,

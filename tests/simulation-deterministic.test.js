@@ -73,6 +73,37 @@ function resolved(manifest) {
     };
 }
 
+test("CPU-only asynchronous sensors keep one step in flight, present while pending, and drain pause", async () => {
+    const { engine, data } = harness();
+    const devices = data.devices();
+    devices.requiresAsyncCapture = true;
+    engine.setModule("assertions", false);
+    let release;
+    devices.updateAsync = () => new Promise((resolve) => { release = resolve; });
+    engine.kernel.play();
+    engine._pendingFrameNs = engine.stepNs;
+    let presented = 0;
+    engine.render = () => { presented += 1; };
+    engine._launchAsyncAdvance();
+    await Promise.resolve();
+    assert.equal(engine._usesAsyncSensors(), true);
+    assert.ok(engine._advanceInFlight);
+    const pending = engine._advanceInFlight;
+    engine._launchAsyncAdvance();
+    assert.equal(engine._advanceInFlight, pending);
+    engine.render(); engine.render();
+    assert.equal(presented, 2);
+    engine.pause();
+    let idle = false;
+    const drained = engine.whenIdle().then(() => { idle = true; });
+    await Promise.resolve();
+    assert.equal(idle, false);
+    release(); await drained;
+    assert.equal(engine.status, "paused");
+    assert.equal(engine.steps, 1);
+    engine.dispose();
+});
+
 test("topic input queue orders declared topics before arrival sequence", () => {
     const queue = new TopicInputQueue([
         { name: "/second", direction: "input" },

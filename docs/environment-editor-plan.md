@@ -1036,6 +1036,21 @@ Record in the ledger: focused-suite pass counts, `npm run lint` result,
 
 ## Decision log
 
+### 2026-10-29 — Asset loading and metric projection performance maintenance
+
+Exact immutable asset revision reads share one in-flight request and a bounded
+128-entry cache per repository. Consumer cancellation is independent, failed or
+abandoned requests are evicted, and callers receive defensive copies. Catalog
+and latest-revision reads retain their existing behavior.
+
+Metric triangle replacement filters once, assigns missing identities in one
+pass, and rebuilds texture/twin buffers once. Existing order, source/instance
+allocation, texture objects, capacity warnings, and deferred-rebuild behavior
+are preserved. Tests cover 81 concurrent consumers, cancellation, retries,
+eviction, copy isolation, and equivalence with sequential triangle uploads.
+Commands and SceneProjector remain the mutation/projection authority. No schema,
+world identity, roadmap milestone, or published asset revision changes.
+
 ### 2026-10-21 — The floor collider can be turned off
 
 The Floor inspector's Collider toggle is on unless `document.floor` stores `collider: false`. That flag is omitted while the collider stays on, so an enabled floor keeps its snapshot and `worldHash`. Turning it off copies `collider: false` onto world v4 `groundPlane` and removes the Rapier plane dynamic bodies land on. The checker, the LiDAR plane, and the vehicle support constraint stay. This is not an ED milestone.

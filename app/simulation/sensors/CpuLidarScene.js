@@ -1,6 +1,5 @@
 import {
     BufferGeometry,
-    DoubleSide,
     Euler,
     Float32BufferAttribute,
     Matrix4,
@@ -75,7 +74,9 @@ function createIndex(primitives) {
     const geometry = new BufferGeometry();
     geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
     const bvh = new MeshBVH(geometry, { indirect: true });
-    return { geometry, bvh, faces };
+    const index = { geometry, bvh, faces };
+    index.query = createNearestQuery(index);
+    return index;
 }
 
 function vehicleMatrix(vehicle) {
@@ -121,48 +122,69 @@ function hitOrder(left, right) {
         || left.triangleIndex - right.triangleIndex;
 }
 
-function raycastPlanes(planes, ray, range, near = CPU_LIDAR_NEAR_METERS) {
-    const hits = [];
-    for (const plane of planes ?? []) {
-        const denom = ray.direction.y;
-        if (Math.abs(denom) <= 1e-7) continue;
-        const distance = (plane.y - ray.origin.y) / denom;
-        if (distance < near || distance > range) continue;
-        hits.push({
-            primitiveId: plane.id,
-            triangleIndex: 0,
-            semanticId: plane.semanticId,
-            instanceId: plane.instanceId,
-            distance,
-            incidence: Math.abs(denom),
-        });
-    }
-    return hits;
-}
-
-function hitFromFace(index, faceIndex, ray, distance) {
-    const metadata = index.faces[faceIndex];
-    return {
-        primitiveId: metadata.primitiveId,
-        triangleIndex: metadata.triangleIndex,
-        semanticId: metadata.semanticId,
-        instanceId: metadata.instanceId,
-        distance,
-        incidence: Math.abs(metadata.normal.dot(ray.direction)),
+function createNearestQuery(index) {
+    const point = new Vector3();
+    const a = new Vector3();
+    const b = new Vector3();
+    const c = new Vector3();
+    const positions = index.geometry.attributes.position;
+    const vertices = index.geometry.index;
+    const query = { ray: null, near: 0, far: 0, distance: 0, faceIndex: -1, hit: {} };
+    query.callbacks = {
+        boundsTraverseOrder(box) {
+            if (box.containsPoint(query.ray.origin)) return 0;
+            return query.ray.intersectBox(box, point)
+                ? query.ray.origin.distanceTo(point) : Infinity;
+        },
+        intersectsBounds(_box, _leaf, score) {
+            // Pad bounds pruning only; hit distances and ties remain exact.
+            return score <= query.distance + Math.max(1e-9, query.distance * Number.EPSILON * 8);
+        },
+        intersectsRange(offset, count) {
+            for (let i = offset, end = offset + count; i < end; i += 1) {
+                const faceIndex = index.bvh.resolveTriangleIndex(i);
+                const start = faceIndex * 3;
+                a.fromBufferAttribute(positions, vertices ? vertices.getX(start) : start);
+                b.fromBufferAttribute(positions, vertices ? vertices.getX(start + 1) : start + 1);
+                c.fromBufferAttribute(positions, vertices ? vertices.getX(start + 2) : start + 2);
+                if (!query.ray.intersectTriangle(a, b, c, false, point)) continue;
+                const distance = query.ray.origin.distanceTo(point);
+                if (distance < query.near || distance > query.far || distance > query.distance) continue;
+                const previous = index.faces[query.faceIndex];
+                const candidate = index.faces[faceIndex];
+                // Equal-id episode triangles can arrive in authored index order.
+                const earlier = !previous || (candidate.primitiveId === previous.primitiveId
+                    ? candidate.triangleIndex < previous.triangleIndex : faceIndex < query.faceIndex);
+                if (distance < query.distance || earlier) {
+                    query.distance = distance;
+                    query.faceIndex = faceIndex;
+                }
+            }
+            return false;
+        },
     };
+    return query;
 }
 
 function nearestIndexHit(index, ray, near, far) {
     if (!index) return null;
-    const first = index.bvh.raycastFirst(ray, DoubleSide, near, far);
-    if (!first) return null;
-    const ties = index.bvh.raycast(ray, DoubleSide, first.distance, first.distance);
-    let best = null;
-    for (const hit of ties) {
-        const candidate = hitFromFace(index, hit.faceIndex, ray, hit.distance);
-        if (!best || hitOrder(candidate, best) < 0) best = candidate;
-    }
-    return best ?? hitFromFace(index, first.faceIndex, ray, first.distance);
+    const query = index.query;
+    query.ray = ray;
+    query.near = near;
+    query.far = far;
+    query.distance = far;
+    query.faceIndex = -1;
+    index.bvh.shapecast(query.callbacks);
+    if (query.faceIndex < 0) return null;
+    const metadata = index.faces[query.faceIndex];
+    const hit = query.hit;
+    hit.primitiveId = metadata.primitiveId;
+    hit.triangleIndex = metadata.triangleIndex;
+    hit.semanticId = metadata.semanticId;
+    hit.instanceId = metadata.instanceId;
+    hit.distance = query.distance;
+    hit.incidence = Math.abs(metadata.normal.dot(ray.direction));
+    return hit;
 }
 
 function poseMoved(pose) {
@@ -207,15 +229,20 @@ function disposeIndex(index) {
 
 export class CpuLidarScene {
     constructor(resource) {
+        const start = performance.now();
         const description = assertLidarGeometryResource(resource);
+        const validatedAt = performance.now();
         this.authoredPrimitives = description.staticPrimitives;
         this.fullStaticIndex = createIndex(description.staticPrimitives);
         this.staticIndex = this.fullStaticIndex;
         this.planes = description.planes ?? [];
+        this._planeHits = this.planes.map((plane) => ({ ...plane, primitiveId: plane.id, triangleIndex: 0 }));
+        this._directions = new WeakMap();
         this.actorIndexes = new Map(description.actors.map((actor) => [
             actor.actorId,
             createIndex(actor.primitives),
         ]));
+        this.preparationTimings = { validationMs: validatedAt - start, bvhBuildMs: performance.now() - validatedAt };
         this.episodeIndex = null;
         this._bodyGroups = new Map();
         this._bodyIndex = null;
@@ -311,24 +338,54 @@ export class CpuLidarScene {
     }
 
     _nearestHit(worldRay, near, far, movers) {
-        const candidates = [];
-        const consider = (index, ray) => {
-            const hit = nearestIndexHit(index, ray, near, far);
-            if (hit) candidates.push(hit);
-        };
-        consider(this._activeStaticIndex, worldRay);
-        consider(this.episodeIndex, worldRay);
-        consider(this._queryBodyIndex, worldRay);
+        let best = nearestIndexHit(this._activeStaticIndex, worldRay, near, far);
+        const episode = nearestIndexHit(this.episodeIndex, worldRay, near, far);
+        if (episode && (!best || hitOrder(episode, best) < 0)) best = episode;
+        const body = nearestIndexHit(this._queryBodyIndex, worldRay, near, far);
+        if (body && (!best || hitOrder(body, best) < 0)) best = body;
         for (const mover of movers) {
-            if (!mover.inverse) {
-                consider(mover.index, worldRay);
-                continue;
-            }
-            consider(mover.index, this._localRay.copy(worldRay).applyMatrix4(mover.inverse));
+            const ray = mover.inverse ? this._localRay.copy(worldRay).applyMatrix4(mover.inverse) : worldRay;
+            const hit = nearestIndexHit(mover.index, ray, near, far);
+            if (hit && (!best || hitOrder(hit, best) < 0)) best = hit;
         }
-        candidates.push(...raycastPlanes(this.planes, worldRay, far, near));
-        candidates.sort(hitOrder);
-        return candidates[0] ?? null;
+        const denom = worldRay.direction.y;
+        if (Math.abs(denom) > 1e-7) {
+            for (const hit of this._planeHits) {
+                const distance = (hit.y - worldRay.origin.y) / denom;
+                if (distance < near || distance > far) continue;
+                hit.distance = distance;
+                hit.incidence = Math.abs(denom);
+                if (!best || hitOrder(hit, best) < 0) best = hit;
+            }
+        }
+        return best;
+    }
+
+    _scanDirections(calibration) {
+        let scan = this._directions.get(calibration);
+        if (scan) return scan;
+        const layout = calibration.scanLayout;
+        const width = layout ? layout.azimuthsDeg.length
+            : Math.ceil((calibration.azimuth.endDeg - calibration.azimuth.startDeg) / calibration.azimuth.stepDeg);
+        const height = layout ? layout.channels.length
+            : Math.ceil((calibration.elevation.endDeg - calibration.elevation.startDeg) / calibration.elevation.stepDeg);
+        const directions = new Float64Array(width * height * 3);
+        for (let row = 0; row < height; row += 1) {
+            const phi = (layout ? layout.channels[row].elevationDeg
+                : calibration.elevation.startDeg + row * calibration.elevation.stepDeg) * Math.PI / 180;
+            const cosPhi = Math.cos(phi);
+            for (let column = 0; column < width; column += 1) {
+                const theta = (layout ? layout.azimuthsDeg[column] + layout.channels[row].azimuthOffsetDeg
+                    : calibration.azimuth.startDeg + column * calibration.azimuth.stepDeg) * Math.PI / 180;
+                const offset = (row * width + column) * 3;
+                directions[offset] = cosPhi * Math.cos(theta);
+                directions[offset + 1] = Math.sin(phi);
+                directions[offset + 2] = cosPhi * Math.sin(theta);
+            }
+        }
+        scan = { width, height, directions };
+        this._directions.set(calibration, scan);
+        return scan;
     }
 
     _writeHit(buffer, offset, hit) {
@@ -344,8 +401,7 @@ export class CpuLidarScene {
         const origin = new Vector3().setFromMatrixPosition(matrix);
         const sensorQuaternion = new Quaternion().setFromRotationMatrix(matrix);
         const layout = config.calibration.scanLayout;
-        const width = layout.azimuthsDeg.length;
-        const height = layout.channels.length;
+        const { width, height, directions } = this._scanDirections(config.calibration);
         const minRange = Number(layout.minRangeM);
         const maxRange = Number(layout.maxRangeM);
         const buffer = new Float32Array(width * height * 4);
@@ -354,16 +410,9 @@ export class CpuLidarScene {
         const movers = this._movers(config.parentId, vehicles);
 
         for (let channelIndex = 0; channelIndex < height; channelIndex += 1) {
-            const channel = layout.channels[channelIndex];
-            const phi = channel.elevationDeg * Math.PI / 180;
-            const cosPhi = Math.cos(phi);
             for (let azimuthIndex = 0; azimuthIndex < width; azimuthIndex += 1) {
-                const theta = (layout.azimuthsDeg[azimuthIndex] + channel.azimuthOffsetDeg) * Math.PI / 180;
-                worldRay.direction.set(
-                    cosPhi * Math.cos(theta),
-                    Math.sin(phi),
-                    cosPhi * Math.sin(theta),
-                ).applyQuaternion(sensorQuaternion).normalize();
+                worldRay.direction.fromArray(directions, (channelIndex * width + azimuthIndex) * 3)
+                    .applyQuaternion(sensorQuaternion).normalize();
                 this._writeHit(
                     buffer,
                     (channelIndex * width + azimuthIndex) * 4,
@@ -384,10 +433,7 @@ export class CpuLidarScene {
         const matrix = sensorMatrix(vehicle, config.pose);
         const origin = new Vector3().setFromMatrixPosition(matrix);
         const sensorQuaternion = new Quaternion().setFromRotationMatrix(matrix);
-        const azimuth = config.calibration.azimuth;
-        const elevation = config.calibration.elevation;
-        const width = Math.ceil((azimuth.endDeg - azimuth.startDeg) / azimuth.stepDeg);
-        const height = Math.ceil((elevation.endDeg - elevation.startDeg) / elevation.stepDeg);
+        const { width, height, directions } = this._scanDirections(config.calibration);
         const range = Number(config.calibration.range);
         const buffer = new Float32Array(width * height * 4);
         const worldRay = new Ray(origin, new Vector3());
@@ -395,15 +441,9 @@ export class CpuLidarScene {
         const movers = this._movers(config.parentId, vehicles);
 
         for (let elevationIndex = 0; elevationIndex < height; elevationIndex += 1) {
-            const phi = (elevation.startDeg + elevationIndex * elevation.stepDeg) * Math.PI / 180;
-            const cosPhi = Math.cos(phi);
             for (let azimuthIndex = 0; azimuthIndex < width; azimuthIndex += 1) {
-                const theta = (azimuth.startDeg + azimuthIndex * azimuth.stepDeg) * Math.PI / 180;
-                worldRay.direction.set(
-                    cosPhi * Math.cos(theta),
-                    Math.sin(phi),
-                    cosPhi * Math.sin(theta),
-                ).applyQuaternion(sensorQuaternion).normalize();
+                worldRay.direction.fromArray(directions, (elevationIndex * width + azimuthIndex) * 3)
+                    .applyQuaternion(sensorQuaternion).normalize();
                 this._writeHit(
                     buffer,
                     (elevationIndex * width + azimuthIndex) * 4,
