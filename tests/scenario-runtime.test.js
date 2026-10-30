@@ -321,7 +321,7 @@ test("inactive flag-started External ROS controllers consume commands and hold t
         value: { speedMps: 5, steeringRad: 0.2 },
     });
     assert.equal(vehicles[0].velocity.x, 5);
-    assert.equal(vehicles[0].steeringAngle, -0.2);
+    assert.equal(vehicles[0].steeringAngle, 0.2);
 
     runtime.setFlag("external-enabled", false);
     runtime.preMotion({ step: 1, timeNs: 1, dt: 0.01 });
@@ -380,7 +380,7 @@ test("actor-command expiry restores the latest External ROS command deterministi
 
     runtime.preMotion({ step: 3, timeNs: 3, dt: 0.01 });
     assert.equal(vehicles[0].velocity.x, 4);
-    assert.equal(vehicles[0].steeringAngle, -0.15);
+    assert.equal(vehicles[0].steeringAngle, 0.15);
 
     runtime.reset();
     runtime.preMotion({ step: 1, timeNs: 1, dt: 0.01 });

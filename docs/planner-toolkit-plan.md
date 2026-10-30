@@ -304,3 +304,30 @@ which does not import the planning bundle. `npm run test:cli` passed.
 `npm run test:python` passed, 129 tests. `npm run fixtures:planning` changed
 only `exportedAt` on the IGVC example bundles, and those files were left as
 committed. `npm run fixtures:headless` produced an empty characterization delta.
+
+### 2026-10-29 — Browser occupancy export for the October 31 demo
+
+The browser-only `oct-31-testing` run exports `/planning/costmap` as a
+`std_msgs/String` JSON value every 500,000,000 simulation ns after motion.
+The 1000 by 1000, 0.05 m oracle grid uses the same actor footprints and
+episode-overlay obstacles as planning observations. Rows are reversed into
+REP-103 Y, `origin_x = originX`, `origin_y = -(originZ + rows * resolution)`,
+and base64 cells use 0 for free and 255 for blocked. Ego is not stamped.
+Congestion drops the export; it never blocks a fixed step.
+
+A separately launched Python adapter in the orchestrator repository translates
+pose, goal, grid, and control messages for the existing native Zenoh consumers.
+Reference control authority stays selected. This is an operational demo export,
+not a new PLN milestone or observation profile. All headless and other browser
+runs leave it inactive. Profile schemas, hashes, Protobuf, and the committed
+action-tape characterization remain unchanged. See
+[October 31 Zenoh bridge](oct31-zenoh-bridge.md) for startup and wire details.
+
+Verification: the 20 focused Node tests and all 53 orchestrator Python tests
+passed. Lint passed with existing warnings. The full Node suite reported
+2,443 passes, eight skips, and the previously recorded LiDAR hierarchy failure;
+action-tape characterization passed unchanged. Real-process normal-start,
+late-planner, and mid-run-attachment checks produced trajectories and stamped
+commands using the existing Rust consumers. Later-start checks used a loopback
+Zenoh test router. Browser UI acceptance remains unverified because automation
+could not reliably attach; detailed limits are recorded in the linked guide.

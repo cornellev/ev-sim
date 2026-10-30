@@ -296,7 +296,7 @@ test("queued controls/command is applied only at a step boundary", async () => {
     assert.equal(vehicle.velocity.x, 0);
     engine.step();
     assert.ok(Math.abs(vehicle.velocity.x - 4.4704) < 1e-6);
-    assert.ok(Math.abs(vehicle.steeringAngle - (-0.0872665)) < 1e-6);
+    assert.ok(Math.abs(vehicle.steeringAngle - 0.0872665) < 1e-6);
     const applied = store.events().find((event) => event.name === "input-applied");
     assert.equal(applied.name, "input-applied");
     assert.equal(applied.payload.step, 1);

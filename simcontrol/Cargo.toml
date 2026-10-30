@@ -1,0 +1,13 @@
+[package]
+name = "simcontrol"
+version = "0.1.0"
+edition = "2021"
+description = "A small blocking HTTP client for the ev-sim browser simulator"
+license = "Apache-2.0"
+repository = "https://github.com/cornellev/ev-sim"
+readme = "README.md"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "3.5", features = ["json"] }

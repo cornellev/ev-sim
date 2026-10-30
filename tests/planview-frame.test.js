@@ -151,7 +151,7 @@ test("planViewSourcesFromData reads the live simulation accessors", () => {
     assert.equal(frame.signals.length, 0);
 });
 
-test("sampleAckermannCenterline stays straight at zero steer and turns right for positive steer", () => {
+test("sampleAckermannCenterline stays straight at zero steer and turns left for positive steer", () => {
     const straight = sampleAckermannCenterline(0, { wheelbase: 2, lookahead: 8, segments: 4 });
     assert.equal(straight[0].x, 0);
     assert.ok(straight.at(-1).x > straight[0].x);

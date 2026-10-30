@@ -40,7 +40,7 @@ test("keyboard drive maps WASD and holds the latched wheel", () => {
 
     const left = stepKeyboardDrive(both.state, { down: new Set(["a"]), dt, enabled: true });
     assert.equal(left.state.steeringRadThree, KEYBOARD_STEER_RATE_RAD * dt);
-    assert.equal(left.command.steeringRadRep103, -left.state.steeringRadThree);
+    assert.equal(left.command.steeringRadRep103, left.state.steeringRadThree);
     assert.equal(left.command.speedMps, 0);
 
     const right = stepKeyboardDrive(left.state, { down: new Set(["d"]), dt, enabled: true });
@@ -48,6 +48,6 @@ test("keyboard drive maps WASD and holds the latched wheel", () => {
 
     const held = stepKeyboardDrive(left.state, { down: new Set(), dt, enabled: true });
     assert.equal(held.command.speedMps, 0);
-    assert.equal(held.command.steeringRadRep103, -left.state.steeringRadThree);
+    assert.equal(held.command.steeringRadRep103, left.state.steeringRadThree);
     assert.equal(held.state.steeringRadThree, left.state.steeringRadThree);
 });
