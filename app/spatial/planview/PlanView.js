@@ -22,6 +22,7 @@ export function PlanView({ data }) {
     const [followEpoch, setFollowEpoch] = useState(0);
     const [layerPanelOpen, setLayerPanelOpen] = useState(false);
     const [selectedActorId, setSelectedActorId] = useState(() => getPlanSelection());
+    const [waypointFrame, setWaypointFrame] = useState("global");
     const [environment, setEnvironment] = useState(() => data?.environment?.()?.getDocument?.()?.snapshot?.() ?? null);
 
     useEffect(() => subscribePlanSelection(setSelectedActorId), []);
@@ -31,7 +32,7 @@ export function PlanView({ data }) {
         return document.subscribe((snapshot) => setEnvironment(snapshot));
     }, [data]);
 
-    const frame = usePlanViewFrame(data, { environment, historyMode, selectedActorId });
+    const frame = usePlanViewFrame(data, { environment, historyMode, selectedActorId, waypointFrame });
     const primitives = useMemo(() => projectPlanView(frame, visibility), [frame, visibility]);
     const ego = frame.vehicles.find((actor) => actor.role === "ego") ?? frame.vehicles[0] ?? null;
     const sensorsOn = isGroupVisible(visibility, "sensors");
@@ -62,6 +63,13 @@ export function PlanView({ data }) {
                 >
                     <IconCurrentLocation size={15} stroke={1.75} />
                     Follow
+                </Button>
+                <Button
+                    size="compact"
+                    aria-pressed={waypointFrame === "body"}
+                    onClick={() => setWaypointFrame((mode) => (mode === "body" ? "global" : "body"))}
+                >
+                    {waypointFrame === "body" ? "Path: Car" : "Path: Global"}
                 </Button>
                 <Button
                     size="compact"

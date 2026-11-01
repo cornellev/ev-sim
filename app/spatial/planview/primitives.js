@@ -13,6 +13,7 @@ export const PLAN_COLORS = Object.freeze({
     collision: "#fb7185",
     routeDriven: "#e2e8f0",
     routeRemaining: "#64748b",
+    waypoints: "#f97316",
     trail: "#38bdf8",
     speed: "#f8fafc",
     goal: "#f59e0b",

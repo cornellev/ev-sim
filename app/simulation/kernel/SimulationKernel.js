@@ -35,6 +35,17 @@ const DEFAULT_MODULES = Object.freeze({
     assertions: true,
 });
 
+function plantSteeringBaseline(vehicles) {
+    const baseline = new Map();
+    for (const vehicle of vehicles || []) {
+        const id = String(vehicle?.telemetryId || vehicle?.id || "");
+        if (!id) continue;
+        const angle = Number(vehicle.plant?.steeringAngle ?? vehicle.steeringAngle);
+        if (Number.isFinite(angle)) baseline.set(id, angle);
+    }
+    return baseline;
+}
+
 function cloneSnapshot(value) {
     if (typeof structuredClone === "function") return structuredClone(value);
     return JSON.parse(JSON.stringify(value));
@@ -637,7 +648,12 @@ export class SimulationKernel {
 
         phase("controls", () => {
             if (!this.controlRuntime || this.modules.controls === false) return;
-            const applied = this.controlRuntime.step({ step: nextStep, timeNs: nextTimeNs, dt });
+            const applied = this.controlRuntime.step({
+                step: nextStep,
+                timeNs: nextTimeNs,
+                dt,
+                steeringBaseline: plantSteeringBaseline(this.context.vehicles.list()),
+            });
             this.context.controls.applySetpoints(applied);
         });
 

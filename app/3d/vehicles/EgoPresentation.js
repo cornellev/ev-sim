@@ -1,5 +1,4 @@
 import * as THREE from "three";
-import { lerp } from "three/src/math/MathUtils";
 import Unit from "@/app/util/Unit";
 import { CameraFollower } from "../tools/CameraFollower";
 import { LiDAR3d } from "../devices/LiDAR3d";
@@ -246,8 +245,7 @@ function setupPlaygroundDevices(vehicle) {
 
 function renderPath(vehicle) {
     if (!vehicle.path) return;
-    vehicle.displaySteeringAngle = lerp(vehicle.displaySteeringAngle, vehicle.steeringAngle, 0.1);
-    updatePathRibbonGeometry(vehicle.path.geometry, vehicle.sceneObject, vehicle.displaySteeringAngle);
+    updatePathRibbonGeometry(vehicle.path.geometry, vehicle.sceneObject, vehicle.displaySteeringAngle ?? vehicle.steeringAngle ?? 0);
 }
 
 function updateLaneMeshVisibility(vehicle) {

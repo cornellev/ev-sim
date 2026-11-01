@@ -14,6 +14,12 @@ import {
     msgFilePathsForCatalog,
     schemaClosureForManifest,
 } from "../../autonomy/AutonomyContractCatalog.js";
+import {
+    PLAN_WAYPOINTS_DEFINITION,
+    PLAN_WAYPOINTS_TOPIC,
+    PLAN_WAYPOINTS_TYPE,
+    setPlanWaypoints,
+} from "../../spatial/planview/waypoints.js";
 
 function topicRosType(topic) {
     return topic?.schema?.type || topic?.type || null;
@@ -52,8 +58,12 @@ export class ClientManager {
                 console.warn(`${type} message definition load skipped:`, err.message);
             }
         }
+        registerMsgDefinition(PLAN_WAYPOINTS_TYPE, PLAN_WAYPOINTS_DEFINITION);
         try {
-            const synced = await syncTypesToServer(schemas, { apiBase: "http://localhost:8090" });
+            const synced = await syncTypesToServer({
+                ...schemas,
+                [PLAN_WAYPOINTS_TYPE]: PLAN_WAYPOINTS_DEFINITION,
+            }, { apiBase: "http://localhost:8090" });
             this.catalogHash = synced.catalogHash || synced.hash || this.catalogHash;
         } catch (err) {
             console.warn("autonomy catalog type sync skipped:", err.message);
@@ -108,6 +118,7 @@ export class ClientManager {
     }
 
     _onUpdate(info) {
+        if (info?.name === PLAN_WAYPOINTS_TOPIC) setPlanWaypoints(info.value);
         this._trackOrchestratorTopic(info);
         this.callbacks.forEach((callback) => callback(info));
     }

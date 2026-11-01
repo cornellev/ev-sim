@@ -93,6 +93,8 @@ PointCloud2 points are meters in the declared LiDAR frame (+X forward at azimuth
 
 Managed runs consume `/controls/command` (`sensor_fusion_msgs/StampedAckermannDrive`) through `TopicContractRouter` → `ControlRuntime` at fixed-step boundaries. Fields are SI (m/s, rad, m/s²); `deadline_ns` is absolute simulation time; modes are `velocity`, `acceleration`, and `stop`. REP-103 steering (positive left) is converted once at the actuator boundary. Unmanaged scene integrations use the same endpoint without the legacy mph/deg `/ackdrive` path.
 
+`/planning/waypoints` (`sensor_fusion_msgs/WaypointList`) is a live 2D-map overlay. The payload is `points`, a list of `geometry_msgs/Point32`. The map reads `x` and `z` as meters and ignores `y`. The Path toggle draws that list in map coordinates or in the ego body frame (`+x` forward, `+z` right). The browser registers the definition and pushes it to the orchestrator on connect. It is not an autonomy catalog contract, so the catalog hash is unchanged, and the kernel drops the topic as undeclared.
+
 The scripting ROS units in `app/scripting/units/ROSUnit.js` are placeholders. They do not yet publish or subscribe to live orchestrator topics.
 
 ## Troubleshooting

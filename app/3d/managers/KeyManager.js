@@ -5,6 +5,7 @@ export class KeyManager {
         this.keysUp = {};
         this.keysPress = {};
         this.whileDownCallbacks = {};
+        this.updateCallbacks = [];
         this.down = new Set();
         this.telemetry = null;
     }
@@ -56,6 +57,14 @@ export class KeyManager {
         };
     }
 
+    /** Runs on every update, including frames with no key held. */
+    registerUpdate(callback) {
+        this.updateCallbacks.push(callback);
+        return () => {
+            this.updateCallbacks = this.updateCallbacks.filter((registered) => registered !== callback);
+        };
+    }
+
     onKeyDown(event) {
         const key = event.key;
         const wasAlreadyDown = this.down.has(key);
@@ -101,5 +110,6 @@ export class KeyManager {
 
             callbacks.forEach((callback) => callback?.(deltaTime));
         }
+        for (const callback of this.updateCallbacks) callback?.(deltaTime);
     }
 }

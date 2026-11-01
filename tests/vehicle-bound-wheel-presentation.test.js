@@ -227,6 +227,7 @@ test("ManifestVehicle presents a canonical binding and keeps a legacy load on cy
     assert.equal(left.parent.userData.boundWheel, true);
     assert.equal(vehicle.sceneObject.children.some((child) => child.userData?.generatedWheel || child.children?.some((entry) => entry.userData?.generatedWheel)), false);
     vehicle.steeringAngle = 0.4;
+    vehicle.plant.steeringAngle = 0.4;
     vehicle.update(0);
     assert.ok(Math.abs(left.parent.rotation.y) > 0);
 

@@ -340,11 +340,9 @@ export class ManifestVehicle extends PhysicalVehicle {
     }
 
     update(deltaTime) {
-        const maxSteer = Math.min(this.manifest.kinematics.maxSteeringAngle, Math.PI * 0.49);
-        const steering = THREE.MathUtils.clamp(this.steeringAngle, -maxSteer, +maxSteer);
         stepVehiclePlant(this, deltaTime);
-
-        this.displaySteeringAngle += (steering - this.displaySteeringAngle) * 0.25;
+        const maxSteer = Math.min(this.manifest.kinematics.maxSteeringAngle, Math.PI * 0.49);
+        this.displaySteeringAngle = THREE.MathUtils.clamp(this.steeringAngle, -maxSteer, +maxSteer);
         this._applyVisualSteering();
 
         this._updateLidarZoneTransform();

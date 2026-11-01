@@ -4,6 +4,7 @@
  * publishes visualization.controls.* plus transition events.
  */
 
+import { slewSteeringAngle } from "../simulation/vehicles/steeringLimits.js";
 import { DEFAULT_ACTUATOR_LIMITS } from "../vehicles/VehicleManifest.js";
 import {
     emptyInternalCommand,
@@ -200,12 +201,12 @@ export class ControlRuntime {
      * Fixed-step controls phase: select authority, apply delay/limits, emit applied setpoints.
      * Returns Map(vehicleId -> { speedMps, steeringRadThree, accelerationMps2, command }).
      */
-    step({ step = 0, timeNs = 0, dt = 0 } = {}) {
+    step({ step = 0, timeNs = 0, dt = 0, steeringBaseline = null } = {}) {
         const target = this.controls?.targetVehicleId || "ego";
         const ids = new Set([target, ...this.states.keys(), ...this.pendingByVehicle.keys()]);
         const applied = new Map();
         for (const vehicleId of ids) {
-            applied.set(vehicleId, this._stepVehicle(vehicleId, { step, timeNs, dt }));
+            applied.set(vehicleId, this._stepVehicle(vehicleId, { step, timeNs, dt, steeringBaseline }));
         }
         this.pendingByVehicle.clear();
         const snapshot = this.getSnapshot(target, { applyTimeNs: timeNs });
@@ -213,7 +214,7 @@ export class ControlRuntime {
         return applied;
     }
 
-    _stepVehicle(vehicleId, { step, timeNs, dt }) {
+    _stepVehicle(vehicleId, { step, timeNs, dt, steeringBaseline }) {
         const state = this._state(vehicleId);
         const limits = this.getLimits(vehicleId);
         const authority = this.controls?.authority || "candidate";
@@ -337,7 +338,14 @@ export class ControlRuntime {
             state.flags.delayed = false;
         }
 
-        const limited = this._applyLimits(state.applied, delayed || emptyInternalCommand({ mode: "stop" }), limits, dt);
+        const baselineRad = steeringBaseline?.get?.(vehicleId);
+        const limited = this._applyLimits(
+            state.applied,
+            delayed || emptyInternalCommand({ mode: "stop" }),
+            limits,
+            dt,
+            baselineRad,
+        );
         state.applied = limited.command;
         state.saturated = limited.saturated;
         state.rateLimited = limited.rateLimited;
@@ -366,7 +374,7 @@ export class ControlRuntime {
         };
     }
 
-    _applyLimits(previous, desired, limits, dt) {
+    _applyLimits(previous, desired, limits, dt, baselineRad) {
         const prev = previous || emptyInternalCommand();
         const next = cloneCommand(desired);
         let saturated = false;
@@ -408,13 +416,18 @@ export class ControlRuntime {
             next.accelerationMps2 = (next.speedMps - prev.speedMps) / dtSafe;
         }
 
-        let steer = clamp(next.steeringRadThree, -limits.maxSteeringAngle, limits.maxSteeringAngle);
-        if (steer !== next.steeringRadThree) saturated = true;
-        const maxDeltaSteer = limits.maxSteeringRate * dtSafe;
-        const rateLimitedSteer = clamp(steer, prev.steeringRadThree - maxDeltaSteer, prev.steeringRadThree + maxDeltaSteer);
-        if (rateLimitedSteer !== steer) rateLimited = true;
-        next.steeringRadThree = rateLimitedSteer;
-        next.steeringRadRep103 = threeSteeringToRep103(rateLimitedSteer);
+        const currentSteer = Number.isFinite(baselineRad) ? baselineRad : prev.steeringRadThree;
+        const slewed = slewSteeringAngle({
+            currentRad: currentSteer,
+            targetRad: next.steeringRadThree,
+            maxAngleRad: limits.maxSteeringAngle,
+            maxRateRadPerSec: limits.maxSteeringRate,
+            dtSeconds: dt,
+        });
+        if (slewed.saturated) saturated = true;
+        if (slewed.rateLimited) rateLimited = true;
+        next.steeringRadThree = slewed.angleRad;
+        next.steeringRadRep103 = threeSteeringToRep103(slewed.angleRad);
         return { command: next, saturated, rateLimited };
     }
 

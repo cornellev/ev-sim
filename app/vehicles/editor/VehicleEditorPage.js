@@ -1866,7 +1866,7 @@ function WheelsTab({
                     )}
                     <LimitNumber label="Max steering (deg)" min={0.5} step={0.5} precision={2} value={radToDeg(draft.kinematics.maxSteeringAngle)} onChange={(degrees) => update(["kinematics", "maxSteeringAngle"], degToRad(degrees))} />
                     <LimitNumber label="Max speed (m/s)" min={0.01} step={0.1} value={draft.kinematics.maxSpeed ?? 15} onChange={(next) => update(["kinematics", "maxSpeed"], next)} />
-                    <LimitNumber label="Max steer rate (rad/s)" min={0.01} step={0.1} value={draft.kinematics.maxSteeringRate ?? 1.2} onChange={(next) => update(["kinematics", "maxSteeringRate"], next)} />
+                    <LimitNumber label="Max steer rate (deg/s)" min={0.5} step={0.5} precision={2} value={radToDeg(draft.kinematics.maxSteeringRate ?? 1.2)} onChange={(degrees) => update(["kinematics", "maxSteeringRate"], degToRad(degrees))} />
                 </div>
                 {completeWheelbase != null && (
                     <p className="mt-2 text-[11px] text-[var(--slate-muted)]">Derived from the standard axles.</p>

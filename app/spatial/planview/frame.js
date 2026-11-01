@@ -2,6 +2,7 @@ import { getRoutePolyline } from "../../scenarios/route/Route.js";
 import { buildDirectedRoadGraph, projectPointToRoadNetwork } from "../../scenarios/route/roadGraph.js";
 import { TRAIL_HISTORY_MODES } from "../spatialLogModel.js";
 import { planActorId } from "./selection.js";
+import { getPlanWaypoints, planWaypointRevision } from "./waypoints.js";
 
 const FALLBACK_BOX = Object.freeze({
     size: { x: 4.5, z: 2 },
@@ -312,6 +313,9 @@ export function emptyPlanViewFrame() {
         perception: { oracle: [], candidate: [] },
         localization: { estimate: null },
         controls: {},
+        waypoints: [],
+        waypointFrame: "global",
+        waypointRevision: 0,
     };
 }
 
@@ -388,7 +392,24 @@ export function buildPlanViewFrame(sources = {}) {
         },
         localization: { estimate },
         controls,
+        waypoints: copyWaypoints(sources),
+        waypointFrame: sources.waypointFrame === "body" ? "body" : "global",
+        waypointRevision: Number.isFinite(Number(sources.waypointRevision))
+            ? Number(sources.waypointRevision)
+            : planWaypointRevision(),
     };
+}
+
+function copyWaypoints(sources) {
+    const source = Array.isArray(sources.waypoints) ? sources.waypoints : getPlanWaypoints();
+    const points = [];
+    for (const point of source) {
+        const x = Number(point?.x);
+        const z = Number(point?.z);
+        if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
+        points.push({ x, z });
+    }
+    return points;
 }
 
 /** Read the live simulation into the plain object `buildPlanViewFrame` accepts. */

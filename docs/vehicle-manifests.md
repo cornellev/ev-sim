@@ -84,7 +84,7 @@ Version 3 geometric scalars — model placement, body bounds, wheel position, ra
 - loads and places the GLTF model (or renders a placeholder body when no asset is set),
 - renders a version 3 wheel bound to a model node on a pivot at that node's placed geometric center, keeping the source mesh's placed pose. A node with no geometry uses the accepted wheel position. Unbound wheels stay cylinders. A complete version 3 front axle uses the ideal inner and outer yaw for its two wheels. Every other steerable pivot, including version 2 and an unclassified or singular layout, tracks the shared steering angle. The plant still integrates `kinematics.wheelbase`,
 - measures wheel assignment from the decoded canonical GLB before hiding or reparenting any node; publication repeats that measurement and rejects a binding that is outside pair tolerance or does not reproduce the measured proposal,
-- drives planar bicycle kinematics from `kinematics.wheelbase`, like `BigCar`, then drapes pose Y/pitch onto the paved road surface,
+- drives planar bicycle kinematics from `kinematics.wheelbase`, like `BigCar`, then drapes pose Y/pitch onto the paved road surface. A managed steer command slews from the plant's current angle at `kinematics.maxSteeringRate`. A run actuator override replaces that rate for the run,
 - exposes `collisionDimensions` from `boundingBox.size` so the physics engine sweeps the correct AABB,
 - instantiates the manifest sensors as devices,
 - registers `lidarZone` triangles in the GPU object database and rewrites their texture slots whenever the vehicle pose changes, so the collidable zone follows the vehicle.

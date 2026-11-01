@@ -2,6 +2,7 @@ import "./sensors.js";
 import "./signals.js";
 import "./lane.js";
 import "./route.js";
+import "./waypoints.js";
 import "./trails.js";
 import "./perception.js";
 import "./controls.js";
