@@ -92,10 +92,17 @@ export class Vehicle {
 
     /**
      * Update the vehicle's rotation in the scene.
-     * @param {THREE.Euler} new_rotation 
+     * Plain poses only have `order`, which `Euler.copy` does not read.
+     * @param {THREE.Euler|{ x?: number, y?: number, z?: number, order?: string }} new_rotation
      */
     updateRotation(new_rotation) {
-        this.rotation.copy(new_rotation);
+        const rotation = new_rotation || {};
+        this.rotation.set(
+            Number(rotation.x) || 0,
+            Number(rotation.y) || 0,
+            Number(rotation.z) || 0,
+            rotation.order || this.rotation.order || "XYZ",
+        );
         this.sceneObject.rotation.copy(this.rotation);
         
         for (let device of this.devices) {

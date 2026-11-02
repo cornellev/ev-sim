@@ -38,6 +38,7 @@ restart it manually. Ctrl-C closes its transports and prints traffic totals.
 | `/goal` | `cev/commands/goal` | JSON `longitude` = x, `latitude` = y, both **meters** |
 | `/planning/costmap` | `cev/perception/costmap_raw` | 32-byte header, then row-major 0/255 cells |
 | `/controls/command` (adapter output) | `cev/commands/control` (adapter input) | Stamped SI Ackermann from JSON speed and steering, positive left |
+| `/localization/odometry` (adapter output) | `cev/localization/dead_reckoning` (adapter input) | `nav_msgs/Odometry` from JSON `location.x`, `location.y`, `heading`; stamp is the latest `/tf` |
 
 The browser publishes `/planning/costmap` as a `std_msgs/String` JSON value
 with `rows`, `cols`, `resolution`, `origin_x`, `origin_y`, and base64 `cells`.
