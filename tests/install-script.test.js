@@ -417,6 +417,38 @@ test("install script records a skipped orchestrator", () => {
     assert.match(result.stdout, /^DIR_SET=0$/m);
 });
 
+test("install script reaches main when bash reads it from a pipe", async () => {
+    const source = await fs.readFile(installScript, "utf8");
+    const guard = 'if [[ -n "${BASH_SOURCE[0]:-}" && "${BASH_SOURCE[0]}" != "$0" ]]; then\n  return 0\nfi\n';
+    assert.ok(source.includes(guard));
+    const stub = source.replace(guard, `${guard}printf 'reached-main\\n'\nexit 0\n`);
+    const piped = spawnSync("bash", [], { input: stub, encoding: "utf8" });
+    assert.equal(piped.error, undefined);
+    assert.equal(piped.status, 0, piped.stderr);
+    assert.match(piped.stdout, /^reached-main$/m);
+    assert.doesNotMatch(piped.stderr, /unbound variable/);
+
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "cev-install-pipe-"));
+    try {
+        const file = path.join(dir, "install.sh");
+        await fs.writeFile(file, stub);
+        const executed = spawnSync("bash", [file], { encoding: "utf8" });
+        assert.equal(executed.status, 0, executed.stderr);
+        assert.match(executed.stdout, /^reached-main$/m);
+
+        const sourced = spawnSync(
+            "bash",
+            ["-c", "set --; source \"$1\"; printf 'sourced-only\\n'", "bash", file],
+            { encoding: "utf8" },
+        );
+        assert.equal(sourced.status, 0, sourced.stderr);
+        assert.match(sourced.stdout, /^sourced-only$/m);
+        assert.doesNotMatch(sourced.stdout, /reached-main/);
+    } finally {
+        await fs.rm(dir, { recursive: true, force: true });
+    }
+});
+
 test("install script stops when .env.local has an unsupported registry path", async () => {
     await withDir(async (dir) => {
         await fs.writeFile(

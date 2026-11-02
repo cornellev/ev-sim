@@ -1050,8 +1050,8 @@ run_orchestrator_only() {
   printf '\n'
 }
 
-# Tests source this file and call functions directly. main does not run.
-if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+# Tests source this file. A pipe has no BASH_SOURCE; set -u must still reach main.
+if [[ -n "${BASH_SOURCE[0]:-}" && "${BASH_SOURCE[0]}" != "$0" ]]; then
   return 0
 fi
 
