@@ -16,6 +16,7 @@ import { browserSimulationPerformance } from "./performance/BrowserSimulationPer
 import { createPhysicsBackendSelection } from "../physics/PhysicsBackend.js";
 import { applyRigidBodyViewportPoses } from "../3d/editor/projection/applyRigidBodyPoses.js";
 import { createKeyboardDriveState, stepKeyboardDrive } from "./keyboardDrive.js";
+import { BrowserPacketRelaySink } from "./sensors/BrowserPacketRelaySink.js";
 
 const KERNEL_PROPERTIES = [
     "stepNs",
@@ -138,8 +139,11 @@ export class SimulationEngine {
         const telemetry = this.data.bindings?.()?.signalStore ?? null;
         const pluginModuleSource = options.pluginModuleSource ?? new BrowserPluginModuleSource();
         const scenarioRuntime = new ScenarioRuntime(this.data, { telemetry });
+        this.packetRelay = options.packetRelay === undefined ? new BrowserPacketRelaySink() : options.packetRelay;
         this.runtimeContext = createSimulationRuntimeContext({
             telemetry,
+            nativePacketSink: this.packetRelay,
+            sensorTransportHost: () => this.packetRelay?.hostDescriptor(),
             inputs: () => this.data.keys?.(),
             scripts: () => this.data.bindings?.(),
             vehicles: () => this.data.vehicles?.(),
@@ -587,6 +591,7 @@ export class SimulationEngine {
         this.stopLoop();
         this.controls?.dispose();
         this.kernel.dispose();
+        this.packetRelay?.close();
         this.scenarioDiagnostics.dispose();
         this.autonomyOverlay?.dispose?.();
         this.lidarViewport?.dispose();
@@ -845,7 +850,17 @@ export class SimulationEngine {
         this._resetPacingState();
         this._keyboardDrive = createKeyboardDriveState();
 
+        await this.packetRelay?.refreshHost();
         await this.kernel.prepare(resolved, options);
+        try {
+            await this.packetRelay?.configure({
+                bindings: this.resolvedRun.manifest.sensorTransports?.bindings ?? [],
+                stepNs: this.stepNs,
+            });
+        } catch (error) {
+            this.kernel.clearRun();
+            throw error;
+        }
         this.scenarioDiagnostics.configure(this.resolvedRun?.scenario?.scenario ?? null);
         this._emit();
         this.render();
@@ -866,6 +881,7 @@ export class SimulationEngine {
         this.stopLoop();
         this._keyboardDrive = createKeyboardDriveState();
         this.kernel.clearRun();
+        this.packetRelay?.close();
         this.autonomyOverlay?.clear?.();
         this._emit();
     }

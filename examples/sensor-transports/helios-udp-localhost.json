@@ -1,0 +1,23 @@
+{
+  "kind": "cev-sim.sensor-transport-host-config",
+  "version": 1,
+  "udp": {
+    "maxQueueBytesPerEnvironment": 16777216,
+    "endpoints": [
+      {
+        "id": "helios-msop",
+        "mtu": 1500,
+        "source": {"address": "127.0.0.1", "port": 16699},
+        "destination": {"address": "127.0.0.1", "port": 6699},
+        "pacing": {"mode": "burst"}
+      },
+      {
+        "id": "helios-difop",
+        "mtu": 1500,
+        "source": {"address": "127.0.0.1", "port": 16699},
+        "destination": {"address": "127.0.0.1", "port": 7788},
+        "pacing": {"mode": "burst"}
+      }
+    ]
+  }
+}

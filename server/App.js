@@ -133,6 +133,10 @@ app.prepare().then(async () => {
     server.use('/api/scripting', jsonParser, createScriptingRouter(storageService));
     server.use('/api/headless', headlessJsonParser, createHeadlessRouter(headlessExperimentService, cosmosClipJob));
     server.use('/api/browser-sim', headlessJsonParser, createBrowserSimRouter(new BrowserSimService(storageService)));
+    const { BrowserPacketRelay, readBrowserPacketHostConfig } = await import('./sensor-transports/BrowserPacketRelay.js');
+    const { createBrowserPacketRouter } = await import('./routes/browserPacketRouter.js');
+    const browserPacketRelay = new BrowserPacketRelay({ hostConfig: await readBrowserPacketHostConfig(process.env) });
+    server.use('/api/browser-packets', createBrowserPacketRouter(browserPacketRelay));
     if (supervisorConfigError) cosmosClipJob.rendererError = supervisorConfigError;
     // three does not export `./package.json`; resolve the pinned Basis files via
     // the exported `examples/jsm` glob instead.
@@ -169,6 +173,7 @@ app.prepare().then(async () => {
         if (shuttingDown) return;
         shuttingDown = true;
         httpServer.close();
+        await browserPacketRelay.shutdown();
         await marketplaceService?.close();
         await headlessExperimentService.close();
         await orchestrator.stop();

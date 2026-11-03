@@ -318,7 +318,10 @@ export function createSimulationRuntimeContext(options = {}) {
                 return options.nativePacketSink ?? null;
             },
             sensorTransportHost() {
-                return options.sensorTransportHost ?? { adapters: [], endpoints: [] };
+                const host = typeof options.sensorTransportHost === "function"
+                    ? options.sensorTransportHost()
+                    : options.sensorTransportHost;
+                return host ?? { adapters: [], endpoints: [] };
             },
         },
         physics: {

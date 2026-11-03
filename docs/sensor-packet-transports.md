@@ -144,8 +144,9 @@ Resolved rules:
 - Omitted UDP pacing is `burst`. `packet-offset` requires
   `latenessBudgetNs` and a realtime clock at speed 1:
   `anchor + actualDeliveryStep * stepNs + offsetNs`.
-- Direct `--sensor-transport-config` and browser hosts reject UDP.
-  Supervisors execute UDP from `packetTransports` in `--config`.
+- Direct `--sensor-transport-config` rejects UDP. Supervisors execute UDP
+  from `packetTransports` in `--config`. Browser runs send UDP through the
+  server relay described in [Browser UDP relay](#browser-udp-relay).
 
 ## Structural validation versus execution admission
 
@@ -169,9 +170,10 @@ Execution admission receives an app-neutral host descriptor:
 With `execution: false`, structurally valid bindings are returned without a
 local adapter. With `execution: true`, every binding’s adapter and endpoint
 must exist and the declared stream maximum must be at most `mtu - 28`
-(IPv4 header 20 plus UDP header 8). Browser execution exposes no host
-adapters and therefore rejects requested PCAP and UDP bindings. Direct
-unsupervised CLI also rejects a UDP host section. Supervised `run --config`
+(IPv4 header 20 plus UDP header 8). Browser execution rejects PCAP
+bindings. It accepts UDP bindings only when the sim server has a relay host
+config; otherwise it rejects them. Direct unsupervised CLI rejects a UDP
+host section. Supervised `run --config`
 and managed execution send UDP when `packetTransports.udp` is configured.
 
 PCAP is optional globally but mandatory when a manifest binding requests it.
@@ -268,7 +270,7 @@ does not change `maxQueueBytesPerEnvironment`.
 
 Failure mapping:
 
-- missing adapter or endpoint, direct/browser UDP, bind permission, or
+- missing adapter or endpoint, direct UDP, bind permission, or
   pacing incompatibility → `UNSUPPORTED_CAPABILITY`
 - queue overflow or packet-offset lateness → `RESOURCE_LIMIT`
 - sidecar death or IPC disconnect → `WORKER_CRASHED`
@@ -287,12 +289,57 @@ host resolver, ordering, encoder, and writer. Export fails if the recording
 lacks native envelopes, an attached manifest or run bundle, or required
 transport bindings.
 
+## Browser UDP relay
+
+A browser run cannot open sockets. It streams native packets to its own sim
+server, and the server sends them with the same `UdpTransportRuntime` that
+supervised runs use.
+
+1. Set `CEV_SIM_BROWSER_PACKET_TRANSPORTS` to a
+   `cev-sim.sensor-transport-host-config` file, for example in `.env.local`.
+   The server reads only the `udp` section. All endpoints must use `burst`
+   pacing, because browser steps are not anchored to the server clock.
+   `examples/sensor-transports/helios-udp-localhost.json` sends Helios MSOP
+   to `127.0.0.1:6699` and DIFOP to `127.0.0.1:7788`.
+2. Before admission, `BrowserPacketRelaySink` reads
+   `GET /api/browser-packets/host`. That response is the browser's host
+   descriptor: `{adapters: ["udp"], endpoints}` when the file is configured,
+   and empty when it is not. When it is empty, UDP bindings are rejected as
+   before.
+3. After prepare, the sink sends the run's UDP bindings to
+   `POST /api/browser-packets/sessions`. The server binds the source sockets
+   and returns a `sessionId`. Only one browser session exists at a time; a
+   new session releases the previous one.
+4. At the end of each delivery step, the sink posts that step's batches to
+   `POST /api/browser-packets/sessions/:sessionId/batches` as one
+   `application/octet-stream` frame. The frame layout is: `CEVR`, then a u32
+   LE header length, then a JSON header
+   (`cev-sim.browser-packet-relay-frame` v1, with per-packet `byteLength` and
+   `payloadDigest`), then the payloads in header order. The server recomputes
+   every digest before it sends.
+5. `DELETE /api/browser-packets/sessions/:sessionId` runs on `clearRun` and
+   on dispose.
+
+The sink never throws into the step loop. A step's batches are dropped and
+counted in `sink.stats.droppedBatches` in three cases: no session is open, a
+post is still in flight, or the relay failed. Runtime failures are
+reset-required, so the server releases the session, and the sink stops
+posting until the next `applyRunManifest`. Error codes map to HTTP status as
+follows:
+
+- unknown session: 404
+- `RESOURCE_LIMIT`: 429
+- send failure: 502
+- invalid frame, digest mismatch, or unsupported binding: 400
+
 ## Availability
 
 PLG-06a implements native capture, telemetry recording, portable plugin
 files, and classic PCAP artifacts. PLG-06b adds supervisor-owned live IPv4
-unicast UDP as a dedicated sidecar child. Browser hosts expose no adapters
-and reject requested PCAP or UDP bindings. Direct unsupervised CLI rejects a
+unicast UDP as a dedicated sidecar child. Browser hosts reject PCAP
+bindings. They send UDP through the server relay when
+`CEV_SIM_BROWSER_PACKET_TRANSPORTS` is set, and reject UDP bindings
+otherwise. Direct unsupervised CLI rejects a
 UDP host section. `run --config` and managed execution send UDP when the
 supervisor config includes `packetTransports.udp`. The reserved host
 permissions `sensors.transport.pcap` and `sensors.transport.udp` are not
