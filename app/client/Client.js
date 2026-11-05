@@ -1,3 +1,4 @@
+import { ProtobufChannel } from "./ProtobufChannel.js";
 import {
 	MAX_TOPIC_NAME_LEN,
 	TYPE_DECODERS,
@@ -342,6 +343,15 @@ class Client {
 		await this._send(new Uint8Array([OP_CODES.echo]));
 	}
 
+    _protobufChannel() {
+        return this.protobufChannel ||= new ProtobufChannel((text) => this._send(text));
+    }
+
+    bindProtobuf(binding) { return this._protobufChannel().bind(binding); }
+    publishProtobuf(routeId, value) { return this._protobufChannel().publish(routeId, value); }
+    subscribeProtobuf(routeId, callback) { return this._protobufChannel().subscribe(routeId, callback); }
+    unsubscribeProtobuf(routeId) { return this._protobufChannel().unsubscribe(routeId); }
+
 	async subscribe() {
 		await this._send(new Uint8Array([OP_CODES.subscribe]));
 	}
@@ -438,6 +448,7 @@ class Client {
 				reject(err instanceof Error ? err : new Error("WebSocket error"));
 			};
 			ws.onclose = () => {
+                this.protobufChannel?.close();
 				this._connected = false;
 				if (!this.stopped && !this.reconnect) {
 					const err = new Error("closed");
@@ -453,6 +464,11 @@ class Client {
 			const ws = this.ws;
 			if (!ws) return reject(new Error("No socket"));
 			ws.onmessage = async (evt) => {
+                if (typeof evt.data === "string") {
+                    try { await this._protobufChannel().receive(evt.data); }
+                    catch (error) { this.onError?.({ message: error.message }); }
+                    return;
+                }
 				const buf = evt.data instanceof ArrayBuffer ? new Uint8Array(evt.data) : new Uint8Array(evt.data.buffer || evt.data);
 				if (!buf.length) return;
 				const code = buf[0];
@@ -482,6 +498,7 @@ class Client {
 				}
 			};
 			ws.onclose = () => {
+                this.protobufChannel?.close();
 				this._connected = false;
 				this._rejectReady(new Error("WebSocket closed"));
 				if (this.onClose) {

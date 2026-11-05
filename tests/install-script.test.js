@@ -421,7 +421,7 @@ test("install script reaches main when bash reads it from a pipe", async () => {
     const source = await fs.readFile(installScript, "utf8");
     const guard = 'if [[ -n "${BASH_SOURCE[0]:-}" && "${BASH_SOURCE[0]}" != "$0" ]]; then\n  return 0\nfi\n';
     assert.ok(source.includes(guard));
-    const stub = source.replace(guard, `${guard}printf 'reached-main\\n'\nexit 0\n`);
+    const stub = source.slice(0, source.indexOf(guard)) + `${guard}printf 'reached-main\\n'\nexit 0\n`;
     const piped = spawnSync("bash", [], { input: stub, encoding: "utf8" });
     assert.equal(piped.error, undefined);
     assert.equal(piped.status, 0, piped.stderr);
@@ -460,4 +460,13 @@ test("install script stops when .env.local has an unsupported registry path", as
         assert.match(result.stderr, /Unsupported CEV_SIM_VISUAL_SOURCE_REGISTRY assignment/);
         await assertMissing(defaultRegistry(dir));
     });
+});
+
+test("onboarding installer options are explicit and conflict with skipping orchestrator", () => {
+    const configured = spawnSync("bash", ["-c", 'script="$1"; set -- --onboarding --orchestrator-ref abc123; source "$script"; printf "ONBOARDING=%s REF=%s\\n" "$ONBOARDING" "$ORCHESTRATOR_REF"', "bash", installScript], { encoding: "utf8" });
+    assert.equal(configured.status, 0, configured.stderr);
+    assert.match(configured.stdout, /ONBOARDING=1 REF=abc123/);
+    const conflict = spawnSync("bash", [installScript, "--onboarding", "--no-orchestrator"], { encoding: "utf8" });
+    assert.notEqual(conflict.status, 0);
+    assert.match(conflict.stderr, /only one|requires orchestrator/);
 });

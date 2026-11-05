@@ -1,4 +1,5 @@
-import { createHash } from "node:crypto";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
 
 import { PERCEPTION_LABEL_CATALOG_VERSION } from "./PerceptionLabelCatalog.js";
 
@@ -575,7 +576,7 @@ export function catalogHash() {
         contracts: contractPayload,
         schemas: Object.keys(ROS_SCHEMA_DEFINITIONS).sort(),
     });
-    return createHash("sha256").update(payload).digest("hex");
+    return bytesToHex(sha256(new TextEncoder().encode(payload)));
 }
 
 export const DEFAULT_CANDIDATE_RETURN_CONTRACT_IDS = Object.freeze([

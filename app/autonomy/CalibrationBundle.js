@@ -1,4 +1,5 @@
-import { createHash } from "node:crypto";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
 
 import { PERCEPTION_LABEL_CATALOG_VERSION } from "./AutonomyContractCatalog.js";
 import {
@@ -159,7 +160,7 @@ export function buildCalibrationBundle(manifest, options = {}) {
 
 export function calibrationBundleHash(bundle) {
     const { hash, ...rest } = bundle || {};
-    return createHash("sha256").update(canonicalStringify(rest)).digest("hex");
+    return bytesToHex(sha256(new TextEncoder().encode(canonicalStringify(rest))));
 }
 
 export function staticTransformMessages(bundle, timeNs = 0) {

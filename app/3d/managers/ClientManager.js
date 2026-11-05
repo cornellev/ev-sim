@@ -63,7 +63,7 @@ export class ClientManager {
             const synced = await syncTypesToServer({
                 ...schemas,
                 [PLAN_WAYPOINTS_TYPE]: PLAN_WAYPOINTS_DEFINITION,
-            }, { apiBase: "http://localhost:8090" });
+            }, { apiBase: (process.env.NEXT_PUBLIC_ORCHESTRATOR_API || "http://localhost:8090") });
             this.catalogHash = synced.catalogHash || synced.hash || this.catalogHash;
         } catch (err) {
             console.warn("autonomy catalog type sync skipped:", err.message);
@@ -78,7 +78,7 @@ export class ClientManager {
 
     async _setupClient() {
         try {
-            const synced = await syncTypesFromServer({ apiBase: "http://localhost:8090" });
+            const synced = await syncTypesFromServer({ apiBase: (process.env.NEXT_PUBLIC_ORCHESTRATOR_API || "http://localhost:8090") });
             this.catalogHash = synced.catalogHash;
             console.log(`synced ${synced.count} message type(s) from server`);
         } catch (err) {
@@ -89,7 +89,7 @@ export class ClientManager {
 
         if (this._disposed) return null;
         this.client = new Client({
-            url: "ws://localhost:8080",
+            url: (process.env.NEXT_PUBLIC_ORCHESTRATOR_WS || "ws://localhost:8080"),
             onUpdate: this._onUpdate.bind(this),
             onEcho: (topics) => {
                 for (const info of topics || []) this._trackOrchestratorTopic(info);
