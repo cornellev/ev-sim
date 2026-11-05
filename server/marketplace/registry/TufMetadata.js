@@ -47,6 +47,7 @@ export const TUF_EXPIRATION_MS = Object.freeze({
     [TUF_ROLES.TARGETS]: 365 * 24 * 60 * 60 * 1000,
     [TUF_ROLES.ROOT]: 365 * 24 * 60 * 60 * 1000,
 });
+export const TUF_REFRESH_MARGIN_MS = 60 * 60 * 1000;
 
 export const TUF_DELEGATION_PATHS = Object.freeze({
     [TUF_ROLES.CATALOG]: ["catalog/*"],

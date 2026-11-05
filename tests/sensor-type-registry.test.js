@@ -79,6 +79,8 @@ test("built-in sensor definitions own defaults, fields, outputs, and determinism
 
     assert.ok(cameraFields.some((field) => field.path.join(".") === "calibration.verticalFovDeg" && !field.advanced));
     assert.ok(lidarFields.some((field) => field.path.join(".") === "calibration.range" && !field.advanced));
+    assert.ok(lidarFields.some((field) => field.path.join(".") === "calibration.elevation.startDeg" && !field.advanced));
+    assert.ok(lidarFields.some((field) => field.path.join(".") === "calibration.elevation.endDeg" && !field.advanced));
     assert.ok(lidarFields.some((field) => field.path.join(".") === "noise.pointDropoutProbability"));
     assert.ok(imuFields.some((field) => field.path.join(".") === "calibration.gravity" && !field.advanced));
     assert.ok(imuFields.some((field) => field.path.join(".") === "outputs.imuTopicId" && field.advanced));

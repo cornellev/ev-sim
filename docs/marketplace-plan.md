@@ -1485,6 +1485,10 @@ Local evidence on 2026-09-28:
 
 ## Decision log
 
+### 2026-11-04 — Writable serve renews online TUF metadata
+
+A writable registry re-signs its timestamp and snapshot when either expires within an hour, and re-signs delegated roles when one of those is inside the same hour. The serve process does this before it listens and again on a timer until it exits. Read-only serve still rejects expired metadata. Root and top-level targets stay offline. Expiry durations, marketplace schemas, and semantic hashes are unchanged.
+
 ### 2026-10-15 — Install operation ids include the owning release
 
 A collection can schedule the same authoring operation from more than one member, such as an asset package and the run template that embeds it. Adapter operation ids now include the installing release's item id, version, and artifact digest, so those operations stay distinct in one transaction journal. Marketplace schemas, artifact bytes, and semantic simulator hashes are unchanged. An install plan created before this change has to be started again.

@@ -236,6 +236,8 @@ const cameraRunFields = [
 
 const lidarRunFields = [
     { label: "Range (m)", path: ["calibration", "range"], control: "number", min: 0.01 },
+    { label: "Elevation start (deg)", path: ["calibration", "elevation", "startDeg"], control: "number" },
+    { label: "Elevation end (deg)", path: ["calibration", "elevation", "endDeg"], control: "number" },
     { label: "PointCloud topic ID", path: ["outputs", "pointCloudTopicId"], control: "text", advanced: true },
     { label: "PointCloud ROS schema", path: ["schema", "pointCloudTopicId"], control: "text", advanced: true },
     { label: "Semantic PointCloud topic ID", path: ["outputs", "semanticPointCloudTopicId"], control: "text", advanced: true },

@@ -46,6 +46,7 @@ import {
     TUF_DELEGATION_PATHS,
     TUF_EXPIRATION_MS,
     TUF_ONLINE_ROLES,
+    TUF_REFRESH_MARGIN_MS,
     TUF_ROLES,
     assertTufNotExpired,
     canonicalTufBytes,
@@ -247,6 +248,23 @@ async function generateOnlineKeys(paths) {
 
 function metadataVersions(state) {
     return Object.fromEntries(Object.entries(state.roles).map(([role, entry]) => [role, entry.metadata.signed.version]));
+}
+
+function onlineRoleMetadata(state) {
+    return [
+        state.timestamp.metadata,
+        state.snapshot.metadata,
+        ...TUF_DELEGATED_ROLES.map((role) => state.roles[role].metadata),
+    ];
+}
+
+function metadataDue(metadata, nowMs) {
+    return new Date(metadata.signed.expires).getTime() - nowMs <= TUF_REFRESH_MARGIN_MS;
+}
+
+export function onlineRefreshDelayMs(state, nowMs) {
+    const expiresAt = onlineRoleMetadata(state).map((metadata) => new Date(metadata.signed.expires).getTime());
+    return Math.max(0, Math.min(...expiresAt) - nowMs - TUF_REFRESH_MARGIN_MS);
 }
 
 function sameStringSet(actual, expected) {
@@ -526,6 +544,15 @@ export class TufRepository {
 
     async refresh(catalog) {
         return this.publishCatalog(catalog, { operation: "refresh", forceRefresh: true });
+    }
+
+    // shortcut: root and top-level targets are not re-signed, renew them with tuf rotate-root
+    async ensureOnlineFresh(catalog) {
+        const state = await this.readPublishedState();
+        const nowMs = this.now().getTime();
+        if (!onlineRoleMetadata(state).some((metadata) => metadataDue(metadata, nowMs))) return null;
+        const delegatedDue = TUF_DELEGATED_ROLES.some((role) => metadataDue(state.roles[role].metadata, nowMs));
+        return this.publishCatalog(catalog, { operation: "refresh-online", forceRefresh: delegatedDue });
     }
 
     async recover() {

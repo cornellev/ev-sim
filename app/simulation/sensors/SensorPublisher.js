@@ -471,13 +471,13 @@ export class SensorPublisher {
                     && !frame.observation
                     && frame.nativePackets.length === 0,
             });
-            if (generation !== this.encodeGeneration || frame.encodeCancelled) {
-                throw new Error("encode cancelled");
+            if (generation !== this.encodeGeneration || frame.encodeCancelled || !frame.encodedByTopic) {
+                return;
             }
             frame.encodedByTopic.set(message.topicId, encoded);
         });
         const pending = Promise.all(jobs).then(() => {
-            if (generation !== this.encodeGeneration || frame.encodeCancelled) return;
+            if (generation !== this.encodeGeneration || frame.encodeCancelled || !frame.encodedByTopic) return;
             frame.encodeReady = true;
         }).catch((error) => {
             // Worker/timeout/cancel are best-effort. Deliver falls through to sync encode.
@@ -515,6 +515,7 @@ export class SensorPublisher {
         this.health.queueDepth = this.queue.length;
         this.health.queueBytes = this.queuedBytes;
         for (const frame of ready) {
+            frame.encodeCancelled = true;
             if (frame.encodeFailed) {
                 this.device.releaseObservation?.(frame.observation);
                 frame.messages = null;
@@ -527,7 +528,6 @@ export class SensorPublisher {
             const deadlineNs = Number(this.config.health?.deadlineNs);
             if (Number.isFinite(deadlineNs) && deadlineNs > 0 && clock.timeNs - frame.captureTimeNs > deadlineNs) {
                 this.health.missedDeadlines += 1;
-                frame.encodeCancelled = true;
                 this._event("deadline-missed", "warning", {
                     sampleIndex: frame.sampleIndex,
                     deadlineNs,

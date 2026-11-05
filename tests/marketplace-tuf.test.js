@@ -5,23 +5,28 @@ import path from "node:path";
 import test from "node:test";
 
 import { marketplaceDocumentBytes } from "../server/marketplace/MarketplaceContracts.js";
+import { MarketplaceRegistryHttpServer } from "../server/marketplace/registry/RegistryHttpServer.js";
 import { MarketplaceRegistryReader } from "../server/marketplace/registry/RegistryReader.js";
 import { MarketplaceRegistryService } from "../server/marketplace/registry/RegistryService.js";
 import { MarketplaceRegistryStore } from "../server/marketplace/registry/RegistryStore.js";
 import { generatePrivateKey, loadPrivateKey, tufKeyId } from "../server/marketplace/registry/TufKeys.js";
-import { TUF_DELEGATED_ROLES } from "../server/marketplace/registry/TufMetadata.js";
+import { TUF_DELEGATED_ROLES, TUF_EXPIRATION_MS, TUF_REFRESH_MARGIN_MS } from "../server/marketplace/registry/TufMetadata.js";
 import { blobPath, registryPaths, resolveRegistryPath } from "../server/marketplace/registry/RegistryLayout.js";
 import { marketplacePluginDocuments } from "./helpers/marketplacePluginDocuments.js";
 import { pluginFixtureResource } from "./helpers/pluginFixtures.js";
 
 const documents = JSON.parse(await fs.readFile(new URL("./fixtures/marketplace/documents.v1.json", import.meta.url), "utf8"));
 
-async function initializedRegistry(t, prefix = "cev-mkt-tuf-") {
+async function initializedRegistry(t, prefix = "cev-mkt-tuf-", now = () => new Date()) {
     const parent = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
     t.after(() => fs.rm(parent, { recursive: true, force: true }));
     const root = path.join(parent, "registry");
     const offlineRootKey = path.join(parent, "offline-root.pem");
-    const registry = await MarketplaceRegistryStore.initialize(root, { offlineRootKeyPath: offlineRootKey, unsafeUnsignedDevelopment: true });
+    const registry = await MarketplaceRegistryStore.initialize(root, {
+        offlineRootKeyPath: offlineRootKey,
+        unsafeUnsignedDevelopment: true,
+        now,
+    });
     return { parent, root, offlineRootKey, registry };
 }
 
@@ -231,6 +236,64 @@ test("MKT-04 recovers both overlap roots, rejects expiry, and maps signature fai
     assert.notEqual(tampered, timestamp);
     await fs.writeFile(timestampPath, tampered);
     await assert.rejects(reader.verify(), (error) => error.code === "SIGNATURE_INVALID");
+});
+
+test("MKT-04 leaves a fresh repository unchanged and renews timestamp without delegated roles", async (t) => {
+    const started = new Date("2026-11-04T00:00:00.000Z");
+    const { root } = await initializedRegistry(t, "cev-mkt-tuf-freshness-", () => started);
+    const fresh = await MarketplaceRegistryStore.open(root, { now: () => started });
+    t.after(() => fresh.close());
+    const before = await fresh.tufRepository.readPublishedState();
+    assert.equal(await fresh.mutate(async () => fresh.tufRepository.ensureOnlineFresh(await fresh.readCatalog())), null);
+    const untouched = await fresh.tufRepository.readPublishedState();
+    assert.equal(untouched.timestamp.metadata.signed.version, before.timestamp.metadata.signed.version);
+    assert.equal(untouched.snapshot.metadata.signed.version, before.snapshot.metadata.signed.version);
+    await fresh.close();
+
+    const timestampDue = new Date(started.getTime() + TUF_EXPIRATION_MS.timestamp - TUF_REFRESH_MARGIN_MS);
+    const store = await MarketplaceRegistryStore.open(root, { now: () => timestampDue });
+    t.after(() => store.close());
+    const timestampBefore = await store.tufRepository.readPublishedState();
+    const refreshed = await store.mutate(async () => store.tufRepository.ensureOnlineFresh(await store.readCatalog()));
+    assert.equal(refreshed.timestampVersion, timestampBefore.timestamp.metadata.signed.version + 1);
+    assert.equal(refreshed.snapshotVersion, timestampBefore.snapshot.metadata.signed.version + 1);
+    for (const role of TUF_DELEGATED_ROLES) {
+        assert.equal(refreshed.roleVersions[role], timestampBefore.roles[role].metadata.signed.version);
+    }
+    assert.equal((await store.tufRepository.verify()).rootVersion, timestampBefore.root.version);
+});
+
+test("MKT-04 renews delegated roles inside their refresh margin", async (t) => {
+    const started = new Date("2026-11-04T00:00:00.000Z");
+    const { root } = await initializedRegistry(t, "cev-mkt-tuf-delegated-", () => started);
+    const due = new Date(started.getTime() + TUF_EXPIRATION_MS.delegated - TUF_REFRESH_MARGIN_MS);
+    const store = await MarketplaceRegistryStore.open(root, { now: () => due });
+    t.after(() => store.close());
+    const before = await store.tufRepository.readPublishedState();
+    const refreshed = await store.mutate(async () => store.tufRepository.ensureOnlineFresh(await store.readCatalog()));
+    assert.equal(refreshed.timestampVersion, before.timestamp.metadata.signed.version + 1);
+    for (const role of TUF_DELEGATED_ROLES) {
+        assert.equal(refreshed.roleVersions[role], before.roles[role].metadata.signed.version + 1);
+    }
+    assert.equal((await store.tufRepository.verify()).rootVersion, before.root.version);
+});
+
+test("MKT-04 writable serve starts with an expired timestamp and read-only serve does not", async (t) => {
+    const started = new Date("2026-11-04T00:00:00.000Z");
+    const { root } = await initializedRegistry(t, "cev-mkt-tuf-serve-", () => started);
+    const expired = new Date(started.getTime() + TUF_EXPIRATION_MS.timestamp + TUF_REFRESH_MARGIN_MS);
+    const now = () => expired;
+    await assert.rejects(
+        MarketplaceRegistryHttpServer.open(root, { now }),
+        (error) => error.code === "METADATA_EXPIRED",
+    );
+    const server = await MarketplaceRegistryHttpServer.open(root, { writable: true, now });
+    t.after(() => server.close());
+    const verified = await server.reader.verify();
+    assert.equal(verified.timestampVersion, 2);
+    assert.equal(verified.snapshotVersion, 2);
+    for (const role of TUF_DELEGATED_ROLES) assert.equal(verified.roleVersions[role], 1);
+    assert.equal(verified.rootVersion, 1);
 });
 
 test("MKT-04 rejects a correctly signed timestamp rollback against immutable history", async (t) => {

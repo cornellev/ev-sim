@@ -281,6 +281,49 @@ test("zero-latency encode worker loss is an infrastructure failure", async () =>
     publisher.dispose();
 });
 
+test("sync delivery ignores a heavy encode that finishes after the frame is released", async () => {
+    registerImageSchema();
+    let resolveEncode;
+    const encodingPool = {
+        isHeavySensorValue: () => true,
+        estimateEncodeBytes: () => 4096,
+        encodePoolHasCapacity: () => true,
+        encodePublishedTopicAsync: () => new Promise((resolve) => {
+            resolveEncode = resolve;
+        }),
+        cancelEncodeOwner: () => ({ cancelled: 0, generation: 1 }),
+        bumpEncodeOwnerGeneration: () => 0,
+    };
+    const device = {
+        telemetryId: "cam",
+        captureAt: () => [{ topicId: "image", signal: "image", value: makeImage(4096) }],
+        getParent: () => null,
+    };
+    const publisher = new SensorPublisher(device, {
+        id: "cam",
+        rateHz: 60,
+        phaseNs: 0,
+        latency: { fixedNs: 0, jitterNs: 0 },
+        maxQueueFrames: 2,
+        health: {},
+        calibration: { products: {} },
+        outputs: {},
+    }, {
+        seed: "late-encode",
+        encodingPool,
+        topics: [{ id: "image", name: "/image", type: "sensor_msgs/Image", schema: { type: "sensor_msgs/Image" } }],
+    });
+    publisher.update({ step: 1, timeNs: 16_666_667 });
+    const frame = publisher.queue[0];
+    const pending = frame.encodePromise;
+    publisher.deliver({ step: 1, timeNs: 16_666_667 });
+    assert.equal(frame.encodeCancelled, true);
+    assert.equal(frame.encodedByTopic, null);
+    resolveEncode(buildEncodedPublishPacket("/image", Uint8Array.from([9])));
+    await pending;
+    publisher.dispose();
+});
+
 function makePublisher(client, pause) {
     const fakeDevice = {
         telemetryId: "cam",

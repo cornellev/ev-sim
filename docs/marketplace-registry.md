@@ -71,13 +71,19 @@ envelope. Retired/revoked keys and public bytes remain available for historical
 verification.
 
 `tuf refresh` gives every online delegated role, snapshot, and timestamp a new
-version and expiration. `tuf rotate-root` publishes an old/new overlap root,
-switches top-level targets to the new key, then publishes a final new-only
-root. Every numbered root is retained for sequential client updates.
+version and expiration. `serve --writable` does that itself for the timestamp
+and snapshot when either expires within an hour, and for delegated roles when
+one of those expires within that same hour. It wakes an hour before the soonest
+of those expirations and retries a failed re-sign five minutes later. Root and
+top-level targets stay on the offline key. `tuf rotate-root` publishes an
+old/new overlap root, switches top-level targets to the new key, then publishes
+a final new-only root. Every numbered root is retained for sequential client
+updates.
 
 Commands write exactly one JSON result to stdout. Failures write one redacted
 JSON record to stderr and use a nonzero exit code. `serve` writes one startup
-record, remains quiet, and closes cleanly on `SIGINT` or `SIGTERM`.
+record, remains quiet, and closes cleanly on `SIGINT` or `SIGTERM`. A failed
+online refresh writes one JSON record to stderr and retries.
 
 `serve --enroll` is refused unless the process also has TLS and `--writable`.
 It also requires `--enroll-publisher` and `--enroll-display-name`. While that

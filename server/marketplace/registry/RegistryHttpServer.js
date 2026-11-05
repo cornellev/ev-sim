@@ -9,10 +9,12 @@ import { MarketplaceRegistryReader, REGISTRY_HTTP_MAX_RANGE_BYTES } from "./Regi
 import { MarketplaceRegistryStore } from "./RegistryStore.js";
 import { assertEnrollmentConfig, MarketplaceRegistryService } from "./RegistryService.js";
 import { RegistryAuthStore } from "./RegistryAuthStore.js";
+import { onlineRefreshDelayMs } from "./TufRepository.js";
 
 const JSON_TYPE = "application/json; charset=utf-8";
 const IMMUTABLE_CACHE = "public, max-age=31536000, immutable";
 const MUTABLE_CACHE = "no-cache";
+const TUF_REFRESH_RETRY_MS = 5 * 60 * 1000;
 
 function jsonBytes(value) {
     return Buffer.from(JSON.stringify(value));
@@ -163,6 +165,9 @@ function httpFailure(error) {
 }
 
 export class MarketplaceRegistryHttpServer {
+    #refreshTimer = null;
+    #closed = false;
+
     constructor(reader, { store = null, authStore = null, tls = null, readAuthentication = false, unsafeDevelopmentLan = false, enrollment = null } = {}) {
         this.reader = reader;
         this.store = store;
@@ -190,10 +195,21 @@ export class MarketplaceRegistryHttpServer {
     static async open(root, options = {}) {
         const readAuthentication = options.readAuthentication === true;
         const reader = await MarketplaceRegistryReader.open(root, { ...options, readAuthentication });
-        await reader.verify();
-        const store = options.writable === true ? await MarketplaceRegistryStore.open(root, options) : null;
-        const authStore = await RegistryAuthStore.open(reader.paths, options);
-        return new MarketplaceRegistryHttpServer(reader, { ...options, store, authStore, readAuthentication });
+        let store = null;
+        try {
+            if (options.writable === true) {
+                store = await MarketplaceRegistryStore.open(root, options);
+                await store.mutate(async () => store.tufRepository.ensureOnlineFresh(await store.readCatalog()));
+            }
+            await reader.verify();
+            const authStore = await RegistryAuthStore.open(reader.paths, options);
+            const server = new MarketplaceRegistryHttpServer(reader, { ...options, store, authStore, readAuthentication });
+            if (store) await server.#scheduleOnlineRefresh();
+            return server;
+        } catch (error) {
+            await store?.close();
+            throw error;
+        }
     }
 
     async listen({ host = "127.0.0.1", port = 8080 } = {}) {
@@ -220,8 +236,47 @@ export class MarketplaceRegistryHttpServer {
     }
 
     async close() {
+        this.#closed = true;
+        clearTimeout(this.#refreshTimer);
+        this.#refreshTimer = null;
         if (this.server.listening) await new Promise((resolve, reject) => this.server.close((error) => error ? reject(error) : resolve()));
         await this.store?.close();
+    }
+
+    async #scheduleOnlineRefresh(retryMs = null) {
+        if (this.#closed || !this.store) return;
+        clearTimeout(this.#refreshTimer);
+        let delay = retryMs;
+        if (delay === null) {
+            const state = await this.store.tufRepository.readPublishedState();
+            if (this.#closed) return;
+            delay = onlineRefreshDelayMs(state, this.store.tufRepository.now().getTime());
+        }
+        if (this.#closed) return;
+        this.#refreshTimer = setTimeout(() => {
+            this.#runOnlineRefresh();
+        }, delay);
+        this.#refreshTimer.unref();
+    }
+
+    async #runOnlineRefresh() {
+        if (this.#closed || !this.store) return;
+        try {
+            await this.store.mutate(async () => this.store.tufRepository.ensureOnlineFresh(await this.store.readCatalog()));
+            await this.#scheduleOnlineRefresh();
+        } catch (error) {
+            if (this.#closed) return;
+            process.stderr.write(`${JSON.stringify({
+                ok: false,
+                command: "serve",
+                operation: "refresh-online",
+                error: {
+                    code: error?.code ?? "INTERNAL",
+                    message: error?.message ?? "Online TUF refresh failed.",
+                },
+            })}\n`);
+            await this.#scheduleOnlineRefresh(TUF_REFRESH_RETRY_MS);
+        }
     }
 
     async #actor(request, scope) {
