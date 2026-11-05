@@ -1048,7 +1048,10 @@ configure_orchestrator() {
 print_orchestrator_next_steps() {
   if [[ "$ORCHESTRATOR_STATUS" == "installed" ]]; then
     printf '  Orchestrator is installed in %s%s%s.\n' "$BOLD" "$ORCHESTRATOR_DIR" "$RESET"
-    if [[ "$ORCHESTRATOR_COMMAND_ON_PATH" == "0" ]]; then
+    if [[ "$ONBOARDING" -eq 1 ]]; then
+      printf '  Start zenohd with the onboarding config/zenoh-router.json5.\n'
+      printf '  Then run: %sorch --zenoh-profile cev-onboarding-v1 --zenoh-connect tcp/127.0.0.1:7447%s\n' "$BOLD" "$RESET"
+    elif [[ "$ORCHESTRATOR_COMMAND_ON_PATH" == "0" ]]; then
       printf '  Open a new terminal, then start it with %sorch%s.\n' "$BOLD" "$RESET"
     else
       printf '  Start it with %sorch%s.\n' "$BOLD" "$RESET"
