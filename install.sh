@@ -49,6 +49,8 @@ NODE_DEFAULT_SET=0
 ORCHESTRATOR_CHOICE=""
 ORCHESTRATOR_FLAG_SET=0
 ORCHESTRATOR_ONLY=0
+ONBOARDING=0
+ORCHESTRATOR_REF="${EV_SIM_ORCHESTRATOR_REF:-}"
 ORCHESTRATOR_REPO="${EV_SIM_ORCHESTRATOR_REPO:-https://github.com/cornellev/orchestrator.git}"
 ORCHESTRATOR_DIR="${EV_SIM_ORCHESTRATOR_DIR:-}"
 ORCHESTRATOR_DIR_SET=0
@@ -102,6 +104,9 @@ Options:
   --start          Start the dev server after install
   --marketplace    Enable the marketplace in .env.local
   --no-marketplace Disable the marketplace in .env.local
+  --onboarding     Include pinned Zenoh/Protobuf dependencies and router
+  --orchestrator-ref REF
+                   Select an exact orchestrator Git revision
   --orchestrator   Install the ROS orchestrator without asking
   --no-orchestrator
                    Skip the ROS orchestrator
@@ -172,6 +177,13 @@ while [[ $# -gt 0 ]]; do
       MARKETPLACE_FLAG_SET=1
       shift
       ;;
+    --onboarding)
+      [[ "$ORCHESTRATOR_CHOICE" != "0" ]] || fail "--onboarding requires orchestrator"
+      ONBOARDING=1; ORCHESTRATOR_CHOICE=1; ORCHESTRATOR_FLAG_SET=1; shift ;;
+    --orchestrator-ref)
+      ORCHESTRATOR_REF="${2:-}"
+      [[ -n "$ORCHESTRATOR_REF" ]] || fail "--orchestrator-ref requires a revision"
+      shift 2 ;;
     --orchestrator)
       if [[ "$ORCHESTRATOR_FLAG_SET" -eq 1 && "$ORCHESTRATOR_CHOICE" == "0" ]]; then
         fail "Pass only one of --orchestrator or --no-orchestrator"
@@ -929,7 +941,11 @@ install_orchestrator_checkout() {
     spin_start "Updating orchestrator…"
     if (
       cd "$dest"
-      git pull --ff-only --quiet
+      if [[ -n "$ORCHESTRATOR_REF" ]]; then
+        [[ -z "$(git status --porcelain)" ]] || fail "Orchestrator has local changes; use a clean installation directory"
+      else
+        git pull --ff-only --quiet
+      fi
     ) >"$log" 2>&1; then
       spin_stop ok "Updated orchestrator in ${dest}"
       rm -f "$log"
@@ -956,8 +972,18 @@ install_orchestrator_checkout() {
       fail "Full log: ${log}"
     fi
   fi
+  if [[ -n "$ORCHESTRATOR_REF" ]]; then
+    git -C "$dest" diff --quiet || fail "Orchestrator has local changes"
+    git -C "$dest" fetch --quiet origin "$ORCHESTRATOR_REF" || fail "Cannot fetch orchestrator revision"
+    git -C "$dest" checkout --quiet --detach FETCH_HEAD || fail "Cannot select orchestrator revision"
+  fi
   ensure_orchestrator_venv "$dest"
   install_orchestrator_requirements "$dest"
+  if [[ "$ONBOARDING" -eq 1 ]]; then
+    [[ -f "${dest}/requirements-protobuf.txt" ]] || fail "Selected orchestrator revision does not support Protobuf"
+    "${dest}/.venv/bin/python" -m pip install -r "${dest}/requirements-protobuf.txt" || fail "Protobuf dependency installation failed"
+    "${dest}/.venv/bin/python" "${dest}/scripts/install_zenoh.py" || fail "Zenoh router installation failed"
+  fi
   install_orchestrator_command "$dest"
 }
 
