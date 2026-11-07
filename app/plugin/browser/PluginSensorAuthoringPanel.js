@@ -98,6 +98,8 @@ export default function PluginSensorAuthoringPanel({
     topics = [],
     onOutputChange = null,
     sensorRegistry,
+    onJsonBuffer = null,
+    jsonResets = {},
 }) {
     const ownership = definition?.pluginSensor?.ownership;
     const kind = context?.kind === "vehicle" ? "vehicle" : "run";
@@ -114,6 +116,8 @@ export default function PluginSensorAuthoringPanel({
                 disabled={disabled || unresolved}
                 lockVehicleFields={lockVehicleFields}
                 sensorRegistry={sensorRegistry}
+                onJsonBuffer={onJsonBuffer}
+                jsonResets={jsonResets}
             />
             {kind === "run" && onOutputChange && (
                 <PluginSensorPointCloudOutputs

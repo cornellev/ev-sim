@@ -1,5 +1,13 @@
 export const ADVANCED_AUTHORING_STORAGE_KEY = "cev-sim.ui.advancedAuthoring";
 
+export function resolveAuthoringAdvanced(stored, override) {
+    return typeof override === "boolean" ? override : Boolean(stored);
+}
+
+export function authoringOverrideIsForced(override) {
+    return typeof override === "boolean";
+}
+
 export function readAdvancedAuthoringPreference(storage = null) {
     try {
         const store = storage ?? globalThis.localStorage;

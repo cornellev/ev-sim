@@ -33,6 +33,8 @@ export default function PluginSensorEditor({
     disabled = false,
     lockVehicleFields = false,
     sensorRegistry = sensorTypeRegistry,
+    onJsonBuffer = null,
+    jsonResets = {},
 }) {
     const descriptor = definition?.pluginSensor?.descriptor ?? null;
     const diagnostics = [diagnostic].filter(Boolean);
@@ -42,7 +44,7 @@ export default function PluginSensorEditor({
             context: context.kind,
             sensorRegistry,
         });
-        onCommit(next);
+        return onCommit(next);
     };
     const fields = context.kind === "vehicle" ? definition?.vehicle?.fields ?? [] : definition?.run?.fields ?? [];
     const props = Object.freeze({
@@ -61,6 +63,8 @@ export default function PluginSensorEditor({
         onChange,
         disabled,
         lockVehicleFields,
+        onJsonBuffer,
+        jsonResets,
     });
     if (!Component) return fallback;
     return createElement(

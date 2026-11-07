@@ -64,6 +64,7 @@ import { fetchSensorCatalog, getPluginManifest, listPluginLibrary } from "../plu
 import { BrowserSensorAuthoringSession } from "../plugin/browser/BrowserSensorAuthoringSession.js";
 import PluginSensorAuthoringPanel from "../plugin/browser/PluginSensorAuthoringPanel.js";
 import {
+    commitPluginSensorAuthoringPatch,
     pluginSensorCatalogEntryForType,
     sensorCatalogEntries,
     stampInheritedPluginSelections,
@@ -91,6 +92,19 @@ import {
     loadRunManifestCatalog,
     withConfigLoadTimeout,
 } from "./ConfigCatalogLoader.js";
+import {
+    EMBEDDED_BINDINGS_BUFFER_ID,
+    RAW_MANIFEST_BUFFER_ID,
+    advancedEditorA11yProps,
+    applyReadyBuffers,
+    jsonBufferGate,
+    jsonBufferMessage,
+    listJsonBuffers,
+    planReadyFlush,
+    runConfigHasUnsavedWork,
+    stageJsonBuffer,
+    writeJsonBuffer,
+} from "./runConfigSession.js";
 import {
     AdvancedFields,
     AdvancedValidationBanner,
@@ -201,9 +215,10 @@ function formatValidationIssues(issues = [], { prefix = "Manifest validation fai
     return `${prefix} (${issues.length} issues):\n${issues.map(formatValidationIssue).join("\n")}`;
 }
 
-function buildConfigurationAttention({ error, environmentError, rawError, validation }) {
+function buildConfigurationAttention({ error, environmentError, buffers = {}, validation }) {
     const sections = [];
     const validationIssues = validation?.issues || [];
+    const pendingJson = listJsonBuffers(buffers);
 
     if (environmentError) {
         sections.push({
@@ -212,11 +227,11 @@ function buildConfigurationAttention({ error, environmentError, rawError, valida
             text: environmentError,
         });
     }
-    if (rawError) {
+    if (pendingJson.length > 0) {
         sections.push({
-            key: "json",
-            label: "JSON editor",
-            text: rawError,
+            key: "json-buffers",
+            label: "Unapplied JSON",
+            buffers: pendingJson,
         });
     }
     if (validationIssues.length > 0) {
@@ -239,8 +254,8 @@ function buildConfigurationAttention({ error, environmentError, rawError, valida
         title = validationIssues.length === 1
             ? "1 validation issue blocks this run"
             : `${validationIssues.length} validation issues block this run`;
-    } else if (rawError) {
-        title = "Manifest JSON is invalid";
+    } else if (pendingJson.length > 0) {
+        title = "Unapplied JSON blocks save and launch";
     } else if (environmentError) {
         title = "Environment catalog is unavailable";
     } else if (error) {
@@ -269,7 +284,8 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
     const [saved, setSaved] = useState(null);
     const [draft, setDraft] = useState(null);
     const [raw, setRaw] = useState("");
-    const [rawError, setRawError] = useState(null);
+    const [buffers, setBuffers] = useState({});
+    const [jsonResets, setJsonResets] = useState({});
     const [tab, setTab] = useState("Overview");
     const [busy, setBusy] = useState(false);
     const [pendingDelete, setPendingDelete] = useState(null);
@@ -308,9 +324,15 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
             )
             : [];
     }, [draft, saved, sensorRegistryTick]);
+    const buffersRef = useRef(buffers);
+    buffersRef.current = buffers;
+    const draftRef = useRef(draft);
+    draftRef.current = draft;
+    const jsonBlocked = jsonBufferGate(buffers).blocked;
+    const unsaved = runConfigHasUnsavedWork({ dirty, buffers });
     const configurationAttention = useMemo(
-        () => buildConfigurationAttention({ error, environmentError, rawError, validation }),
-        [error, environmentError, rawError, validation],
+        () => buildConfigurationAttention({ error, environmentError, buffers, validation }),
+        [buffers, error, environmentError, validation],
     );
 
     useEffect(() => () => {
@@ -362,14 +384,20 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [draft?.plugins, sensorCatalog.revision]);
 
+    const clearJsonBuffers = () => {
+        buffersRef.current = {};
+        setBuffers({});
+    };
+
     const applyManifestDocument = (id, document) => {
         const normalized = normalizeRunManifest(document, authoringOptions());
+        clearJsonBuffers();
+        draftRef.current = normalized;
         setEditorSession((value) => value + 1);
         setSelectedId(id);
         setSaved(document);
         setDraft(normalized);
         setRaw(JSON.stringify(normalized, null, 2));
-        setRawError(null);
         setValidation(null);
         controller.selectManifest(id);
     };
@@ -387,6 +415,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
             if (requestId !== manifestLoadRequest.current) return;
             setCatalog(result.catalog);
             if (result.status === "empty") {
+                clearJsonBuffers();
                 setSelectedId(null);
                 setSaved(null);
                 setDraft(null);
@@ -454,7 +483,10 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
     };
 
     const select = async (id, { force = false } = {}) => {
-        if (!force && dirty && !window.confirm("Discard unsaved manifest changes?")) return;
+        const pendingJson = jsonBufferGate(buffersRef.current).blocked;
+        if (!force && (dirty || pendingJson) && !window.confirm(pendingJson
+            ? "Discard unapplied JSON and unsaved manifest changes?"
+            : "Discard unsaved manifest changes?")) return;
         writeLastOpenWorkspaceId("run-config", id);
         setBusy(true);
         setError(null);
@@ -494,14 +526,14 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
     }, [selectedId]);
 
     useEffect(() => {
-        if (!dirty) return undefined;
+        if (!unsaved) return undefined;
         const protect = (event) => {
             event.preventDefault();
             event.returnValue = "";
         };
         window.addEventListener("beforeunload", protect);
         return () => window.removeEventListener("beforeunload", protect);
-    }, [dirty]);
+    }, [unsaved]);
 
     useEffect(() => {
         let cancelled = false;
@@ -515,7 +547,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                 if (cancelled) return;
                 setCatalog(items || []);
                 if (event.action === "id-changed") {
-                    if (dirty) return;
+                    if (unsaved) return;
                     const previousId = event.data?.previousId;
                     const nextId = event.id;
                     const alreadyApplied = saved?.id === nextId
@@ -523,18 +555,10 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                     if (alreadyApplied || !nextId || selectedId !== previousId) return;
                     const document = await getRunManifest(nextId);
                     if (cancelled || !document) return;
-                    const normalized = normalizeRunManifest(document, authoringOptions());
-                    setEditorSession((value) => value + 1);
-                    setSelectedId(nextId);
-                    setSaved(document);
-                    setDraft(normalized);
-                    setRaw(JSON.stringify(normalized, null, 2));
-                    setRawError(null);
-                    setValidation(null);
-                    controller.selectManifest(nextId);
+                    applyManifestDocument(nextId, document);
                     return;
                 }
-                if (dirty) return;
+                if (unsaved) return;
 
                 const selectedWasDeleted = event.action === "deleted" && event.id === selectedId;
                 const nextId = selectedWasDeleted ? items?.[0]?.id : selectedId;
@@ -543,22 +567,104 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
 
                 const document = await getRunManifest(nextId);
                 if (cancelled) return;
-                const normalized = normalizeRunManifest(document, authoringOptions());
-                setEditorSession((value) => value + 1);
-                setSelectedId(nextId);
-                setSaved(document);
-                setDraft(normalized);
-                setRaw(JSON.stringify(normalized, null, 2));
-                setRawError(null);
-                setValidation(null);
-                controller.selectManifest(nextId);
+                applyManifestDocument(nextId, document);
             }).catch((caught) => {
                 if (!cancelled) setError(caught.message);
             });
         });
-    }, [controller, dirty, selectedId, saved]);
+        // applyManifestDocument is recreated each render and only reads current refs.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [controller, selectedId, saved, unsaved]);
+
+    const applyJsonEntry = (current, entry, id) => {
+        if (id === RAW_MANIFEST_BUFFER_ID) return entry.parsed;
+        if (entry.patch?.kind === "embedded-bindings") {
+            const next = structuredClone(current);
+            const bindings = Array.isArray(entry.parsed) ? entry.parsed : [];
+            next.scripts.embeddedBindings = bindings;
+            if (next.scripts.bindingSource === "embedded" || bindings.length > 0) {
+                next.scripts.expectedBindingsHash = computeResolvedRunHash(bindings);
+            }
+            return normalizeRunManifest(next, authoringOptions());
+        }
+        if (entry.patch?.kind === "sensor-json") {
+            const registry = authoringOptions().sensorRegistry;
+            const sensors = current.sensorRig?.sensors ?? [];
+            const index = sensors.findIndex((sensor) => sensor.id === entry.patch.sensorId);
+            if (index < 0) throw new Error(`Sensor "${entry.patch.sensorId}" is no longer on this run.`);
+            const sensor = sensors[index];
+            const definition = registry.get(sensor.type) || getSensorType(sensor.type);
+            const patched = commitPluginSensorAuthoringPatch(sensor, definition, {
+                path: entry.patch.path,
+                value: entry.parsed,
+            }, { context: "run", sensorRegistry: registry, index });
+            const stored = sensor.inheritedFrom ? {
+                ...patched,
+                id: sensor.id,
+                type: sensor.type,
+                parentId: sensor.parentId,
+                pose: sensor.pose,
+                rateHz: sensor.rateHz,
+                inheritedFrom: sensor.inheritedFrom,
+                calibration: {
+                    ...patched.calibration,
+                    scanLayout: sensor.calibration?.scanLayout,
+                    parameters: sensor.calibration?.parameters,
+                    products: sensor.calibration?.products,
+                },
+            } : patched;
+            const next = structuredClone(current);
+            next.sensorRig.sensors[index] = stored;
+            return normalizeRunManifest(next, { sensorRegistry: registry });
+        }
+        return current;
+    };
+
+    const commitReadyBuffers = (nextBuffers) => {
+        const result = applyReadyBuffers(draftRef.current, nextBuffers, applyJsonEntry);
+        draftRef.current = result.draft;
+        buffersRef.current = result.buffers;
+        setDraft(result.draft);
+        setBuffers(result.buffers);
+        setValidation(null);
+        if (!result.buffers[RAW_MANIFEST_BUFFER_ID]) {
+            const rawOnly = result.appliedIds.length === 1 && result.appliedIds[0] === RAW_MANIFEST_BUFFER_ID;
+            const rawText = rawOnly ? nextBuffers[RAW_MANIFEST_BUFFER_ID]?.text : null;
+            setRaw(rawText ?? JSON.stringify(result.draft, null, 2));
+        }
+    };
+
+    const stageBuffer = (id, spec, { flushNow = false } = {}) => {
+        const staged = stageJsonBuffer(buffersRef.current, id, spec);
+        if (flushNow && staged.flush) {
+            commitReadyBuffers(staged.buffers);
+            return;
+        }
+        if (staged.buffers === buffersRef.current) return;
+        buffersRef.current = staged.buffers;
+        setBuffers(staged.buffers);
+    };
+
+    const discardBuffer = (id) => {
+        const next = writeJsonBuffer(buffersRef.current, id, null);
+        setJsonResets((current) => ({ ...current, [id]: (current[id] ?? 0) + 1 }));
+        if (planReadyFlush(next).length > 0) {
+            commitReadyBuffers(next);
+            return;
+        }
+        buffersRef.current = next;
+        setBuffers(next);
+        if (id === RAW_MANIFEST_BUFFER_ID) setRaw(JSON.stringify(draftRef.current, null, 2));
+    };
+
+    const rejectPendingJson = () => {
+        if (!jsonBufferGate(buffersRef.current).blocked) return;
+        const message = jsonBufferMessage(buffersRef.current);
+        throw new Error(message || "Fix or discard invalid JSON before continuing.");
+    };
 
     const update = (path, value) => {
+        if (jsonBufferGate(buffersRef.current).blocked) return false;
         setDraft((current) => {
             const next = path.length === 0 ? structuredClone(value) : structuredClone(current);
             if (path.length > 0) {
@@ -579,6 +685,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
             setValidation(null);
             return normalized;
         });
+        return true;
     };
 
     const createNew = async () => {
@@ -594,6 +701,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
     };
 
     const save = async () => perform(async () => {
+        rejectPendingJson();
         const local = validateRunManifest(draft, authoringOptions());
         if (!local.ok) {
             setValidation(local);
@@ -604,6 +712,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
             ? await saveRunManifest(previousId, local.manifest, saved.revision)
             : await changeRunManifestId(previousId, local.manifest, saved.revision);
         const normalized = normalizeRunManifest(stored, authoringOptions());
+        draftRef.current = normalized;
         setSaved(stored);
         setDraft(normalized);
         setRaw(JSON.stringify(normalized, null, 2));
@@ -618,6 +727,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
     });
 
     const validate = async () => perform(async () => {
+        rejectPendingJson();
         const result = await validateRunManifestOnServer(selectedId, draft);
         setValidation(result);
         if (!result.ok) throw new Error(formatValidationIssues(result.issues));
@@ -625,6 +735,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
     });
 
     const launch = async () => perform(async () => {
+        rejectPendingJson();
         let current = saved;
         if (dirty) current = await save();
         const manifestId = current.id;
@@ -651,18 +762,30 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
 
     const applyRaw = (value) => {
         setRaw(value);
+        const label = "Manifest JSON";
         try {
             const parsed = JSON.parse(value);
             const local = validateRunManifest(parsed, authoringOptions());
             if (!local.ok) {
-                setRawError(formatValidationIssues(local.issues, { prefix: "Manifest JSON is invalid" }));
+                stageBuffer(RAW_MANIFEST_BUFFER_ID, {
+                    label,
+                    text: value,
+                    error: formatValidationIssues(local.issues, { prefix: "Manifest JSON is invalid" }),
+                });
                 return;
             }
-            setRawError(null);
-            setDraft(local.manifest);
-            setValidation(null);
+            stageBuffer(RAW_MANIFEST_BUFFER_ID, {
+                label,
+                text: value,
+                parsed: local.manifest,
+                patch: { kind: "raw" },
+            }, { flushNow: true });
         } catch (caught) {
-            setRawError(caught.message);
+            stageBuffer(RAW_MANIFEST_BUFFER_ID, {
+                label,
+                text: value,
+                error: caught.message,
+            });
         }
     };
 
@@ -674,7 +797,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
 
     const requestDelete = () => {
         if (!draft || !selectedId || busy) return;
-        setPendingDelete({ id: selectedId, name: draft.name, discardEdits: dirty });
+        setPendingDelete({ id: selectedId, name: draft.name, discardEdits: unsaved });
     };
 
     const confirmDelete = () => {
@@ -686,6 +809,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
             setSelectedId(null);
             setSaved(null);
             setDraft(null);
+            clearJsonBuffers();
             await refreshCatalog();
         });
     };
@@ -713,14 +837,14 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
     });
 
     useWorkspaceGuard("run-config", {
-        dirty,
+        dirty: unsaved,
         label: "Run configuration",
-        save,
+        save: jsonBlocked ? undefined : save,
         discard: () => saved && applyManifestDocument(selectedId, saved),
     });
 
     return (
-        <AuthoringModeProvider>
+        <AuthoringModeProvider advanced>
         <main className="fixed inset-0 z-[1] overflow-hidden bg-[var(--slate-bg)] text-[var(--slate-fg)]">
             <header className="flex h-12 items-center justify-between border-b border-[var(--slate-border)] bg-[var(--slate-surface-1)] px-3">
                 <button type="button" className="flex min-w-0 cursor-pointer items-center gap-2 rounded-[var(--radius)] px-1.5 py-1 text-left outline-none transition-colors duration-150 hover:bg-[var(--slate-surface-hover)] focus-visible:ring-2 focus-visible:ring-[var(--slate-ring)]" onClick={onOpenWorkspace} aria-label="Open workspace switcher">
@@ -739,12 +863,12 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                     >
                         {catalog.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
                     </select>
-                    <Action icon={<IconCheck size={14} stroke={1.75} />} label="Validate" onClick={validate} disabled={!draft || busy} />
-                    <Action icon={<IconDeviceFloppy size={14} stroke={1.75} />} label="Save" onClick={save} disabled={!draft || !dirty || busy} />
+                    <Action icon={<IconCheck size={14} stroke={1.75} />} label="Validate" onClick={validate} disabled={!draft || busy || jsonBlocked} />
+                    <Action icon={<IconDeviceFloppy size={14} stroke={1.75} />} label="Save" onClick={save} disabled={!draft || !dirty || busy || jsonBlocked} />
                     <div className="hidden max-[1023px]:block">
                         <Action danger icon={<IconTrash size={14} stroke={1.75} />} label="Delete" onClick={requestDelete} disabled={!draft || busy} />
                     </div>
-                    <Action primary icon={<IconPlayerPlay size={14} stroke={1.75} />} label="Launch" onClick={launch} disabled={!draft || busy} />
+                    <Action primary icon={<IconPlayerPlay size={14} stroke={1.75} />} label="Launch" onClick={launch} disabled={!draft || busy || jsonBlocked} />
                 </div>
             </header>
 
@@ -781,6 +905,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                     {manifestLoadState === "error" && <ConfigLoadState error title="Could not load manifests" detail={error || "The manifest catalog is unavailable."} action={<Action label="Retry" onClick={() => loadManifestCatalog(selectedId)} />} />}
                     {manifestLoadState === "empty" && <ConfigLoadState title="No run manifests" detail="Create the first server-backed manifest to configure a simulation run." action={<Action primary icon={<IconPlus size={14} stroke={1.75} />} label="Create manifest" onClick={createNew} disabled={busy} />} />}
                     {manifestLoadState === "ready" && draft && (
+                        <AdvancedRunEditor hidden={false}>
                         <TabsRoot value={tab} onValueChange={setTab} className="mx-auto max-w-6xl p-6 max-[900px]:p-4">
                             <div className="mb-5 flex flex-wrap items-start justify-between gap-3 border-b border-[var(--slate-border)] pb-5">
                                 <div>
@@ -802,7 +927,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                                     <div className="space-y-3">
                                         {configurationAttention.sections.map((section) => (
                                             <div key={section.key}>
-                                                {section.label && section.text && (
+                                                {section.label && (section.text || section.buffers) && (
                                                     <p className="text-[12px] font-medium text-[var(--slate-fg-2)]">{section.label}</p>
                                                 )}
                                                 {section.text && (
@@ -823,6 +948,18 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                                                                 </li>
                                                             );
                                                         })}
+                                                    </ul>
+                                                )}
+                                                {section.buffers && (
+                                                    <ul className="mt-1 space-y-1.5 text-[13px]">
+                                                        {section.buffers.map((entry) => (
+                                                            <li key={entry.id} className="rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-2)] px-3 py-2">
+                                                                <p>{entry.label}: {entry.error}</p>
+                                                                <button type="button" className="mt-2 text-[11px] font-medium text-[var(--slate-fg-2)]" onClick={() => discardBuffer(entry.id)}>
+                                                                    Discard {entry.label}
+                                                                </button>
+                                                            </li>
+                                                        ))}
                                                     </ul>
                                                 )}
                                             </div>
@@ -857,6 +994,8 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                                                 onError={setError}
                                                 bumpRegistry={bumpSensorRegistry}
                                                 vehicleCatalog={vehicleCatalog}
+                                                onJsonBuffer={stageBuffer}
+                                                jsonResets={jsonResets}
                                             />
                                         )}
                                         {item === "Observation" && <Observation draft={draft} update={update} />}
@@ -866,6 +1005,9 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                                                 update={update}
                                                 validation={validation}
                                                 sensorRegistry={authoringOptions().sensorRegistry}
+                                                buffers={buffers}
+                                                jsonResets={jsonResets}
+                                                onStageJson={stageBuffer}
                                             />
                                         )}
                                         {item === "Topics" && <Topics draft={draft} update={update} />}
@@ -875,6 +1017,9 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                                         {item === "JSON" && (
                                             <div className="space-y-3">
                                                 <textarea aria-label="Raw run manifest JSON" spellCheck={false} value={raw} onChange={(event) => applyRaw(event.target.value)} className="sf-input min-h-[520px] resize-y p-4 font-mono text-[12px] leading-relaxed" />
+                                                {buffers[RAW_MANIFEST_BUFFER_ID]?.error && (
+                                                    <p className="text-[11px] text-[var(--slate-danger)]">{buffers[RAW_MANIFEST_BUFFER_ID].error}</p>
+                                                )}
                                                 <details className="rounded-[var(--radius)] border border-[var(--slate-border)] bg-[var(--slate-surface-1)] p-3">
                                                     <summary className="cursor-pointer text-[12px] font-medium text-[var(--slate-fg-2)]">Normalized diff preview ({normalizedDiff.length})</summary>
                                                     <div className="mod-scrollbar mt-2 max-h-52 overflow-auto font-mono text-[11px] text-[var(--slate-muted)]">
@@ -887,6 +1032,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                                 ))}
                             </div>
                         </TabsRoot>
+                        </AdvancedRunEditor>
                     )}
                 </section>
             </div>
@@ -915,6 +1061,10 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
         </AlertDialog.Root>
         </AuthoringModeProvider>
     );
+}
+
+function AdvancedRunEditor({ hidden = false, children }) {
+    return <div {...advancedEditorA11yProps(hidden)}>{children}</div>;
 }
 
 function ConfigLoadState({ title, detail, action = null, error = false }) {
@@ -1472,6 +1622,8 @@ function Sensors({
     onError = () => {},
     bumpRegistry = () => {},
     vehicleCatalog = [],
+    onJsonBuffer = null,
+    jsonResets = {},
 }) {
     const registry = session?.registry ?? sensorTypeRegistry;
     const catalogEntries = sensorCatalogEntries(catalog, registry);
@@ -1530,26 +1682,12 @@ function Sensors({
     const displaySensors = inheriting ? applied.manifest.sensorRig.sensors : draft.sensorRig.sensors;
     const inheritedCount = displaySensors.filter((sensor) => sensor.inheritedFrom).length;
 
-    useEffect(() => {
-        if (!inheriting || !vehicleManifest) return;
-        const projected = applySensorInheritance(draft, { vehicleManifest, registry });
-        if (projected.issues.length > 0) return;
-        const stamped = stampInheritedPluginSelections(projected.manifest, catalog, registry);
-        const normalized = normalizeRunManifest({
-            ...draft,
-            plugins: stamped.manifest.plugins,
-        }, { sensorRegistry: registry });
-        if (JSON.stringify(normalized.plugins ?? null) === JSON.stringify(draft.plugins ?? null)) return;
-        update([], normalized);
-    }, [catalog, draft, inheriting, registry, update, vehicleManifest]);
-
     const writeDisplayedSensor = (displayed, mutate) => {
         const index = storedSensorIndex(draft.sensorRig.sensors, displayed);
         if (index < 0) {
-            update(["sensorRig", "sensors"], [...draft.sensorRig.sensors, mutate(structuredClone(displayed))]);
-            return;
+            return update(["sensorRig", "sensors"], [...draft.sensorRig.sensors, mutate(structuredClone(displayed))]);
         }
-        update(["sensorRig", "sensors", index], mutate(structuredClone(draft.sensorRig.sensors[index])));
+        return update(["sensorRig", "sensors", index], mutate(structuredClone(draft.sensorRig.sensors[index])));
     };
     const setInheritance = async (enabled) => {
         try {
@@ -1837,6 +1975,7 @@ function Sensors({
                             </div>
                         </AdvancedFields>
                         {plugin && (
+                            // shortcut: plugin-authored sensor views do not report their own text, hook this when a plugin can publish a pending buffer
                             <PluginSensorAuthoringPanel
                                 context={{ kind: "run" }}
                                 sensor={sensor}
@@ -1847,6 +1986,8 @@ function Sensors({
                                 lockVehicleFields={inherited}
                                 topics={draft.topics}
                                 sensorRegistry={registry}
+                                onJsonBuffer={onJsonBuffer}
+                                jsonResets={jsonResets}
                                 onCommit={(next) => writeDisplayedSensor(sensor, () => (
                                     inherited ? {
                                         ...next,
@@ -2043,7 +2184,15 @@ function SensorDefinitionField({ field, sensor, change, locked = false }) {
     );
 }
 
-function Scripts({ draft, update, validation = null, sensorRegistry = sensorTypeRegistry }) {
+function Scripts({
+    draft,
+    update,
+    validation = null,
+    sensorRegistry = sensorTypeRegistry,
+    buffers = {},
+    jsonResets = {},
+    onStageJson = () => {},
+}) {
     const [library, setLibrary] = useState({ revision: 0, packages: [] });
     const [manifests, setManifests] = useState({});
     const addArtifact = () => update(["scripts", "artifacts"], [...draft.scripts.artifacts, { scriptId: "", expectedHash: null }]);
@@ -2140,15 +2289,6 @@ function Scripts({ draft, update, validation = null, sensorRegistry = sensorType
         }
         update([], next);
     };
-    const setEmbeddedBindings = (value) => {
-        const next = structuredClone(draft);
-        const bindings = Array.isArray(value) ? value : [];
-        next.scripts.embeddedBindings = bindings;
-        if (next.scripts.bindingSource === "embedded" || bindings.length > 0) {
-            next.scripts.expectedBindingsHash = computeResolvedRunHash(bindings);
-        }
-        update([], next);
-    };
 
     return (
         <div className="space-y-4">
@@ -2173,7 +2313,20 @@ function Scripts({ draft, update, validation = null, sensorRegistry = sensorType
                     </div>
                 ))}
                 <Field label="Expected bindings SHA-256"><input value={draft.scripts.expectedBindingsHash || ""} placeholder="Unlocked" onChange={(event) => update(["scripts", "expectedBindingsHash"], event.target.value || null)} /></Field>
-                <Field label="Embedded portable bindings"><JsonField value={draft.scripts.embeddedBindings} onChange={setEmbeddedBindings} rows={9} /></Field>
+                <Field label="Embedded portable bindings">
+                    <JsonField
+                        label="Embedded portable bindings"
+                        value={draft.scripts.embeddedBindings}
+                        error={buffers[EMBEDDED_BINDINGS_BUFFER_ID]?.error || ""}
+                        resetToken={jsonResets[EMBEDDED_BINDINGS_BUFFER_ID] ?? 0}
+                        onStage={(spec) => onStageJson(EMBEDDED_BINDINGS_BUFFER_ID, {
+                            label: "Embedded portable bindings",
+                            patch: { kind: "embedded-bindings" },
+                            ...spec,
+                        }, { flushNow: true })}
+                        rows={9}
+                    />
+                </Field>
             </AdvancedFields>
             <div className="space-y-4">
                 <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--slate-muted)]">Simulator plugins</p>
@@ -2668,10 +2821,40 @@ function VectorFields({ label, value, onChange, disabled = false }) {
     return <div className="mt-4"><p className="mb-2 text-[13px] font-medium text-[var(--slate-fg-2)]">{label}</p><div className="grid gap-3 sm:grid-cols-3">{["x", "y", "z"].map((axis) => <Field key={axis} label={axis.toUpperCase()}><input aria-label={`${label} ${axis}`} type="number" step="0.001" value={value?.[axis] ?? 0} disabled={disabled} onChange={(event) => onChange(axis, Number(event.target.value))} /></Field>)}</div></div>;
 }
 
-function JsonField({ value, onChange, rows = 5, className = "", ...props }) {
-    const [textValue, setTextValue] = useState(() => JSON.stringify(value, null, 2));
+function JsonField({ value, onStage, error = "", resetToken = 0, rows = 5, className = "", ...props }) {
+    const [textValue, setTextValue] = useState(() => JSON.stringify(value ?? null, null, 2));
     const [invalid, setInvalid] = useState(false);
-    return <div><textarea {...props} spellCheck={false} rows={rows} value={textValue} onChange={(event) => { const next = event.target.value; setTextValue(next); try { onChange(JSON.parse(next)); setInvalid(false); } catch { setInvalid(true); } }} className={[className, invalid && "border-[var(--slate-danger)]"].filter(Boolean).join(" ")} />{invalid && <p className="mt-1 text-[11px] text-[var(--slate-danger)]">Enter valid JSON to apply this field.</p>}</div>;
+    const [seenReset, setSeenReset] = useState(resetToken);
+    if (seenReset !== resetToken) {
+        setSeenReset(resetToken);
+        setTextValue(JSON.stringify(value ?? null, null, 2));
+        setInvalid(false);
+    }
+    const shownError = error || (invalid ? "Enter valid JSON to apply this field." : "");
+    return (
+        <div>
+            <textarea
+                {...props}
+                spellCheck={false}
+                rows={rows}
+                value={textValue}
+                onChange={(event) => {
+                    const next = event.target.value;
+                    setTextValue(next);
+                    try {
+                        const parsed = JSON.parse(next);
+                        setInvalid(false);
+                        onStage?.({ text: next, parsed, error: null });
+                    } catch (caught) {
+                        setInvalid(true);
+                        onStage?.({ text: next, error: caught.message });
+                    }
+                }}
+                className={[className, shownError && "border-[var(--slate-danger)]"].filter(Boolean).join(" ")}
+            />
+            {shownError && <p className="mt-1 text-[11px] text-[var(--slate-danger)]">{shownError}</p>}
+        </div>
+    );
 }
 
 function Field({ label, wide = false, children }) {

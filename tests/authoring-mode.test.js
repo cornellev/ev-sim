@@ -3,7 +3,9 @@ import test from "node:test";
 
 import {
     ADVANCED_AUTHORING_STORAGE_KEY,
+    authoringOverrideIsForced,
     readAdvancedAuthoringPreference,
+    resolveAuthoringAdvanced,
     validationIssueRequiresAdvanced,
     validationIssuesRequireAdvanced,
     writeAdvancedAuthoringPreference,
@@ -31,6 +33,17 @@ test("advanced authoring preference defaults to false and persists in storage", 
 
     writeAdvancedAuthoringPreference(false, storage);
     assert.equal(readAdvancedAuthoringPreference(storage), false);
+});
+
+test("authoring override wins without writing storage", () => {
+    const storage = createMemoryStorage({ [ADVANCED_AUTHORING_STORAGE_KEY]: "false" });
+    const stored = readAdvancedAuthoringPreference(storage);
+    assert.equal(resolveAuthoringAdvanced(stored, true), true);
+    assert.equal(storage.getItem(ADVANCED_AUTHORING_STORAGE_KEY), "false");
+    assert.equal(authoringOverrideIsForced(true), true);
+    assert.equal(resolveAuthoringAdvanced(true, false), false);
+    assert.equal(authoringOverrideIsForced(undefined), false);
+    assert.equal(resolveAuthoringAdvanced(true, undefined), true);
 });
 
 test("validationIssueRequiresAdvanced maps hidden authoring paths", () => {

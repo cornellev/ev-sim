@@ -1,5 +1,7 @@
 import { useState } from "react";
 
+import { sensorJsonBufferId } from "../../config/runConfigSession.js";
+
 const inputClass = "w-full rounded-[var(--radius)] border border-white/10 bg-[var(--slate-bg)] px-2.5 py-1.5 text-xs text-white outline-none";
 
 function parseSettingValue(setting, raw) {
@@ -29,6 +31,8 @@ export default function PluginSensorSettingsForm({
     onChange,
     disabled = false,
     lockVehicleFields = false,
+    onJsonBuffer = null,
+    jsonResets = {},
 }) {
     const root = parameterRoot(context);
     const parameters = sensor?.[root]?.parameters ?? {};
@@ -39,7 +43,24 @@ export default function PluginSensorSettingsForm({
     const [draft, setDraft] = useState(() => ({ ...parameters }));
     const [seenParameters, setSeenParameters] = useState(parameters);
     const [error, setError] = useState(null);
-    if (scanLayout !== seenLayout) {
+    const [seenResets, setSeenResets] = useState(jsonResets);
+    const layoutId = sensor?.id ? sensorJsonBufferId(sensor.id, `${root}.scanLayout`) : "";
+    const layoutReset = layoutId ? (jsonResets[layoutId] ?? 0) : 0;
+    const layoutTokenChanged = Boolean(layoutId) && (seenResets[layoutId] ?? 0) !== layoutReset;
+    const parameterReset = (descriptor?.settings ?? []).some((setting) => {
+        if (setting.valueType !== "json" || !sensor?.id) return false;
+        const id = sensorJsonBufferId(sensor.id, `${root}.parameters.${setting.key}`);
+        return (seenResets[id] ?? 0) !== (jsonResets[id] ?? 0);
+    });
+    if (layoutTokenChanged || parameterReset) {
+        setSeenResets(jsonResets);
+        setError(null);
+        if (layoutTokenChanged) {
+            setSeenLayout(scanLayout);
+            setLayoutText(JSON.stringify(scanLayout ?? {}, null, 2));
+        }
+        if (parameterReset) setDraft({ ...parameters });
+    } else if (scanLayout !== seenLayout) {
         setSeenLayout(scanLayout);
         setLayoutText(JSON.stringify(scanLayout ?? {}, null, 2));
     }
@@ -50,10 +71,43 @@ export default function PluginSensorSettingsForm({
 
     const commit = (path, value) => {
         try {
-            onChange?.({ path, value });
+            const applied = onChange?.({ path, value });
+            if (applied === false) {
+                setDraft((current) => {
+                    const next = { ...parameters };
+                    for (const setting of descriptor?.settings ?? []) {
+                        if (setting.valueType === "json" && typeof current[setting.key] === "string") {
+                            next[setting.key] = current[setting.key];
+                        }
+                    }
+                    return next;
+                });
+                return;
+            }
             setError(null);
         } catch (caught) {
             setError(caught.message);
+        }
+    };
+
+    const reportJson = (id, label, path, raw, { flushNow }) => {
+        try {
+            const parsed = JSON.parse(raw);
+            setError(null);
+            onJsonBuffer?.(id, {
+                label,
+                text: raw,
+                parsed,
+                patch: { kind: "sensor-json", sensorId: sensor.id, path },
+            }, { flushNow });
+        } catch (caught) {
+            setError(caught.message);
+            onJsonBuffer?.(id, {
+                label,
+                text: raw,
+                error: caught.message,
+                patch: { kind: "sensor-json", sensorId: sensor.id, path },
+            }, { flushNow: false });
         }
     };
 
@@ -71,10 +125,20 @@ export default function PluginSensorSettingsForm({
                     disabled={locked}
                     rows={8}
                     value={layoutText}
-                    onChange={(event) => setLayoutText(event.target.value)}
-                    onBlur={() => {
+                    onChange={(event) => {
+                        const next = event.target.value;
+                        setLayoutText(next);
+                        if (!onJsonBuffer || !layoutId) return;
+                        reportJson(layoutId, "Scan layout", `${root}.scanLayout`, next, { flushNow: false });
+                    }}
+                    onBlur={(event) => {
+                        const next = event.target.value;
+                        if (onJsonBuffer && layoutId) {
+                            reportJson(layoutId, "Scan layout", `${root}.scanLayout`, next, { flushNow: true });
+                            return;
+                        }
                         try {
-                            commit(`${root}.scanLayout`, JSON.parse(layoutText));
+                            commit(`${root}.scanLayout`, JSON.parse(next));
                         } catch (caught) {
                             setError(caught.message);
                         }
@@ -84,6 +148,9 @@ export default function PluginSensorSettingsForm({
             {(descriptor?.settings ?? []).map((setting) => {
                 const value = draft[setting.key] ?? setting.default ?? "";
                 const path = `${root}.parameters.${setting.key}`;
+                const settingBufferId = sensor?.id && setting.valueType === "json"
+                    ? sensorJsonBufferId(sensor.id, path)
+                    : "";
                 if (setting.valueType === "boolean") {
                     return (
                         <label key={setting.key} className="flex items-center gap-2 text-[11px] text-zinc-300">
@@ -129,8 +196,17 @@ export default function PluginSensorSettingsForm({
                                 disabled={locked}
                                 rows={4}
                                 value={displaySettingValue(setting, value)}
-                                onChange={(event) => setDraft((current) => ({ ...current, [setting.key]: event.target.value }))}
+                                onChange={(event) => {
+                                    const next = event.target.value;
+                                    setDraft((current) => ({ ...current, [setting.key]: next }));
+                                    if (!onJsonBuffer || !settingBufferId) return;
+                                    reportJson(settingBufferId, setting.key, path, next, { flushNow: false });
+                                }}
                                 onBlur={(event) => {
+                                    if (onJsonBuffer && settingBufferId) {
+                                        reportJson(settingBufferId, setting.key, path, event.target.value, { flushNow: true });
+                                        return;
+                                    }
                                     try {
                                         const next = parseSettingValue(setting, event.target.value);
                                         setDraft((current) => ({ ...current, [setting.key]: next }));

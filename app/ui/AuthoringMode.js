@@ -5,7 +5,9 @@ import { createContext, useCallback, useContext, useMemo, useSyncExternalStore }
 import { Switch } from "./FormControls.js";
 import { StatusMessage } from "./WorkspaceFrame.js";
 import {
+    authoringOverrideIsForced,
     readAdvancedAuthoringPreference,
+    resolveAuthoringAdvanced,
     validationIssueRequiresAdvanced,
     writeAdvancedAuthoringPreference,
 } from "./authoringModeStorage.js";
@@ -42,18 +44,19 @@ function getAuthoringModeServerSnapshot() {
     return false;
 }
 
-export function AuthoringModeProvider({ children }) {
-    const advanced = useSyncExternalStore(
+export function AuthoringModeProvider({ children, advanced: advancedOverride }) {
+    const stored = useSyncExternalStore(
         subscribeAuthoringMode,
         getAuthoringModeSnapshot,
         getAuthoringModeServerSnapshot,
     );
+    const advanced = resolveAuthoringAdvanced(stored, advancedOverride);
 
     const setAdvanced = useCallback((value) => {
-        const next = Boolean(value);
-        writeAdvancedAuthoringPreference(next);
+        if (authoringOverrideIsForced(advancedOverride)) return;
+        writeAdvancedAuthoringPreference(Boolean(value));
         emitAuthoringModeChange();
-    }, []);
+    }, [advancedOverride]);
 
     const contextValue = useMemo(() => ({ advanced, setAdvanced }), [advanced, setAdvanced]);
 

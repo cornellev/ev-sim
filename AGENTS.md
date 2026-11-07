@@ -157,6 +157,19 @@ body keep their current `worldHash`.
 Update the progress and decision log in `docs/rigid-body-plan.md` whenever this
 program changes a contract, hash, acceptance criterion, or milestone status.
 
+## Run-configuration roadmap
+
+Before changing Run Configuration simple mode, the shared editor session, or
+run-config JSON buffers, read [`docs/run-configuration-plan.md`](docs/run-configuration-plan.md).
+
+This is a separate `CFG-*` program. CFG-01 is implemented and CFG-02 is next.
+`cev-sim.ui.runConfig.mode` waits until CFG-03, and the detailed editor stays
+the only run-config view until CFG-06.
+
+Update the progress and decision log in `docs/run-configuration-plan.md`
+whenever a CFG package changes a contract, acceptance criterion, or milestone
+status.
+
 ## Architectural invariants
 
 - JavaScript remains the single authoritative simulator implementation.
