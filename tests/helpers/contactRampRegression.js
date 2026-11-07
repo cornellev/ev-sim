@@ -7,7 +7,6 @@ import { createPhysicsBackendSelection } from "../../app/physics/PhysicsBackend.
 import { PhysicsEngine } from "../../app/physics/PhysicsEngine.js";
 import { createKeyboardDriveState, stepKeyboardDrive } from "../../app/simulation/keyboardDrive.js";
 import { createVehiclePlantDefinition, KinematicVehiclePlant } from "../../app/simulation/vehicles/KinematicVehiclePlant.js";
-import { settleContactVehicles } from "../../app/simulation/vehicles/contactBicycle.js";
 import { createRoadGroundSampler } from "../../app/simulation/vehicles/roadGroundSampler.js";
 import { CONTACT_BICYCLE_MODEL, normalizeVehicleManifest } from "../../app/vehicles/VehicleManifest.js";
 import { PLANT_CONTACT_BICYCLE_MODEL } from "../../app/plugin/PlantModule.js";
@@ -66,7 +65,6 @@ export async function replayContactRamp({ browser = false, manifest = null, step
             if (browser) stepVehiclePlant(vehicle, dt);
             else body.update(dt);
             physics.step(dt);
-            settleContactVehicles([vehicle]);
             control.sampleAchieved("ego", { speedMps: body.velocity.x, steeringRadThree: body.steeringAngle, accelerationMps2: body.acceleration.x });
             maxLateralSpeed = Math.max(maxLateralSpeed, Math.abs(body.lateralVelocity));
             if (physics.pendingContacts.has("ego|ground:floor") && body.onRoad) floorSteps += 1;

@@ -264,7 +264,7 @@ export async function generateHeadlessCharacterization(tape) {
 
     return {
         kind: "cev-sim.headless.characterization",
-        version: 1,
+        version: 2,
         id: tape.id,
         sourceRuntime: "app/simulation/SimulationEngine.js",
         run: {

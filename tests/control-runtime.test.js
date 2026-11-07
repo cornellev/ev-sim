@@ -48,6 +48,17 @@ test("normalization converts REP-103 steering once at the actuator boundary", ()
     assert.equal(threeSteeringToRep103(result.command.steeringRadThree), 0.25);
 });
 
+test("steering normalization preserves positive-left, negative-right, and zero signs", () => {
+    for (const angle of [0.25, -0.25, 0]) {
+        const result = normalizeStampedAckermannCommand(stamped({ steering: angle }));
+        assert.equal(result.ok, true);
+        assert.equal(result.command.steeringRadRep103, angle);
+        assert.equal(result.command.steeringRadThree, angle);
+        assert.equal(rep103SteeringToThree(angle), angle);
+        assert.equal(threeSteeringToRep103(angle), angle);
+    }
+});
+
 test("control runtime applies velocity commands with saturation and keeps requested distinct", () => {
     const runtime = new ControlRuntime({
         controls: {

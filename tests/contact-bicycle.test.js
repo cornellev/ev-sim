@@ -2,30 +2,24 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { PLANT_CONTACT_BICYCLE_MODEL } from "../app/plugin/PlantModule.js";
-import { buildImuMeasurement, captureVehicleSnapshot, createMeasurementSeedState } from "../app/autonomy/LocalizationMeasurements.js";
 import { applyManualDrive } from "../app/3d/vehicles/VehiclePlantAdapter.js";
 import { createPhysicsBackendSelection } from "../app/physics/PhysicsBackend.js";
 import { PhysicsEngine, supportPlanePosition } from "../app/physics/PhysicsEngine.js";
-import { normalizeRunSensor } from "../app/simulation/sensors/SensorTypeRegistry.js";
 import {
     axleContactForces,
-    catchContactFloor,
     contactAxes,
-    contactClearance,
     groundClearance,
-    settleContactBody,
-    sampleContactSupport,
     tangentialGrade,
 } from "../app/simulation/vehicles/contactBicycle.js";
 import {
     createVehiclePlantDefinition,
     KinematicVehiclePlant,
 } from "../app/simulation/vehicles/KinematicVehiclePlant.js";
-import { SeededRNG } from "../app/util/SeededRNG.js";
 import {
     CONTACT_BICYCLE_MODEL,
     normalizeVehicleManifest,
 } from "../app/vehicles/VehicleManifest.js";
+import { placeChassis, runChassis, startChassis } from "./helpers/contactChassisRun.js";
 
 const DT = 0.01;
 const MERCEVES_AXLE = 0.112991;
@@ -88,13 +82,35 @@ function fakeRapier() {
     };
 }
 
-function flatRoad(y = 0) {
-    return () => ({ y, pitch: 0, normal: { x: 0, y: 1, z: 0 } });
+const FLOOR = { obstacles: [], groundPlane: { y: 0 } };
+
+function slopeWorld(pitch) {
+    return { obstacles: [], groundPlane: { y: -5 }, drivableSurfaces: [rampMesh(pitch)] };
 }
 
-function gradeRoad(pitch) {
-    const normal = { x: -Math.sin(pitch), y: Math.cos(pitch), z: 0 };
-    return (x) => ({ y: x * Math.tan(pitch), pitch, normal });
+function rampMesh(pitch, x0 = -5, length = 60) {
+    const rise = Math.tan(pitch) * length;
+    const y0 = Math.tan(pitch) * x0;
+    return {
+        id: "ramp",
+        kind: "road-mesh",
+        vertices: [
+            { x: x0, y: y0, z: -8 },
+            { x: x0 + length, y: y0 + rise, z: -8 },
+            { x: x0 + length, y: y0 + rise, z: 8 },
+            { x: x0, y: y0, z: 8 },
+        ],
+        indices: [0, 1, 2, 0, 2, 3],
+    };
+}
+
+async function drive(body, world, fn) {
+    const { physics } = await startChassis(world, [body]);
+    try {
+        return await fn(physics);
+    } finally {
+        physics.disposeRun();
+    }
 }
 
 test("ground clearance is the deepest tread below the origin", () => {
@@ -157,100 +173,46 @@ test("rolling resistance holds a gentle grade and a steep grade overpowers it", 
     assert.equal(loose.Fxr, 0);
 });
 
-test("a car 10 m above the road falls and then stops on it", () => {
+test("a car 10 m above the road falls and then stops on it", async () => {
     const body = plant({}, { position: { y: 10 } });
-    body.setGroundSampler(flatRoad(0));
-    assert.equal(body.position.y, 10);
-    for (let step = 0; step < 5; step += 1) {
-        body.update(DT);
-        settleContactBody(body);
-    }
-    assert.ok(body.position.y > 8, `still falling at y=${body.position.y}`);
-    for (let step = 0; step < 400; step += 1) {
-        body.update(DT);
-        settleContactBody(body);
-    }
-    assert.ok(Math.abs(body.position.y) < 1e-9);
-    assert.ok(Math.abs(body.verticalVelocity) < 1e-9);
-    const parked = body.position.y;
-    body.update(DT);
-    settleContactBody(body);
-    assert.equal(body.position.y, parked);
+    await drive(body, FLOOR, (physics) => {
+        runChassis(physics, [body], 50);
+        assert.ok(body.position.y > 8, `still falling at y=${body.position.y}`);
+        runChassis(physics, [body], 400);
+        assert.ok(Math.abs(body.position.y) < 0.01, `y ${body.position.y}`);
+        assert.ok(Math.abs(body.verticalVelocity) < 1e-3, `vertical ${body.verticalVelocity}`);
+        const parked = body.position.y;
+        runChassis(physics, [body], 20);
+        assert.ok(Math.abs(body.position.y - parked) < 1e-3, `drift y ${body.position.y}`);
+        assert.ok(Math.hypot(body.position.x, body.position.z) < 1e-3, "drift");
+    });
 });
 
-test("an uphill grade slows the car and a flat road does not", () => {
-    const uphill = plant({ rollingResistance: 0 });
-    uphill.setGroundSampler(gradeRoad(0.1));
-    const flat = plant({ rollingResistance: 0 });
-    flat.setGroundSampler(flatRoad(0));
-    for (let step = 0; step < 20; step += 1) {
-        uphill.update(DT);
-        settleContactBody(uphill);
-        flat.update(DT);
-        settleContactBody(flat);
-    }
-    assert.ok(uphill.velocity.x < -0.1);
-    assert.equal(flat.velocity.x, 0);
-    assert.ok(Math.abs(uphill.position.y - uphill.position.x * Math.tan(0.1)) < 1e-6);
+test("an uphill grade slows the car and a flat road does not", async () => {
+    const uphill = plant({ rollingResistance: 0 }, { position: { x: 5, y: Math.tan(0.1) * 5 + 0.05 } });
+    const flat = plant({ rollingResistance: 0 }, { position: { y: 0.05 } });
+    await drive(uphill, slopeWorld(0.1), (physics) => {
+        runChassis(physics, [uphill], 50);
+    });
+    await drive(flat, FLOOR, (physics) => {
+        runChassis(physics, [flat], 50);
+    });
+    assert.ok(uphill.velocity.x < -0.1, `uphill vx ${uphill.velocity.x}`);
+    assert.ok(Math.abs(flat.velocity.x) < 1e-3, `flat vx ${flat.velocity.x}`);
+    assert.ok(Math.abs(uphill.position.y - uphill.position.x * Math.tan(0.1)) < 0.05, `grade y ${uphill.position.y}`);
 });
 
-test("a car facing across a ramp slides sideways", () => {
-    const body = plant({ rollingResistance: 0 }, { rotation: { y: -Math.PI / 2 } });
-    const pitch = 0.2;
-    body.setGroundSampler(() => ({
-        y: 0,
-        pitch: 0,
-        normal: { x: -Math.sin(pitch), y: Math.cos(pitch), z: 0 },
-    }));
-    body.update(DT);
-    settleContactBody(body);
-    assert.ok(body.lateralVelocity < -0.01, `vy ${body.lateralVelocity}`);
-    assert.equal(body.rotation.x, 0);
-});
-
-test("a pose already above the road is not pulled down", () => {
+test("a pose already above the road is not pulled down in one step", async () => {
     const body = plant({}, { position: { y: 2 } });
     body.verticalVelocity = -4;
-    body.setGroundSampler(flatRoad(0));
-    settleContactBody(body);
-    assert.equal(body.position.y, 2);
-    assert.equal(body.verticalVelocity, -4);
-});
-
-test("free fall specific force cancels and a held grade does not", () => {
-    const config = normalizeRunSensor({
-        type: "imu",
-        calibration: {
-            gravity: 9.81,
-            angularVelocityStdDev: { x: 0, y: 0, z: 0 },
-            linearAccelerationStdDev: { x: 0, y: 0, z: 0 },
-            angularRandomWalk: { x: 0, y: 0, z: 0 },
-            accelerationRandomWalk: { x: 0, y: 0, z: 0 },
-            turnOnBias: { randomize: false, angular: { x: 0, y: 0, z: 0 }, acceleration: { x: 0, y: 0, z: 0 } },
-            noise: {},
-        },
+    await drive(body, FLOOR, (physics) => {
+        runChassis(physics, [body], 1);
     });
-    const falling = plant();
-    falling.position.y = 3;
-    falling.setGroundSampler(flatRoad(0));
-    falling.update(DT);
-    const held = plant({ rollingResistance: 1 });
-    held.setGroundSampler(gradeRoad(0.4));
-    held.update(DT);
-    settleContactBody(held);
-    const measure = (body) => buildImuMeasurement(
-        captureVehicleSnapshot(body, 10_000_000),
-        config,
-        new SeededRNG("contact-imu"),
-        createMeasurementSeedState(config, new SeededRNG("contact-imu")),
-    ).measurement.linearAcceleration;
-    const fall = measure(falling);
-    const grade = measure(held);
-    assert.ok(Math.abs(fall.z) < 0.05, `free fall z ${fall.z}`);
-    assert.ok(Math.abs(grade.x) > 1, `held grade x ${grade.x}`);
+    assert.ok(body.position.y > 1, `y ${body.position.y}`);
+    assert.ok(body.position.y < 2, `y ${body.position.y}`);
 });
 
-test("a contact plugin force stepper matches the built-in plant", () => {
+test("a contact plugin force stepper matches the built-in plant", async () => {
     const wheels = [
         { id: "front-left", position: { x: 0.75, y: 0.25, z: 0.55 }, steerable: true },
         { id: "front-right", position: { x: 0.75, y: 0.25, z: -0.55 }, steerable: true },
@@ -293,26 +255,18 @@ test("a contact plugin force stepper matches the built-in plant", () => {
     const javascript = new KinematicVehiclePlant(createVehiclePlantDefinition(entry, {
         manifest: normalizeVehicleManifest({ ...shared, dynamics: { model: CONTACT_BICYCLE_MODEL } }),
     }));
-    const sample = gradeRoad(0.08);
-    plugin.setGroundSampler(sample);
-    javascript.setGroundSampler(sample);
-    plugin.position.y = 3;
-    javascript.position.y = 3;
+    plugin.position.y = 0.05;
+    javascript.position.y = 0.05;
     applyManualDrive(plugin, { mode: "acceleration", accelerationX: 1.5, steeringRad: 0.1 });
     applyManualDrive(javascript, { mode: "acceleration", accelerationX: 1.5, steeringRad: 0.1 });
-    plugin.update(DT);
-    javascript.update(DT);
-    assert.equal(plugin.velocity.x, 4);
-    assert.equal(javascript.velocity.x, 4);
-    plugin.position.y = 0;
-    javascript.position.y = 0;
-    plugin.verticalVelocity = 0;
-    javascript.verticalVelocity = 0;
-    for (let step = 0; step < 15; step += 1) {
-        plugin.update(DT);
-        javascript.update(DT);
-        settleContactBody(plugin);
-        settleContactBody(javascript);
+    const left = await startChassis(FLOOR, [plugin]);
+    const right = await startChassis(FLOOR, [javascript]);
+    try {
+        runChassis(left.physics, [plugin], 15);
+        runChassis(right.physics, [javascript], 15);
+    } finally {
+        left.physics.disposeRun();
+        right.physics.disposeRun();
     }
     for (const field of ["x", "y", "z"]) {
         assert.ok(Math.abs(plugin.position[field] - javascript.position[field]) < 1e-9, `${field} ${plugin.position[field]}`);
@@ -321,50 +275,19 @@ test("a contact plugin force stepper matches the built-in plant", () => {
     assert.ok(Math.abs(plugin.lateralVelocity - javascript.lateralVelocity) < 1e-9);
     assert.ok(Math.abs(plugin.yawRate - javascript.yawRate) < 1e-9);
     assert.ok(Math.abs(plugin.verticalVelocity - javascript.verticalVelocity) < 1e-9);
-    assert.ok(plugin.position.x > 0.5);
+    assert.ok(plugin.position.x > 0.5, `x ${plugin.position.x}`);
 });
 
-test("a protruding tread rests above the road and stays on the grade", () => {
-    const dropped = plant({}, { position: { y: 2 } }, HANGING_WHEELS);
-    dropped.setGroundSampler(flatRoad(0));
-    for (let step = 0; step < 120; step += 1) {
-        dropped.update(DT);
-        settleContactBody(dropped);
-    }
-    assert.ok(Math.abs(dropped.position.y - MERCEVES_CLEARANCE) < 1e-6, `rest y ${dropped.position.y}`);
-    const parked = dropped.position.y;
-    dropped.update(DT);
-    settleContactBody(dropped);
-    assert.ok(Math.abs(dropped.position.y - parked) < 1e-9);
-
-    const sitting = plant({}, { position: { y: 0 } }, HANGING_WHEELS);
-    sitting.setGroundSampler(flatRoad(0));
-    settleContactBody(sitting);
-    assert.ok(Math.abs(sitting.position.y - MERCEVES_CLEARANCE) < 1e-9);
-
-    const uphill = plant({ rollingResistance: 0 }, {}, HANGING_WHEELS);
-    uphill.setGroundSampler(gradeRoad(0.1));
-    for (let step = 0; step < 20; step += 1) {
-        uphill.update(DT);
-        settleContactBody(uphill);
-    }
-    const grade = uphill.position.x * Math.tan(0.1) + MERCEVES_CLEARANCE / Math.cos(0.1);
-    assert.ok(Math.abs(uphill.position.y - grade) < 1e-6, `grade y ${uphill.position.y}`);
-});
-
-test("the checker floor lifts a contact car and the next step can drive", () => {
+test("the checker floor lifts a contact car and the next step can drive", async () => {
     const body = plant({}, { position: { y: -0.2 } });
     body.verticalVelocity = -2;
-    body.setGroundSampler(() => null);
-    const supported = supportPlanePosition({ x: 0, y: 1, z: 0 }, body.position, 0);
-    assert.equal(supported.held, true);
-    catchContactFloor(body, 0, supported.held);
-    assert.equal(body.position.y, 0);
-    assert.equal(body.verticalVelocity, 0);
-    applyManualDrive(body, { mode: "acceleration", accelerationX: 2 });
-    body.update(DT);
-    assert.ok(body.velocity.x > 0, `vx ${body.velocity.x}`);
-    assert.ok(body.position.y >= -1e-6);
+    await drive(body, FLOOR, (physics) => {
+        runChassis(physics, [body], 40);
+        assert.ok(body.position.y > -1e-3, `y ${body.position.y}`);
+        assert.ok(body.position.y < 0.05, `y ${body.position.y}`);
+        runChassis(physics, [body], 20, { mode: "acceleration", accelerationX: 2 });
+        assert.ok(body.velocity.x > 0, `vx ${body.velocity.x}`);
+    });
 });
 
 test("the checker holds a sweep-driven car that ends a step below it", async () => {
@@ -391,82 +314,79 @@ test("the checker holds a sweep-driven car that ends a step below it", async () 
     physics.disposeRun();
 });
 
-test("a contact car above the checker is not pulled down", () => {
-    const body = plant({}, { position: { y: 2 } });
-    body.floorSupport = { y: 0, normal: { x: 0, y: 1, z: 0 } };
-    const supported = supportPlanePosition({ x: 0, y: 2, z: 0 }, body.position, 0);
-    assert.equal(supported.held, false);
-    catchContactFloor(body, 0, supported.held);
-    assert.equal(body.floorSupport, null);
-    body.setGroundSampler(() => null);
-    body.update(DT);
-    assert.ok(body.position.y < 2);
-    assert.ok(body.position.y > 1);
+test("a road above the floor pitches the car and a buried road does not", async () => {
+    const pitch = 0.1;
+    const world = {
+        obstacles: [],
+        groundPlane: { y: 0 },
+        drivableSurfaces: [
+            rampMesh(pitch, 2, 20),
+            {
+                id: "buried",
+                kind: "road-mesh",
+                vertices: [
+                    { x: -8, y: -3, z: -6 }, { x: 1, y: -1, z: -6 },
+                    { x: 1, y: -1, z: 6 }, { x: -8, y: -3, z: 6 },
+                ],
+                indices: [0, 1, 2, 0, 2, 3],
+            },
+        ],
+    };
+    const body = plant({}, { position: { x: -2, y: 0.2 } });
+    await drive(body, world, (physics) => {
+        runChassis(physics, [body], 40);
+        assert.equal(body.onRoad, true);
+        assert.ok(Math.abs(body.rotation.z) < 0.02, `flat pitch ${body.rotation.z}`);
+        runChassis(physics, [body], 20, { mode: "acceleration", accelerationX: 2 });
+        assert.ok(body.velocity.x > 0, `vx ${body.velocity.x}`);
+        body.position.x = 8;
+        body.position.y = Math.tan(pitch) * 6 + 0.1;
+        body.position.z = 0;
+        body.velocity.x = 0;
+        body.lateralVelocity = 0;
+        body.yawRate = 0;
+        placeChassis(physics, body);
+        runChassis(physics, [body], 40);
+        assert.ok(Math.abs(body.rotation.z - pitch) < 0.02, `ramp pitch ${body.rotation.z}`);
+        assert.equal(body.rotation.x, 0);
+    });
 });
 
-test("a road sample beats the checker floor", () => {
-    const body = plant();
-    body.floorSupport = { y: 0, normal: { x: 0, y: 1, z: 0 } };
-    body.setGroundSampler(gradeRoad(0.1));
-    body.update(DT);
-    assert.ok(Math.abs(body.rotation.z - 0.1) < 1e-9);
-});
-
-test("no floor and no road keeps falling", () => {
+test("no floor keeps a contact car falling", async () => {
     const body = plant({}, { position: { y: 1 } });
-    body.setGroundSampler(() => null);
-    body.update(DT);
-    assert.ok(body.position.y < 1);
-    assert.equal(body.floorSupport ?? null, null);
+    await drive(body, { obstacles: [] }, (physics) => {
+        runChassis(physics, [body], 5);
+    });
+    assert.ok(body.position.y < 1, `y ${body.position.y}`);
+    assert.equal(body.onRoad, false);
 });
 
-test("drive force stays off while the car is in the air", () => {
+test("drive force stays off while the car is in the air", async () => {
     const body = plant({}, { position: { y: 4 } });
-    body.setGroundSampler(flatRoad(0));
-    applyManualDrive(body, { accelerationX: 3 });
-    body.update(DT);
-    assert.equal(body.velocity.x, 0);
-    assert.ok(body.verticalVelocity < 0);
+    await drive(body, FLOOR, (physics) => {
+        runChassis(physics, [body], 1, { accelerationX: 3 });
+    });
+    assert.ok(Math.abs(body.velocity.x) < 1e-6, `vx ${body.velocity.x}`);
+    assert.ok(body.verticalVelocity < 0, `vertical ${body.verticalVelocity}`);
+    assert.equal(body.axCommand, 0);
+    assert.equal(body.contactControlActive, false);
 });
 
-test("floor support wins over a buried road and remains drivable with its Rapier collider off", () => {
-    const body = plant({}, {}, HANGING_WHEELS);
-    body.groundPlane = { y: 0, collider: false };
-    body.setGroundSampler(gradeRoad(0.1));
-    body.position.x = -2;
-    settleContactBody(body);
-    assert.equal(sampleContactSupport(body).source, "floor");
-    assert.equal(body.rotation.z, 0);
-    applyManualDrive(body, { mode: "acceleration", accelerationX: 2 });
-    body.update(DT);
-    assert.equal(body.onRoad, true);
-    assert.ok(body.velocity.x > 0);
-    body.position.x = 2;
-    assert.equal(sampleContactSupport(body).source, "road");
-    body.position.x = 0;
-    assert.equal(sampleContactSupport(body).source, "road", "road wins a height tie");
+test("a floor with its collider off still holds a contact car", async () => {
+    const body = plant({}, { position: { y: 1 } }, HANGING_WHEELS);
+    await drive(body, { obstacles: [], groundPlane: { y: 0, collider: false } }, (physics) => {
+        runChassis(physics, [body], 160);
+        assert.ok(Math.abs(body.position.y - MERCEVES_CLEARANCE) < 0.01, `y ${body.position.y}`);
+        runChassis(physics, [body], 20, { mode: "acceleration", accelerationX: 2 });
+        assert.ok(body.velocity.x > 0, `vx ${body.velocity.x}`);
+    });
 });
 
-test("cross-slope contact has zero heading pitch and carries lateral motion down the surface", () => {
+test("cross-slope contact has zero heading pitch", () => {
     const normal = { x: 0, y: Math.cos(0.2), z: Math.sin(0.2) };
     const axes = contactAxes(normal, 0);
     assert.equal(axes.pitch, 0);
     assert.ok(Math.abs(axes.right.y - Math.sin(0.2)) < 1e-12);
-    const body = plant({ rollingResistance: 0 }, {}, [
-        ...HANGING_WHEELS,
-        ...HANGING_WHEELS.map((wheel) => ({ ...wheel, id: `${wheel.id}-right`, position: { ...wheel.position, z: -wheel.position.z } })),
-    ]);
-    body.setGroundSampler((x, z) => ({ y: -z * Math.tan(0.2), pitch: 0.2, normal }));
-    settleContactBody(body);
-    assert.equal(body.rotation.z, 0);
-    body.lateralVelocity = -2;
-    body.update(DT);
-    assert.ok(body.verticalVelocity < 0);
-    settleContactBody(body);
-    assert.equal(body.onRoad, true);
-    const support = sampleContactSupport(body);
-    assert.ok(Math.abs(body.position.y - support.y) < 1e-9);
-    assert.ok(contactClearance(body, normal, 0) > MERCEVES_CLEARANCE);
 });
 
 test("lateral friction dissipates forward, reverse, and zero-forward-speed slip without overshoot", () => {
@@ -491,32 +411,23 @@ test("forward and reverse steer generate opposite yaw moments", () => {
     }
 });
 
-test("an unpowered flat contact car dissipates lateral and yaw energy at rest and in reverse", () => {
-    for (const vx of [-1, 0, 1]) {
-        const body = plant();
-        body.setGroundSampler(flatRoad());
-        body.velocity.x = vx;
-        body.lateralVelocity = 1;
-        body.yawRate = 0.2;
-        let previousEnergy = Infinity;
-        for (let step = 0; step < 600; step += 1) {
-            body.update(1 / 60);
-            settleContactBody(body);
-            const energy = 750 * (body.velocity.x ** 2 + body.lateralVelocity ** 2) + 1125 * body.yawRate ** 2;
-            assert.ok(energy <= previousEnergy + 1e-9, `energy grew: ${energy} > ${previousEnergy}`);
-            previousEnergy = energy;
+test("an unpowered flat contact car dissipates lateral and yaw energy at rest and in reverse", async () => {
+    const body = plant({}, { position: { y: 0.05 } });
+    await drive(body, FLOOR, (physics) => {
+        for (const vx of [-1, 0, 1]) {
+            body.position.x = 0;
+            body.position.y = 0.05;
+            body.position.z = 0;
+            body.rotation.y = 0;
+            body.rotation.z = 0;
+            body.velocity.x = vx;
+            body.lateralVelocity = 1;
+            body.yawRate = 0.2;
+            body.verticalVelocity = 0;
+            placeChassis(physics, body);
+            runChassis(physics, [body], 600, null, { dt: 1 / 60 });
+            assert.ok(Math.hypot(body.velocity.x, body.lateralVelocity) < 0.05, `vx ${body.velocity.x} vy ${body.lateralVelocity}`);
+            assert.ok(Math.abs(body.yawRate) < 0.05, `yaw rate ${body.yawRate}`);
         }
-        assert.ok(previousEnergy < 1e-6, `did not settle: ${previousEnergy}`);
-    }
-});
-
-test("removing the configured floor discards previous floor support", () => {
-    const body = plant();
-    body.groundPlane = { y: 0 };
-    settleContactBody(body);
-    assert.equal(body.floorSupport.y, 0);
-    body.groundPlane = null;
-    body.update(DT);
-    assert.ok(body.position.y < 0);
-    assert.equal(body.onRoad, false);
+    });
 });

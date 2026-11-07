@@ -6,10 +6,10 @@ import {
     createMeasurementSeedState,
 } from "../../app/autonomy/LocalizationMeasurements.js";
 import { HeadlessVehicleManager } from "../../app/simulation/headless/HeadlessVehicleManager.js";
-import { settleContactBody } from "../../app/simulation/vehicles/contactBicycle.js";
 import { normalizeRunSensor } from "../../app/simulation/sensors/SensorTypeRegistry.js";
 import { CONTACT_BICYCLE_MODEL, normalizeVehicleManifest } from "../../app/vehicles/VehicleManifest.js";
 import { SeededRNG } from "../../app/util/SeededRNG.js";
+import { placeChassis, startChassis } from "./contactChassisRun.js";
 
 const STEP_NS = 10_000_000;
 const TOLERANCE = 1e-9;
@@ -22,7 +22,9 @@ export const CONTACT_BICYCLE_TAPE = Object.freeze([
 
 function finite(value) {
     const number = Number(value);
-    return Number.isFinite(number) ? Number(number.toFixed(12)) : 0;
+    if (!Number.isFinite(number)) return 0;
+    const rounded = Number(number.toFixed(12));
+    return rounded === 0 ? 0 : rounded;
 }
 
 function zeros() {
@@ -70,6 +72,7 @@ function assertPlantMatch(left, right) {
     close(left.lateralVelocity, right.lateralVelocity, "lateralVelocity");
     close(left.yawRate, right.yawRate, "yawRate");
     close(left.verticalVelocity, right.verticalVelocity, "verticalVelocity");
+    for (const field of ["bodyVelocity", "bodyAngularVelocity", "bodyAcceleration"]) assertVectorMatch(left[field], right[field], field);
 }
 
 function assertVectorMatch(left, right, label) {
@@ -95,9 +98,12 @@ function recordStep(state, imu, wheel, step, timeNs) {
         y: finite(state.position.y),
         z: finite(state.position.z),
         yaw: finite(state.rotation.y),
+        pitch: finite(state.rotation.z),
         ax: finite(state.acceleration.x),
         ay: finite(state.acceleration.y),
         imu: {
+            angularX: finite(imu.measurement.angularVelocity.x),
+            angularY: finite(imu.measurement.angularVelocity.y),
             angularZ: finite(imu.measurement.angularVelocity.z),
             linearX: finite(imu.measurement.linearAcceleration.x),
             linearY: finite(imu.measurement.linearAcceleration.y),
@@ -145,9 +151,15 @@ async function createPair() {
 
 export async function replayContactBicycleCharacterization() {
     const { browser, headless } = await createPair();
-    const sample = () => ({ y: 0, pitch: 0, normal: { x: 0, y: 1, z: 0 } });
-    browser.plant.setGroundSampler(sample);
-    headless.setGroundSampler(sample);
+    const world = { obstacles: [], groundPlane: { y: 0 } };
+    const browserRun = await startChassis(world, [browser]);
+    const headlessRun = await startChassis(world, [headless]);
+    try {
+    // A ray cast misses colliders that have not been stepped yet.
+    browserRun.physics.world.step();
+    headlessRun.physics.world.step();
+    placeChassis(browserRun.physics, browser);
+    placeChassis(headlessRun.physics, headless);
     syncVehicleFromPlant(browser);
 
     const imuConfig = normalizeRunSensor({ type: "imu", calibration: quietCalibration() });
@@ -171,10 +183,12 @@ export async function replayContactBicycleCharacterization() {
             };
             applyManualDrive(browser, command);
             applyManualDrive(headless, command);
+            browserRun.physics.beginStep();
+            headlessRun.physics.beginStep();
             stepVehiclePlant(browser, segment.dt);
             headless.update(segment.dt);
-            settleContactBody(browser.plant);
-            settleContactBody(headless);
+            browserRun.physics.step(segment.dt);
+            headlessRun.physics.step(segment.dt);
             syncVehicleFromPlant(browser);
             const left = browser.plant.getDeterministicState();
             const right = headless.getDeterministicState();
@@ -198,6 +212,10 @@ export async function replayContactBicycleCharacterization() {
         }
     }
     return steps;
+    } finally {
+        browserRun.physics.disposeRun();
+        headlessRun.physics.disposeRun();
+    }
 }
 
 export async function generateContactBicycleCharacterization() {
@@ -205,7 +223,7 @@ export async function generateContactBicycleCharacterization() {
     return {
         kind: "cev-sim.vehicle.contact-bicycle-characterization",
         version: 1,
-        id: "contact-bicycle-v1",
+        id: "contact-bicycle-v2",
         model: CONTACT_BICYCLE_MODEL,
         dt: 0.01,
         steps,

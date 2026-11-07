@@ -103,8 +103,24 @@ chassis; RZ-01 retains the current JS contact integration. RZ-02 adds the
 floor slab, obstacle hulls, and chassis-only road trimeshes. RZ-03 makes a
 contact vehicle a dynamic Rapier body: a downward ray feeds the tire law,
 Rapier integrates, and pose/velocity copy back onto the plant. The kinematic
-and dynamic-bicycle plants stay on the sweep. The JS contact integrator
-remains only for plants no chassis claimed, until RZ-04 deletes it.
+and dynamic-bicycle plants stay on the sweep. RZ-04 deletes the JavaScript
+contact integrator, so a contact plant does not move unless Rapier steps it.
+
+The shared physics facade forwards sweep and vehicle admission separately.
+With `modules.vehicles: false`, contact chassis hold their pose as
+position-based kinematic bodies, retaining their colliders while object
+physics continues. Re-enabling vehicles restores their saved linear and
+angular velocity. With vehicles enabled, contact chassis still step when
+`modules.physics` is false, without running the kinematic sweep.
+
+Contact plants retain full REP-103 body velocity, angular velocity, and
+inertial acceleration alongside the existing tire/controller state. Origin
+acceleration is the fixed-step world-velocity difference projected into the
+chassis frame. Sensor snapshots differentiate all gyro axes over the actual
+capture interval and use the existing offset-IMU rotational acceleration
+terms. They do not add another centripetal correction to contact origin
+acceleration. Roll stays projected out; pitch rate is retained. Kinematic and
+dynamic-bicycle measurements and the plugin force ABI remain unchanged.
 
 `app/scripting/UnitCatalog.meta.js` is the server-safe authority for stable built-in type IDs and metadata. `registerBuiltInBlocks.js` registers those explicit IDs, `UnitCatalog.js` attaches React components by type, and `AddMenu.js` renders placeable entries as a searchable categorized sidebar. Typed configuration changes pass through `ScriptManager.reconfigureUnitDetailed()` so ports, configuration, and graph-wide type bindings commit or roll back together. The built-in catalog includes atomic math/logic plus conversions, strings, JSON path ops, typed arrays, geometry (vec/pose), read-only route helpers, `control` temporal/PID blocks, `texture1d` arithmetic, and simulator adapters (`VehicleStateBlock`, `DeviceStateBlock`, `SimulationClockBlock`, `ScenarioStatusBlock`).
 

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import test from "node:test";
+
+import { runPython } from "./helpers/pythonExecutable.js";
 
 import { OracleOccupancyGrid, snapWindowOrigin } from "../app/simulation/occupancy/OracleOccupancyGrid.js";
 
@@ -45,7 +46,7 @@ test("a snapped window matches the Python cell rule and leaves the ego unstamped
     const snapped = snapWindowOrigin(2, 0, RESOLUTION, CELLS);
     assert.equal(sample.originX, snapped.originX);
     assert.equal(sample.originZ, snapped.originZ);
-    const python = spawnSync("python3", ["-c", `
+    const python = runPython(["-c", `
 import json, sys
 import numpy as np
 from cev_sim.world import DrivableSurface, Obstacle, OccupancyGrid, PlanningWorld, Pose2D, VehicleModel
@@ -69,8 +70,6 @@ sys.stdout.write(grid.cells.tobytes().hex())
             obstacle: description.obstacles[0].footprint.map((point) => [point.x, point.z]),
             bounds: [sample.originX, sample.originZ, sample.originX + CELLS * RESOLUTION, sample.originZ + CELLS * RESOLUTION],
         }),
-        encoding: "utf8",
-        env: { ...process.env, PYTHONPATH: "python/src" },
     });
     assert.equal(python.status, 0, python.stderr || python.stdout);
     const expected = Buffer.from(python.stdout.trim(), "hex");

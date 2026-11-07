@@ -44,10 +44,10 @@ The restrictions on Rapier drive contact and gravity below continue to apply
 to the PHY kinematic and dynamic-bicycle plants. Their motion and both tapes
 stay pinned. Suspension, wheel spin, and per-wheel rays remain out of scope.
 
-RZ-01 prepares identity and admission and retains the JavaScript contact
-integrator. RZ-02 builds the floor, obstacle hulls, and road trimeshes.
-RZ-03 puts a contact vehicle on a dynamic Rapier chassis. Release is held
-until RZ-04 (integrator deletion and the v2 motion tape) is complete.
+RZ-01 prepares identity and admission. RZ-02 builds the floor, obstacle
+hulls, and road trimeshes. RZ-03 puts a contact vehicle on a dynamic Rapier
+chassis. RZ-04 deletes the JavaScript contact integrator and records
+`characterization.contact-bicycle.v2.json`.
 
 | RZ-01 work package | Implementation | Acceptance |
 | --- | --- | --- |
@@ -56,15 +56,15 @@ until RZ-04 (integrator deletion and the v2 motion tape) is complete.
 | WP03: plugin host identity | Resolved vehicle record carries `contactHost: 2` | Root/nested semantic vehicle hashes bind it |
 | WP04: execution admission | Shared bundle/kernel guard, before vehicle normalization or active-run teardown | Old bundles require re-resolution; inspection/import remain available |
 | WP05: regression coverage | Migration, integrity, admission, recovery, dispatch, and plugin parity tests | Verification recorded below |
-| WP06: guidance and release gate | Physics/rigid-body/plugin and manifest contracts updated | Release pending RZ-04 and the pinned-tape gate |
+| WP06: guidance and release gate | Physics/rigid-body/plugin and manifest contracts updated | RZ-04 evidence, historical pins, and reviewed current-runtime v2 gate required |
 
 | RZ-03 work package | Implementation | Acceptance |
 | --- | --- | --- |
 | WP01: chassis body | Dynamic Rapier body, cuboid at the tread, `rapierChassis` claim | Dispose releases the plant; kinematic cars stay on the sweep |
 | WP02: tire step | Downward ray on `FLOOR_GROUP \| ROAD_GROUP`, `contactTireStep` / `contactChassisPush` | Resting car stays in contact; unresolved plugins apply no tire force |
-| WP03: copy-back | Skip sweep for chassis, zero-roll projection, rest rules, body-frame acceleration | Steer sign matches the JS integrator; IMU centripetal term is not doubled |
+| WP03: copy-back | Skip sweep for chassis, zero-roll projection, rest rules, full body sensor vectors | Steer sign matches the JS integrator; inertial IMU acceleration is not corrected twice |
 | WP04: contacts | `contactPairsWith` through `colliderContactIds` | Wall and crate report start/end; roads stay unreported |
-| WP05: physics-off | Kernel steps Rapier when `hasChassis()` even if `modules.physics` is false | Sweep-driven cars stay put; the chassis still moves |
+| WP05: module admission | Shared facade forwards sweep and vehicle flags; kernel steps admitted chassis when physics is off | Disabled chassis hold pose with colliders retained; enabled chassis still move without the sweep |
 | WP06: coverage and docs | `tests/contact-chassis.test.js`; physics/rigid-body/architecture notes | Pinned kinematic and dynamic-bicycle tapes unchanged |
 
 ## What is modeled
@@ -198,7 +198,7 @@ contact-v2 host belongs to `RZ-*`.
 | --- | --- |
 | `kinematic-bicycle-v1` | Current built-in bicycle. Omitted `dynamics` normalizes to this. |
 | `dynamic-bicycle-v1` | This plant. Manifest physical fields are filled from the defaults above. The plant integrates and the host drapes height and pitch. |
-| `contact-bicycle-v2` | Contact host identity for the Rapier chassis. RZ-03 supplies Rapier motion; the JS integrator remains a fallback for plants no chassis claimed. The plugin force model remains `contact-bicycle-v1`. |
+| `contact-bicycle-v2` | Rapier chassis. JavaScript applies the tire pushes and copies pose back. The plugin force model remains `contact-bicycle-v1`. |
 
 These ids are vehicle-manifest model ids. They are not `backendSelections`
 entries, and this program does not add a protobuf backend kind. A dynamic
@@ -219,9 +219,8 @@ kinematic bicycle.
 `characterization.dynamic-bicycle.v1.json` stays the draped dynamic plant.
 Legacy authoring `contact-bicycle-v1` dynamics normalize to v2, including at
 new run resolution without saving the vehicle. Received resolved v1 contact
-records cannot execute. `characterization.contact-bicycle.v1.json` retains its
-ID, format version, and samples during RZ-01; only its model metadata becomes
-v2. RZ-04 replaces it with the v2 motion tape.
+records cannot execute. `characterization.contact-bicycle.v2.json` is the
+chassis motion tape. The v1 contact tape is gone with the JavaScript integrator.
 
 Contact-plugin manifests and saved locks stay unchanged. Their resolved
 vehicle records add numeric `contactHost: 2`, derived from the exactly locked
@@ -249,8 +248,11 @@ hash.
 ### PHY-D03 — Kinematic tape stays the pin
 
 `motionModel: "bicycle"` and `characterization.v1.json` stay the reviewed
-kinematic contract. `npm run fixtures:headless` must keep producing an empty
-delta for that file. The new-run default does not flip in PHY-01.
+historical kinematic contract. `npm run fixtures:headless` never rewrites
+that file; its identity ledger checksum remains pinned. The separately
+reviewed 2026-11-07 steering-sign transition uses `characterization.v2.json`
+for exact current-runtime acceptance. Neither plant integration nor the
+dynamic-bicycle-v1 tape changes. The new-run default does not flip in PHY-01.
 
 ### PHY-D04 — Two-axle friction, no suspension
 
@@ -262,12 +264,133 @@ wheel spin, four-wheel rays, and Rapier drive contact are out of this program.
 PHY-01 runs `tests/physics-contract.test.js`, `npm run lint`, `npm test`, and
 `npm run fixtures:headless` with an empty fixture delta.
 
-PHY-02 runs `tests/dynamic-bicycle.test.js` and keeps the kinematic characterization match.
+PHY-02 runs `tests/dynamic-bicycle.test.js` and keeps the active kinematic
+characterization match plus the historical v1 checksum.
 
 PHY-03 runs browser/headless plant parity at the existing `1e-9` tolerance and
 writes a second characterization tape.
 
 ## Progress and decision log
+
+### 2026-11-07 — Separate steering acceptance blocker resolved with v2
+
+The earlier `5304766` control-sign correction is accepted explicitly, not
+folded into RZ-04 or implemented again. Current positive-left steering stays
+unchanged. `characterization.v2.json` is generated from the existing canonical
+action tape and production runtime. A transition test constrains its delta
+to artifact version 2, four steering-angle signs, and three trajectory
+hashes. All other snapshot, control, input, time, phase, metric, assertion,
+and run/action-tape identity fields remain unchanged. Positive, negative, and
+zero command signs have independent assertions and real kinematic
+browser/headless motion coverage.
+
+The historical `characterization.v1.json` remains byte-for-byte pinned at
+SHA-256 `60dc0bd2b02a9ec768f833070ce4d8d2047f5383838f09ea3f130dd31552dd6f`.
+The existing identity ledger remains unchanged; release checks retain its
+checksum gate alongside exact v2 regeneration. The dynamic-bicycle-v1 and
+contact-v2 fixtures are not changed by this maintenance. The generator writes
+only active fixtures and both CI drift gates monitor them. This changes the
+acceptance baseline, not production steering, plant versions, plugin ABI,
+Protobuf, or semantic hash algorithms; it does not certify historical
+steering-sign replay. The earlier blocker reports below are historical.
+
+The two Python verification failures were interpreter-selection failures:
+they pass with the already installed Python 3.12 project venv. A shared test
+helper now follows the parity probe's explicit-PYTHON/project-venv/system
+precedence and surfaces errors without falling back or skipping. External
+candidate evidence requirements and the three existing hook warnings are
+unchanged.
+
+Verification on 2026-11-07 (Node 22.22.2, macOS ARM64):
+
+- Check-fix focused suites: 52 passed, zero failed, two Chromium-gated skips.
+- RZ regression suites: 88 passed, zero failed/skipped. Compiled contact
+  parity with `CEV_PLANT_CARGO=1`: three passed, none skipped.
+- `npm test -- --test-concurrency=4`: 2,611 passed, zero failed, eight existing
+  opt-in skips. All three formerly failing checks pass.
+- `npm run fixtures:headless` in a disposable copy: zero byte deltas across
+  the action tape, historical v1, active v2, dynamic-bicycle-v1, and contact-v2
+  files. The older pinned files still match the pre-RZ Git objects.
+- `npm run release:check` passes. Separate disposable tampering probes reject
+  both historical checksum changes and active v2 snapshot changes; restored
+  fixtures pass. Both modified workflow files parse and gate all fixtures.
+- `npm run lint`: zero errors, three existing hook warnings.
+  `git diff --check` passes. Hosted, hardware, and soak checks were not rerun.
+
+### 2026-11-07 — RZ-04 review fixes: vehicle admission and contact IMU
+
+The real shared runtime facade now forwards physics step options and
+`hasChassis()`. Vehicle-module admission is independent of the general
+physics/sweep flag. Disabled contact vehicles become position-based
+kinematic bodies: their pose is held, tire/plugin execution is skipped,
+forces and torques are cleared, and their colliders remain available to
+dynamic props. Re-enabling restores saved world linear/angular velocity;
+there is no catch-up integration. Teleports replace the held pose and reset
+the acceleration baseline. Reset and disposal discard pause state. Saved
+pause motion is included in contact physics canonical state.
+
+Contact canonical vehicle state adds REP-103 `bodyVelocity`,
+`bodyAngularVelocity`, and `bodyAcceleration`. These are measured from the
+post-zero-roll chassis, independently of the tire/controller motion frame.
+Origin acceleration is the Rapier world-velocity delta over the fixed step,
+projected into the current chassis frame. Contact sensor snapshots use it
+without another `omega x v` correction. All three gyro axes and their
+capture-interval derivatives reach the existing offset-IMU formula, so pitch
+contributes both tangential and centripetal acceleration. Kinematic and
+dynamic-bicycle measurements, force ABI 1 and its 13-slot state, model/host
+admission, Protobuf, backend identities, and `worldHash` are unchanged.
+
+The contact-v2 tape records pitch and all gyro axes. Its reviewed delta is
+limited to the new fields and physical contact sensor measurements. Both
+older tapes remain pinned. The pre-existing four steering-angle and three
+hash mismatches remain a separate compatibility blocker; RZ acceptance and
+release are still pending restoration of that gate without rewriting the
+kinematic fixture.
+
+Verification on 2026-11-07 (Node 22.22.2, macOS arm64):
+
+- The focused chassis, kernel, localization, admission/hash, rigid-body,
+  collision, URDF, headless, and dynamic characterization suites passed 169
+  tests, with no failures or skips. After the contact fixture refresh, the
+  final core regression and contact characterization gate passed 64 tests.
+- `CEV_PLANT_CARGO=1` passed all three tests in
+  `tests/dynamic-bicycle-plant-plugin.test.js`, including the compiled-WASM
+  contact parity test; none were skipped.
+- `npm run fixtures:headless` succeeded in a disposable copy of the current
+  working tree. The reviewed contact-v2 delta contains 21 pitch fields, 42
+  gyro X/Y fields, and 53 contact IMU linear-acceleration changes; all existing
+  vehicle-motion and wheel samples stay unchanged. The dynamic tape has no
+  delta. The known seven-field kinematic delta was not applied. Both older
+  tapes still match pre-RZ commit `34d4fbc` byte-for-byte.
+- Final `npm test -- --test-concurrency=4`: 2,597 passed, three failed, eight
+  skipped. The failures are the known kinematic characterization gate and
+  two Python integration checks (`cosmos-clip` and `occupancy-oracle`) whose
+  selected Python environment lacks `gymnasium`. The refreshed contact-v2
+  characterization passes. No unrelated simulator or dependency repairs are
+  included.
+- Final `npm run lint`: zero errors and the same three existing hook
+  warnings. `git diff --check` passes.
+
+### 2026-11-07 — RZ-04 deletes the JavaScript contact integrator
+
+A contact vehicle moves only as a Rapier chassis. `KinematicVehiclePlant.update`
+keeps the steer and longitudinal command and does not integrate. Pose, landing,
+and obstacle contact come from Rapier. `characterization.contact-bicycle.v2.json`
+replaces the v1 contact tape and is recorded from that chassis. Browser and
+headless agree in one process. Cross-OS bit identity is not claimed.
+`characterization.v1.json` and `characterization.dynamic-bicycle.v1.json` stay
+pinned. The plugin force model remains `contact-bicycle-v1` on ABI 1.
+
+Verification on 2026-11-07: `npm run lint` reported zero errors and the same
+three existing hook warnings. `npm test` passed 2,584, failed 4, and skipped
+8. The kinematic characterization check in `tests/headless-contract.test.js`
+is the known steering-sign mismatch. The other three failures (archive time
+budget, glTF validation timeout, and a plugin runtime-cache membership check)
+passed when re-run alone. `npm run fixtures:headless` left
+`characterization.dynamic-bicycle.v1.json` and
+`characterization.contact-bicycle.v2.json` byte-for-byte and rewrote only the
+known kinematic mismatch, which was discarded. With `CEV_PLANT_CARGO=1`, the
+compiled contact plant matched the built-in chassis at `1e-9`.
 
 ### 2026-11-07 — RZ-03 Rapier chassis
 

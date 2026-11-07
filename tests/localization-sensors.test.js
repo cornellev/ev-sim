@@ -4,6 +4,7 @@ import test from "node:test";
 import { SeededRNG } from "../app/util/SeededRNG.js";
 import { enuOffsetToWgs84 } from "../app/3d/earth/GeospatialTransform.js";
 import {
+    accelerationAtOffset,
     buildGnssMeasurement,
     buildImuMeasurement,
     buildTruthOdometry,
@@ -124,6 +125,73 @@ function dynamicVehicle(overrides = {}) {
         ...overrides,
     };
 }
+
+test("contact snapshots retain full body kinematics and differentiate every gyro axis at capture time", () => {
+    const vehicle = dynamicVehicle({
+        motionModel: "contact-bicycle", yawRate: 99,
+        bodyVelocity: { x: 3, y: 1, z: 2 },
+        bodyAcceleration: { x: 1, y: 2, z: 3 },
+        bodyAngularVelocity: { x: 0.1, y: -1, z: 0.2 },
+    });
+    const first = captureVehicleSnapshot(vehicle, 10_000_000);
+    assert.deepEqual(first.bodyAngularAcceleration, { x: 0, y: 0, z: 0 });
+    vehicle.bodyAngularVelocity = { x: 0.3, y: -2, z: 0.4 };
+    const second = captureVehicleSnapshot(vehicle, 35_000_000, first);
+    assert.deepEqual(second.bodyVelocity, vehicle.bodyVelocity);
+    assert.deepEqual(second.bodyAcceleration, vehicle.bodyAcceleration);
+    assert.deepEqual(second.bodyAngularVelocity, vehicle.bodyAngularVelocity);
+    for (const [axis, expected] of Object.entries({ x: 8, y: -40, z: 8 })) {
+        assert.ok(Math.abs(second.bodyAngularAcceleration[axis] - expected) < 1e-12);
+    }
+    for (const timeNs of [35_000_000, 20_000_000]) {
+        assert.deepEqual(captureVehicleSnapshot(vehicle, timeNs, second).bodyAngularAcceleration, { x: 0, y: 0, z: 0 });
+    }
+    const view = { position: vehicle.position, rotation: vehicle.rotation, plant: vehicle };
+    assert.deepEqual(captureVehicleSnapshot(view, 35_000_000, first), second);
+    second.bodyAngularVelocity.y = 42;
+    assert.equal(vehicle.bodyAngularVelocity.y, -2);
+});
+
+test("pitch rate and acceleration reach an offset IMU in a rotated sensor frame", () => {
+    const vehicle = dynamicVehicle({
+        motionModel: "contact-bicycle",
+        bodyVelocity: { x: 4, y: 0, z: 0 },
+        bodyAcceleration: { x: 1, y: 2, z: 3 },
+        bodyAngularVelocity: { x: 0, y: 1.7, z: 0 },
+    });
+    const first = captureVehicleSnapshot(vehicle, 100_000_000);
+    vehicle.bodyAngularVelocity.y = 2;
+    const snapshot = captureVehicleSnapshot(vehicle, 200_000_000, first);
+    const offset = { x: 1, y: 0, z: 0.5 };
+    const acceleration = accelerationAtOffset(snapshot, offset);
+    for (const [axis, expected] of Object.entries({ x: -1.5, y: 2, z: -2 })) {
+        assert.ok(Math.abs(acceleration[axis] - expected) < 1e-12, `${axis}: ${acceleration[axis]}`);
+    }
+    const config = quietImu();
+    config.calibration.gravity = 0;
+    config.pose = { position: offset, rotation: { x: 0, y: 0, z: Math.PI / 2 } };
+    const rng = new SeededRNG("contact-offset");
+    const { measurement } = buildImuMeasurement(snapshot, config, rng, createMeasurementSeedState(config, rng));
+    for (const [axis, expected] of Object.entries({ x: 2, y: 1.5, z: -2 })) {
+        assert.ok(Math.abs(measurement.linearAcceleration[axis] - expected) < 1e-12);
+    }
+    assert.ok(Math.abs(measurement.angularVelocity.x - 2) < 1e-12);
+    assert.ok(Math.abs(measurement.angularVelocity.y) < 1e-12);
+    assert.equal(measurement.angularVelocity.z, 0);
+});
+
+test("contact measurement fields do not change kinematic or draped dynamic snapshots", () => {
+    for (const vehicle of [mockVehicle({ velocity: { x: 3 }, steeringAngle: 0.1 }), dynamicVehicle({ yawRate: 0.4 })]) {
+        const first = captureVehicleSnapshot(vehicle, 10_000_000);
+        const expected = captureVehicleSnapshot(vehicle, 20_000_000, first);
+        Object.assign(vehicle, {
+            bodyVelocity: { x: 99, y: 99, z: 99 },
+            bodyAngularVelocity: { x: 99, y: 99, z: 99 },
+            bodyAcceleration: { x: 99, y: 99, z: 99 },
+        });
+        assert.deepEqual(captureVehicleSnapshot(vehicle, 20_000_000, first), expected);
+    }
+});
 
 test("dynamic bicycle IMU uses plant yaw rate instead of steer", () => {
     const config = quietImu();

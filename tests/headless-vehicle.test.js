@@ -54,6 +54,34 @@ function presentationVehicle(initial, manifest) {
     return vehicle;
 }
 
+test("kinematic browser and headless vehicles turn left for positive steering", () => {
+    const manifest = getBuiltInVehicleManifest("big-car");
+    for (const steering of [0.2, -0.2, 0]) {
+        const initial = entry({
+            pose: { position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0, order: "XYZ" } },
+            linearVelocity: { x: 3, y: 0, z: 0 },
+            linearAcceleration: { x: 0, y: 0, z: 0 },
+            steeringAngle: steering,
+        });
+        const browser = presentationVehicle(initial, manifest);
+        const plant = new KinematicVehiclePlant(createVehiclePlantDefinition(initial, { manifest }));
+        for (let step = 0; step < 20; step += 1) {
+            stepVehiclePlant(browser, 0.05);
+            plant.update(0.05);
+        }
+        assert.ok(Math.abs(browser.rotation.y - plant.rotation.y) <= 1e-9);
+        assert.ok(Math.abs(browser.position.z - plant.position.z) <= 1e-9);
+        assert.ok(plant.position.x > 0);
+        if (steering === 0) {
+            assert.equal(plant.rotation.y, 0);
+            assert.equal(plant.position.z, 0);
+        } else {
+            assert.ok(plant.rotation.y * steering > 0);
+            assert.ok(plant.position.z * steering < 0);
+        }
+    }
+});
+
 test("built-in bicycle plant uses local +X and explicit Euler ordering", () => {
     const plant = new KinematicVehiclePlant(createVehiclePlantDefinition(entry()));
     plant.update(0.5);

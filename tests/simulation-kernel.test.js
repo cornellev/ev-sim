@@ -241,7 +241,7 @@ test("physics off still steps a contact chassis and skips the kinematic sweep", 
     const kernel = new SimulationKernel(target.context);
     await kernel.configureRun(resolvedRun(manifest));
     kernel.step(1);
-    assert.deepEqual(steps, [{ sweep: false }]);
+    assert.deepEqual(steps, [{ sweep: false, vehicles: true }]);
     chassis = false;
     kernel.step(1);
     assert.equal(steps.length, 1);

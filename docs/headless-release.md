@@ -155,5 +155,11 @@ GitHub OIDC and provenance, not long-lived tokens.
 `release:check` enforces coordinated root package, plugin, `app/version.js`,
 Python project, and Python runtime versions; MCP advertisement of
 `CEV_SIM_VERSION`; the Apache-2.0 license; protocol 1.5; generated stub
-presence; and byte-for-byte PR 1 characterization stability. With `--dist`, it
-also verifies artifact sizes and SHA-256 records.
+presence; the historical PR 1 characterization checksum from the unchanged
+vehicle identity ledger; and exact current-runtime `characterization.v2.json`
+regeneration. The v2 fixture explicitly accepts the earlier positive-left
+steering correction without rewriting historical v1 evidence. Both CI drift
+gates monitor the historical, current v2, dynamic-bicycle-v1, and contact-v2
+fixtures. With `--dist`, the checker also verifies artifact sizes and SHA-256
+records. Outstanding hosted, soak, NVIDIA, and Jetson evidence is still
+required; this baseline transition does not satisfy those gates.

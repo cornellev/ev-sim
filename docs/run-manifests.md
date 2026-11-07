@@ -99,7 +99,8 @@ Inspection and authoring import still verify original hashes before any
 migration; hash projection never backfills a missing marker. Run-bundle v1,
 identity profiles, backend hashes, and `worldHash` are unchanged. RZ-01 and
 RZ-02 prepared identity and the static world; RZ-03 supplies the chassis.
-Release waits for RZ-04.
+RZ-04 deletes the JavaScript contact integrator and records
+`characterization.contact-bicycle.v2.json`. Plugin force ABI 1 is unchanged.
 
 VIS-12a activates manifest v11 and the plugin-free
 `resolved.identityProfile = { id: "world-bound", version: 2 }`, semantic and

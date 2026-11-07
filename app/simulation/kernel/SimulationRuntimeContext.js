@@ -343,8 +343,11 @@ export function createSimulationRuntimeContext(options = {}) {
             beginStep() {
                 return manager(options.physics)?.beginStep?.();
             },
-            step(dt) {
-                return manager(options.physics)?.step?.(dt);
+            step(dt, stepOptions) {
+                return manager(options.physics)?.step?.(dt, stepOptions);
+            },
+            hasChassis() {
+                return manager(options.physics)?.hasChassis?.() ?? false;
             },
             syncAndPublishContacts(clock) {
                 return manager(options.physics)?.syncAndPublishContacts?.(clock) ?? null;

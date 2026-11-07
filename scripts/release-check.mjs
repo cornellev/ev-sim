@@ -122,11 +122,16 @@ async function main() {
         "python/src/cev_sim/headless/v1/headless_pb2.pyi",
         "python/src/cev_sim/headless/v1/headless_pb2_grpc.py",
     ]) await fs.access(path.join(REPOSITORY_ROOT, relative));
+    const ledger = JSON.parse(await read("tests/fixtures/vehicle-editor/identity.v1.json"));
+    const historicalDigest = await sha256(path.join(REPOSITORY_ROOT, "tests/fixtures/headless/characterization.v1.json"));
+    if (historicalDigest !== ledger.characterizationSha256) {
+        throw new Error("The historical PR 1 headless characterization checksum changed.");
+    }
     const tape = JSON.parse(await read("tests/fixtures/headless/action-tape.v1.json"));
-    const expected = JSON.parse(await read("tests/fixtures/headless/characterization.v1.json"));
+    const expected = JSON.parse(await read("tests/fixtures/headless/characterization.v2.json"));
     const actual = await generateHeadlessCharacterization(tape);
     if (JSON.stringify(actual) !== JSON.stringify(expected)) {
-        throw new Error("The PR 1 headless characterization fixture changed.");
+        throw new Error("The current-runtime headless characterization v2 fixture changed.");
     }
     const manifest = options.dist
         ? await checkDistribution(options.dist, rootPackage.version, rootPackage.engines.node)

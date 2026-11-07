@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { HeadlessSession } from "../server/headless/HeadlessSession.js";
 import {
@@ -12,6 +14,15 @@ import {
     createReport,
     percentile,
 } from "../server/headless/ReleaseReports.js";
+
+test("the release checker validates current characterization and historical identity", () => {
+    const result = spawnSync(process.execPath, ["--experimental-default-type=module", "scripts/release-check.mjs"], {
+        cwd: fileURLToPath(new URL("../", import.meta.url)),
+        encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.error?.message || result.stderr || result.stdout);
+    assert.equal(JSON.parse(result.stdout).ok, true);
+});
 
 function benchmark(fixedStepsPerSecond = 100, p95 = 10, resetP95 = 20, rss = 100_000_000) {
     return createReport(BENCHMARK_REPORT_KIND, {

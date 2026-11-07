@@ -226,11 +226,6 @@ export function absorbDynamicClamp(vehicle, clamped, from, attempted) {
         plant.velocity.z = 0;
     }
     plant.lateralVelocity = projected.vy;
-    if ((plant.motionModel === "contact-bicycle" || plant.definition?.plant?.model === PLANT_CONTACT_BICYCLE_MODEL)
-        && num(clamped.y) > num(attempted.y) + 1e-9
-        && plant.verticalVelocity < 0) {
-        plant.verticalVelocity = 0;
-    }
     if (vehicle !== plant && vehicle.velocity) {
         if (typeof vehicle.velocity.set === "function") vehicle.velocity.set(projected.vx, 0, 0);
         else {

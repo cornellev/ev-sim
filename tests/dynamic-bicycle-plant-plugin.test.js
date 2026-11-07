@@ -18,6 +18,7 @@ import {
 import { buildLocalPlantPackage } from "../server/plugins/plantBuild.js";
 import { getBuiltInVehicleManifest } from "../app/vehicles/BuiltInVehicleManifests.js";
 import { CONTACT_BICYCLE_MODEL, DYNAMIC_BICYCLE_MODEL } from "../app/vehicles/VehicleManifest.js";
+import { runChassis, startChassis } from "./helpers/contactChassisRun.js";
 
 const wasm32 = spawnSync("rustup", ["target", "list", "--installed"], { encoding: "utf8" });
 const cargoReady = wasm32.status === 0 && wasm32.stdout.includes("wasm32-unknown-unknown");
@@ -147,6 +148,58 @@ test("a dynamic plugin host matches the built-in plant, imu, and obstacle clamp"
     runTape(plugin, javascript);
 });
 
+async function runContactChassis(plugin, javascript) {
+    const tape = [
+        { dt: 0.02, drive: { mode: "acceleration", accelerationX: 1.2, steeringRad: 0 } },
+        { dt: 0.02, drive: { mode: "acceleration", accelerationX: 0.4, steeringRad: 0.08 } },
+        { dt: 0.02, drive: { mode: "velocity", speedMps: 6, steeringRad: 0.12 } },
+        { dt: 0.02, drive: { mode: "acceleration", accelerationX: 0, steeringRad: -0.05 } },
+    ];
+    plugin.position.y = 0.2;
+    javascript.position.y = 0.2;
+    const world = { obstacles: [], groundPlane: { y: 0 } };
+    const left = await startChassis(world, [plugin]);
+    const right = await startChassis(world, [javascript]);
+    try {
+        for (const action of tape) {
+            applyManualDrive(plugin, action.drive);
+            applyManualDrive(javascript, action.drive);
+            runChassis(left.physics, [plugin], 1, null, { dt: action.dt });
+            runChassis(right.physics, [javascript], 1, null, { dt: action.dt });
+            for (const field of ["x", "z"]) close(plugin.position[field], javascript.position[field], field);
+            close(plugin.rotation.y, javascript.rotation.y, "yaw");
+            close(plugin.rotation.z, javascript.rotation.z, "pitch");
+            close(plugin.velocity.x, javascript.velocity.x, "vx");
+            close(plugin.lateralVelocity, javascript.lateralVelocity, "vy");
+            close(plugin.yawRate, javascript.yawRate, "r");
+            close(plugin.acceleration.x, javascript.acceleration.x, "ax");
+            close(plugin.acceleration.y, javascript.acceleration.y, "ay");
+            assert.equal(plugin.velocity.y, 0);
+            assert.equal(plugin.velocity.z, 0);
+        }
+        assert.ok(Math.abs(plugin.position.x - 1) > 0.01, "contact chassis did not move");
+        const pluginSample = captureVehicleSnapshot(plugin, 20_000_000);
+        const javascriptSample = captureVehicleSnapshot(javascript, 20_000_000);
+        for (const field of ["x", "y", "z"]) {
+            close(pluginSample.bodyVelocity[field], javascriptSample.bodyVelocity[field], `imu v ${field}`);
+            close(pluginSample.bodyAcceleration[field], javascriptSample.bodyAcceleration[field], `imu a ${field}`);
+            close(pluginSample.bodyAngularVelocity[field], javascriptSample.bodyAngularVelocity[field], `imu angular ${field}`);
+        }
+        close(pluginSample.bodyAngularVelocity.z, javascriptSample.bodyAngularVelocity.z, "imu r");
+        const from = { x: plugin.position.x - 1, y: plugin.position.y, z: plugin.position.z };
+        const attempted = { x: plugin.position.x, y: plugin.position.y, z: plugin.position.z };
+        const clamped = { x: from.x + 0.25, y: attempted.y, z: attempted.z };
+        absorbDynamicClamp(plugin, clamped, from, attempted);
+        absorbDynamicClamp(javascript, clamped, from, attempted);
+        close(plugin.position.x, javascript.position.x, "clamped x");
+        close(plugin.velocity.x, javascript.velocity.x, "clamped vx");
+        close(plugin.lateralVelocity, javascript.lateralVelocity, "clamped vy");
+    } finally {
+        left.physics.disposeRun();
+        right.physics.disposeRun();
+    }
+}
+
 test("the compiled contact bicycle package matches the built-in plant", {
     skip: process.env.CEV_PLANT_CARGO !== "1" || !cargoReady,
 }, async (t) => {
@@ -178,5 +231,5 @@ test("the compiled contact bicycle package matches the built-in plant", {
     const javascript = new KinematicVehiclePlant(createVehiclePlantDefinition(entry, {
         manifest: manifest({ model: CONTACT_BICYCLE_MODEL }),
     }));
-    runTape(headless.vehicles[0], javascript);
+    await runContactChassis(headless.vehicles[0], javascript);
 });

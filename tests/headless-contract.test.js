@@ -3,11 +3,13 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { generateHeadlessCharacterization } from "./helpers/headlessCharacterization.js";
+import { characterizationDigest, loadVehicleIdentityLedger } from "./helpers/vehicleIdentityLedger.js";
 
 const root = new URL("../", import.meta.url);
 const protoUrl = new URL("proto/cev_sim/headless/v1/headless.proto", root);
 const tapeUrl = new URL("tests/fixtures/headless/action-tape.v1.json", root);
-const characterizationUrl = new URL("tests/fixtures/headless/characterization.v1.json", root);
+const characterizationUrl = new URL("tests/fixtures/headless/characterization.v2.json", root);
+const legacyCharacterizationUrl = new URL("tests/fixtures/headless/characterization.v1.json", root);
 
 async function readJson(url) {
     return JSON.parse(await readFile(url, "utf8"));
@@ -93,11 +95,36 @@ test("episode semantics stay separate from operational and artifact policy", asy
     assert.match(health, /bool requires_reset = 9;/);
 });
 
-test("headless characterization fixture regenerates from the current runtime", async () => {
+test("historical headless characterization keeps its pinned identity", async () => {
+    const ledger = await loadVehicleIdentityLedger();
+    assert.equal(await characterizationDigest(), ledger.characterizationSha256);
+});
+
+test("headless characterization v2 changes only the reviewed steering signs and hashes", async () => {
+    const legacy = await readJson(legacyCharacterizationUrl);
+    const current = await readJson(characterizationUrl);
+    assert.equal(legacy.version, 1);
+    assert.equal(current.version, 2);
+    assert.deepEqual(legacy.snapshots.map((snapshot) => snapshot.vehicle.steeringAngle), [-0.05, -0.05, 0.1, 0.1, 0, 0]);
+    assert.deepEqual(current.snapshots.map((snapshot) => snapshot.vehicle.steeringAngle), [0.05, 0.05, -0.1, -0.1, 0, 0]);
+
+    const approved = structuredClone(legacy);
+    approved.version = 2;
+    const steering = [0.05, 0.05, -0.1, -0.1];
+    steering.forEach((angle, index) => { approved.snapshots[index].vehicle.steeringAngle = angle; });
+    for (const key of ["trajectorySha256", "resetTrajectorySha256", "freshTrajectorySha256"]) {
+        assert.notEqual(current.hashes[key], legacy.hashes[key]);
+        approved.hashes[key] = current.hashes[key];
+    }
+    assert.deepEqual(current, approved);
+});
+
+test("headless characterization v2 regenerates from the current runtime", async () => {
     const tape = await readJson(tapeUrl);
     const expected = await readJson(characterizationUrl);
     const generated = await generateHeadlessCharacterization(tape);
 
+    assert.equal(generated.version, 2);
     assert.deepEqual(generated, expected);
     assert.equal(generated.verification.resetReplayMatches, true);
     assert.equal(generated.verification.freshRuntimeMatches, true);

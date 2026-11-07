@@ -16,7 +16,7 @@ language-neutral API authority is
 - Current milestone: **PR 12 — implementation complete; external hardware acceptance pending**
 - Next planned milestone: **None — the numbered headless implementation roadmap is complete**
 - Default implementation/review reasoning level: **Extra High**
-- Last updated: **2026-09-23** (saved-environment camera clips; milestone status unchanged)
+- Last updated: **2026-11-07** (reviewed steering characterization v2; milestone status unchanged)
 
 Progress:
 
@@ -180,6 +180,18 @@ npm run fixtures:headless
 
 A fixture delta is a contract review event. Do not regenerate merely to make
 a failing test pass.
+
+On 2026-11-07, the earlier positive-left steering correction was explicitly
+accepted as a separate baseline transition. `characterization.v1.json` stays
+immutable historical evidence, checked against the vehicle identity ledger
+SHA-256. `characterization.v2.json` is the active current-runtime fixture;
+its only differences from v1 are artifact version 2, four recorded steering
+signs, and three trajectory hashes. The canonical action tape, its frozen
+manifest-v10 input, all other recorded fields, and the dynamic-bicycle-v1
+fixture remain unchanged. The generator never writes the historical file.
+Contract tests and release/CI gates require exact v2 regeneration in addition
+to historical checksum stability. This versions the test artifact, not a
+plant, run, or wire contract, and does not promise old steering-sign replay.
 
 ## Staged implementation
 
@@ -505,6 +517,46 @@ compared with the committed characterization.
 - [Isaac Lab reinforcement-learning architecture](https://docs.nvidia.com/learning/physical-ai/getting-started-with-isaac-lab/latest/train-your-first-robot-with-isaac-lab/02-how-isaac-lab-accelerates-reinforcement-learning.html)
 
 ## Decision log
+
+### 2026-11-07 — Reviewed steering baseline and Python check selection
+
+Accept the prior `5304766` positive-left steering correction without changing
+the current runtime or overwriting PR 1 evidence. Characterization v2 uses the
+same action tape and records the corrected internal steering signs. A strict
+transition test admits only the version field, four steering samples, and
+three trajectory hashes; reset and fresh-runtime replay remain exact. The
+existing v1 identity ledger checksum is still authoritative for the historical
+file. Both hosted and internal-candidate drift gates monitor all active
+headless fixtures and the historical pin, and `release:check` verifies the
+historical checksum and current v2 regeneration separately.
+
+The Node camera/occupancy Python checks now select explicit `PYTHON`, then
+the project venv, then `python3`, matching the parity probe. Repository/source
+paths are absolute, and a selected interpreter failure names that executable
+without retrying or skipping. On this machine, the shell Python is unsupported
+3.14 and lacks Gymnasium; the existing project Python 3.12 venv already passes
+both checks. No Python dependency, package import, Protobuf, backend, or
+simulation identity changes are introduced. This is maintenance, not PR 13;
+the outstanding PR 12 hosted, soak, x64 NVIDIA, and Jetson ARM64 evidence gates
+remain mandatory.
+
+Local verification on 2026-11-07 (Node 22.22.2, macOS ARM64): the full Node
+suite reports **2,611 passed, zero failed, eight existing opt-in skips**.
+Check-fix focused tests report 52 passed and two Chromium-gated skips; RZ
+regressions report 88 passed with no skips, and all three compiled contact
+parity tests pass with `CEV_PLANT_CARGO=1`. Lint has zero errors and the same
+three hook warnings. Disposable fixture regeneration has no byte delta in
+the action tape, historical v1, active v2, dynamic-bicycle-v1, or contact-v2
+files. Release checks pass and reject independent historical-checksum and
+active-snapshot tampering. Both workflow files parse as YAML and include all
+headless fixture drift gates; `git diff --check` passes. Hosted workflows,
+hardware, and soak were not rerun.
+
+The accepted v2 fixture SHA-256 is
+`d52e40ab93a91ba9939170cf8a7a8ac6e14f69b36c50fde745d8c3ef61328ce6`.
+Its trajectory/reset/fresh-runtime SHA-256 is
+`4c97b79ceafdfa1e6ab158a216c2e3cbd0550a604adcd9eddd408c7826bd5200`;
+the historical v1 trajectory hash remains unchanged in its pinned file.
 
 ### 2026-10-29 — CPU LiDAR browser performance maintenance
 

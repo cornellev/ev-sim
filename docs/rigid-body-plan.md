@@ -6,8 +6,8 @@ Rapier gravity off, and both characterization tapes stay pinned. The separate
 `RZ-*` program permits Rapier gravity and drive contact for contact-v2 vehicles.
 RZ-01 establishes identity and admission. RZ-02 builds the floor, obstacle
 hulls, and road trimeshes. RZ-03 puts the contact vehicle on a dynamic Rapier
-chassis, which now pushes props through Rapier instead of the hull impulse.
-Release is held for RZ-04.
+chassis, which pushes props through Rapier instead of the hull impulse.
+RZ-04 deletes the JavaScript contact integrator.
 
 ## Contract
 
@@ -61,6 +61,14 @@ for the remaining closing speed along the contact face. A vertical face falls
 back to the horizontal direction from the vehicle origin to the body. A
 kinematic plant receives the clamped pose and keeps its commanded speed.
 
+With `modules.vehicles: false`, contact chassis hold their pose as
+position-based kinematic bodies, keeping their colliders enabled. Dynamic
+props still move and collide with the held chassis when physics steps.
+Re-enabling restores the chassis's saved linear/angular velocity without
+catch-up motion. Teleports update the held pose; reset and disposal discard
+the saved motion. The general physics flag remains separate from vehicle
+admission.
+
 Editor Play, when no run is resolved, steps that live world description.
 Entered from stopped, it rebuilds rigid bodies at the authored pose before
 stepping. Pause then Play leaves them where they are. A resolved run keeps
@@ -73,6 +81,24 @@ and `lidarGeometryHash` stay the authored geometry. GPU LiDAR and photoreal
 cameras keep the authored pose.
 
 ## Progress and decision log
+
+### 2026-11-07 — RZ-04 review: disabled chassis do not integrate
+
+The shared runtime forwards vehicle admission independently of the sweep
+flag. A disabled contact chassis becomes position-based kinematic, so
+gravity, inertia, drive forces, and prop impacts cannot move it. Its collider
+still stops dynamic props and publishes contacts. Re-enabling restores saved
+body velocities. Reset/disposal clear the saved state. `worldHash`, the
+rigid-body component, and both older pinned tapes are unchanged. Verification
+and the separate kinematic acceptance blocker are recorded in the physics
+plan's RZ-04 review entry.
+
+### 2026-11-07 — RZ-04 contact motion is Rapier only
+
+The JavaScript contact integrator, settle, and floor catch are gone. A contact
+chassis still pushes props through Rapier. Kinematic and dynamic-bicycle cars
+keep the sweep. `worldHash` and both pinned tapes stay unchanged.
+Verification on 2026-11-07 matches the physics-plan RZ-04 entry.
 
 ### 2026-11-07 — RZ-03 chassis pushes props through Rapier
 

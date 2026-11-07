@@ -1,5 +1,4 @@
 import { CandidateOutputRuntime } from "../../autonomy/CandidateOutputRuntime.js";
-import { settleContactVehicles } from "../vehicles/contactBicycle.js";
 import { assertResolvedContactHosts } from "../vehicles/ContactHostContract.js";
 import { ControlRuntime } from "../../autonomy/ControlRuntime.js";
 import { getBuiltInVehicleManifest } from "../../vehicles/BuiltInVehicleManifests.js";
@@ -668,9 +667,8 @@ export class SimulationKernel {
             if (scenarioPreTerminal) return;
             // A contact chassis moves only in Rapier, so turning physics off must not freeze it.
             if (this.modules.physics || (this.modules.vehicles && this.context.physics.hasChassis?.())) {
-                this.context.physics.step(dt, { sweep: this.modules.physics });
+                this.context.physics.step(dt, { sweep: this.modules.physics, vehicles: this.modules.vehicles });
             }
-            if (this.modules.vehicles) settleContactVehicles(this.context.vehicles.list());
         });
 
         if (this.controlRuntime) {

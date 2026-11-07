@@ -68,6 +68,33 @@ python python/scripts/generate_proto.py
 python python/scripts/generate_proto.py --check
 ```
 
+## Running cross-language checks
+
+The Node camera-decoding/export and occupancy-parity tests select Python in
+this order: a nonempty `PYTHON` environment variable, the existing
+`python/.venv/bin/python`, then `python3` on `PATH`. This matches the parity
+probe. A failed selected interpreter reports its path and error; tests do
+not retry another interpreter or skip missing dependencies. Python 3.14 is
+outside the supported range.
+
+Reuse an existing supported project venv. If none exists, create one and
+install the declared test dependencies:
+
+```bash
+python3.12 -m venv python/.venv
+python/.venv/bin/python -m pip install -e './python[test]'
+```
+
+An explicit override also works for these Node checks:
+
+```bash
+PYTHON="$PWD/python/.venv/bin/python" npm test -- --test-concurrency=4
+```
+
+The npm Python-only commands still invoke `python3`; activate the venv before
+running `npm run test:python`, `npm run lint:python`, or `npm run proto:python`.
+Gymnasium/SB3 integration tests additionally need the existing `sb3` extra.
+
 ## Planning and controls
 
 `load_world(bundle)` reads the verified route, obstacle footprints, drivable

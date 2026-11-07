@@ -3,7 +3,7 @@ import { PLANT_CONTACT_BICYCLE_MODEL, PLANT_STATE_LENGTH } from "../../plugin/Pl
 import { getBuiltInVehicleManifest } from "../../vehicles/BuiltInVehicleManifests.js";
 import { CONTACT_BICYCLE_MODEL, DYNAMIC_BICYCLE_MODEL, normalizeVehicleManifest } from "../../vehicles/VehicleManifest.js";
 import { euler, finiteOr as finite, pose, vec3 } from "../../util/plainGeometry.js";
-import { groundClearance, stepContactPlant } from "./contactBicycle.js";
+import { groundClearance } from "./contactBicycle.js";
 import { deriveAxleDistances, longitudinalCommand, stepDynamicBicycle } from "./dynamicBicycle.js";
 
 export const VEHICLE_PLANT_KIND = "cev-sim.vehicle-plant";
@@ -271,7 +271,6 @@ export class KinematicVehiclePlant {
         this.lateralVelocity = 0;
         this.yawRate = 0;
         this.verticalVelocity = 0;
-        this.floorSupport = null;
         this.contactNormal = null;
         this.contactControlActive = false;
         this.onRoad = false;
@@ -280,6 +279,11 @@ export class KinematicVehiclePlant {
         if (this.motionModel === "dynamic-bicycle" || isDynamicPlugin(this) || isContactMotion(this)) {
             this.velocity.y = 0;
             this.velocity.z = 0;
+        }
+        if (isContactMotion(this)) {
+            this.bodyVelocity = { x: this.velocity.x, y: 0, z: 0 };
+            this.bodyAngularVelocity = vec3();
+            this.bodyAcceleration = vec3();
         }
         this.elapsedTime = 0;
         this.completed = false;
@@ -343,11 +347,7 @@ export class KinematicVehiclePlant {
                 maxJerk: finite(this.kinematics.maxJerk, 10),
             });
         }
-        if (this.motionModel === "contact-bicycle" || contactPlugin) {
-            // shortcut: the JS integrator stays for plants no Rapier chassis claimed, delete in RZ-04.
-            if (!this.rapierChassis) stepContactPlant(this, dt);
-            return;
-        }
+        if (this.motionModel === "contact-bicycle" || contactPlugin) return;
         if (this.motionModel === "dynamic-bicycle") {
             const axle = this.definition.axle ?? deriveAxleDistances([], this.kinematics.wheelbase);
             const dynamics = this.definition.dynamics ?? {};
@@ -462,6 +462,9 @@ export class KinematicVehiclePlant {
                 yawRate: finite(this.yawRate),
             } : {}),
             ...(isContactMotion(this) ? {
+                bodyVelocity: vec3(this.bodyVelocity),
+                bodyAngularVelocity: vec3(this.bodyAngularVelocity),
+                bodyAcceleration: vec3(this.bodyAcceleration),
                 verticalVelocity: finite(this.verticalVelocity),
                 axCommand: finite(this.axCommand),
                 contactControlActive: this.contactControlActive === true,

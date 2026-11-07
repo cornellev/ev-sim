@@ -34,6 +34,9 @@ jobs:
           npm run fixtures:environment-editor
           git diff --exit-code -- \
             tests/fixtures/headless/characterization.v1.json \
+            tests/fixtures/headless/characterization.v2.json \
+            tests/fixtures/headless/characterization.dynamic-bicycle.v1.json \
+            tests/fixtures/headless/characterization.contact-bicycle.v2.json \
             tests/fixtures/environment-editor/compatibility-baseline.v1.json
       - run: npm run proto:python
       - run: npm run lint:python

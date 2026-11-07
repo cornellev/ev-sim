@@ -47,6 +47,14 @@ function scaled(axis, length) {
     return { x: axis.x * length, y: axis.y * length, z: axis.z * length };
 }
 
+function chassisBodyVector(value, frame) {
+    return {
+        x: dot(value, frame.forward),
+        y: dot(value, frame.right),
+        z: dot(value, cross(frame.forward, frame.right)),
+    };
+}
+
 /** Rotate `v` by unit quaternion `q`. */
 function rotate(q, v) {
     const t = scaled(cross(q, v), 2);
@@ -734,7 +742,7 @@ export class PhysicsEngine {
             .setCollisionGroups(collisionGroups(CHASSIS_GROUP, 0xffff));
         const collider = this.world.createCollider(descriptor, body);
         const halfWidth = half.z + Math.abs(center.z);
-        const chassis = { plant, collider, clearance, halfWidth, pose: null, previousUp: 0, inContact: false, normal: null, rest: null };
+        const chassis = { plant, collider, clearance, halfWidth, pose: null, previousUp: 0, inContact: false, normal: null, rest: null, pausedMotion: null };
         this._placeChassis(body, chassis);
         plant.rapierChassis = true;
         return { body, chassis };
@@ -757,8 +765,44 @@ export class PhysicsEngine {
             z: forward.z * vx + right.z * vy,
         }, true);
         body.setAngvel(scaled(up, finite(plant.yawRate)), true);
+        plant.bodyVelocity = chassisBodyVector(body.linvel(), { forward, right });
+        plant.bodyAngularVelocity = chassisBodyVector(body.angvel(), { forward, right });
+        plant.bodyAcceleration = { x: 0, y: 0, z: 0 };
+        if (chassis.pausedMotion) {
+            chassis.pausedMotion = {
+                linearVelocity: { ...body.linvel() },
+                angularVelocity: { ...body.angvel() },
+            };
+        }
         chassis.pose = chassisPose(plant);
         chassis.previousUp = 0;
+    }
+
+    _admitChassis(state, enabled) {
+        const { body, chassis } = state;
+        if (!samePose(chassis.pose, chassisPose(chassis.plant))) this._placeChassis(body, chassis);
+        if (enabled) {
+            if (chassis.pausedMotion) {
+                body.setBodyType(this.RAPIER.RigidBodyType.Dynamic, true);
+                body.setLinvel(chassis.pausedMotion.linearVelocity, true);
+                body.setAngvel(chassis.pausedMotion.angularVelocity, true);
+                chassis.pausedMotion = null;
+            }
+            return;
+        }
+        if (!chassis.pausedMotion) {
+            chassis.pausedMotion = {
+                linearVelocity: { ...body.linvel() },
+                angularVelocity: { ...body.angvel() },
+            };
+            body.setBodyType(this.RAPIER.RigidBodyType.KinematicPositionBased, true);
+        }
+        body.resetForces(true);
+        body.resetTorques(true);
+        body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+        body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+        body.setNextKinematicTranslation(body.translation());
+        body.setNextKinematicRotation(body.rotation());
     }
 
     /**
@@ -769,7 +813,7 @@ export class PhysicsEngine {
     _driveChassis(state, deltaTime) {
         const { body, chassis } = state;
         const plant = chassis.plant;
-        if (!samePose(chassis.pose, chassisPose(plant))) this._placeChassis(body, chassis);
+        chassis.previousLinearVelocity = { ...body.linvel() };
         const origin = body.translation();
         const rotation = body.rotation();
         const up = rotate(rotation, Y_AXIS);
@@ -843,6 +887,13 @@ export class PhysicsEngine {
         }
         const vy = dot(linear, axes.right);
         const vUp = dot(linear, up);
+        plant.bodyVelocity = chassisBodyVector(linear, frame);
+        plant.bodyAngularVelocity = chassisBodyVector(angular, frame);
+        plant.bodyAcceleration = deltaTime > 0 ? chassisBodyVector({
+            x: (linear.x - chassis.previousLinearVelocity.x) / deltaTime,
+            y: (linear.y - chassis.previousLinearVelocity.y) / deltaTime,
+            z: (linear.z - chassis.previousLinearVelocity.z) / deltaTime,
+        }, frame) : { x: 0, y: 0, z: 0 };
         if (deltaTime > 0) {
             plant.acceleration.x = (vx - previousVx) / deltaTime;
             plant.acceleration.y = (vy - finite(plant.lateralVelocity)) / deltaTime;
@@ -1083,8 +1134,8 @@ export class PhysicsEngine {
         for (const state of this.vehicleStates) state.previous = vector(state.vehicle.position);
     }
 
-    /** `sweep: false` keeps sweep-driven cars where their plants put them; a chassis always steps. */
-    step(deltaTime, { sweep = true } = {}) {
+    /** `sweep: false` skips the sweep; `vehicles: false` holds contact chassis while object physics steps. */
+    step(deltaTime, { sweep = true, vehicles = true } = {}) {
         if (!this.world) return;
         this.pendingContacts = new Set();
         this._pushes = [];
@@ -1209,12 +1260,15 @@ export class PhysicsEngine {
             state.body.setNextKinematicTranslation(position);
             state.body.setNextKinematicRotation?.(yawQuaternion(state.vehicle.rotation?.y));
         }
-        for (const state of chassis) this._driveChassis(state, deltaTime);
+        for (const state of chassis) {
+            this._admitChassis(state, vehicles);
+            if (vehicles) this._driveChassis(state, deltaTime);
+        }
         this._stepRigidBodies();
         this.world.timestep = deltaTime;
         this.world.step();
         for (const state of chassis) {
-            this._readChassis(state, deltaTime);
+            if (vehicles) this._readChassis(state, deltaTime);
             this._chassisContacts(state);
         }
         this._publishRigidBodyPoses();
@@ -1265,6 +1319,10 @@ export class PhysicsEngine {
             vehicles: this.vehicleStates.map((state) => ({
                 id: state.id,
                 previous: vector(state.previous),
+                ...(state.chassis?.pausedMotion ? { pausedMotion: {
+                    linearVelocity: vector(state.chassis.pausedMotion.linearVelocity),
+                    angularVelocity: vector(state.chassis.pausedMotion.angularVelocity),
+                } } : {}),
             })),
             ...(this.rigidBodyStates.length > 0 ? { rigidBodies: this._rigidBodyPoses } : {}),
         };

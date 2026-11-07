@@ -9,7 +9,7 @@ import { generateHeadlessCharacterization } from "../tests/helpers/headlessChara
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fixtureDirectory = path.join(root, "tests", "fixtures", "headless");
 const tapePath = path.join(fixtureDirectory, "action-tape.v1.json");
-const characterizationPath = path.join(fixtureDirectory, "characterization.v1.json");
+const characterizationPath = path.join(fixtureDirectory, "characterization.v2.json");
 
 const tape = JSON.parse(await readFile(tapePath, "utf8"));
 const characterization = await generateHeadlessCharacterization(tape);
@@ -19,7 +19,7 @@ const dynamicPath = path.join(fixtureDirectory, "characterization.dynamic-bicycl
 const dynamic = await generateDynamicBicycleCharacterization();
 await writeFile(dynamicPath, `${JSON.stringify(dynamic, null, 2)}\n`);
 
-const contactPath = path.join(fixtureDirectory, "characterization.contact-bicycle.v1.json");
+const contactPath = path.join(fixtureDirectory, "characterization.contact-bicycle.v2.json");
 const contact = await generateContactBicycleCharacterization();
 await writeFile(contactPath, `${JSON.stringify(contact, null, 2)}\n`);
 

@@ -3,7 +3,6 @@ import { DEFAULT_DYNAMIC_BICYCLE } from "../../vehicles/VehicleManifest.js";
 import { deriveAxleDistances, GRAVITY } from "./dynamicBicycle.js";
 
 export const VX_REST = 1e-3;
-const CONTACT_SLACK = 1e-3;
 
 function num(value, fallback = 0) {
     const number = Number(value);
@@ -77,10 +76,6 @@ export function bodyAxes(yaw, pitch) {
     };
 }
 
-function dot(a, b) {
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
 /** Orthonormal motion frame, including the vertical component of cross-slope travel. */
 export function contactAxes(normal, yaw) {
     const n = unitNormal(normal);
@@ -98,13 +93,6 @@ export function contactAxes(normal, yaw) {
         },
         pitch,
     };
-}
-
-export function normalFromPitch(pitch, yaw) {
-    const sine = Math.sin(num(pitch));
-    const cosYaw = Math.cos(num(yaw));
-    const sinYaw = Math.sin(num(yaw));
-    return { x: -sine * cosYaw, y: Math.cos(num(pitch)), z: sine * sinYaw };
 }
 
 function unitNormal(normal) {
@@ -229,19 +217,6 @@ function steerLimit(plant) {
     return Math.min(finite(plant.kinematics?.maxSteeringAngle, 0.6), Math.PI * 0.49);
 }
 
-function worldVelocity(plant, alongRoad) {
-    const axes = alongRoad && plant.contactNormal
-        ? contactAxes(plant.contactNormal, plant.rotation.y)
-        : bodyAxes(plant.rotation.y, alongRoad ? plant.rotation.z : 0);
-    const vx = finite(plant.velocity?.x);
-    const vy = finite(plant.lateralVelocity);
-    return {
-        x: axes.forward.x * vx + axes.right.x * vy,
-        y: alongRoad ? axes.forward.y * vx + axes.right.y * vy : finite(plant.verticalVelocity),
-        z: axes.forward.z * vx + axes.right.z * vy,
-    };
-}
-
 function readForces(plant, dt, inContact, grade, normalLoad, delta) {
     const params = contactParameters(plant);
     if (plant.motionModel !== "plugin") {
@@ -289,59 +264,6 @@ export function groundClearance(wheels = []) {
     return clearance;
 }
 
-/** Support of the zero-roll wheel cylinders against the selected surface plane. */
-export function contactClearance(plant, normal, pitch) {
-    const wheels = plant.definition?.contactWheels;
-    if (!wheels?.length) return Math.max(0, finite(plant.groundClearance));
-    const yaw = finite(plant.rotation?.y);
-    const { forward, right } = bodyAxes(yaw, pitch);
-    const up = { x: -Math.cos(yaw) * Math.sin(pitch), y: Math.cos(pitch), z: Math.sin(yaw) * Math.sin(pitch) };
-    const n = unitNormal(normal);
-    let clearance = 0;
-    for (const wheel of wheels) {
-        const center = wheel.position;
-        const projectedCenter = center.x * dot(n, forward) + center.y * dot(n, up) - center.z * dot(n, right);
-        const steer = wheel.steerable ? finite(plant.steeringAngle) : 0;
-        const axle = {
-            x: -right.x * Math.cos(steer) + forward.x * Math.sin(steer),
-            y: -right.y * Math.cos(steer) + forward.y * Math.sin(steer),
-            z: -right.z * Math.cos(steer) + forward.z * Math.sin(steer),
-        };
-        const axial = Math.min(1, Math.abs(dot(n, axle)));
-        const radius = wheel.radius * Math.sqrt(Math.max(0, 1 - axial * axial)) + wheel.width * axial / 2;
-        clearance = Math.max(clearance, (radius - projectedCenter) / Math.max(1e-9, n.y));
-    }
-    return clearance;
-}
-
-export function sampleContactSupport(plant) {
-    const yaw = finite(plant.rotation.y);
-    const road = plant.groundSampler?.(plant.position.x, plant.position.z, yaw);
-    const floor = Object.hasOwn(plant, "groundPlane") ? plant.groundPlane : plant.floorSupport;
-    const sample = road && (!floor || finite(road.y) >= finite(floor.y))
-        ? { ...road, source: "road" }
-        : floor ? { y: finite(floor.y), normal: { x: 0, y: 1, z: 0 }, source: "floor" } : null;
-    if (!sample) return null;
-    const normal = unitNormal(sample.normal ?? normalFromPitch(sample.pitch, yaw));
-    const axes = contactAxes(normal, yaw);
-    return { ...sample, normal, pitch: axes.pitch, y: finite(sample.y) + contactClearance(plant, normal, axes.pitch) };
-}
-
-/** The checker floor held this car. The next step drives on it when no road is underneath. */
-export function catchContactFloor(plant, planeY, held) {
-    if (!plant) return;
-    if (!held) {
-        plant.floorSupport = null;
-        return;
-    }
-    const y = finite(planeY);
-    plant.position.y = y + contactClearance(plant, { x: 0, y: 1, z: 0 }, 0);
-    if (finite(plant.verticalVelocity) < 0) plant.verticalVelocity = 0;
-    plant.rotation.x = 0;
-    plant.rotation.z = 0;
-    plant.floorSupport = { y, normal: { x: 0, y: 1, z: 0 } };
-}
-
 /** Command and tire forces for one step on the given support. Gravity is not included. */
 export function contactTireStep(plant, inContact, normal, dt) {
     const yaw = finite(plant.rotation?.y);
@@ -366,7 +288,7 @@ export function contactTireStep(plant, inContact, normal, dt) {
 
 /**
  * World force and yaw torque for a Rapier chassis on `normal`. Also returns the
- * rest-rule inputs the JS integrator used to stop a parked car from creeping.
+ * rest-rule inputs that stop a parked car from creeping.
  */
 export function contactChassisPush(plant, inContact, normal, dt) {
     const { params, grade, normalLoad, forces } = contactTireStep(plant, inContact, normal, dt);
@@ -391,94 +313,6 @@ export function contactChassisPush(plant, inContact, normal, dt) {
     };
 }
 
-/** Free motion. The road catch runs after the obstacle sweep. */
-export function stepContactPlant(plant, dt) {
-    const step = Math.max(0, finite(dt));
-    if (step === 0) return;
-    const yaw = finite(plant.rotation?.y);
-    const sample = sampleContactSupport(plant);
-    if (sample) {
-        plant.rotation.x = 0;
-        plant.rotation.z = finite(sample.pitch);
-        plant.rotation.order = plant.rotation.order || "XYZ";
-    }
-    const pitch = finite(plant.rotation?.z);
-    const normal = sample?.normal ?? (sample ? normalFromPitch(pitch, yaw) : null);
-    const inContact = Boolean(sample) && plant.position.y <= finite(sample.y) + CONTACT_SLACK;
-    const { params, grade, normalLoad, forces } = contactTireStep(plant, inContact, normal, step);
-    if (!forces) return;
-    const vx = finite(plant.velocity?.x);
-    const vy = finite(plant.lateralVelocity);
-    const r = finite(plant.yawRate);
-    const sumFx = forces.Fxf + forces.Fxr;
-    const sumFy = forces.Fyf + forces.Fyr;
-    const yawAccel = (params.lf * forces.Fyf - params.lr * forces.Fyr) / params.yawInertia;
-    const gravX = -GRAVITY * Math.sin(pitch);
-    const gravZ = -GRAVITY * Math.cos(pitch);
-    const ax = sumFx / params.mass + (inContact ? grade.x : 0) + r * vy;
-    const ay = sumFy / params.mass + (inContact ? grade.y : 0) - r * vx;
-    let nextVx = vx + ax * step;
-    const nextVy = vy + ay * step;
-    const nextR = r + yawAccel * step;
-    const drive = params.mass * finite(plant.axCommand);
-    const net = drive + params.mass * grade.x;
-    const rollingCapacity = params.rollingResistance * normalLoad;
-    if (inContact && Math.abs(vx) < VX_REST && Math.abs(net) <= rollingCapacity) nextVx = 0;
-    else if (inContact && finite(plant.axCommand) === 0 && vx !== 0 && vx * nextVx < 0) nextVx = 0;
-    const axes = inContact ? contactAxes(normal, yaw) : bodyAxes(yaw, 0);
-    plant.velocity.x = nextVx;
-    plant.velocity.y = 0;
-    plant.velocity.z = 0;
-    plant.lateralVelocity = nextVy;
-    plant.yawRate = nextR;
-    plant.position.x += (axes.forward.x * nextVx + axes.right.x * nextVy) * step;
-    plant.position.z += (axes.forward.z * nextVx + axes.right.z * nextVy) * step;
-    if (inContact) {
-        const vertical = axes.forward.y * nextVx + axes.right.y * nextVy;
-        plant.position.y += vertical * step;
-        plant.verticalVelocity = vertical;
-        plant.acceleration.z = 0;
-    } else {
-        plant.verticalVelocity = finite(plant.verticalVelocity) - GRAVITY * step;
-        plant.position.y += plant.verticalVelocity * step;
-        plant.acceleration.z = gravZ;
-    }
-    plant.rotation.y = yaw + nextR * step;
-    plant.onRoad = inContact;
-    plant.contactNormal = inContact ? normal : null;
-    plant.acceleration.x = ax + (inContact ? 0 : gravX);
-    plant.acceleration.y = ay;
-}
-
-/** Lift only a pose that has gone through the pavement. A crate above the road stays. */
-export function settleContactBody(plant) {
-    if (!plant) return null;
-    const sample = sampleContactSupport(plant);
-    if (sample) {
-        plant.rotation.x = 0;
-        plant.rotation.z = finite(sample.pitch);
-        plant.rotation.order = plant.rotation.order || "XYZ";
-    }
-    if (!sample || plant.position.y > finite(sample.y) + CONTACT_SLACK) return null;
-    const normal = sample.normal;
-    const vel = worldVelocity(plant, plant.onRoad === true);
-    const into = vel.x * normal.x + vel.y * normal.y + vel.z * normal.z;
-    if (into < 0) {
-        vel.x -= into * normal.x;
-        vel.y -= into * normal.y;
-        vel.z -= into * normal.z;
-    }
-    const axes = contactAxes(normal, plant.rotation.y);
-    plant.velocity.x = vel.x * axes.forward.x + vel.y * axes.forward.y + vel.z * axes.forward.z;
-    plant.lateralVelocity = vel.x * axes.right.x + vel.y * axes.right.y + vel.z * axes.right.z;
-    plant.verticalVelocity = axes.forward.y * plant.velocity.x + axes.right.y * plant.lateralVelocity;
-    plant.position.y = finite(sample.y);
-    plant.onRoad = true;
-    plant.contactNormal = normal;
-    plant.floorSupport = sample.source === "floor" ? { y: finite(plant.groundPlane?.y ?? plant.floorSupport?.y) } : null;
-    return sample;
-}
-
 export function publishContactPose(vehicle, plant) {
     if (!vehicle || vehicle === plant) return;
     if (vehicle.position) {
@@ -500,14 +334,5 @@ export function publishContactPose(vehicle, plant) {
             vehicle.velocity.y = 0;
             vehicle.velocity.z = 0;
         }
-    }
-}
-
-export function settleContactVehicles(vehicles = []) {
-    for (const vehicle of vehicles) {
-        const plant = contactBicycleBody(vehicle);
-        if (!plant || plant.rapierChassis) continue;
-        settleContactBody(plant);
-        publishContactPose(vehicle, plant);
     }
 }

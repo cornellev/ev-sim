@@ -1,13 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { captureVehicleSnapshot } from "../app/autonomy/LocalizationMeasurements.js";
+import { buildImuMeasurement, captureVehicleSnapshot, createMeasurementSeedState } from "../app/autonomy/LocalizationMeasurements.js";
+import { quaternionInverse, rotateVectorByQuaternion, threeToRep103Vector } from "../app/autonomy/CoordinateFrames.js";
 import { applyManualDrive } from "../app/3d/vehicles/VehiclePlantAdapter.js";
-import { createPhysicsBackendSelection } from "../app/physics/PhysicsBackend.js";
-import { CHASSIS_RAY_SLACK, DYNAMIC_GROUP, PhysicsEngine } from "../app/physics/PhysicsEngine.js";
-import { settleContactVehicles, stepContactPlant } from "../app/simulation/vehicles/contactBicycle.js";
+import { CHASSIS_RAY_SLACK, DYNAMIC_GROUP } from "../app/physics/PhysicsEngine.js";
+import { normalizeRunSensor } from "../app/simulation/sensors/SensorTypeRegistry.js";
 import { createVehiclePlantDefinition, KinematicVehiclePlant } from "../app/simulation/vehicles/KinematicVehiclePlant.js";
+import { SeededRNG } from "../app/util/SeededRNG.js";
 import { CONTACT_BICYCLE_MODEL, normalizeVehicleManifest } from "../app/vehicles/VehicleManifest.js";
+import { rampSurface, runChassis, startChassis } from "./helpers/contactChassisRun.js";
 
 const DT = 0.01;
 const FLUSH_WHEELS = [
@@ -34,41 +36,8 @@ function car({ id = "ego", position = {}, yaw = 0, wheels = FLUSH_WHEELS } = {})
     return plant;
 }
 
-async function start(world, vehicles) {
-    const events = [];
-    const physics = new PhysicsEngine({
-        vehicles: () => ({ vehicles }),
-        objects: () => ({ boxes: () => [] }),
-        bindings: () => ({ signalStore: { emitTelemetryEvent: (event) => events.push(event) } }),
-    });
-    await physics.configureRun({ manifest: {}, worldDescription: world, backendSelection: createPhysicsBackendSelection(world) });
-    return { physics, events };
-}
-
-function run(physics, vehicles, steps, command = null, options = {}) {
-    for (let index = 0; index < steps; index += 1) {
-        for (const vehicle of vehicles) if (command) applyManualDrive(vehicle, command);
-        physics.beginStep();
-        for (const vehicle of vehicles) vehicle.update(DT);
-        physics.step(DT, options);
-        physics.syncAndPublishContacts({ step: index + 1, timeNs: (index + 1) * DT * 1e9 });
-        options.each?.(index);
-    }
-}
-
-function rampSurface(pitch, length = 60) {
-    const rise = Math.tan(pitch) * length;
-    const start = -Math.tan(pitch) * 5;
-    return {
-        id: "ramp",
-        kind: "road-mesh",
-        vertices: [
-            { x: -5, y: start, z: -10 }, { x: length, y: rise, z: -10 },
-            { x: length, y: rise, z: 10 }, { x: -5, y: start, z: 10 },
-        ],
-        indices: [0, 1, 2, 0, 2, 3],
-    };
-}
+const start = startChassis;
+const run = runChassis;
 
 function wall(id, center, yaw, half = { x: 0.5, z: 5 }) {
     const corners = [[-half.x, -half.z], [half.x, -half.z], [half.x, half.z], [-half.x, half.z]];
@@ -146,20 +115,11 @@ test("acceleration mode drives forward at about the command", async () => {
     physics.disposeRun();
 });
 
-test("positive steer turns the same way as the JS integrator", async () => {
+test("positive steer turns the chassis positive", async () => {
     const ego = car({ position: { y: 0.01 } });
     const { physics } = await start({ obstacles: [], groundPlane: { y: 0 } }, [ego]);
     run(physics, [ego], 30);
     run(physics, [ego], 300, { mode: "acceleration", accelerationX: 2, steeringRad: 0.2 });
-
-    const reference = car();
-    reference.groundPlane = { y: 0 };
-    for (let index = 0; index < 300; index += 1) {
-        applyManualDrive(reference, { mode: "acceleration", accelerationX: 2, steeringRad: 0.2 });
-        stepContactPlant(reference, DT);
-        settleContactVehicles([reference]);
-    }
-    assert.ok(reference.rotation.y > 0.1, `reference yaw ${reference.rotation.y}`);
     assert.ok(ego.rotation.y > 0.1, `chassis yaw ${ego.rotation.y}`);
     assert.ok(ego.yawRate > 0);
     physics.disposeRun();
@@ -183,7 +143,49 @@ test("a ramp pitches the chassis with zero roll facing along it and across it", 
     assert.ok(Math.abs(across.rotation.z) < 0.01, `across pitch ${across.rotation.z}`);
     assert.equal(across.rotation.x, 0);
     assert.ok(Math.abs(across.rotation.y - Math.PI / 2) < 0.05, `across yaw ${across.rotation.y}`);
+    assert.ok(across.lateralVelocity > 1e-4, `downhill vy ${across.lateralVelocity}`);
+    assert.ok(across.position.x < 30, `downhill x ${across.position.x}`);
     second.physics.disposeRun();
+});
+
+test("ramp landings retain physical body gyro and inertial acceleration at multiple headings", async () => {
+    for (const yaw of [0, Math.PI / 3, -0.6]) {
+        const ego = car({ position: { x: 5, y: 4 }, yaw });
+        const { physics } = await start({ obstacles: [], groundPlane: { y: -5 }, drivableSurfaces: [rampSurface(0.3)] }, [ego]);
+        let previous = null;
+        let peakPitchRate = 0;
+        try {
+            for (let step = 1; step <= 180; step += 1) {
+                const body = physics.vehicleStates[0].body;
+                const beforeVelocity = { ...body.linvel() };
+                run(physics, [ego], 1);
+                const inverse = quaternionInverse(body.rotation());
+                const angular = threeToRep103Vector(rotateVectorByQuaternion(body.angvel(), inverse));
+                const velocity = threeToRep103Vector(rotateVectorByQuaternion(body.linvel(), inverse));
+                const afterVelocity = body.linvel();
+                const acceleration = threeToRep103Vector(rotateVectorByQuaternion({
+                    x: (afterVelocity.x - beforeVelocity.x) / DT,
+                    y: (afterVelocity.y - beforeVelocity.y) / DT,
+                    z: (afterVelocity.z - beforeVelocity.z) / DT,
+                }, inverse));
+                const snapshot = captureVehicleSnapshot(ego, step * 10_000_000, previous);
+                for (const axis of ["x", "y", "z"]) {
+                    assert.ok(Math.abs(snapshot.bodyAngularVelocity[axis] - angular[axis]) < 1e-6, `gyro ${yaw}: ${axis}`);
+                    assert.ok(Math.abs(snapshot.bodyVelocity[axis] - velocity[axis]) < 1e-6, `velocity ${yaw}: ${axis}`);
+                    assert.ok(Math.abs(snapshot.bodyAcceleration[axis] - acceleration[axis]) < 1e-3, `acceleration ${yaw}: ${axis}`);
+                    if (previous) {
+                        const alpha = (snapshot.bodyAngularVelocity[axis] - previous.bodyAngularVelocity[axis]) / DT;
+                        assert.ok(Math.abs(snapshot.bodyAngularAcceleration[axis] - alpha) < 1e-9);
+                    }
+                }
+                peakPitchRate = Math.max(peakPitchRate, Math.abs(angular.y));
+                previous = snapshot;
+            }
+            assert.ok(peakPitchRate > 0.1, `pitch rate ${yaw}: ${peakPitchRate}`);
+        } finally {
+            physics.disposeRun();
+        }
+    }
 });
 
 test("a rotated wall stops the chassis at its hull and reports the contact", async () => {
@@ -291,11 +293,50 @@ test("a stop command does not reverse the chassis and it stays parked", async ()
     physics.disposeRun();
 });
 
-test("an unclaimed contact plant still integrates on its own", () => {
+test("a contact plant without a chassis does not integrate", () => {
     const ego = car({ position: { y: 0 } });
-    ego.groundPlane = { y: 0 };
     applyManualDrive(ego, { mode: "acceleration", accelerationX: 2 });
     for (let index = 0; index < 20; index += 1) ego.update(DT);
     assert.equal(ego.rapierChassis, undefined);
-    assert.ok(ego.velocity.x > 0.1, `vx ${ego.velocity.x}`);
+    assert.equal(ego.velocity.x, 0);
+    assert.equal(ego.longitudinal.mode, "acceleration");
+    assert.equal(ego.longitudinal.accelerationMps2, 2);
+});
+
+test("free fall specific force cancels and a held grade does not", async () => {
+    const config = normalizeRunSensor({
+        type: "imu",
+        calibration: {
+            gravity: 9.81,
+            angularVelocityStdDev: { x: 0, y: 0, z: 0 },
+            linearAccelerationStdDev: { x: 0, y: 0, z: 0 },
+            angularRandomWalk: { x: 0, y: 0, z: 0 },
+            accelerationRandomWalk: { x: 0, y: 0, z: 0 },
+            turnOnBias: { randomize: false, angular: { x: 0, y: 0, z: 0 }, acceleration: { x: 0, y: 0, z: 0 } },
+            noise: {},
+        },
+    });
+    const measure = (body) => buildImuMeasurement(
+        captureVehicleSnapshot(body, 10_000_000),
+        config,
+        new SeededRNG("contact-imu"),
+        createMeasurementSeedState(config, new SeededRNG("contact-imu")),
+    ).measurement.linearAcceleration;
+
+    const falling = car({ position: { y: 3 } });
+    const airborne = await start({ obstacles: [], groundPlane: { y: 0 } }, [falling]);
+    run(airborne.physics, [falling], 1);
+    const fall = measure(falling);
+    assert.ok(Math.abs(fall.z) < 0.05, `free fall z ${fall.z}`);
+    airborne.physics.disposeRun();
+
+    const pitch = 0.4;
+    const held = car({ position: { x: 5, y: Math.tan(pitch) * 5 + 0.05 } });
+    held.definition.dynamics.rollingResistance = 1;
+    const grounded = await start({ obstacles: [], groundPlane: { y: -5 }, drivableSurfaces: [rampSurface(pitch)] }, [held]);
+    run(grounded.physics, [held], 80);
+    const grade = measure(held);
+    assert.ok(Math.abs(grade.x) > 1, `held grade x ${grade.x}`);
+    assert.ok(Math.abs(held.velocity.x) < 0.05, `held vx ${held.velocity.x}`);
+    grounded.physics.disposeRun();
 });

@@ -6,6 +6,8 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { runPython } from "./helpers/pythonExecutable.js";
+
 import { rep103ToThreeVector } from "../app/autonomy/CoordinateFrames.js";
 import { encodeTopicValue, registerMsgDefinition } from "../app/client/TopicCodec.js";
 import { measuredStateProfileRef, routeSafetyProfileRef } from "../app/simulation/headless/ProfileRegistry.js";
@@ -381,11 +383,7 @@ test("photometric noise changes analytic RGB and leaves depth unchanged", async 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 function pythonClip(script, args) {
-    return spawnSync("python3", ["-c", script, ...args], {
-        cwd: REPO_ROOT,
-        encoding: "utf8",
-        env: { ...process.env, PYTHONPATH: path.join(REPO_ROOT, "python/src") },
-    });
+    return runPython(["-c", script, ...args]);
 }
 
 test("Python decodes retained RGB, depth, and CameraInfo SFLog messages", async (context) => {
@@ -694,24 +692,16 @@ print(json.dumps({
     assert.equal(summary.interrupted, false);
     if (!ffmpegAvailable()) return;
     const clips = path.join(root, "clips");
-    const command = spawnSync("python3", [
+    const command = runPython([
         "-m", "cev_sim.cosmos_clip", "export",
         "--run-output", published,
         "--camera-id", "front-camera",
         "--window-index", "0",
         "--output-root", clips,
-    ], {
-        cwd: REPO_ROOT,
-        encoding: "utf8",
-        env: { ...process.env, PYTHONPATH: path.join(REPO_ROOT, "python/src") },
-    });
+    ]);
     assert.equal(command.status, 0, command.stderr);
     const clip = command.stdout.trim();
-    const checked = spawnSync("python3", ["-m", "cev_sim.cosmos_clip", "check", clip], {
-        cwd: REPO_ROOT,
-        encoding: "utf8",
-        env: { ...process.env, PYTHONPATH: path.join(REPO_ROOT, "python/src") },
-    });
+    const checked = runPython(["-m", "cev_sim.cosmos_clip", "check", clip]);
     assert.equal(checked.status, 0, checked.stderr);
     const report = JSON.parse(checked.stdout);
     assert.equal(report.frameCount, 121);

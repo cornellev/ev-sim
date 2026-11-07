@@ -10,6 +10,7 @@ import {
 } from "./CoordinateFrames.js";
 import { enuOffsetToWgs84 } from "./Geodesy.js";
 import { dynamicBicycleBody } from "../simulation/vehicles/dynamicBicycle.js";
+import { contactBicycleBody } from "../simulation/vehicles/contactBicycle.js";
 
 const GRAVITY = 9.80665;
 const UNAVAILABLE_COVARIANCE = -1;
@@ -135,6 +136,7 @@ function dynamicBicycleSource(vehicle) {
 
 export function captureVehicleSnapshot(vehicle, captureTimeNs, previous = null, stepNs = 16_666_667) {
     const dynamic = dynamicBicycleSource(vehicle);
+    const contact = contactBicycleBody(vehicle);
     const pose = rep103PoseFromVehicle(vehicle);
     const orientation = eulerToQuaternion(pose.rotation);
     const wheelbase = Number(
@@ -146,7 +148,7 @@ export function captureVehicleSnapshot(vehicle, captureTimeNs, previous = null, 
     );
     const steeringAngle = Number((dynamic ?? vehicle)?.steeringAngle || 0);
     // Plant +vy is to the right. REP-103 +y is left.
-    const bodyVelocity = dynamic
+    const bodyVelocity = contact ? vec3(contact.bodyVelocity) : dynamic
         ? {
             x: Number(dynamic.velocity?.x || 0),
             y: -Number(dynamic.lateralVelocity || 0),
@@ -157,14 +159,16 @@ export function captureVehicleSnapshot(vehicle, captureTimeNs, previous = null, 
     const yawRate = dynamic
         ? Number(dynamic.yawRate || 0)
         : (wheelbase > 0 ? (speed / wheelbase) * Math.tan(steeringAngle) : 0);
-    const bodyAngularVelocity = { x: 0, y: 0, z: yawRate };
+    const bodyAngularVelocity = contact ? vec3(contact.bodyAngularVelocity) : { x: 0, y: 0, z: yawRate };
 
     let bodyAcceleration = { x: 0, y: 0, z: 0 };
     let bodyAngularAcceleration = { x: 0, y: 0, z: 0 };
     const captureDt = previous?.captureTimeNs != null && captureTimeNs > previous.captureTimeNs
         ? (captureTimeNs - previous.captureTimeNs) / 1e9
         : 0;
-    if (dynamic) {
+    if (contact) {
+        bodyAcceleration = vec3(contact.bodyAcceleration);
+    } else if (dynamic) {
         // shortcut: ax/ay are the last plant step, upgrade when a same-step clamp must be in the IMU sample.
         bodyAcceleration = {
             x: Number(dynamic.acceleration?.x || 0),
@@ -180,16 +184,18 @@ export function captureVehicleSnapshot(vehicle, captureTimeNs, previous = null, 
     }
     if (captureDt > 0) {
         bodyAngularAcceleration = {
-            x: 0,
-            y: 0,
-            z: (yawRate - Number(previous.bodyAngularVelocity?.z || 0)) / captureDt,
+            x: contact ? (bodyAngularVelocity.x - Number(previous.bodyAngularVelocity?.x || 0)) / captureDt : 0,
+            y: contact ? (bodyAngularVelocity.y - Number(previous.bodyAngularVelocity?.y || 0)) / captureDt : 0,
+            z: (bodyAngularVelocity.z - Number(previous.bodyAngularVelocity?.z || 0)) / captureDt,
         };
     }
     // The body frame rotates with the vehicle, so the derivative of body-frame
     // velocity omits omega x v. In a steady turn that term is the whole
     // centripetal acceleration: yaw rate times forward speed, toward the turn.
-    bodyAcceleration.x -= yawRate * bodyVelocity.y;
-    bodyAcceleration.y += yawRate * bodyVelocity.x;
+    if (!contact) {
+        bodyAcceleration.x -= yawRate * bodyVelocity.y;
+        bodyAcceleration.y += yawRate * bodyVelocity.x;
+    }
 
     return {
         captureTimeNs,

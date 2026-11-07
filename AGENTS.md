@@ -153,9 +153,11 @@ This is a separate `PHY-*` program. Do not treat it as a headless PR 13.
 Do not add suspension springs or wheel spin. Rapier drive contact stays off
 the kinematic `bicycle` and `dynamic-bicycle` plants. Those plants and their
 `characterization.v1.json` and `characterization.dynamic-bicycle.v1.json`
-tapes stay pinned. The separate `RZ-*` program permits a Rapier chassis only
+tapes stay pinned. The separately reviewed steering-sign correction uses
+`characterization.v2.json` for current-runtime acceptance; it does not rewrite
+the historical v1 tape or change either plant. The separate `RZ-*` program permits a Rapier chassis only
 for `contact-bicycle-v2` and contact plugins with resolved `contactHost: 2`.
-RZ-01 establishes identity and admission. RZ-02 builds the floor, obstacle hulls, and road trimeshes. RZ-03 puts the contact vehicle on a dynamic Rapier chassis. Release waits for RZ-04.
+RZ-01 establishes identity and admission. RZ-02 builds the floor, obstacle hulls, and road trimeshes. RZ-03 puts the contact vehicle on a dynamic Rapier chassis. RZ-04 deletes the JavaScript contact integrator. The contact tape is `characterization.contact-bicycle.v2.json`.
 A plugin `dynamics.plant` remains an override of the built-in plant.
 
 Update the progress and decision log in `docs/physics-plan.md` whenever a PHY
@@ -174,8 +176,9 @@ environment-editor rigid-body component, read:
 This is a separate program from `PHY-*`. Kinematic and dynamic-bicycle plants
 keep their sweep and have no Rapier gravity. The separate `RZ-*` contact-v2
 program may use Rapier gravity and drive contact. RZ-02 supplies the world
-colliders for that chassis. RZ-03 implements the chassis motion. Release
-waits for RZ-04. Worlds with no rigid body keep their current `worldHash`.
+colliders for that chassis. RZ-03 implements the chassis motion. RZ-04
+deletes the JavaScript contact integrator. Worlds with no rigid body keep
+their current `worldHash`.
 
 Update the progress and decision log in `docs/rigid-body-plan.md` whenever this
 program changes a contract, hash, acceptance criterion, or milestone status.
@@ -222,10 +225,13 @@ status.
   source of truth. Preserve field numbers and use additive changes within v1.
 - Keep generated bindings isolated and reproducible; do not hand-edit them.
 - `tests/fixtures/headless/action-tape.v1.json` is the canonical PR 1 input.
-  `characterization.v1.json` is generated from the current production
-  `SimulationEngine`.
-- Regenerate it with `npm run fixtures:headless`. Any fixture delta must be
-  reviewed as a simulator-contract change, not accepted mechanically.
+  `characterization.v1.json` is immutable historical evidence, protected by
+  the vehicle identity ledger checksum. `characterization.v2.json` records
+  the current production `SimulationEngine` with positive-left steering.
+- `npm run fixtures:headless` regenerates the active v2, dynamic-bicycle-v1,
+  and contact-v2 fixtures; it never writes historical `characterization.v1.json`.
+  Any fixture delta must be reviewed as a simulator-contract change, not
+  accepted mechanically. The dynamic-bicycle-v1 fixture remains pinned.
 
 ## Required verification
 

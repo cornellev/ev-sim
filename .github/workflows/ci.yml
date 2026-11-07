@@ -39,7 +39,11 @@ jobs:
       - name: Verify characterization fixture drift
         run: |
           npm run fixtures:headless
-          git diff --exit-code -- tests/fixtures/headless/characterization.v1.json
+          git diff --exit-code -- \
+            tests/fixtures/headless/characterization.v1.json \
+            tests/fixtures/headless/characterization.v2.json \
+            tests/fixtures/headless/characterization.dynamic-bicycle.v1.json \
+            tests/fixtures/headless/characterization.contact-bicycle.v2.json
       - name: Verify environment-editor fixture drift
         run: |
           npm run fixtures:environment-editor
