@@ -35,6 +35,19 @@ export const PHYSICS_BACKEND_CONFIG_V2 = Object.freeze({
     },
 });
 export const PHYSICS_BACKEND_CONFIG_HASH_V2 = simulationSha256(PHYSICS_BACKEND_CONFIG_V2);
+export const STATIC_COLLISION = Object.freeze({
+    id: "obstacle-hull-prisms-v1",
+    floor: "always",
+    drivable: "chassis-trimesh-v1",
+});
+const PHYSICS_BACKEND_CONFIG_HASH_STATIC = simulationSha256({
+    ...PHYSICS_BACKEND_CONFIG,
+    staticCollision: STATIC_COLLISION,
+});
+const PHYSICS_BACKEND_CONFIG_HASH_V2_STATIC = simulationSha256({
+    ...PHYSICS_BACKEND_CONFIG_V2,
+    staticCollision: STATIC_COLLISION,
+});
 
 
 function worldHasCollisionProxies(world) {
@@ -42,18 +55,33 @@ function worldHasCollisionProxies(world) {
         || (world?.primitives ?? []).length > 0;
 }
 
+function worldHasRigidBodies(world) {
+    return (world?.rigidBodies ?? []).length > 0;
+}
+
 export function createPhysicsBackendSelection(world = null) {
-    const compound = worldHasCollisionProxies(world?.description ?? world);
+    const description = world?.description ?? world;
+    const compound = worldHasCollisionProxies(description);
+    const props = worldHasRigidBodies(description);
     return {
         kind: PHYSICS_BACKEND_KIND,
         capabilityId: compound ? PHYSICS_CAPABILITY_ID_V2 : PHYSICS_CAPABILITY_ID,
         version: RAPIER3D_VERSION,
-        configHash: compound ? PHYSICS_BACKEND_CONFIG_HASH_V2 : PHYSICS_BACKEND_CONFIG_HASH,
+        configHash: props
+            ? (compound ? PHYSICS_BACKEND_CONFIG_HASH_V2_STATIC : PHYSICS_BACKEND_CONFIG_HASH_STATIC)
+            : (compound ? PHYSICS_BACKEND_CONFIG_HASH_V2 : PHYSICS_BACKEND_CONFIG_HASH),
     };
 }
 
 export function listPhysicsBackendSelections() {
-    return [createPhysicsBackendSelection(), createPhysicsBackendSelection({ assetProxies: [{ collision: [{}] }] })];
+    const compound = { assetProxies: [{ collision: [{}] }] };
+    const props = { rigidBodies: [{}] };
+    return [
+        createPhysicsBackendSelection(),
+        createPhysicsBackendSelection(compound),
+        createPhysicsBackendSelection(props),
+        createPhysicsBackendSelection({ ...compound, ...props }),
+    ];
 }
 
 export function sortBackendSelections(entries = []) {

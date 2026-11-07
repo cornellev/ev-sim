@@ -666,7 +666,10 @@ export class SimulationKernel {
 
         phase("physics", () => {
             if (scenarioPreTerminal) return;
-            if (this.modules.physics) this.context.physics.step(dt);
+            // A contact chassis moves only in Rapier, so turning physics off must not freeze it.
+            if (this.modules.physics || (this.modules.vehicles && this.context.physics.hasChassis?.())) {
+                this.context.physics.step(dt, { sweep: this.modules.physics });
+            }
             if (this.modules.vehicles) settleContactVehicles(this.context.vehicles.list());
         });
 

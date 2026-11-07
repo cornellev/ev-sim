@@ -19,7 +19,7 @@ Config/Vehicle controls remain a later plugin milestone.
 
 ## Operator workflow
 
-Open **Run configuration** from the workspace switcher. The header **Simple / Advanced** control changes presentation only. Both views edit one draft and share catalog create, duplicate, delete, bundle import and export, **Validate**, optimistic revision saves, and **Launch**. With no `cev-sim.ui.runConfig.mode` value, a stored `cev-sim.ui.advancedAuthoring` of `true` opens Advanced. Otherwise the page opens Simple. Choosing a view writes only `cev-sim.ui.runConfig.mode`. That write does not change the global authoring preference, which still belongs to the other editors. Inside this workspace the Advanced view shows every technical field.
+Open **Run configuration** from the workspace switcher. **Settings** in that menu has the **Simple / Advanced** control, and it changes presentation only. Both views edit one draft and share catalog create, duplicate, delete, bundle import and export, **Validate**, optimistic revision saves, and **Launch**. With no `cev-sim.ui.runConfig.mode` value, a stored `cev-sim.ui.advancedAuthoring` of `true` opens Advanced. Otherwise the page opens Simple. Choosing a view writes only `cev-sim.ui.runConfig.mode`. That write does not change the global authoring preference, which still belongs to the other editors. Inside this workspace the Advanced view shows every technical field.
 
 Simple edits the run name, scenario, ego vehicle, execution profile, pacing, speed, and recording policy. The execution profile is **Standard Simulation** or **External Controller**. Applying one confirms the reviewed field changes first. The profile is inferred from the manifest and is not stored. A run with no scenario can edit position, heading, and longitudinal speed; a scenario run shows the scenario's initial state. **Customize**, **Edit**, and validation targets open the matching Advanced tab.
 
@@ -97,8 +97,9 @@ rejects resolved built-in v1 contact records and contact plugins without
 exact numeric marker 2, with an `UNSUPPORTED_CAPABILITY` re-resolution error.
 Inspection and authoring import still verify original hashes before any
 migration; hash projection never backfills a missing marker. Run-bundle v1,
-identity profiles, backend hashes, and `worldHash` are unchanged. RZ-01 is
-preparatory and release waits for the RZ-02–04 Rapier implementation.
+identity profiles, backend hashes, and `worldHash` are unchanged. RZ-01 and
+RZ-02 prepared identity and the static world; RZ-03 supplies the chassis.
+Release waits for RZ-04.
 
 VIS-12a activates manifest v11 and the plugin-free
 `resolved.identityProfile = { id: "world-bound", version: 2 }`, semantic and
@@ -318,10 +319,11 @@ truth, portable LiDAR, and analytic render-scene generation.
 Legacy worlds pin `rapier3d-swept-prism-v1` / Rapier `0.19.3`. Worlds with
 collision asset proxies pin `rapier3d-swept-compound-v2`, whose config hash
 covers continuous 3D swept AABB/convex SAT, compound contact collapse, and
-UTF-8 earliest-contact order. Browser, direct headless, managed admission, CLI,
-and Python validate the world-derived selection. Supervisor capabilities
-advertise both identities; a prepared run accepts exactly the one its world
-requires.
+UTF-8 earliest-contact order. A world with `rigidBodies` keeps that
+capability and adds `staticCollision` to the hashed config. Browser, direct
+headless, managed admission, CLI, and Python validate the world-derived
+selection. Supervisor capabilities advertise every selection; a prepared run
+accepts exactly the one its world requires.
 
 Canonical roads may include sparse `turnRules` entries shaped as
 `{ nodeId, fromEdgeId, toEdgeId, allowed }`. Rule references, incidence,

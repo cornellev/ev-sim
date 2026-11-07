@@ -7,7 +7,7 @@ import { createSimulationRuntimeContext } from "../app/simulation/kernel/Simulat
 import { axleContactForces, contactLongitudinalCommand, settleContactBody } from "../app/simulation/vehicles/contactBicycle.js";
 import { createVehiclePlantDefinition, KinematicVehiclePlant } from "../app/simulation/vehicles/KinematicVehiclePlant.js";
 import { CONTACT_BICYCLE_MODEL, normalizeVehicleManifest } from "../app/vehicles/VehicleManifest.js";
-import { replayContactRamp } from "./helpers/contactRampRegression.js";
+import { LANDING_TREAD_TOLERANCE, replayContactRamp } from "./helpers/contactRampRegression.js";
 
 const fixture = JSON.parse(await readFile(new URL("fixtures/headless/contact-stopping-regression.v1.json", import.meta.url)));
 const recordedSteer = 0.13089969651756864;
@@ -163,7 +163,7 @@ test("the reported keyboard recording stays supported and stops identically in b
     assert.deepEqual(numeric.states, browser.states);
     assert.ok(numeric.floorSteps > 0);
     assert.ok(numeric.maxLateralSpeed < 6, `sideways runaway: ${numeric.maxLateralSpeed}`);
-    for (const state of numeric.states) assert.ok(state.position.y >= 0.0171 - 1e-9, "tread below floor");
+    for (const state of numeric.states) assert.ok(state.position.y >= 0.0171 - LANDING_TREAD_TOLERANCE, "tread below floor");
     const rest = numeric.states.slice(-Math.floor(10e9 / fixture.stepNs));
     for (const state of rest) {
         assert.ok(Math.hypot(state.velocity.x, state.lateralVelocity) < 1e-3, `continued hunting: ${state.velocity.x}`);

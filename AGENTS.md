@@ -155,7 +155,7 @@ the kinematic `bicycle` and `dynamic-bicycle` plants. Those plants and their
 `characterization.v1.json` and `characterization.dynamic-bicycle.v1.json`
 tapes stay pinned. The separate `RZ-*` program permits a Rapier chassis only
 for `contact-bicycle-v2` and contact plugins with resolved `contactHost: 2`.
-RZ-01 establishes identity and admission. RZ-02 builds the floor, obstacle hulls, and road trimeshes. Release waits for RZ-03–04.
+RZ-01 establishes identity and admission. RZ-02 builds the floor, obstacle hulls, and road trimeshes. RZ-03 puts the contact vehicle on a dynamic Rapier chassis. Release waits for RZ-04.
 A plugin `dynamics.plant` remains an override of the built-in plant.
 
 Update the progress and decision log in `docs/physics-plan.md` whenever a PHY
@@ -174,8 +174,8 @@ environment-editor rigid-body component, read:
 This is a separate program from `PHY-*`. Kinematic and dynamic-bicycle plants
 keep their sweep and have no Rapier gravity. The separate `RZ-*` contact-v2
 program may use Rapier gravity and drive contact. RZ-02 supplies the world
-colliders for that chassis. Neither RZ-01 nor RZ-02 implements that motion.
-Worlds with no rigid body keep their current `worldHash`.
+colliders for that chassis. RZ-03 implements the chassis motion. Release
+waits for RZ-04. Worlds with no rigid body keep their current `worldHash`.
 
 Update the progress and decision log in `docs/rigid-body-plan.md` whenever this
 program changes a contract, hash, acceptance criterion, or milestone status.

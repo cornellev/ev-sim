@@ -5,7 +5,9 @@ milestone. Kinematic and dynamic-bicycle vehicles keep their sweep with
 Rapier gravity off, and both characterization tapes stay pinned. The separate
 `RZ-*` program permits Rapier gravity and drive contact for contact-v2 vehicles.
 RZ-01 establishes identity and admission. RZ-02 builds the floor, obstacle
-hulls, and road trimeshes. Release is held for RZ-03–04.
+hulls, and road trimeshes. RZ-03 puts the contact vehicle on a dynamic Rapier
+chassis, which now pushes props through Rapier instead of the hull impulse.
+Release is held for RZ-04.
 
 ## Contract
 
@@ -38,17 +40,22 @@ Dynamic bodies use the existing Rapier world gravity. Kinematic bodies and
 queue until the next physics step. The floor slab is built whenever the document floor has a finite height,
 including a world with no rigid bodies. Turning the collider off keeps the
 slab for `CHASSIS_GROUP` and removes `DYNAMIC_GROUP`, so props fall
-through it. The sweep-driven vehicle collider is in `DYNAMIC_GROUP`, so
-chassis-only floors and roads do not hit it. Static obstacles are convex
+through it. Sweep-driven vehicles stay kinematic, so the floor and the
+road meshes do not hit them. A contact chassis is dynamic and collides
+with the floor, roads, obstacles, other cars, and props. Static obstacles are convex
 hulls, or one convex prism per footprint triangle. Legacy environment
-boxes stay bounds cuboids. Drivable surfaces are fixed trimeshes that
-collide with `CHASSIS_GROUP` only and are left out of the contact-id map.
-`worldHash` does not change. The vehicle
-hull sweep treats a rigid body as another obstacle, and the Rapier car
-collider uses that hull's center and yaw. A hit that still has time left
-stops the car short of the body. A dynamic body already overlapping the hull
-is moved out along the sweep normal, including up, and the car keeps the
-part of the step that does not enter it. That overlap does not also take the
+boxes stay bounds cuboids. Drivable surfaces become fixed trimeshes only
+when a contact vehicle is in the run. Those meshes use `ROAD_GROUP`
+membership and `CHASSIS_GROUP` filter, and stay out of the contact-id map.
+`worldHash` does not change. A world with `rigidBodies` hashes
+`staticCollision` into its physics config. A world without them keeps the
+previous config hash. The vehicle
+hull sweep treats a rigid body as another obstacle for kinematic and
+dynamic-bicycle cars. A contact chassis skips that sweep; Rapier pushes the
+crate. A kinematic hit that still has time left stops the car short of the
+body. A dynamic body already overlapping the hull is moved out along the
+sweep normal, including up, and the sweep-driven car keeps the part of the
+step that does not enter it. That overlap does not also take the
 closing-speed impulse. A separated approach still gives the body an impulse
 for the remaining closing speed along the contact face. A vertical face falls
 back to the horizontal direction from the vehicle origin to the body. A
@@ -66,6 +73,26 @@ and `lidarGeometryHash` stay the authored geometry. GPU LiDAR and photoreal
 cameras keep the authored pose.
 
 ## Progress and decision log
+
+### 2026-11-07 — RZ-03 chassis pushes props through Rapier
+
+A contact vehicle is a dynamic Rapier body. It no longer queues a closing-speed
+impulse or separates crate overlaps from the hull sweep. Rapier resolves the
+chassis against dynamic props, and `contactPairsWith` reports `vehicle|crate`
+through the existing contact-id map. Kinematic and dynamic-bicycle cars still
+use the sweep push. `worldHash` and both pinned tapes stay unchanged. Release
+waits for RZ-04.
+
+### 2026-11-07 — worlds with props get a new physics config hash
+
+Obstacle hulls, the always-on floor, and collider creation order change
+where a prop stops. A world with `rigidBodies` now hashes `staticCollision`
+(`obstacle-hull-prisms-v1`) on top of the existing config, so an old bundle
+must be re-resolved. Worlds without props keep `PHYSICS_BACKEND_CONFIG` and
+`PHYSICS_BACKEND_CONFIG_V2` and their hashes. Road trimeshes are built only
+when a contact vehicle is present. The sweep-driven vehicle collider stays
+on Rapier's default groups, because a kinematic body does not contact a
+fixed body.
 
 ### 2026-11-07 — RZ-02 gives Rapier the static world
 

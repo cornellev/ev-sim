@@ -2,7 +2,7 @@ import { PLANT_CONTACT_BICYCLE_MODEL } from "../../plugin/PlantModule.js";
 import { DEFAULT_DYNAMIC_BICYCLE } from "../../vehicles/VehicleManifest.js";
 import { deriveAxleDistances, GRAVITY } from "./dynamicBicycle.js";
 
-const VX_REST = 1e-3;
+export const VX_REST = 1e-3;
 const CONTACT_SLACK = 1e-3;
 
 function num(value, fallback = 0) {
@@ -204,7 +204,7 @@ export function axleContactForces(input = {}) {
     };
 }
 
-function contactParameters(plant) {
+export function contactParameters(plant) {
     const plugin = plant.motionModel === "plugin";
     const dynamics = plant.definition?.dynamics ?? {};
     const wheelbase = Math.max(1e-9, finite(plant.kinematics?.wheelbase, 1.5));
@@ -342,6 +342,55 @@ export function catchContactFloor(plant, planeY, held) {
     plant.floorSupport = { y, normal: { x: 0, y: 1, z: 0 } };
 }
 
+/** Command and tire forces for one step on the given support. Gravity is not included. */
+export function contactTireStep(plant, inContact, normal, dt) {
+    const yaw = finite(plant.rotation?.y);
+    const grade = inContact ? tangentialGrade(normal, yaw) : { x: 0, y: 0, normalY: 0 };
+    const params = contactParameters(plant);
+    const normalLoad = inContact ? params.mass * GRAVITY * grade.normalY : 0;
+    const delta = Math.max(-steerLimit(plant), Math.min(steerLimit(plant), finite(plant.steeringAngle)));
+    plant.axCommand = inContact ? contactLongitudinalCommand({
+        ...plant.longitudinal,
+        vx: plant.velocity.x,
+        previousAx: plant.axCommand,
+        realizedAx: plant.contactControlActive ? plant.acceleration.x : 0,
+        dt,
+        maxAcceleration: finite(plant.kinematics?.maxAcceleration, 3),
+        maxDeceleration: finite(plant.kinematics?.maxDeceleration, 5),
+        maxJerk: finite(plant.kinematics?.maxJerk, 10),
+    }) : 0;
+    plant.contactControlActive = inContact;
+    const forces = readForces(plant, dt, inContact, grade, normalLoad, delta);
+    return { params, grade, normalLoad, forces };
+}
+
+/**
+ * World force and yaw torque for a Rapier chassis on `normal`. Also returns the
+ * rest-rule inputs the JS integrator used to stop a parked car from creeping.
+ */
+export function contactChassisPush(plant, inContact, normal, dt) {
+    const { params, grade, normalLoad, forces } = contactTireStep(plant, inContact, normal, dt);
+    const rest = {
+        net: params.mass * finite(plant.axCommand) + params.mass * grade.x,
+        rollingCapacity: params.rollingResistance * normalLoad,
+    };
+    if (!inContact || !forces) return { force: null, torque: null, ...rest };
+    const { forward, right } = contactAxes(normal, plant.rotation.y);
+    const n = unitNormal(normal);
+    const fx = forces.Fxf + forces.Fxr;
+    const fy = forces.Fyf + forces.Fyr;
+    const moment = params.lf * forces.Fyf - params.lr * forces.Fyr;
+    return {
+        force: {
+            x: forward.x * fx + right.x * fy,
+            y: forward.y * fx + right.y * fy,
+            z: forward.z * fx + right.z * fy,
+        },
+        torque: { x: n.x * moment, y: n.y * moment, z: n.z * moment },
+        ...rest,
+    };
+}
+
 /** Free motion. The road catch runs after the obstacle sweep. */
 export function stepContactPlant(plant, dt) {
     const step = Math.max(0, finite(dt));
@@ -356,22 +405,7 @@ export function stepContactPlant(plant, dt) {
     const pitch = finite(plant.rotation?.z);
     const normal = sample?.normal ?? (sample ? normalFromPitch(pitch, yaw) : null);
     const inContact = Boolean(sample) && plant.position.y <= finite(sample.y) + CONTACT_SLACK;
-    const grade = inContact ? tangentialGrade(normal, yaw, pitch) : { x: 0, y: 0, normalY: 0 };
-    const params = contactParameters(plant);
-    const normalLoad = inContact ? params.mass * GRAVITY * grade.normalY : 0;
-    const delta = Math.max(-steerLimit(plant), Math.min(steerLimit(plant), finite(plant.steeringAngle)));
-    plant.axCommand = inContact ? contactLongitudinalCommand({
-        ...plant.longitudinal,
-        vx: plant.velocity.x,
-        previousAx: plant.axCommand,
-        realizedAx: plant.contactControlActive ? plant.acceleration.x : 0,
-        dt: step,
-        maxAcceleration: finite(plant.kinematics?.maxAcceleration, 3),
-        maxDeceleration: finite(plant.kinematics?.maxDeceleration, 5),
-        maxJerk: finite(plant.kinematics?.maxJerk, 10),
-    }) : 0;
-    plant.contactControlActive = inContact;
-    const forces = readForces(plant, step, inContact, grade, normalLoad, delta);
+    const { params, grade, normalLoad, forces } = contactTireStep(plant, inContact, normal, step);
     if (!forces) return;
     const vx = finite(plant.velocity?.x);
     const vy = finite(plant.lateralVelocity);
@@ -445,7 +479,7 @@ export function settleContactBody(plant) {
     return sample;
 }
 
-function publishContactPose(vehicle, plant) {
+export function publishContactPose(vehicle, plant) {
     if (!vehicle || vehicle === plant) return;
     if (vehicle.position) {
         vehicle.position.x = plant.position.x;
@@ -472,7 +506,7 @@ function publishContactPose(vehicle, plant) {
 export function settleContactVehicles(vehicles = []) {
     for (const vehicle of vehicles) {
         const plant = contactBicycleBody(vehicle);
-        if (!plant) continue;
+        if (!plant || plant.rapierChassis) continue;
         settleContactBody(plant);
         publishContactPose(vehicle, plant);
     }

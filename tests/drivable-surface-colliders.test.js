@@ -11,11 +11,22 @@ function groups(membership, filter = 0xffff) {
     return ((membership & 0xffff) << 16) | (filter & 0xffff);
 }
 
-async function start(description) {
+function parkedContactVehicle() {
+    return {
+        motionModel: "contact-bicycle",
+        telemetryId: "parked",
+        position: { x: 1000, y: 50, z: 1000 },
+        rotation: { x: 0, y: 0, z: 0 },
+        velocity: { x: 0, y: 0, z: 0 },
+        acceleration: { x: 0, y: 0, z: 0 },
+    };
+}
+
+async function start(description, vehicles = [parkedContactVehicle()]) {
     const snapshot = JSON.stringify(description);
     const hash = hashWorldDescription(description);
     const physics = new PhysicsEngine({
-        vehicles: () => ({ vehicles: [] }),
+        vehicles: () => ({ vehicles }),
         objects: () => ({ boxes: () => [] }),
         bindings: () => ({ signalStore: null }),
     });
@@ -42,8 +53,8 @@ function drop(physics, x, y, z, membership) {
     return body;
 }
 
-async function restY(description, x, z, membership) {
-    const physics = await start(description);
+async function restY(description, x, z, membership, vehicles) {
+    const physics = await start(description, vehicles);
     const body = drop(physics, x, 3, z, membership);
     const dt = 1 / 60;
     for (let step = 0; step < 180; step += 1) physics.step(dt);
@@ -126,6 +137,14 @@ function meshWorld() {
         document: document.snapshot(),
     });
 }
+
+test("roads without a contact vehicle build no trimesh", async () => {
+    const description = corridorWorld();
+    const onRoad = await restY(description, 15, 0, CHASSIS_GROUP, []);
+    const beside = await restY(description, 15, 12, CHASSIS_GROUP, []);
+    assert.ok(onRoad < 0, `on corridor y ${onRoad}`);
+    assert.ok(beside < 0, `beside corridor y ${beside}`);
+});
 
 test("a chassis rests on a graded corridor and a prop falls through it", async () => {
     const description = corridorWorld();

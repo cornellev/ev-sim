@@ -367,19 +367,15 @@ test("the checker floor lifts a contact car and the next step can drive", () => 
     assert.ok(body.position.y >= -1e-6);
 });
 
-test("protruding tires rest on the checker and the next step does not sink", async () => {
-    const hanging = plant({}, { id: "hanging", position: { x: 0, y: 1 } }, HANGING_WHEELS);
-    const flush = plant({}, { id: "flush", position: { x: 20, y: 1 } });
+test("the checker holds a sweep-driven car that ends a step below it", async () => {
     const kinematic = {
         telemetryId: "box",
         position: { x: 40, y: 1, z: 0 },
         updatePosition(position) { Object.assign(this.position, position); },
     };
-    hanging.setGroundSampler(() => null);
-    flush.setGroundSampler(() => null);
     const world = { obstacles: [], groundPlane: { y: 0 } };
     const physics = new PhysicsEngine({
-        vehicles: () => ({ vehicles: [hanging, flush, kinematic] }),
+        vehicles: () => ({ vehicles: [kinematic] }),
         objects: () => ({ boxes: () => [] }),
         bindings: () => ({ signalStore: null }),
     }, { loadPhysics: async () => fakeRapier() });
@@ -389,18 +385,9 @@ test("protruding tires rest on the checker and the next step does not sink", asy
         backendSelection: createPhysicsBackendSelection(world),
     });
     physics.beginStep();
-    hanging.position.y = -0.2;
-    flush.position.y = -0.2;
     kinematic.position.y = -0.2;
     physics.step(DT);
-    assert.ok(Math.abs(hanging.position.y - MERCEVES_CLEARANCE) < 1e-9, `hanging y ${hanging.position.y}`);
-    assert.equal(hanging.floorSupport.y, 0);
-    assert.equal(flush.position.y, 0);
     assert.equal(kinematic.position.y, 0);
-    applyManualDrive(hanging, { mode: "acceleration", accelerationX: 2 });
-    hanging.update(DT);
-    assert.ok(hanging.velocity.x > 0, `vx ${hanging.velocity.x}`);
-    assert.ok(Math.abs(hanging.position.y - MERCEVES_CLEARANCE) < 1e-6);
     physics.disposeRun();
 });
 

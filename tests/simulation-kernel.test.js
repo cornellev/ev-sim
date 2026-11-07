@@ -226,6 +226,27 @@ test("SimulationKernel imports and steps without browser or graphics globals", a
     }
 });
 
+test("physics off still steps a contact chassis and skips the kinematic sweep", async () => {
+    const { SimulationKernel } = await import("../app/simulation/kernel/SimulationKernel.js");
+    const target = createHarness();
+    const steps = [];
+    let chassis = true;
+    target.context.physics.hasChassis = () => chassis;
+    target.context.physics.step = (dt, options) => steps.push(options);
+    const manifest = createDefaultRunManifest({
+        clock: { stepNs: 20_000_000, pacing: "unbounded", maxSteps: 3, modules: { physics: false } },
+        sensorRig: { sensors: [] },
+        assertions: [],
+    });
+    const kernel = new SimulationKernel(target.context);
+    await kernel.configureRun(resolvedRun(manifest));
+    kernel.step(1);
+    assert.deepEqual(steps, [{ sweep: false }]);
+    chassis = false;
+    kernel.step(1);
+    assert.equal(steps.length, 1);
+});
+
 test("kernel snapshots are defensive, structured-cloneable state values", async () => {
     const { SimulationKernel } = await import("../app/simulation/kernel/SimulationKernel.js");
     const target = createHarness();

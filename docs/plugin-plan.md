@@ -771,7 +771,7 @@ change the outstanding PR-12 hosted, soak, NVIDIA x64, or Jetson ARM64 gates.
   dynamic-bicycle plugins get no marker and retain their identities. Execution
   rejects unmarked contact-plugin records; integrity inspection and authoring
   import preserve historical bundles, and re-resolution needs no Reimport.
-  This is a separate RZ preparation step, with release held for RZ-02–04.
+  This is a separate RZ preparation step, with release held for RZ-04.
 
 - **2026-10-27 — Stable contact stopping and bounded rolling impulse.** The
   contact host uses a damped speed/stop controller shared by built-in and WASM

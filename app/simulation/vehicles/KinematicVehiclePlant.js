@@ -344,7 +344,8 @@ export class KinematicVehiclePlant {
             });
         }
         if (this.motionModel === "contact-bicycle" || contactPlugin) {
-            stepContactPlant(this, dt);
+            // shortcut: the JS integrator stays for plants no Rapier chassis claimed, delete in RZ-04.
+            if (!this.rapierChassis) stepContactPlant(this, dt);
             return;
         }
         if (this.motionModel === "dynamic-bicycle") {

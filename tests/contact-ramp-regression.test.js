@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { replayContactRamp } from "./helpers/contactRampRegression.js";
+import { LANDING_TREAD_TOLERANCE, replayContactRamp } from "./helpers/contactRampRegression.js";
 
 test("the recorded 10 m ramp drop and keyboard sequence stay grounded and stop without a sideways runaway", async () => {
     const numeric = await replayContactRamp();
@@ -16,7 +16,7 @@ test("the recorded 10 m ramp drop and keyboard sequence stay grounded and stop w
             for (const axis of ["x", "y", "z"]) assert.ok(Math.abs(a[field][axis] - b[field][axis]) <= 1e-9, `${index}: ${field}.${axis}`);
         }
         for (const field of ["lateralVelocity", "yawRate", "verticalVelocity"]) assert.ok(Math.abs(a[field] - b[field]) <= 1e-9);
-        assert.ok(a.position.y >= 0.0171 - 1e-9, `tread below floor at step ${index + 1}`);
+        assert.ok(a.position.y >= 0.0171 - LANDING_TREAD_TOLERANCE, `tread below floor at step ${index + 1}`);
         assert.ok(Math.hypot(a.position.x, a.position.z) < 15, `runaway at step ${index + 1}`);
     }
     const final = numeric.states.at(-1);

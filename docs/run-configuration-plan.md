@@ -69,7 +69,8 @@ the existing application preference conventions.
 
 Persist only explicit mode choices. Keep switching functional for the current
 session when storage is unavailable. Changing the run preference must not
-write the global preference or change another workspace's settings.
+write the global preference or change another workspace's settings. The
+Simple / Advanced control is in the workspace menu Settings pane.
 
 ### Simple workspace
 
@@ -78,7 +79,7 @@ control, status messages, and dialogs. Use a compact single-page layout.
 
 | Area | Content |
 | --- | --- |
-| Header | Editable name, validation state, Simple / Advanced, Validate, Save, Launch |
+| Header | Editable name, validation state, Validate, Save, Launch |
 | Scenario | Scenario selection, environment summary, missing/stale-reference status |
 | Vehicle | Ego vehicle selection and sensor-inheritance status |
 | Execution | Standard Simulation / External Controller, actual control source, pacing and speed |
@@ -460,3 +461,10 @@ The comparison baseline stamps the selected vehicle's plugin locks into
 sensor lock grants `sensors.sample.range-image`. A plant lock grants
 `plant.step`. A stamp failure is a baseline issue and keeps grants already
 applied. Execution presets still do not rewrite the draft's plugin grants.
+
+### 2026-11-07 — Simple / Advanced lives in workspace settings
+
+The view control moved from the Run Configuration header to the workspace
+menu Settings pane. `chooseRunConfigMode` is the only writer of
+`cev-sim.ui.runConfig.mode`. Validation targets and Customize still call it.
+The global Advanced switch stays a separate preference.

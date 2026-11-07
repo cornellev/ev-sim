@@ -7,10 +7,13 @@ import { createPhysicsBackendSelection } from "../../app/physics/PhysicsBackend.
 import { PhysicsEngine } from "../../app/physics/PhysicsEngine.js";
 import { createKeyboardDriveState, stepKeyboardDrive } from "../../app/simulation/keyboardDrive.js";
 import { createVehiclePlantDefinition, KinematicVehiclePlant } from "../../app/simulation/vehicles/KinematicVehiclePlant.js";
-import { sampleContactSupport, settleContactVehicles } from "../../app/simulation/vehicles/contactBicycle.js";
+import { settleContactVehicles } from "../../app/simulation/vehicles/contactBicycle.js";
 import { createRoadGroundSampler } from "../../app/simulation/vehicles/roadGroundSampler.js";
 import { CONTACT_BICYCLE_MODEL, normalizeVehicleManifest } from "../../app/vehicles/VehicleManifest.js";
 import { PLANT_CONTACT_BICYCLE_MODEL } from "../../app/plugin/PlantModule.js";
+
+// The Rapier chassis sinks a few millimetres for one step when it lands from the 10 m drop.
+export const LANDING_TREAD_TOLERANCE = 0.005;
 
 export async function replayContactRamp({ browser = false, manifest = null, stepper = null, fixture: recording = null, releaseSeconds = 5, axle = null } = {}) {
     const fixture = recording ?? JSON.parse(await readFile(new URL("../fixtures/headless/contact-ramp-regression.v1.json", import.meta.url)));
@@ -66,8 +69,7 @@ export async function replayContactRamp({ browser = false, manifest = null, step
             settleContactVehicles([vehicle]);
             control.sampleAchieved("ego", { speedMps: body.velocity.x, steeringRadThree: body.steeringAngle, accelerationMps2: body.acceleration.x });
             maxLateralSpeed = Math.max(maxLateralSpeed, Math.abs(body.lateralVelocity));
-            const support = sampleContactSupport(body);
-            if (support?.source === "floor" && body.onRoad) floorSteps += 1;
+            if (physics.pendingContacts.has("ego|ground:floor") && body.onRoad) floorSteps += 1;
             states.push(body.getDeterministicState());
         }
         return { states, maxLateralSpeed, floorSteps };

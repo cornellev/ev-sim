@@ -1,6 +1,6 @@
 'use client';
 
-import { cloneElement, isValidElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { cloneElement, isValidElement, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { AlertDialog } from "radix-ui";
 import {
     IconCheck,
@@ -94,11 +94,10 @@ import {
     withConfigLoadTimeout,
 } from "./ConfigCatalogLoader.js";
 import {
-    readRunConfigModePreference,
-    resolveRunConfigMode,
-    writeRunConfigModePreference,
+    chooseRunConfigMode,
+    readResolvedRunConfigMode,
     RUN_CONFIG_MODE_FALLBACK,
-    RUN_CONFIG_MODE_STORAGE_KEY,
+    subscribeRunConfigMode,
 } from "./runConfigMode.js";
 import { SIMPLE_VEHICLE_OPTIONS as BUILT_IN_VEHICLE_OPTIONS, simpleCreatedManifest, validationIssueTarget } from "./simpleRunModel.js";
 import SimpleRunWorkspace from "./SimpleRunWorkspace.js";
@@ -123,8 +122,6 @@ import {
     AsyncState,
     Button,
     Field as SharedField,
-    readAdvancedAuthoringPreference,
-    SegmentedControl,
     StatusMessage,
     Switch as SharedSwitch,
     TabsContent,
@@ -136,7 +133,6 @@ import {
     readLastOpenWorkspaceId,
     writeLastOpenWorkspaceId,
 } from "../ui";
-import { ADVANCED_AUTHORING_STORAGE_KEY } from "../ui/authoringModeStorage.js";
 import { radToDeg } from "three/src/math/MathUtils.js";
 import { degToRad } from "../util/Math.js";
 
@@ -297,8 +293,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
     const [sensorCatalog, setSensorCatalog] = useState({ revision: 0, sensors: [] });
     const [sensorRegistryTick, setSensorRegistryTick] = useState(0);
     const [environmentsReady, setEnvironmentsReady] = useState(false);
-    const sessionModeRef = useRef(null);
-    const [mode, setMode] = useState(RUN_CONFIG_MODE_FALLBACK);
+    const mode = useSyncExternalStore(subscribeRunConfigMode, readResolvedRunConfigMode, () => RUN_CONFIG_MODE_FALLBACK);
     const [comparisonLatch, setComparisonLatch] = useState(null);
     const onComparisonLatch = useCallback((next) => {
         setComparisonLatch((current) => (current === next ? current : next));
@@ -347,29 +342,6 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
         sensorSessionRef.current = null;
     }, []);
 
-    useEffect(() => {
-        const sync = (event) => {
-            if (event?.key && event.key !== RUN_CONFIG_MODE_STORAGE_KEY && event.key !== ADVANCED_AUTHORING_STORAGE_KEY) return;
-            if (sessionModeRef.current) {
-                setMode(sessionModeRef.current);
-                return;
-            }
-            setMode(resolveRunConfigMode({
-                stored: readRunConfigModePreference(),
-                advancedAuthoring: readAdvancedAuthoringPreference(),
-            }));
-        };
-        sync();
-        window.addEventListener("storage", sync);
-        return () => window.removeEventListener("storage", sync);
-    }, []);
-
-    const chooseMode = (next) => {
-        if ((next !== "simple" && next !== "advanced") || next === mode) return;
-        setMode(next);
-        sessionModeRef.current = writeRunConfigModePreference(next) ? null : next;
-    };
-
     const openValidationIssue = (issue) => {
         const target = validationIssueTarget(issue, draftRef.current);
         if (mode === "simple" && target.simpleFocusId) {
@@ -380,7 +352,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
         }
         focusRequest.current = { id: target.advancedFocusId, tab: target.tab };
         setTab(target.tab);
-        if (mode !== "advanced") chooseMode("advanced");
+        if (mode !== "advanced") chooseRunConfigMode("advanced");
         setFocusTick((value) => value + 1);
     };
 
@@ -920,12 +892,6 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                     <span className="truncate text-[13px]/[13px] font-semibold">Run Configuration</span>
                 </button>
                 <div className="flex flex-wrap items-center gap-2">
-                    <SegmentedControl
-                        label="Run configuration view"
-                        value={mode}
-                        items={[{ value: "simple", label: "Simple" }, { value: "advanced", label: "Advanced" }]}
-                        onValueChange={chooseMode}
-                    />
                     <select
                         aria-label="Select run manifest"
                         className="sf-input hidden max-w-48 max-[1023px]:block"
@@ -1002,7 +968,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                                 onUpdate={update}
                                 onOpenAdvanced={(nextTab) => {
                                     setTab(nextTab);
-                                    chooseMode("advanced");
+                                    chooseRunConfigMode("advanced");
                                 }}
                             >
                                 <ConfigurationAttention

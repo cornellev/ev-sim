@@ -4,8 +4,11 @@ import test from "node:test";
 import { ADVANCED_AUTHORING_STORAGE_KEY } from "../app/ui/authoringModeStorage.js";
 import {
     RUN_CONFIG_MODE_STORAGE_KEY,
+    chooseRunConfigMode,
+    readResolvedRunConfigMode,
     readRunConfigModePreference,
     resolveRunConfigMode,
+    subscribeRunConfigMode,
     writeRunConfigModePreference,
 } from "../app/config/runConfigMode.js";
 
@@ -46,6 +49,42 @@ test("invalid stored mode is ignored and a write does not touch advanced authori
     assert.equal(storage.getItem(RUN_CONFIG_MODE_STORAGE_KEY), "simple");
     assert.equal(storage.getItem(ADVANCED_AUTHORING_STORAGE_KEY), "true");
     assert.equal(readRunConfigModePreference(storage), "simple");
+});
+
+test("chooseRunConfigMode writes the run view and keeps a failed write for the session", () => {
+    const storage = createMemoryStorage({
+        [ADVANCED_AUTHORING_STORAGE_KEY]: "true",
+    });
+    let calls = 0;
+    const stop = subscribeRunConfigMode(() => {
+        calls += 1;
+    });
+    try {
+        assert.equal(readResolvedRunConfigMode(storage), "advanced");
+        chooseRunConfigMode("simple", storage);
+        assert.equal(calls, 1);
+        assert.equal(storage.getItem(RUN_CONFIG_MODE_STORAGE_KEY), "simple");
+        assert.equal(storage.getItem(ADVANCED_AUTHORING_STORAGE_KEY), "true");
+        assert.equal(readResolvedRunConfigMode(storage), "simple");
+        chooseRunConfigMode("simple", storage);
+        assert.equal(calls, 1);
+
+        const throwing = {
+            getItem() {
+                throw new Error("storage unavailable");
+            },
+            setItem() {
+                throw new Error("storage unavailable");
+            },
+        };
+        chooseRunConfigMode("advanced", throwing);
+        assert.equal(calls, 2);
+        assert.equal(readResolvedRunConfigMode(storage), "advanced");
+        assert.equal(storage.getItem(RUN_CONFIG_MODE_STORAGE_KEY), "simple");
+    } finally {
+        stop();
+        chooseRunConfigMode("simple", storage);
+    }
 });
 
 test("storage failures leave the preference unread and unwritten", () => {

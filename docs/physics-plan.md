@@ -46,8 +46,8 @@ stay pinned. Suspension, wheel spin, and per-wheel rays remain out of scope.
 
 RZ-01 prepares identity and admission and retains the JavaScript contact
 integrator. RZ-02 builds the floor, obstacle hulls, and road trimeshes.
-Release is held until RZ-03 (chassis) and RZ-04 (integrator deletion and
-the v2 motion tape) are complete.
+RZ-03 puts a contact vehicle on a dynamic Rapier chassis. Release is held
+until RZ-04 (integrator deletion and the v2 motion tape) is complete.
 
 | RZ-01 work package | Implementation | Acceptance |
 | --- | --- | --- |
@@ -56,17 +56,29 @@ the v2 motion tape) are complete.
 | WP03: plugin host identity | Resolved vehicle record carries `contactHost: 2` | Root/nested semantic vehicle hashes bind it |
 | WP04: execution admission | Shared bundle/kernel guard, before vehicle normalization or active-run teardown | Old bundles require re-resolution; inspection/import remain available |
 | WP05: regression coverage | Migration, integrity, admission, recovery, dispatch, and plugin parity tests | Verification recorded below |
-| WP06: guidance and release gate | Physics/rigid-body/plugin and manifest contracts updated | Release pending RZ-03–04 and the pinned-tape gate |
+| WP06: guidance and release gate | Physics/rigid-body/plugin and manifest contracts updated | Release pending RZ-04 and the pinned-tape gate |
+
+| RZ-03 work package | Implementation | Acceptance |
+| --- | --- | --- |
+| WP01: chassis body | Dynamic Rapier body, cuboid at the tread, `rapierChassis` claim | Dispose releases the plant; kinematic cars stay on the sweep |
+| WP02: tire step | Downward ray on `FLOOR_GROUP \| ROAD_GROUP`, `contactTireStep` / `contactChassisPush` | Resting car stays in contact; unresolved plugins apply no tire force |
+| WP03: copy-back | Skip sweep for chassis, zero-roll projection, rest rules, body-frame acceleration | Steer sign matches the JS integrator; IMU centripetal term is not doubled |
+| WP04: contacts | `contactPairsWith` through `colliderContactIds` | Wall and crate report start/end; roads stay unreported |
+| WP05: physics-off | Kernel steps Rapier when `hasChassis()` even if `modules.physics` is false | Sweep-driven cars stay put; the chassis still moves |
+| WP06: coverage and docs | `tests/contact-chassis.test.js`; physics/rigid-body/architecture notes | Pinned kinematic and dynamic-bicycle tapes unchanged |
 
 ## What is modeled
 
 A single-track dynamic bicycle on the paved surface. Two axles, one center of
-gravity. Planar dynamics are in the road-tangent frame. Pose Y and pitch still
-come from the existing road sampler. That drape is a kinematic constraint, not
-suspension.
+gravity. Planar dynamics are in the road-tangent frame. Kinematic and
+dynamic-bicycle pose Y and pitch still come from the existing road sampler.
+That drape is a kinematic constraint, not suspension. A `contact-bicycle-v2`
+vehicle is a dynamic Rapier chassis: Rapier owns gravity, landing, walls, and
+crates, and JavaScript applies only the tire pushes.
 
 States are body-frame `vx`, `vy`, and yaw rate `r`, plus world `X`, `Z`, and
-yaw. Pitch is sampled, not a dynamic state.
+yaw. Kinematic and dynamic-bicycle pitch is sampled, not a dynamic state.
+A contact chassis takes pitch from Rapier with roll projected to zero.
 
 Inputs are the applied front steer `δ`, already delayed and limited by
 `ControlRuntime`, and a longitudinal acceleration command `ax_cmd`. Velocity
@@ -186,7 +198,7 @@ contact-v2 host belongs to `RZ-*`.
 | --- | --- |
 | `kinematic-bicycle-v1` | Current built-in bicycle. Omitted `dynamics` normalizes to this. |
 | `dynamic-bicycle-v1` | This plant. Manifest physical fields are filled from the defaults above. The plant integrates and the host drapes height and pitch. |
-| `contact-bicycle-v2` | Contact host identity for the Rapier chassis transition. RZ-01 reserves it while retaining JS integration; RZ-03 supplies Rapier motion. The plugin force model remains `contact-bicycle-v1`. |
+| `contact-bicycle-v2` | Contact host identity for the Rapier chassis. RZ-03 supplies Rapier motion; the JS integrator remains a fallback for plants no chassis claimed. The plugin force model remains `contact-bicycle-v1`. |
 
 These ids are vehicle-manifest model ids. They are not `backendSelections`
 entries, and this program does not add a protobuf backend kind. A dynamic
@@ -256,6 +268,44 @@ PHY-03 runs browser/headless plant parity at the existing `1e-9` tolerance and
 writes a second characterization tape.
 
 ## Progress and decision log
+
+### 2026-11-07 — RZ-03 Rapier chassis
+
+A contact vehicle is a dynamic Rapier body. Rapier integrates gravity, lands
+on the floor and road trimeshes, and resolves walls, other cars, and crates.
+JavaScript computes the four tire pushes from a downward ray and copies pose
+and body-frame velocity back onto the plant.
+
+Roll is projected out after each step. Rapier's `setEnabledRotations` locks
+world axes, so `(false, true, true)` would lock pitch instead of roll at yaw
+90°. Roads use `ROAD_GROUP` so the ray can select floor and road; a handle
+set still excludes default-group obstacle cuboids. The plant `update()` path
+keeps `stepContactPlant` until a chassis claims it, so the v1 tape and the
+plant-only stopping tests stay on the JS integrator. `modules.physics = false`
+still steps Rapier while any chassis exists and skips the kinematic sweep.
+The collider is a cuboid with Rapier contact skin rather than a round cuboid:
+the skin holds the tread above the allowed penetration.
+
+`worldHash`, `PHYSICS_BACKEND_CONFIG`, and both pinned characterization tapes
+stay unchanged. Release waits for RZ-04 to delete the integrator and record
+the v2 tape.
+
+Verification on 2026-11-07: `npm run lint` reported zero errors and the same
+three existing hook warnings. `npm test` passed 2,591, failed the pre-existing
+kinematic characterization check in `tests/headless-contract.test.js`, and
+skipped 8. `npm run fixtures:headless` left
+`characterization.dynamic-bicycle.v1.json` and
+`characterization.contact-bicycle.v1.json` byte-for-byte. It rewrote only the
+known kinematic steering-sign mismatch, which was discarded.
+
+### 2026-11-07 — props select a new physics config hash
+
+RZ-02 changed where a prop stops: obstacle hulls replace bounds cuboids, the
+floor exists without props, and collider order changed. Worlds with
+`rigidBodies` hash `staticCollision` onto the existing backend config and
+must be re-resolved. Worlds without props keep `PHYSICS_BACKEND_CONFIG`,
+`PHYSICS_BACKEND_CONFIG_V2`, and both pinned tapes. Road trimeshes are built
+only when a contact vehicle is in the run.
 
 ### 2026-11-07 — RZ-02 world colliders
 

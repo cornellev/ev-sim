@@ -1780,6 +1780,8 @@ html[data-perspective-view="idle"] #canvas-container canvas {
 }
 
 .sf-workspace-menu__setting {
+  display: grid;
+  gap: 8px;
   padding: 4px 10px 8px;
 }
 

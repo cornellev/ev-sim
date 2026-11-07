@@ -1,5 +1,13 @@
 import { assertPhysicsBackendSelection, PHYSICS_BACKEND_CONFIG } from "./PhysicsBackend.js";
-import { contactBicycleBody, settleContactBody } from "../simulation/vehicles/contactBicycle.js";
+import {
+    bodyAxes,
+    contactAxes,
+    contactBicycleBody,
+    contactChassisPush,
+    contactParameters,
+    publishContactPose,
+    VX_REST,
+} from "../simulation/vehicles/contactBicycle.js";
 import { absorbDynamicClamp, dynamicBicycleBody } from "../simulation/vehicles/dynamicBicycle.js";
 import { worldSweepMesh } from "../simulation/world/RigidBodyRecords.js";
 import { compareUtf8 } from "../simulation/world/WorldDescription.js";
@@ -8,7 +16,71 @@ import { boxSupportRadius, obbAsConvex, orientedBoxCenter, sweepAabbConvex, swee
 export const DYNAMIC_GROUP = 0x0002;
 export const CHASSIS_GROUP = 0x0004;
 const FLOOR_GROUP = 0x0008;
+export const ROAD_GROUP = 0x0010;
 const DISC_SEGMENTS = 64; // same fan as LidarGeometry INTERSECTION_SEGMENTS
+export const CHASSIS_RAY_SLACK = 0.02;
+// Predictive contacts catch a 30 m/s landing within one 60 Hz step instead of resolving the overlap afterwards.
+const CHASSIS_SOFT_CCD = 0.5;
+// The skin holds the tread just above the surface instead of sinking by Rapier's allowed penetration.
+const CHASSIS_SKIN = 0.002;
+const X_AXIS = { x: 1, y: 0, z: 0 };
+const Y_AXIS = { x: 0, y: 1, z: 0 };
+
+function finite(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : 0;
+}
+
+function dot(left, right) {
+    return left.x * right.x + left.y * right.y + left.z * right.z;
+}
+
+function cross(left, right) {
+    return {
+        x: left.y * right.z - left.z * right.y,
+        y: left.z * right.x - left.x * right.z,
+        z: left.x * right.y - left.y * right.x,
+    };
+}
+
+function scaled(axis, length) {
+    return { x: axis.x * length, y: axis.y * length, z: axis.z * length };
+}
+
+/** Rotate `v` by unit quaternion `q`. */
+function rotate(q, v) {
+    const t = scaled(cross(q, v), 2);
+    const u = cross(q, t);
+    return { x: v.x + q.w * t.x + u.x, y: v.y + q.w * t.y + u.y, z: v.z + q.w * t.z + u.z };
+}
+
+/** Euler XYZ with zero roll: yaw about +Y, then pitch about the body +Z. */
+function yawPitchQuaternion(yaw, pitch) {
+    const sy = Math.sin(yaw / 2);
+    const cy = Math.cos(yaw / 2);
+    const sp = Math.sin(pitch / 2);
+    const cp = Math.cos(pitch / 2);
+    return { x: sy * sp, y: sy * cp, z: cy * sp, w: cy * cp };
+}
+
+function wrapAngle(angle) {
+    return angle - Math.PI * 2 * Math.round(angle / (Math.PI * 2));
+}
+
+function supportNormal(normal) {
+    const n = vector(normal);
+    const length = Math.hypot(n.x, n.y, n.z);
+    if (length <= 1e-9) return { ...Y_AXIS };
+    return scaled(n, (n.y < 0 ? -1 : 1) / length);
+}
+
+function chassisPose(plant) {
+    return [plant.position.x, plant.position.y, plant.position.z, plant.rotation.y, plant.rotation.z];
+}
+
+function samePose(left, right) {
+    return Boolean(left) && left.every((value, index) => value === right[index]);
+}
 
 function collisionGroups(membership, filter) {
     return ((membership & 0xffff) << 16) | (filter & 0xffff);
@@ -272,14 +344,18 @@ function component(point, axis) {
     return Number(axis === 1 ? value ?? 0 : value);
 }
 
-function packMesh(vertices, indices) {
-    const flat = new Float32Array(vertices.length * 3);
-    vertices.forEach((vertex, index) => {
-        flat[index * 3] = vertex[0];
-        flat[index * 3 + 1] = vertex[1];
-        flat[index * 3 + 2] = vertex[2];
+function flatPoints(points) {
+    const flat = new Float32Array(points.length * 3);
+    points.forEach((point, index) => {
+        flat[index * 3] = component(point, 0);
+        flat[index * 3 + 1] = component(point, 1);
+        flat[index * 3 + 2] = component(point, 2);
     });
-    return { vertices: flat, indices: new Uint32Array(indices) };
+    return flat;
+}
+
+function packMesh(vertices, indices) {
+    return { vertices: flatPoints(vertices), indices: new Uint32Array(indices) };
 }
 
 // Rapier contacts the front face. A downward triangle does not hold a body dropped onto it.
@@ -305,13 +381,7 @@ function faceUp(mesh) {
 
 function indexedMesh(sourceVertices, sourceIndices) {
     const vertices = sourceVertices.map((point) => [component(point, 0), component(point, 1), component(point, 2)]);
-    const indices = [];
-    if (sourceIndices.length > 0 && Array.isArray(sourceIndices[0])) {
-        for (const triangle of sourceIndices) indices.push(triangle[0], triangle[1], triangle[2]);
-    } else {
-        for (const index of sourceIndices) indices.push(index);
-    }
-    return packMesh(vertices, indices);
+    return packMesh(vertices, sourceIndices);
 }
 
 function corridorMesh(surface, roads) {
@@ -424,6 +494,8 @@ export class PhysicsEngine {
         this.activeContacts = new Set();
         this.pendingContacts = new Set();
         this.colliderContactIds = new Map();
+        this.colliderVehicleIds = new Map();
+        this.supportColliders = new Set();
         this.episodeObstacles = [];
         this._initialization = loadPhysics().then(async (module) => {
             this.RAPIER = await initializeRapier(module);
@@ -434,6 +506,7 @@ export class PhysicsEngine {
     _releaseWorld() {
         const world = this.world;
         const bodies = this.rigidbodies;
+        for (const state of this.vehicleStates) if (state.chassis) state.chassis.plant.rapierChassis = false;
         this.world = null;
         this.rigidbodies = [];
         this.staticColliders = [];
@@ -442,6 +515,8 @@ export class PhysicsEngine {
         this.rigidBodyById = new Map();
         this._rigidBodyPoses = [];
         this.colliderContactIds = new Map();
+        this.colliderVehicleIds = new Map();
+        this.supportColliders = new Set();
         if (!world) return;
         if (typeof world.removeRigidBody === "function") {
             for (const body of bodies) {
@@ -465,10 +540,6 @@ export class PhysicsEngine {
         if (!this.RAPIER) return;
         this._releaseWorld();
         this.world = new this.RAPIER.World(PHYSICS_BACKEND_CONFIG.gravity);
-        this.rigidbodies = [];
-        this.staticColliders = [];
-        this.vehicleStates = [];
-        this.colliderContactIds = new Map();
     }
 
     async start() {
@@ -575,13 +646,7 @@ export class PhysicsEngine {
     }
 
     _convexCollider(body, points, label) {
-        const flat = new Float32Array(points.length * 3);
-        points.forEach((point, index) => {
-            flat[index * 3] = component(point, 0);
-            flat[index * 3 + 1] = component(point, 1);
-            flat[index * 3 + 2] = component(point, 2);
-        });
-        const descriptor = this.RAPIER.ColliderDesc.convexHull(flat);
+        const descriptor = this.RAPIER.ColliderDesc.convexHull(flatPoints(points));
         if (!descriptor) throw new TypeError(`Convex collider failed for ${label}.`);
         return this.world.createCollider(descriptor, body);
     }
@@ -596,8 +661,8 @@ export class PhysicsEngine {
         const triangles = entry.triangles ?? entry.obstacle?.triangles;
         const minY = Number(entry.minY ?? entry.obstacle?.minY);
         const maxY = Number(entry.maxY ?? entry.obstacle?.maxY);
-        if (Array.isArray(footprint) && footprint.length >= 3) {
-            if (!Array.isArray(triangles) || triangles.length === 0 || !Number.isFinite(minY) || !Number.isFinite(maxY)) {
+        if (footprint) {
+            if (!Array.isArray(footprint) || footprint.length < 3 || !Array.isArray(triangles) || triangles.length === 0 || !Number.isFinite(minY) || !Number.isFinite(maxY)) {
                 throw new TypeError(`Convex collider failed for ${entry.id}.`);
             }
             return triangles.map((triangle, index) => {
@@ -625,21 +690,204 @@ export class PhysicsEngine {
             .map((vehicle, index) => ({ vehicle, id: stableVehicleId(vehicle, index) }))
             .sort((left, right) => compareUtf8(left.id, right.id));
         this.vehicleStates = vehicles.map(({ vehicle, id }) => {
-            const contact = contactBicycleBody(vehicle);
-            if (contact) contact.groundPlane = this.preparedWorldDescription?.groundPlane ?? null;
             const half = vehicleHalfExtents(vehicle);
             const position = vector(vehicle.position);
+            const contact = contactBicycleBody(vehicle);
+            if (contact) {
+                const { body, chassis } = this._buildChassis(vehicle, contact, half);
+                this.colliderVehicleIds.set(chassis.collider.handle, id);
+                this.rigidbodies.push(body);
+                return { id, vehicle, half, previous: position, body, chassis };
+            }
             const descriptor = this.RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(position.x, position.y, position.z);
             const body = this.world.createRigidBody(descriptor);
             const center = vector(vehicle.collisionCenter);
             const collider = this.RAPIER.ColliderDesc.cuboid(half.x, half.y, half.z);
             if (center.x || center.y || center.z) collider.setTranslation?.(center.x, center.y, center.z);
-            // Default membership is every bit, so a chassis-only floor or road would hit this sweep-driven body.
-            collider.setCollisionGroups?.(collisionGroups(DYNAMIC_GROUP, 0xffff));
-            this.world.createCollider(collider, body);
+            const created = this.world.createCollider(collider, body);
+            if (created?.handle !== undefined) this.colliderVehicleIds.set(created.handle, id);
             this.rigidbodies.push(body);
             return { id, vehicle, half, previous: position, body };
         });
+    }
+
+    /** A dynamic body whose collider bottom sits at the tread. Tires are its only grip. */
+    _buildChassis(vehicle, plant, half) {
+        const params = contactParameters(plant);
+        const clearance = Math.max(0, finite(plant.groundClearance));
+        const center = vector(vehicle.collisionCenter);
+        const body = this.world.createRigidBody(this.RAPIER.RigidBodyDesc.dynamic()
+            .setAdditionalMassProperties(params.mass, { x: 0, y: 0, z: 0 }, {
+                x: params.mass * ((2 * half.y) ** 2 + (2 * half.z) ** 2) / 12,
+                y: params.yawInertia,
+                z: params.mass * ((2 * half.x) ** 2 + (2 * half.y) ** 2) / 12,
+            }, { x: 0, y: 0, z: 0, w: 1 })
+            .setCcdEnabled(true)
+            .setSoftCcdPrediction(CHASSIS_SOFT_CCD)
+            .setCanSleep(false));
+        const descriptor = this.RAPIER.ColliderDesc.cuboid(half.x, half.y, half.z)
+            .setContactSkin(CHASSIS_SKIN)
+            .setTranslation(center.x, half.y - clearance, center.z)
+            .setDensity(0)
+            .setFriction(0)
+            .setFrictionCombineRule(this.RAPIER.CoefficientCombineRule.Min)
+            .setCollisionGroups(collisionGroups(CHASSIS_GROUP, 0xffff));
+        const collider = this.world.createCollider(descriptor, body);
+        const halfWidth = half.z + Math.abs(center.z);
+        const chassis = { plant, collider, clearance, halfWidth, pose: null, previousUp: 0, inContact: false, normal: null, rest: null };
+        this._placeChassis(body, chassis);
+        plant.rapierChassis = true;
+        return { body, chassis };
+    }
+
+    /** Put the body on the plant pose and velocity. Used at build and after an outside teleport. */
+    _placeChassis(body, chassis) {
+        const plant = chassis.plant;
+        const yaw = finite(plant.rotation?.y);
+        const pitch = finite(plant.rotation?.z);
+        const { forward, right } = bodyAxes(yaw, pitch);
+        const up = cross(forward, right);
+        const vx = finite(plant.velocity?.x);
+        const vy = finite(plant.lateralVelocity);
+        body.setTranslation(vector(plant.position), true);
+        body.setRotation(yawPitchQuaternion(yaw, pitch), true);
+        body.setLinvel({
+            x: forward.x * vx + right.x * vy,
+            y: forward.y * vx + right.y * vy,
+            z: forward.z * vx + right.z * vy,
+        }, true);
+        body.setAngvel(scaled(up, finite(plant.yawRate)), true);
+        chassis.pose = chassisPose(plant);
+        chassis.previousUp = 0;
+    }
+
+    /**
+     * Downward ray from the origin, then the tire push for this step. With roll
+     * locked, a cross-slope holds the box on its uphill edge, so the reach grows
+     * by half the width times the cross-slope tangent.
+     */
+    _driveChassis(state, deltaTime) {
+        const { body, chassis } = state;
+        const plant = chassis.plant;
+        if (!samePose(chassis.pose, chassisPose(plant))) this._placeChassis(body, chassis);
+        const origin = body.translation();
+        const rotation = body.rotation();
+        const up = rotate(rotation, Y_AXIS);
+        const ray = new this.RAPIER.Ray(
+            { x: origin.x + up.x * CHASSIS_RAY_SLACK, y: origin.y + up.y * CHASSIS_RAY_SLACK, z: origin.z + up.z * CHASSIS_RAY_SLACK },
+            scaled(up, -1),
+        );
+        const hit = this.world.castRayAndGetNormal(
+            ray,
+            chassis.clearance + 2 * CHASSIS_RAY_SLACK + chassis.halfWidth,
+            true,
+            undefined,
+            collisionGroups(CHASSIS_GROUP, FLOOR_GROUP | ROAD_GROUP),
+            undefined,
+            body,
+            // Obstacle cuboids keep default membership 0xffff, which includes FLOOR and ROAD bits.
+            (collider) => this.supportColliders.has(collider.handle),
+        );
+        const normal = hit ? supportNormal(hit.normal) : null;
+        let reach = chassis.clearance + 2 * CHASSIS_RAY_SLACK;
+        if (normal) {
+            const across = Math.min(1, Math.abs(dot(normal, rotate(rotation, { x: 0, y: 0, z: -1 }))));
+            reach += chassis.halfWidth * across / Math.max(1e-6, Math.sqrt(1 - across * across));
+        }
+        chassis.inContact = Boolean(hit) && hit.timeOfImpact <= reach;
+        chassis.normal = chassis.inContact ? normal : null;
+        const push = contactChassisPush(plant, chassis.inContact, chassis.normal, deltaTime);
+        chassis.rest = push;
+        body.resetForces(true);
+        body.resetTorques(true);
+        if (push.force) {
+            body.addForce(push.force, true);
+            body.addTorque(push.torque, true);
+        }
+    }
+
+    /** Remove roll, apply the parked-car rules, and copy the body back onto the plant. */
+    _readChassis(state, deltaTime) {
+        const { body, chassis } = state;
+        const plant = chassis.plant;
+        const heading = rotate(body.rotation(), X_AXIS);
+        const pitch = Math.asin(Math.max(-1, Math.min(1, heading.y)));
+        const previousYaw = finite(plant.rotation.y);
+        const yaw = previousYaw + wrapAngle(Math.atan2(-heading.z, heading.x) - previousYaw);
+        body.setRotation(yawPitchQuaternion(yaw, pitch), true);
+        const frame = bodyAxes(yaw, pitch);
+        const spin = body.angvel();
+        const angular = { ...spin };
+        const roll = dot(angular, frame.forward);
+        angular.x -= roll * frame.forward.x;
+        angular.y -= roll * frame.forward.y;
+        angular.z -= roll * frame.forward.z;
+        body.setAngvel(angular, true);
+
+        const axes = chassis.inContact ? contactAxes(chassis.normal, yaw) : frame;
+        const up = cross(axes.forward, axes.right);
+        const linear = { ...body.linvel() };
+        let vx = dot(linear, axes.forward);
+        const previousVx = finite(plant.velocity.x);
+        const rest = chassis.rest;
+        const parked = chassis.inContact && rest && (
+            (Math.abs(previousVx) < VX_REST && Math.abs(rest.net) <= rest.rollingCapacity)
+            || (finite(plant.axCommand) === 0 && previousVx !== 0 && previousVx * vx < 0)
+        );
+        if (parked && vx !== 0) {
+            linear.x -= vx * axes.forward.x;
+            linear.y -= vx * axes.forward.y;
+            linear.z -= vx * axes.forward.z;
+            body.setLinvel(linear, true);
+            vx = 0;
+        }
+        const vy = dot(linear, axes.right);
+        const vUp = dot(linear, up);
+        if (deltaTime > 0) {
+            plant.acceleration.x = (vx - previousVx) / deltaTime;
+            plant.acceleration.y = (vy - finite(plant.lateralVelocity)) / deltaTime;
+            plant.acceleration.z = (vUp - chassis.previousUp) / deltaTime;
+        }
+        const translation = body.translation();
+        plant.position.x = translation.x;
+        plant.position.y = translation.y;
+        plant.position.z = translation.z;
+        plant.rotation.x = 0;
+        plant.rotation.y = yaw;
+        plant.rotation.z = pitch;
+        plant.velocity.x = vx;
+        plant.velocity.y = 0;
+        plant.velocity.z = 0;
+        plant.lateralVelocity = vy;
+        plant.yawRate = dot(angular, up);
+        plant.verticalVelocity = linear.y;
+        plant.onRoad = chassis.inContact;
+        plant.contactNormal = chassis.normal;
+        chassis.previousUp = vUp;
+        chassis.pose = chassisPose(plant);
+        publishContactPose(state.vehicle, plant);
+    }
+
+    /** Touching pairs only. Road trimeshes have no contact id and stay unreported. */
+    _chassisContacts(state) {
+        const collider = state.chassis.collider;
+        this.world.contactPairsWith(collider, (other) => {
+            const vehicleId = this.colliderVehicleIds.get(other.handle);
+            const contactId = this.colliderContactIds.get(other.handle);
+            if (vehicleId === undefined && contactId === undefined) return;
+            let touching = false;
+            this.world.contactPair(collider, other, (manifold) => {
+                if (manifold.numContacts() > 0) touching = true;
+            });
+            if (!touching) return;
+            if (contactId !== undefined) this.pendingContacts.add(`${state.id}|${contactId}`);
+            else if (compareUtf8(state.id, vehicleId) < 0) this.pendingContacts.add(`${state.id}|${vehicleId}`);
+            else this.pendingContacts.add(`${vehicleId}|${state.id}`);
+        });
+    }
+
+    hasChassis() {
+        return this.vehicleStates.some((state) => state.chassis);
     }
 
     _rigidBodyCollider(part) {
@@ -647,13 +895,7 @@ export class PhysicsEngine {
         if (part.kind === "cuboid") descriptor = this.RAPIER.ColliderDesc.cuboid(part.half.x, part.half.y, part.half.z);
         else if (part.kind === "ball") descriptor = this.RAPIER.ColliderDesc.ball(part.radius);
         else {
-            const points = new Float32Array(part.vertices.length * 3);
-            part.vertices.forEach((vertex, index) => {
-                points[index * 3] = vertex[0];
-                points[index * 3 + 1] = vertex[1];
-                points[index * 3 + 2] = vertex[2];
-            });
-            descriptor = this.RAPIER.ColliderDesc.convexHull(points);
+            descriptor = this.RAPIER.ColliderDesc.convexHull(flatPoints(part.vertices));
             if (!descriptor) throw new TypeError("Rigid body convex hull failed.");
         }
         descriptor.setDensity(0);
@@ -672,7 +914,11 @@ export class PhysicsEngine {
         const body = this.world.createRigidBody(this.RAPIER.RigidBodyDesc.fixed().setTranslation(0, y - 0.5, 0));
         const descriptor = this.RAPIER.ColliderDesc.cuboid(5000, 0.5, 5000);
         descriptor.setCollisionGroups?.(collisionGroups(FLOOR_GROUP, filter));
-        this.world.createCollider(descriptor, body);
+        const collider = this.world.createCollider(descriptor, body);
+        if (collider?.handle !== undefined) {
+            this.supportColliders.add(collider.handle);
+            this.colliderContactIds.set(collider.handle, "ground:floor");
+        }
         this.rigidbodies.push(body);
     }
 
@@ -689,8 +935,9 @@ export class PhysicsEngine {
                 this.RAPIER.TriMeshFlags?.FIX_INTERNAL_EDGES,
             );
             if (!descriptor) throw new TypeError(`Drivable surface "${surface.id}" trimesh failed.`);
-            descriptor.setCollisionGroups?.(collisionGroups(CHASSIS_GROUP, CHASSIS_GROUP));
-            this.world.createCollider(descriptor, body);
+            descriptor.setCollisionGroups?.(collisionGroups(ROAD_GROUP, CHASSIS_GROUP));
+            const collider = this.world.createCollider(descriptor, body);
+            if (collider?.handle !== undefined) this.supportColliders.add(collider.handle);
             this.rigidbodies.push(body);
         }
     }
@@ -711,7 +958,7 @@ export class PhysicsEngine {
                 .setGravityScale(dynamic && spec.useGravity ? 1 : 0)
                 .setCcdEnabled(dynamic);
             const body = this.world.createRigidBody(descriptor);
-            for (const part of spec.parts) this.world.createCollider(this._rigidBodyCollider(part), body);
+            for (const part of spec.parts) this._rememberContact(this.world.createCollider(this._rigidBodyCollider(part), body), spec);
             body.setAdditionalMass(spec.mass, true);
             body.recomputeMassPropertiesFromColliders?.();
             this.rigidbodies.push(body);
@@ -836,14 +1083,18 @@ export class PhysicsEngine {
         for (const state of this.vehicleStates) state.previous = vector(state.vehicle.position);
     }
 
-    step(deltaTime) {
+    /** `sweep: false` keeps sweep-driven cars where their plants put them; a chassis always steps. */
+    step(deltaTime, { sweep = true } = {}) {
         if (!this.world) return;
         this.pendingContacts = new Set();
         this._pushes = [];
+        const kinematic = this.vehicleStates.filter((state) => !state.chassis);
+        const chassis = this.vehicleStates.filter((state) => state.chassis);
+        const swept = sweep ? kinematic : [];
         const obstacles = this.rigidBodyStates.length
             ? [...this.staticColliders, ...this._rigidBodyObstacles()]
             : this.staticColliders;
-        for (const state of this.vehicleStates) {
+        for (const state of swept) {
             const candidate = vector(state.vehicle.position);
             const box = vehicleBox(state.vehicle);
             const hits = [];
@@ -893,7 +1144,7 @@ export class PhysicsEngine {
             this._queueRigidBodyPush(state, candidate, deltaTime, hits, impact);
             this._separateOverlaps(overlaps);
             const plane = this.preparedWorldDescription?.groundPlane;
-            if (!contactBicycleBody(state.vehicle) && plane && Number.isFinite(Number(plane.y))) {
+            if (plane && Number.isFinite(Number(plane.y))) {
                 const supported = supportPlanePosition(state.previous, vector(state.vehicle.position), Number(plane.y));
                 if (supported.held) {
                     state.vehicle.updatePosition?.(supported.position);
@@ -903,10 +1154,10 @@ export class PhysicsEngine {
             }
         }
 
-        for (let leftIndex = 0; leftIndex < this.vehicleStates.length; leftIndex += 1) {
-            const left = this.vehicleStates[leftIndex];
-            for (let rightIndex = leftIndex + 1; rightIndex < this.vehicleStates.length; rightIndex += 1) {
-                const right = this.vehicleStates[rightIndex];
+        for (let leftIndex = 0; leftIndex < swept.length; leftIndex += 1) {
+            const left = swept[leftIndex];
+            for (let rightIndex = leftIndex + 1; rightIndex < swept.length; rightIndex += 1) {
+                const right = swept[rightIndex];
                 const leftCandidate = vector(left.vehicle.position);
                 const rightCandidate = vector(right.vehicle.position);
                 const leftBox = vehicleBox(left.vehicle);
@@ -952,24 +1203,20 @@ export class PhysicsEngine {
             }
         }
 
-        for (const state of this.vehicleStates) {
-            const contact = contactBicycleBody(state.vehicle);
-            if (contact) {
-                const support = settleContactBody(contact);
-                if (state.vehicle !== contact) {
-                    state.vehicle.updatePosition?.(contact.position);
-                    state.vehicle.updateRotation?.(contact.rotation);
-                }
-                if (support?.source === "floor") this.pendingContacts.add(`${state.id}|ground:floor`);
-            }
+        for (const state of kinematic) {
             const position = vector(state.vehicle.position);
             absorbKinematicClamp(state.vehicle, position);
             state.body.setNextKinematicTranslation(position);
             state.body.setNextKinematicRotation?.(yawQuaternion(state.vehicle.rotation?.y));
         }
+        for (const state of chassis) this._driveChassis(state, deltaTime);
         this._stepRigidBodies();
         this.world.timestep = deltaTime;
         this.world.step();
+        for (const state of chassis) {
+            this._readChassis(state, deltaTime);
+            this._chassisContacts(state);
+        }
         this._publishRigidBodyPoses();
     }
 
@@ -1001,13 +1248,13 @@ export class PhysicsEngine {
             this._buildFloorCollider();
             this._buildVehicleStates();
             this._buildRigidBodies();
-            this._buildDrivableColliders();
+            if (this.hasChassis()) this._buildDrivableColliders();
         }
         this.activeContacts.clear();
         this.pendingContacts.clear();
         for (const state of this.vehicleStates) {
             state.previous = vector(state.vehicle.position);
-            state.body?.setNextKinematicTranslation?.(state.previous);
+            if (!state.chassis) state.body?.setNextKinematicTranslation?.(state.previous);
         }
     }
 

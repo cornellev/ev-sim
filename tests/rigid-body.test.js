@@ -4,7 +4,15 @@ import test from "node:test";
 import { createEnvironmentCommandService } from "../app/3d/editor/commands/index.js";
 import { EnvironmentDocument, resetDocumentIdCounter } from "../app/3d/editor/document/EnvironmentDocument.js";
 import { hashAssetMetric } from "../app/editor-assets/AssetDefinition.js";
-import { PHYSICS_CAPABILITY_ID_V2, createPhysicsBackendSelection } from "../app/physics/PhysicsBackend.js";
+import {
+    PHYSICS_BACKEND_CONFIG_HASH,
+    PHYSICS_BACKEND_CONFIG_HASH_V2,
+    PHYSICS_CAPABILITY_ID,
+    PHYSICS_CAPABILITY_ID_V2,
+    assertPhysicsBackendSelection,
+    createPhysicsBackendSelection,
+    listPhysicsBackendSelections,
+} from "../app/physics/PhysicsBackend.js";
 import { CHASSIS_GROUP, PhysicsEngine } from "../app/physics/PhysicsEngine.js";
 import { SimulationKernel } from "../app/simulation/kernel/SimulationKernel.js";
 import { SimulationEngine } from "../app/simulation/SimulationEngine.js";
@@ -321,6 +329,76 @@ test("the floor slab exists without props, and a closed collider still holds a c
     const rested = chassis.translation().y;
     assert.ok(rested > 0.05 && rested < 0.45, `chassis y ${rested}`);
     closed.disposeRun();
+});
+
+test("a world with props selects a new physics config hash", () => {
+    const plain = createPhysicsBackendSelection();
+    const props = createPhysicsBackendSelection({ rigidBodies: [{ id: "box" }] });
+    const compound = createPhysicsBackendSelection({ assetProxies: [{ collision: [{}] }] });
+    assert.equal(plain.configHash, PHYSICS_BACKEND_CONFIG_HASH);
+    assert.equal(compound.configHash, PHYSICS_BACKEND_CONFIG_HASH_V2);
+    assert.notEqual(props.configHash, plain.configHash);
+    assert.equal(props.capabilityId, PHYSICS_CAPABILITY_ID);
+    assert.throws(
+        () => assertPhysicsBackendSelection(plain, { rigidBodies: [{ id: "box" }] }),
+        /Physics backend mismatch/,
+    );
+    assert.equal(new Set(listPhysicsBackendSelections().map((entry) => entry.configHash)).size, 4);
+});
+
+test("a short footprint fails instead of placing a box at the origin", async () => {
+    const description = {
+        obstacles: [{
+            id: "bad",
+            bounds: { min: { x: 5, y: 0, z: 5 }, max: { x: 6, y: 2, z: 6 } },
+            footprint: [],
+        }],
+    };
+    const physics = new PhysicsEngine({
+        vehicles: () => ({ vehicles: [] }),
+        objects: () => ({ boxes: () => [] }),
+        bindings: () => ({ signalStore: null }),
+    });
+    await assert.rejects(
+        () => physics.configureRun({
+            manifest: {},
+            worldDescription: description,
+            backendSelection: createPhysicsBackendSelection(description),
+        }),
+        /Convex collider failed for bad/,
+    );
+});
+
+test("a crate dropped in an L-shaped notch rests on the floor", async () => {
+    const { document, service } = yard();
+    assert.equal(service.run("setFloor", { enabled: true }).ok, true);
+    assert.equal(service.run("addBuilding", {
+        buildingId: "ell",
+        height: 2,
+        footprint: [
+            { x: 0, z: 0 },
+            { x: 4, z: 0 },
+            { x: 4, z: 2 },
+            { x: 2, z: 2 },
+            { x: 2, z: 4 },
+            { x: 0, z: 4 },
+        ],
+    }).ok, true);
+    assert.equal(service.run("addPrimitive", {
+        id: "crate",
+        shape: "box",
+        x: 3,
+        y: 3,
+        z: 3,
+        size: { x: 0.4, y: 0.4, z: 0.4 },
+    }).ok, true);
+    assert.equal(service.run("addRigidBody", { objectId: "crate" }).ok, true);
+    const physics = await startPhysics(document);
+    const dt = 1 / 60;
+    for (let step = 0; step < 240; step += 1) physics.step(dt);
+    const y = poseOf(physics, "crate").position.y;
+    assert.ok(y > 0.05 && y < 1, `notch y ${y}`);
+    physics.disposeRun();
 });
 
 test("a prop rests on a rotated obstacle hull inside the bounding box", async () => {

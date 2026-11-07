@@ -1,6 +1,22 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 
+async function openWorkspaceSettings(page) {
+    const opener = page.getByRole("button", { name: "Open workspace switcher" }).first();
+    await opener.evaluate((button) => button.click());
+    const dialog = page.getByRole("dialog", { name: "Workspaces" });
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("button", { name: "Settings", exact: true }).click();
+    return dialog;
+}
+
+async function chooseRunView(page, label) {
+    const dialog = await openWorkspaceSettings(page);
+    await dialog.getByRole("group", { name: "Run configuration view" }).getByRole("button", { name: label }).click();
+    await dialog.getByRole("button", { name: "Close workspaces" }).click();
+    await expect(dialog).toBeHidden();
+}
+
 async function openWorkspace(page, label) {
     const dialog = page.getByRole("dialog", { name: "Workspaces" });
     const opener = page.getByRole("button", { name: "Open workspace switcher" }).first();
@@ -21,7 +37,6 @@ test("simple and advanced keep the draft, invalid JSON, and the other editor pre
     await page.goto("/");
     await openWorkspace(page, "Run configuration");
 
-    const view = page.getByRole("group", { name: "Run configuration view" });
     const advancedAuthoring = await page.evaluate((key) => localStorage.getItem(key), "cev-sim.ui.advancedAuthoring");
     await expect(page.getByRole("group", { name: "Execution profile" })).toBeVisible({ timeout: 30_000 });
     await expect(page.getByRole("tablist", { name: "Run manifest sections" })).toBeHidden();
@@ -32,21 +47,21 @@ test("simple and advanced keep the draft, invalid JSON, and the other editor pre
     await simpleName.fill(renamed);
     await expect.poll(() => page.evaluate((key) => localStorage.getItem(key), "cev-sim.ui.advancedAuthoring")).toBe(advancedAuthoring);
 
-    await view.getByRole("button", { name: "Advanced" }).click();
+    await chooseRunView(page, "Advanced");
     await expect.poll(() => page.evaluate((key) => localStorage.getItem(key), "cev-sim.ui.runConfig.mode")).toBe("advanced");
     await expect(page.getByRole("textbox", { name: "Name" })).toHaveValue(renamed);
-    await view.getByRole("button", { name: "Simple" }).click();
+    await chooseRunView(page, "Simple");
     await expect(page.getByRole("textbox", { name: "Name" })).toHaveValue(renamed);
 
-    await view.getByRole("button", { name: "Advanced" }).click();
+    await chooseRunView(page, "Advanced");
     await page.getByRole("tab", { name: "JSON" }).click();
     const raw = page.getByRole("textbox", { name: "Raw run manifest JSON" });
     await raw.fill("{");
     await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
-    await view.getByRole("button", { name: "Simple" }).click();
+    await chooseRunView(page, "Simple");
     await expect(page.getByRole("alert").getByText("Unapplied JSON blocks save and launch")).toBeVisible();
     await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
-    await view.getByRole("button", { name: "Advanced" }).click();
+    await chooseRunView(page, "Advanced");
     await expect(page.getByRole("textbox", { name: "Raw run manifest JSON" })).toHaveValue("{");
     await expect.poll(() => page.evaluate((key) => localStorage.getItem(key), "cev-sim.ui.advancedAuthoring")).toBe(advancedAuthoring);
 });
@@ -55,7 +70,7 @@ test("simple mode can select a scenario and vehicle, save, and launch", async ({
     test.setTimeout(180_000);
     await page.goto("/");
     await openWorkspace(page, "Run configuration");
-    await page.getByRole("group", { name: "Run configuration view" }).getByRole("button", { name: "Simple" }).click();
+    await chooseRunView(page, "Simple");
 
     const scenario = page.getByRole("combobox", { name: "Scenario" });
     await expect(scenario).toBeVisible({ timeout: 30_000 });
@@ -93,7 +108,7 @@ test("a global advanced preference opens advanced until the run view is chosen",
     await openWorkspace(page, "Run configuration");
     await expect(page.getByRole("tablist", { name: "Run manifest sections" })).toBeVisible({ timeout: 30_000 });
     await expect.poll(() => page.evaluate((key) => localStorage.getItem(key), "cev-sim.ui.runConfig.mode")).toBeNull();
-    await page.getByRole("group", { name: "Run configuration view" }).getByRole("button", { name: "Simple" }).click();
+    await chooseRunView(page, "Simple");
     await expect.poll(() => page.evaluate((key) => localStorage.getItem(key), "cev-sim.ui.runConfig.mode")).toBe("simple");
     await expect.poll(() => page.evaluate((key) => localStorage.getItem(key), "cev-sim.ui.advancedAuthoring")).toBe("true");
 });
@@ -121,9 +136,12 @@ test("a storage failure keeps the chosen view for the session", async ({ page })
     await openWorkspace(page, "Run configuration");
     await expect(page.getByRole("group", { name: "Execution profile" })).toBeVisible({ timeout: 30_000 });
     await expect(page.getByRole("tablist", { name: "Run manifest sections" })).toBeHidden();
-    const advanced = page.getByRole("group", { name: "Run configuration view" }).getByRole("button", { name: "Advanced" });
+    const dialog = await openWorkspaceSettings(page);
+    const advanced = dialog.getByRole("group", { name: "Run configuration view" }).getByRole("button", { name: "Advanced" });
     await advanced.focus();
     await page.keyboard.press("Enter");
+    await dialog.getByRole("button", { name: "Close workspaces" }).click();
+    await expect(dialog).toBeHidden();
     await expect(page.getByRole("tablist", { name: "Run manifest sections" })).toBeVisible();
     await page.evaluate(() => {
         window.dispatchEvent(new StorageEvent("storage", { key: "cev-sim.ui.runConfig.mode" }));
@@ -156,9 +174,12 @@ test("keyboard stays out of the hidden advanced editor", async ({ page }) => {
         const insideHidden = await page.evaluate(() => Boolean(document.activeElement?.closest("[aria-hidden='true']")));
         expect(insideHidden).toBe(false);
     }
-    const advanced = page.getByRole("group", { name: "Run configuration view" }).getByRole("button", { name: "Advanced" });
+    const dialog = await openWorkspaceSettings(page);
+    const advanced = dialog.getByRole("group", { name: "Run configuration view" }).getByRole("button", { name: "Advanced" });
     await advanced.focus();
     await page.keyboard.press("Enter");
+    await dialog.getByRole("button", { name: "Close workspaces" }).click();
+    await expect(dialog).toBeHidden();
     await expect(page.getByRole("tablist", { name: "Run manifest sections" })).toBeVisible();
 });
 
@@ -203,7 +224,8 @@ test("simple run configuration is accessible at the narrow breakpoint @a11y", as
     await page.setViewportSize({ width: 900, height: 720 });
     await page.goto("/");
     await openWorkspace(page, "Run configuration");
-    await expect(page.getByRole("group", { name: "Run configuration view" })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole("group", { name: "Execution profile" })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole("group", { name: "Run configuration view" })).toHaveCount(0);
     const results = await new AxeBuilder({ page })
         .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
         .analyze();
