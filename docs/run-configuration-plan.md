@@ -6,16 +6,16 @@ current detailed editor as Advanced Mode. Both views edit one run manifest.
 
 ## Status and scope
 
-- Status: CFG-01 is implemented. Its Advanced-workflow gate is still open because Playwright was not accepted as evidence.
-- Next package: **CFG-02 — Two execution presets and comparison model**.
+- Status: CFG-03 is implemented. Its browser gate is still open because Playwright was not run. CFG-01's Advanced-workflow gate is still open for the same reason.
+- Next package: **CFG-04 — Effective summary and Custom Settings**.
 - Delivery: six dependency-ordered PRs, each implemented in a separate session.
 - Last updated: **2026-11-06**.
 
 | Package | Depends on | Status |
 | --- | --- | --- |
 | CFG-01 — Shared session and preservation safeguards | None | Implemented; Playwright not run |
-| CFG-02 — Two execution presets and comparison model | CFG-01 | Planned |
-| CFG-03 — Simple workspace and mode switching | CFG-02 | Planned |
+| CFG-02 — Two execution presets and comparison model | CFG-01 | Implemented |
+| CFG-03 — Simple workspace and mode switching | CFG-02 | Implemented; Playwright not run |
 | CFG-04 — Effective summary and Custom Settings | CFG-03 | Planned |
 | CFG-05 — Validation navigation and launch integration | CFG-04 | Planned |
 | CFG-06 — Acceptance, documentation, and default | CFG-05 | Planned |
@@ -209,6 +209,8 @@ paths, meaningful Custom inference, non-mutating previews, and preservation of
 advanced customizations. Neither preset changes seed or duration bounds, and
 neither requires a finite scenario duration.
 
+**CFG-02 checks, 2026-11-06.** `node --experimental-default-type=module --test tests/execution-profiles.test.js` passed 9 tests. `npm run lint` exited 0 with the three existing warnings in `app/3d/overlay/map/MapSurface.js` and `app/marketplace/ui/MarketplaceWorkspace.js`. `npm test` ran 2514 tests: 2501 passed, 5 failed, and 8 skipped. The five failures match the CFG-01 suite and sit outside this package: the pinned headless characterization comparison, plan-view control arcs, plugin range-image parent updates, state-sensor vehicle mounts, and the lidar hierarchy row. The characterization fixture was left unchanged. Playwright was not run; this package adds no UI.
+
 ### CFG-03 — Simple workspace and mode switching
 
 Add the scoped preference and visible segmented switch. Build the essential
@@ -219,6 +221,8 @@ available explicitly; keep the initial default Advanced until CFG-06.
 **Gate:** Users can select a compatible scenario and vehicle, save, and launch
 from Simple. Mode switches preserve unsaved edits. Missing catalog entries
 remain represented and recoverable. Other editor preferences are unchanged.
+
+**CFG-03 checks, 2026-11-06.** `node --experimental-default-type=module --test tests/run-config-mode.test.js tests/simple-run-workspace.test.js` passed 10 tests. `npm run lint` exited 0 with the three existing warnings in `app/3d/overlay/map/MapSurface.js` and `app/marketplace/ui/MarketplaceWorkspace.js`. `npm test` ran 2524 tests: 2511 passed, 5 failed, and 8 skipped. The five failures match the CFG-01 suite and sit outside this package: the pinned headless characterization comparison, plan-view control arcs, plugin range-image parent updates, state-sensor vehicle mounts, and the lidar hierarchy row. The characterization fixture was left unchanged. Playwright was not run. Selecting a scenario and vehicle, saving, and launching from Simple in the browser are unverified.
 
 ### CFG-04 — Effective summary and Custom Settings
 
@@ -352,3 +356,46 @@ sensor views that never call `onChange` do not report their own text.
 The Sensors effect that stamped inherited plugin selections on mount, catalog
 change, or draft change is gone. Enable inheritance, reset to parent, add
 sensor, and change sensor type still stamp and lock.
+
+### 2026-11-06 — Infer execution profiles from manifest fields
+
+Standard Simulation and External Controller are patches in
+`app/config/executionProfiles.js`. They are not stored on the manifest.
+
+External matches first: realtime pacing, speed 1, clock publishing, and
+authority `reference` when the ego controller is `external-ros`, or
+`candidate` when the run has no scenario. A local route follower, script, or
+script-with-route controller is not a direct-command match. Logging is
+ignored. Standard matches next: reference authority, realtime pacing, speed
+1, optional logging, and a local ego controller. Publish-clock is ignored. A
+manifest-only run does not match Standard. Otherwise the run is Custom and
+the comparison baseline is Standard. A matching profile with other overrides
+is also labeled Custom and names that profile as the baseline.
+
+Preview withholds the whole patch when a scenario is selected and its
+document is not loaded. The external baseline still sets pacing, speed, and
+clock publishing, and leaves authority at the default candidate value. A
+known control source applies its patch even when prerequisites are unmet.
+The preview reports those issues and does not rewrite controllers or topics.
+Neither preset changes seed, step size, the manifest step limit, or scenario
+duration, and neither requires a finite duration.
+
+### 2026-11-06 — Simple is an explicit view over the same draft
+
+`cev-sim.ui.runConfig.mode` stores `simple` or `advanced`. An explicit value
+wins. With no run preference, a true `cev-sim.ui.advancedAuthoring` value
+selects Advanced. Otherwise the fallback stays Advanced until CFG-06. Writing
+the run preference does not write the global preference. If storage throws,
+the choice stays in the page for the session and storage events are ignored.
+
+`SimpleRunWorkspace` edits the ConfigPage draft. Advanced stays mounted and
+uses `advancedEditorA11yProps` while Simple is visible. Switching modes does
+not write the draft. New runs created while Simple is selected call
+`enableSensorInheritance` for the built-in vehicle. Constructor sensors whose
+ids do not match that vehicle stay as extras. Advanced create still uses
+`createDefaultRunManifest` alone.
+
+An execution profile confirms through `previewProfile` before `update`. A
+vehicle change that would add plugin locks confirms through
+`pluginGrantPreview`. Cancellation writes nothing. The resolved summary and
+Custom Settings stay in CFG-04.

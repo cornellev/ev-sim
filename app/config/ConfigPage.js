@@ -93,6 +93,15 @@ import {
     withConfigLoadTimeout,
 } from "./ConfigCatalogLoader.js";
 import {
+    readRunConfigModePreference,
+    resolveRunConfigMode,
+    writeRunConfigModePreference,
+    RUN_CONFIG_MODE_FALLBACK,
+    RUN_CONFIG_MODE_STORAGE_KEY,
+} from "./runConfigMode.js";
+import { SIMPLE_VEHICLE_OPTIONS as BUILT_IN_VEHICLE_OPTIONS, simpleCreatedManifest } from "./simpleRunModel.js";
+import SimpleRunWorkspace from "./SimpleRunWorkspace.js";
+import {
     EMBEDDED_BINDINGS_BUFFER_ID,
     RAW_MANIFEST_BUFFER_ID,
     advancedEditorA11yProps,
@@ -112,6 +121,8 @@ import {
     AsyncState,
     Button,
     Field as SharedField,
+    readAdvancedAuthoringPreference,
+    SegmentedControl,
     StatusMessage,
     Switch as SharedSwitch,
     TabsContent,
@@ -123,6 +134,7 @@ import {
     readLastOpenWorkspaceId,
     writeLastOpenWorkspaceId,
 } from "../ui";
+import { ADVANCED_AUTHORING_STORAGE_KEY } from "../ui/authoringModeStorage.js";
 import { radToDeg } from "three/src/math/MathUtils.js";
 import { degToRad } from "../util/Math.js";
 
@@ -296,6 +308,9 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
     if (!sensorSessionRef.current) sensorSessionRef.current = new BrowserSensorAuthoringSession();
     const [sensorCatalog, setSensorCatalog] = useState({ revision: 0, sensors: [] });
     const [sensorRegistryTick, setSensorRegistryTick] = useState(0);
+    const [environmentsReady, setEnvironmentsReady] = useState(false);
+    const sessionModeRef = useRef(null);
+    const [mode, setMode] = useState(RUN_CONFIG_MODE_FALLBACK);
     const authoringOptions = () => ({
         sensorRegistry: sensorSessionRef.current?.registry ?? sensorTypeRegistry,
     });
@@ -339,6 +354,29 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
         sensorSessionRef.current?.dispose();
         sensorSessionRef.current = null;
     }, []);
+
+    useEffect(() => {
+        const sync = (event) => {
+            if (event?.key && event.key !== RUN_CONFIG_MODE_STORAGE_KEY && event.key !== ADVANCED_AUTHORING_STORAGE_KEY) return;
+            if (sessionModeRef.current) {
+                setMode(sessionModeRef.current);
+                return;
+            }
+            setMode(resolveRunConfigMode({
+                stored: readRunConfigModePreference(),
+                advancedAuthoring: readAdvancedAuthoringPreference(),
+            }));
+        };
+        sync();
+        window.addEventListener("storage", sync);
+        return () => window.removeEventListener("storage", sync);
+    }, []);
+
+    const chooseMode = (next) => {
+        if ((next !== "simple" && next !== "advanced") || next === mode) return;
+        setMode(next);
+        sessionModeRef.current = writeRunConfigModePreference(next) ? null : next;
+    };
 
     useEffect(() => {
         let mounted = true;
@@ -435,6 +473,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
     const loadEnvironmentCatalog = async () => {
         const requestId = ++environmentLoadRequest.current;
         setEnvironmentError(null);
+        setEnvironmentsReady(false);
         try {
             const items = await withConfigLoadTimeout(
                 listEnvironments(),
@@ -443,6 +482,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
             );
             if (requestId !== environmentLoadRequest.current) return;
             setEnvironments(items || []);
+            setEnvironmentsReady(true);
         } catch (caught) {
             if (requestId !== environmentLoadRequest.current) return;
             setEnvironmentError(caught.message);
@@ -695,7 +735,9 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
         let suffix = 2;
         while (existing.has(id)) id = `${runIdFromName(baseName)}-${suffix++}`;
         await perform(async () => {
-            const created = await createRunManifest(createDefaultRunManifest({ id, name: baseName }));
+            const created = await createRunManifest(mode === "simple"
+                ? simpleCreatedManifest(id, baseName)
+                : createDefaultRunManifest({ id, name: baseName }));
             await refreshCatalog(created.id);
         });
     };
@@ -854,6 +896,12 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                     <span className="truncate text-[13px]/[13px] font-semibold">Run Configuration</span>
                 </button>
                 <div className="flex flex-wrap items-center gap-2">
+                    <SegmentedControl
+                        label="Run configuration view"
+                        value={mode}
+                        items={[{ value: "simple", label: "Simple" }, { value: "advanced", label: "Advanced" }]}
+                        onValueChange={chooseMode}
+                    />
                     <select
                         aria-label="Select run manifest"
                         className="sf-input hidden max-w-48 max-[1023px]:block"
@@ -865,8 +913,13 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                     </select>
                     <Action icon={<IconCheck size={14} stroke={1.75} />} label="Validate" onClick={validate} disabled={!draft || busy || jsonBlocked} />
                     <Action icon={<IconDeviceFloppy size={14} stroke={1.75} />} label="Save" onClick={save} disabled={!draft || !dirty || busy || jsonBlocked} />
-                    <div className="hidden max-[1023px]:block">
-                        <Action danger icon={<IconTrash size={14} stroke={1.75} />} label="Delete" onClick={requestDelete} disabled={!draft || busy} />
+                    <div className="hidden flex-wrap items-center gap-2 max-[1023px]:flex">
+                        <Action compact icon={<IconPlus size={14} stroke={1.75} />} label="New" onClick={createNew} disabled={busy} />
+                        <Action compact icon={<IconFileImport size={14} stroke={1.75} />} label="Import" onClick={() => importRef.current?.click()} disabled={busy} />
+                        <Action compact icon={<IconCopy size={14} stroke={1.75} />} label="Duplicate" onClick={duplicate} disabled={!draft || busy} />
+                        <Action compact icon={<IconDownload size={14} stroke={1.75} />} label="Export bundle" onClick={exportBundle} disabled={!draft || busy} />
+                        <Action compact icon={<IconDownload size={14} stroke={1.75} />} label="Export template" onClick={exportTemplate} disabled={!draft || busy} />
+                        <Action compact danger icon={<IconTrash size={14} stroke={1.75} />} label="Delete" onClick={requestDelete} disabled={!draft || busy} />
                     </div>
                     <Action primary icon={<IconPlayerPlay size={14} stroke={1.75} />} label="Launch" onClick={launch} disabled={!draft || busy || jsonBlocked} />
                 </div>
@@ -905,7 +958,39 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                     {manifestLoadState === "error" && <ConfigLoadState error title="Could not load manifests" detail={error || "The manifest catalog is unavailable."} action={<Action label="Retry" onClick={() => loadManifestCatalog(selectedId)} />} />}
                     {manifestLoadState === "empty" && <ConfigLoadState title="No run manifests" detail="Create the first server-backed manifest to configure a simulation run." action={<Action primary icon={<IconPlus size={14} stroke={1.75} />} label="Create manifest" onClick={createNew} disabled={busy} />} />}
                     {manifestLoadState === "ready" && draft && (
-                        <AdvancedRunEditor hidden={false}>
+                        <>
+                        {mode === "simple" && (
+                            <SimpleRunWorkspace
+                                draft={draft}
+                                blocked={jsonBlocked || busy}
+                                environments={environments}
+                                environmentsReady={environmentsReady}
+                                scenarios={scenarioCatalog}
+                                scenarioCatalogState={scenarioCatalogState}
+                                scenarioCatalogError={scenarioCatalogError}
+                                onRetryScenarios={loadScenarioCatalog}
+                                vehicleCatalog={vehicleCatalog}
+                                sensorCatalog={sensorCatalog}
+                                sensorRegistry={authoringOptions().sensorRegistry}
+                                onUpdate={update}
+                                onOpenAdvanced={(nextTab) => {
+                                    setTab(nextTab);
+                                    chooseMode("advanced");
+                                }}
+                            >
+                                <ConfigurationAttention
+                                    attention={configurationAttention}
+                                    validation={validation}
+                                    environmentError={environmentError}
+                                    error={error}
+                                    onDiscardBuffer={discardBuffer}
+                                    onRetryEnvironments={loadEnvironmentCatalog}
+                                />
+                                {validation?.ok && <StatusMessage className="mb-4" tone="success" title="Manifest and dependencies are valid." />}
+                                {migrationPending && <StatusMessage className="mb-4" tone="info" title={`Run manifest v${saved.version} is ready to migrate`}>Saving writes the normalized v{RUN_MANIFEST_VERSION} document. Manifests before v8 also gain missing candidate perception and localization return topics.</StatusMessage>}
+                            </SimpleRunWorkspace>
+                        )}
+                        <AdvancedRunEditor hidden={mode === "simple"}>
                         <TabsRoot value={tab} onValueChange={setTab} className="mx-auto max-w-6xl p-6 max-[900px]:p-4">
                             <div className="mb-5 flex flex-wrap items-start justify-between gap-3 border-b border-[var(--slate-border)] pb-5">
                                 <div>
@@ -921,55 +1006,14 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                                 </div>
                             </div>
 
-                            {configurationAttention.sections.length > 0 && (
-                                <StatusMessage className="mb-4" tone="danger" title={configurationAttention.title}>
-                                    <AdvancedValidationBanner issues={validation?.issues || []} />
-                                    <div className="space-y-3">
-                                        {configurationAttention.sections.map((section) => (
-                                            <div key={section.key}>
-                                                {section.label && (section.text || section.buffers) && (
-                                                    <p className="text-[12px] font-medium text-[var(--slate-fg-2)]">{section.label}</p>
-                                                )}
-                                                {section.text && (
-                                                    <p className="mt-1 whitespace-pre-wrap text-[13px]">{section.text}</p>
-                                                )}
-                                                {section.issues && (
-                                                    <ul className="mt-1 space-y-1.5 text-[13px]">
-                                                        {section.issues.map((issue, index) => {
-                                                            const path = issue.path ? String(issue.path) : "manifest";
-                                                            const location = validationIssueLocation(path);
-                                                            return (
-                                                                <li key={`${path}-${index}`} className="rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-2)] px-3 py-2">
-                                                                    <p className="font-mono text-[11px] text-[var(--slate-muted)]">
-                                                                        {path}
-                                                                        {location ? ` · open ${location}` : ""}
-                                                                    </p>
-                                                                    <p className="mt-1 text-[var(--slate-fg)]">{issue.message}</p>
-                                                                </li>
-                                                            );
-                                                        })}
-                                                    </ul>
-                                                )}
-                                                {section.buffers && (
-                                                    <ul className="mt-1 space-y-1.5 text-[13px]">
-                                                        {section.buffers.map((entry) => (
-                                                            <li key={entry.id} className="rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-2)] px-3 py-2">
-                                                                <p>{entry.label}: {entry.error}</p>
-                                                                <button type="button" className="mt-2 text-[11px] font-medium text-[var(--slate-fg-2)]" onClick={() => discardBuffer(entry.id)}>
-                                                                    Discard {entry.label}
-                                                                </button>
-                                                            </li>
-                                                        ))}
-                                                    </ul>
-                                                )}
-                                            </div>
-                                        ))}
-                                        {environmentError && !error && (
-                                            <Action compact label="Retry environments" onClick={loadEnvironmentCatalog} />
-                                        )}
-                                    </div>
-                                </StatusMessage>
-                            )}
+                            <ConfigurationAttention
+                                attention={configurationAttention}
+                                validation={validation}
+                                environmentError={environmentError}
+                                error={error}
+                                onDiscardBuffer={discardBuffer}
+                                onRetryEnvironments={loadEnvironmentCatalog}
+                            />
                             {validation?.ok && <StatusMessage className="mb-4" tone="success" title="Manifest and dependencies are valid." />}
                             {migrationPending && <StatusMessage className="mb-4" tone="info" title={`Run manifest v${saved.version} is ready to migrate`}>Saving writes the normalized v{RUN_MANIFEST_VERSION} document. Manifests before v8 also gain missing candidate perception and localization return topics.</StatusMessage>}
 
@@ -1033,6 +1077,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                             </div>
                         </TabsRoot>
                         </AdvancedRunEditor>
+                        </>
                     )}
                 </section>
             </div>
@@ -1067,6 +1112,66 @@ function AdvancedRunEditor({ hidden = false, children }) {
     return <div {...advancedEditorA11yProps(hidden)}>{children}</div>;
 }
 
+function ConfigurationAttention({
+    attention,
+    validation,
+    environmentError,
+    error,
+    onDiscardBuffer,
+    onRetryEnvironments,
+}) {
+    if (!attention?.sections?.length) return null;
+    return (
+        <StatusMessage className="mb-4" tone="danger" title={attention.title}>
+            <AdvancedValidationBanner issues={validation?.issues || []} />
+            <div className="space-y-3">
+                {attention.sections.map((section) => (
+                    <div key={section.key}>
+                        {section.label && (section.text || section.buffers) && (
+                            <p className="text-[12px] font-medium text-[var(--slate-fg-2)]">{section.label}</p>
+                        )}
+                        {section.text && (
+                            <p className="mt-1 whitespace-pre-wrap text-[13px]">{section.text}</p>
+                        )}
+                        {section.issues && (
+                            <ul className="mt-1 space-y-1.5 text-[13px]">
+                                {section.issues.map((issue, index) => {
+                                    const path = issue.path ? String(issue.path) : "manifest";
+                                    const location = validationIssueLocation(path);
+                                    return (
+                                        <li key={`${path}-${index}`} className="rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-2)] px-3 py-2">
+                                            <p className="font-mono text-[11px] text-[var(--slate-muted)]">
+                                                {path}
+                                                {location ? ` · open ${location}` : ""}
+                                            </p>
+                                            <p className="mt-1 text-[var(--slate-fg)]">{issue.message}</p>
+                                        </li>
+                                    );
+                                })}
+                            </ul>
+                        )}
+                        {section.buffers && (
+                            <ul className="mt-1 space-y-1.5 text-[13px]">
+                                {section.buffers.map((entry) => (
+                                    <li key={entry.id} className="rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-2)] px-3 py-2">
+                                        <p>{entry.label}: {entry.error}</p>
+                                        <button type="button" className="mt-2 text-[11px] font-medium text-[var(--slate-fg-2)]" onClick={() => onDiscardBuffer(entry.id)}>
+                                            Discard {entry.label}
+                                        </button>
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
+                    </div>
+                ))}
+                {environmentError && !error && (
+                    <Action compact label="Retry environments" onClick={onRetryEnvironments} />
+                )}
+            </div>
+        </StatusMessage>
+    );
+}
+
 function ConfigLoadState({ title, detail, action = null, error = false }) {
     return <div className="grid h-full place-items-center p-6"><div><AsyncState status={error ? "error" : action ? "empty" : "loading"} title={title} detail={detail} />{action && <div className="mt-4 flex justify-center">{action}</div>}</div></div>;
 }
@@ -1074,12 +1179,6 @@ function ConfigLoadState({ title, detail, action = null, error = false }) {
 function Overview({ draft, environments, update }) {
     return <div className="grid gap-4 md:grid-cols-2"><Field label="Name"><input value={draft.name} onChange={(event) => update(["name"], event.target.value)} /></Field><Field label="Stable ID"><input value={draft.id} onChange={(event) => update(["id"], event.target.value)} /></Field><Field wide label="Description"><textarea rows={3} value={draft.description} onChange={(event) => update(["description"], event.target.value)} /></Field><Field label="Environment"><select disabled={Boolean(draft.scenario)} value={draft.environment.id} onChange={(event) => update(["environment", "id"], event.target.value)}>{environments.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></Field><Field label="Expected environment hash"><input disabled={Boolean(draft.scenario)} value={draft.environment.expectedHash || ""} placeholder={draft.scenario ? "Supplied by scenario" : "Unlocked"} onChange={(event) => update(["environment", "expectedHash"], event.target.value || null)} /></Field><Field label="Seed"><input value={draft.seed} onChange={(event) => update(["seed"], event.target.value)} /></Field>{draft.scenario && <p className="md:col-span-2 text-[12px] text-[var(--slate-muted)]">The selected scenario supplies the environment, actors, poses, routes, and events. This run configuration supplies the Ego vehicle, sensors, scripts, assertions, clock, and logging.</p>}</div>;
 }
-
-const BUILT_IN_VEHICLE_OPTIONS = [
-    { id: "big-car", name: "Big Car (built-in)" },
-    { id: "igvc-car", name: "IGVC Car (built-in)" },
-    { id: "scenario-car", name: "Scenario Car (built-in)" },
-];
 
 function ScenarioSelection({
     draft,

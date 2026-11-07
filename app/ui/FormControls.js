@@ -86,7 +86,7 @@ export function Switch({ checked, onCheckedChange, label, description, disabled,
     );
 }
 
-export function SegmentedControl({ value, onValueChange, items, label, className }) {
+export function SegmentedControl({ value, onValueChange, items, label, className, disabled = false }) {
     return (
         <ToggleGroup.Root
             type="single"
@@ -94,6 +94,7 @@ export function SegmentedControl({ value, onValueChange, items, label, className
             onValueChange={(next) => next && onValueChange?.(next)}
             aria-label={label}
             className={cx("sf-segmented", className)}
+            disabled={disabled}
         >
             {items.map((item) => (
                 <ToggleGroup.Item key={item.value} value={item.value} className="sf-segmented__item">
