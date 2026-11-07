@@ -153,7 +153,7 @@ test("the floor grid exists only when the floor collider does", () => {
         rigidBodyStates: [body],
     });
     assert.equal(off.floor, null);
-    assert.equal(empty.floor, null);
+    assert.equal(empty.floor.y, 1.5);
     assert.equal(on.floor.y, 1.5);
     assert.deepEqual([on.floor.minX, on.floor.maxX, on.floor.minZ, on.floor.maxZ], [-20, 20, -20, 20]);
     for (let index = 1; index < on.floor.positions.length; index += 3) {

@@ -105,3 +105,25 @@ test("ED-08 georegistration rejects stale preview plans without mutation", () =>
     assert.equal(result.issues[0].code, "command.document.stale");
     assert.deepEqual(document.snapshot(), before);
 });
+
+test("whole-environment georegistration migrates drive areas, preserves elevation, and honors locks", () => {
+    const document = legacyDocument();
+    const service = createEnvironmentCommandService({ document });
+    assert.equal(service.run("addDriveArea", { driveAreaId: "yard", footprint: document.buildings[0].footprint, y: 4 }).ok, true);
+    const before = document.snapshot();
+    const roadsOnly = planGeoregistration(document, { targetFrame: FRAME, scope: "roads" });
+    assert.deepEqual(roadsOnly.after.driveAreas, before.driveAreas);
+    const plan = planGeoregistration(document, { targetFrame: FRAME, scope: "environment" });
+    const pointKey = ({ x, z }) => `${x.toFixed(6)},${z.toFixed(6)}`;
+    assert.deepEqual(plan.after.driveAreas[0].footprint.map(pointKey).sort(), plan.after.buildings[0].footprint.map(pointKey).sort());
+    assert.equal(plan.after.driveAreas[0].y, 4);
+    assert.equal(service.bus.execute(migrateGeoregistration({ expectedDocumentVersion: document.version, plan })).ok, true);
+    assert.equal(service.bus.undo().ok, true);
+    assert.deepEqual(document.snapshot(), before);
+    assert.equal(service.bus.redo().ok, true);
+    assert.equal(service.bus.undo().ok, true);
+    assert.equal(service.run("setObjectsLocked", { objectIds: ["yard"], locked: true }).ok, true);
+    const blocked = planGeoregistration(document, { targetFrame: FRAME, scope: "environment" });
+    assert.equal(blocked.after, null);
+    assert.ok(blocked.issues.some((issue) => issue.objectId === "yard"));
+});

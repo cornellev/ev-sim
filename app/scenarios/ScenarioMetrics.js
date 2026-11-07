@@ -12,7 +12,7 @@ import {
     environmentDocumentFrom,
     projectPointToRoadNetwork,
 } from "./route/roadGraph.js";
-import { pointOnDriveAreas } from "../simulation/world/DriveAreas.js";
+import { driveAreaSurfacesFrom, pointOnDriveAreas } from "../simulation/world/DriveAreas.js";
 import {
     createRouteProjectionIndex,
     projectPoseToRoute,
@@ -223,6 +223,7 @@ export class ScenarioMetricCollector {
         this._keyframes = [];
         this._hasRoadNetwork = false;
         this._hasPavement = false;
+        this._areaEnvironment = { drivableSurfaces: [] };
         this.reset();
     }
 
@@ -238,12 +239,13 @@ export class ScenarioMetricCollector {
         this._roadGraph = null;
         this._hasRoadNetwork = false;
         this._hasPavement = false;
+        this._areaEnvironment = { drivableSurfaces: [] };
         if (this._environment) {
             const document = environmentDocumentFrom(this._environment);
             this._hasRoadNetwork = (document.roads?.nodes?.length ?? 0) > 0
                 && (document.roads?.edges?.length ?? 0) > 0;
-            const hasAreas = (Array.isArray(document.driveAreas) && document.driveAreas.length > 0)
-                || (document.drivableSurfaces ?? []).some((surface) => surface?.kind === "area-polygon");
+            this._areaEnvironment = { drivableSurfaces: driveAreaSurfacesFrom(document) };
+            const hasAreas = this._areaEnvironment.drivableSurfaces.length > 0;
             this._hasPavement = this._hasRoadNetwork || hasAreas;
             if (this._hasRoadNetwork) {
                 this._roadGraph = buildDirectedRoadGraph(this._environment);
@@ -372,7 +374,7 @@ export class ScenarioMetricCollector {
             const onRoad = this._roadGraph
                 ? Boolean(projectPointToRoadNetwork(corner, this._environment, { graph: this._roadGraph }))
                 : false;
-            return onRoad || pointOnDriveAreas(corner, this._environment);
+            return onRoad || pointOnDriveAreas(corner, this._areaEnvironment);
         });
         current["off-road"] = onPavement ? 0 : 1;
         if (!onPavement) this._everOffRoad = true;

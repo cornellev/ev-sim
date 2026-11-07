@@ -2,6 +2,7 @@ import { createGeoFrame, geodeticToLocal } from "../../../geography/GeoFrame.js"
 import { resolveRoadEdge } from "../../../roads/RoadGeometryRecord.js";
 import { sampleCenterline } from "../../../roads/RoadGeometry.js";
 import { ROAD_GEOMETRY_POLICY_V1 } from "../../../roads/RoadGeometryPolicy.js";
+import { normalizeDriveAreaFootprint } from "../../../simulation/world/DriveAreas.js";
 import { COMMAND_ISSUE_CODES, commandFailure, commandIssue, commandSuccess } from "./commandIssues.js";
 
 const WEB_MERCATOR_RADIUS = 6378137;
@@ -103,6 +104,7 @@ export function planGeoregistration(document, { targetFrame, scope } = {}) {
         ...after.roads.edges.map((entry) => String(entry.id)),
         ...(scope === "environment" ? after.buildings.map((entry) => String(entry.buildingId)) : []),
         ...(scope === "environment" ? after.features.map((entry) => String(entry.id)) : []),
+        ...(scope === "environment" ? (after.driveAreas ?? []).map((entry) => String(entry.id)) : []),
     ]);
     if (scope === "environment") {
         for (const record of after.objects ?? []) {
@@ -152,6 +154,9 @@ export function planGeoregistration(document, { targetFrame, scope } = {}) {
     after.roadsAuthored = true;
 
     if (scope === "environment") {
+        for (const area of after.driveAreas ?? []) {
+            area.footprint = normalizeDriveAreaFootprint(area.footprint.map((point) => migratePoint(point, anchor, frame)));
+        }
         for (const building of after.buildings) {
             building.footprint = building.footprint.map((point) => {
                 const migrated = migratePoint({ ...point, y: 0 }, anchor, frame);

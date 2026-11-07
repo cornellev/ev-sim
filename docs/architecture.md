@@ -99,7 +99,9 @@ semantic lock projection binds the marker. The shared contact-host guard runs
 at bundle execution and kernel pre-activation, before vehicle normalization.
 Old contact bundles remain available for integrity inspection and authoring
 import, but must be re-resolved to execute. This prepares the later Rapier
-chassis; RZ-01 retains the current JS contact integration.
+chassis; RZ-01 retains the current JS contact integration. RZ-02 adds the
+floor slab, obstacle hulls, and chassis-only road trimeshes. The sweep still
+moves the car.
 
 `app/scripting/UnitCatalog.meta.js` is the server-safe authority for stable built-in type IDs and metadata. `registerBuiltInBlocks.js` registers those explicit IDs, `UnitCatalog.js` attaches React components by type, and `AddMenu.js` renders placeable entries as a searchable categorized sidebar. Typed configuration changes pass through `ScriptManager.reconfigureUnitDetailed()` so ports, configuration, and graph-wide type bindings commit or roll back together. The built-in catalog includes atomic math/logic plus conversions, strings, JSON path ops, typed arrays, geometry (vec/pose), read-only route helpers, `control` temporal/PID blocks, `texture1d` arithmetic, and simulator adapters (`VehicleStateBlock`, `DeviceStateBlock`, `SimulationClockBlock`, `ScenarioStatusBlock`).
 

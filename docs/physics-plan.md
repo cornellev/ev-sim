@@ -44,9 +44,10 @@ The restrictions on Rapier drive contact and gravity below continue to apply
 to the PHY kinematic and dynamic-bicycle plants. Their motion and both tapes
 stay pinned. Suspension, wheel spin, and per-wheel rays remain out of scope.
 
-RZ-01 prepares identity and admission; it retains the current JavaScript
-contact integrator. Release is held until RZ-02 (world colliders), RZ-03
-(chassis), and RZ-04 (integrator deletion and v2 motion tape) are complete.
+RZ-01 prepares identity and admission and retains the JavaScript contact
+integrator. RZ-02 builds the floor, obstacle hulls, and road trimeshes.
+Release is held until RZ-03 (chassis) and RZ-04 (integrator deletion and
+the v2 motion tape) are complete.
 
 | RZ-01 work package | Implementation | Acceptance |
 | --- | --- | --- |
@@ -55,7 +56,7 @@ contact integrator. Release is held until RZ-02 (world colliders), RZ-03
 | WP03: plugin host identity | Resolved vehicle record carries `contactHost: 2` | Root/nested semantic vehicle hashes bind it |
 | WP04: execution admission | Shared bundle/kernel guard, before vehicle normalization or active-run teardown | Old bundles require re-resolution; inspection/import remain available |
 | WP05: regression coverage | Migration, integrity, admission, recovery, dispatch, and plugin parity tests | Verification recorded below |
-| WP06: guidance and release gate | Physics/rigid-body/plugin and manifest contracts updated | Release pending RZ-02–04 and the pinned-tape gate |
+| WP06: guidance and release gate | Physics/rigid-body/plugin and manifest contracts updated | Release pending RZ-03–04 and the pinned-tape gate |
 
 ## What is modeled
 
@@ -255,6 +256,16 @@ PHY-03 runs browser/headless plant parity at the existing `1e-9` tolerance and
 writes a second characterization tape.
 
 ## Progress and decision log
+
+### 2026-11-07 — RZ-02 world colliders
+
+Rapier now builds a floor for every finite ground plane, convex obstacle
+shapes in place of bounds cuboids, and one chassis-only trimesh per
+drivable surface. Kinematic and dynamic-bicycle motion stay on the sweep.
+`worldHash`, `PHYSICS_BACKEND_CONFIG`, and both pinned tapes are unchanged.
+Release still waits for the RZ-03 chassis and the RZ-04 tape. The 2026-11-07
+fixture run left the two pinned tapes byte-for-byte; the kinematic tape's
+pre-existing steering-sign mismatch was regenerated and discarded.
 
 ### 2026-11-07 — RZ-01 contact host identity and admission
 

@@ -35,7 +35,7 @@ function fakeRapier() {
             fixed: () => new BodyDescriptor(),
             kinematicPositionBased: () => new BodyDescriptor(),
         },
-        ColliderDesc: { cuboid: () => ({}) },
+        ColliderDesc: { cuboid: () => ({}), convexHull: () => ({}) },
     };
 }
 

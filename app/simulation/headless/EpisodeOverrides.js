@@ -31,7 +31,7 @@ export function assertStartPoseClear(resolvedRun, startPose) {
     if (!size?.x || !size?.z) {
         throw new HeadlessEpisodeError("BUNDLE_INVALID", "A start pose override requires the ego footprint.");
     }
-    const issue = pavementPoseIssue(resolvedRun?.world?.description, startPose, size);
+    const issue = pavementPoseIssue(resolvedRun?.world?.description, startPose, size, vehicle.manifest.boundingBox.center);
     if (issue) throw new HeadlessEpisodeError("INVALID_REQUEST", issue);
 }
 

@@ -7,13 +7,14 @@ import * as THREE from "three";
 import { triangulateFootprint } from "../../../../simulation/world/DriveAreas.js";
 import { EDITOR_LAYERS } from "../../EditorState.js";
 import { trianglesFromSolid } from "../lidarSolidTriangles.js";
+import { indexObjectsById } from "../../commands/objectMutations.js";
+import { isObjectHidden } from "./objectsProjector.js";
 
 export function driveAreaEntityId(id) {
     return `drive-area:${id}`;
 }
 
-function meshFor(area) {
-    const faces = triangulateFootprint(area.footprint);
+function meshFor(area, faces) {
     const positions = [];
     for (const face of faces) {
         for (const index of face) {
@@ -33,22 +34,22 @@ function meshFor(area) {
     return mesh;
 }
 
-function lidarTriangles(area) {
+function lidarTriangles(area, faces) {
     return trianglesFromSolid({
         vertices: area.footprint.map((point) => [point.x, area.y, point.z]),
-        triangles: triangulateFootprint(area.footprint),
+        triangles: faces,
         semantic: "road",
     }, { geometryType: "drive-area", sourceId: area.id });
 }
 
-function removeDriveAreaRuntime({ data, scene, registry, id }) {
+function removeDriveAreaRuntime({ data, registry, id }) {
     const entityId = driveAreaEntityId(id);
     const entity = registry?.getEntity?.(entityId);
     const mesh = entity?.object3D;
     if (mesh) {
         mesh.geometry?.dispose?.();
         mesh.material?.dispose?.();
-        scene?.remove?.(mesh);
+        mesh.removeFromParent();
     }
     data?.objects?.()?.replaceTriangles?.(
         (triangle) => triangle.environmentGeometryType === "drive-area" && triangle.environmentSourceId === id,
@@ -57,21 +58,29 @@ function removeDriveAreaRuntime({ data, scene, registry, id }) {
     registry?.unregisterEntity?.(entityId);
 }
 
-function regenerateDriveAreaRuntime({ data, scene, registry, record }) {
+function regenerateDriveAreaRuntime({ data, scene, registry, document, record }) {
     removeDriveAreaRuntime({ data, scene, registry, id: record.id });
-    const mesh = meshFor(record);
+    const faces = triangulateFootprint(record.footprint);
+    const mesh = meshFor(record, faces);
+    const objects = indexObjectsById(document?.objects ?? []);
+    const visible = !isObjectHidden(objects, record.id);
+    mesh.visible = visible;
     scene?.add?.(mesh);
     registry?.registerEntity?.({
         id: driveAreaEntityId(record.id),
         sourceId: record.id,
         kind: "drive-area",
+        semanticClass: "road",
+        label: objects.get(String(record.id))?.name || "Drive area",
+        visible,
+        hidden: !visible,
         layer: EDITOR_LAYERS.ROADS,
         object3D: mesh,
         record: { ...record },
     });
     data?.objects?.()?.replaceTriangles?.(
         (triangle) => triangle.environmentGeometryType === "drive-area" && triangle.environmentSourceId === record.id,
-        lidarTriangles(record),
+        lidarTriangles(record, faces),
     );
     return mesh;
 }
@@ -79,12 +88,12 @@ function regenerateDriveAreaRuntime({ data, scene, registry, record }) {
 export function createDriveAreasProjector() {
     return {
         id: "drive-areas",
-        apply({ changeSet, data, scene, registry }) {
+        apply({ changeSet, data, scene, registry, document }) {
             const domain = changeSet.domains?.driveAreas;
             if (!domain) return;
             for (const [id, after] of domain.after) {
                 if (!after) removeDriveAreaRuntime({ data, scene, registry, id });
-                else regenerateDriveAreaRuntime({ data, scene, registry, record: after });
+                else regenerateDriveAreaRuntime({ data, scene, registry, document, record: after });
             }
         },
         rebuildAll({ data, scene, registry, document }) {
@@ -97,7 +106,7 @@ export function createDriveAreasProjector() {
                 [],
             );
             for (const record of document.driveAreas ?? []) {
-                regenerateDriveAreaRuntime({ data, scene, registry, record });
+                regenerateDriveAreaRuntime({ data, scene, registry, document, record });
             }
         },
         dispose() {},

@@ -11,6 +11,7 @@ import {
     normalizeRunManifest,
     stripRunMetadata,
 } from "../simulation/RunManifest.js";
+import { stampManifestPluginSelectionForVehicleLock } from "../plugin/PluginSensorAuthoring.js";
 import {
     enableSensorInheritance,
     resolveInheritedVehicleSelection,
@@ -337,6 +338,19 @@ export function buildComparisonBaseline(manifest, profileId, context = {}) {
         baseline = inherited.manifest;
         for (const entry of inherited.issues) {
             issues.push(issue("inheritance", entry.path, "sensors", entry.message));
+        }
+        for (const lock of context.vehicleManifest.pluginLocks ?? []) {
+            try {
+                const plugins = stampManifestPluginSelectionForVehicleLock(baseline.plugins, lock);
+                if (plugins) baseline = { ...baseline, plugins };
+            } catch (error) {
+                issues.push(issue(
+                    "plugin-grant",
+                    "plugins",
+                    "plugins",
+                    error instanceof Error ? error.message : String(error),
+                ));
+            }
         }
     } else {
         const vehicleId = resolveInheritedVehicleSelection(manifest).vehicleId;

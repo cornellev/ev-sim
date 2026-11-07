@@ -4,6 +4,7 @@ import { register } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { Euler, Vector3 } from "three";
 
 import { createPluginPackage, verifyPluginPackage } from "../app/plugin/PluginPackage.js";
 import { createPluginSensorsResource } from "../app/plugin/PluginSensorIdentity.js";
@@ -667,16 +668,12 @@ test("plugin range-image devices tolerate vehicle parent updates", async () => {
         instance,
         Publisher: class StubPublisher {},
     });
-    const pose = () => ({
-        copy() { return this; },
-        add() { return this; },
-    });
     const vehicle = {
         telemetryId: "ego",
         devices: [],
-        position: pose(),
-        rotation: pose(),
-        sceneObject: { position: pose(), rotation: pose() },
+        position: new Vector3(),
+        rotation: new Euler(),
+        sceneObject: { position: new Vector3(), rotation: new Euler() },
     };
     device.parentVehicle = vehicle;
     vehicle.devices.push(device);

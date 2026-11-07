@@ -10,7 +10,7 @@ import {
     projectPointToRoadNetwork,
 } from "../../scenarios/route/roadGraph.js";
 import { finiteNumber } from "../../scenarios/route/geometry.js";
-import { sampleContainingDriveArea } from "../world/DriveAreas.js";
+import { createDriveAreaSurfaceCache, sampleContainingDriveArea } from "../world/DriveAreas.js";
 
 const EPSILON = 1e-9;
 
@@ -158,10 +158,14 @@ export function createRoadGroundSampler(source) {
     let graph = null;
     let hash = null;
     let graphBuilds = 0;
+    const areas = createDriveAreaSurfaceCache();
 
     const sampler = {
         get graphBuilds() {
             return graphBuilds;
+        },
+        get areaBuilds() {
+            return areas.builds;
         },
         sample(x, z, yaw = 0) {
             const environment = resolveEnvironment(source);
@@ -178,7 +182,7 @@ export function createRoadGroundSampler(source) {
                 const road = sampleRoadGround({ x, z }, graph, yaw);
                 if (road) return road;
             }
-            const area = sampleContainingDriveArea(environment, x, z);
+            const area = sampleContainingDriveArea(areas.get(environment), x, z);
             if (!area) return null;
             return {
                 y: area.y,

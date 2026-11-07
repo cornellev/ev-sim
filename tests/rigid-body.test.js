@@ -5,7 +5,7 @@ import { createEnvironmentCommandService } from "../app/3d/editor/commands/index
 import { EnvironmentDocument, resetDocumentIdCounter } from "../app/3d/editor/document/EnvironmentDocument.js";
 import { hashAssetMetric } from "../app/editor-assets/AssetDefinition.js";
 import { PHYSICS_CAPABILITY_ID_V2, createPhysicsBackendSelection } from "../app/physics/PhysicsBackend.js";
-import { PhysicsEngine } from "../app/physics/PhysicsEngine.js";
+import { CHASSIS_GROUP, PhysicsEngine } from "../app/physics/PhysicsEngine.js";
 import { SimulationKernel } from "../app/simulation/kernel/SimulationKernel.js";
 import { SimulationEngine } from "../app/simulation/SimulationEngine.js";
 import {
@@ -290,6 +290,75 @@ test("the floor collider is on until the floor inspector turns it off", async ()
     assert.equal(service.bus.undo().ok, true);
     assert.deepEqual(document.floor, { enabled: true });
     assert.equal(worldHash(document), onHash);
+});
+
+test("the floor slab exists without props, and a closed collider still holds a chassis", async () => {
+    const { document, service } = yard();
+    assert.equal(service.run("setFloor", { enabled: true }).ok, true);
+    const hash = worldHash(document);
+    const open = await startPhysics(document);
+    assert.equal(worldHash(document), hash);
+    const dt = 1 / 60;
+    const resting = open.world.createRigidBody(open.RAPIER.RigidBodyDesc.dynamic().setTranslation(0, 1, 0).setCanSleep(false));
+    const openCollider = open.RAPIER.ColliderDesc.cuboid(0.2, 0.2, 0.2);
+    openCollider.setCollisionGroups(((CHASSIS_GROUP & 0xffff) << 16) | 0xffff);
+    open.world.createCollider(openCollider, resting);
+    for (let step = 0; step < 120; step += 1) open.step(dt);
+    const openY = resting.translation().y;
+    assert.ok(openY > 0.05 && openY < 0.45, `open y ${openY}`);
+    open.disposeRun();
+
+    assert.equal(service.run("setObjectOptions", { objectId: "floor", patch: { collider: false } }).ok, true);
+    assert.equal(service.run("addPrimitive", { id: "box", shape: "box", x: 0, y: 2, z: 0, size: { x: 1, y: 1, z: 1 } }).ok, true);
+    assert.equal(service.run("addRigidBody", { objectId: "box" }).ok, true);
+    const closed = await startPhysics(document);
+    const chassis = closed.world.createRigidBody(closed.RAPIER.RigidBodyDesc.dynamic().setTranslation(4, 1, 0).setCanSleep(false));
+    const descriptor = closed.RAPIER.ColliderDesc.cuboid(0.2, 0.2, 0.2);
+    descriptor.setCollisionGroups(((CHASSIS_GROUP & 0xffff) << 16) | 0xffff);
+    closed.world.createCollider(descriptor, chassis);
+    for (let step = 0; step < 120; step += 1) closed.step(dt);
+    assert.ok(poseOf(closed, "box").position.y < 0, `prop y ${poseOf(closed, "box").position.y}`);
+    const rested = chassis.translation().y;
+    assert.ok(rested > 0.05 && rested < 0.45, `chassis y ${rested}`);
+    closed.disposeRun();
+});
+
+test("a prop rests on a rotated obstacle hull inside the bounding box", async () => {
+    const { document, service } = yard();
+    const diamond = [
+        { x: Math.SQRT2, z: 0 },
+        { x: 0, z: Math.SQRT2 },
+        { x: -Math.SQRT2, z: 0 },
+        { x: 0, z: -Math.SQRT2 },
+    ];
+    assert.equal(service.run("addBuilding", { buildingId: "diamond", footprint: diamond, height: 2 }).ok, true);
+    assert.equal(service.run("addPrimitive", {
+        id: "crate",
+        shape: "box",
+        x: 1.3,
+        y: 0.5,
+        z: 1.3,
+        size: { x: 0.3, y: 0.3, z: 0.3 },
+    }).ok, true);
+    assert.equal(service.run("addRigidBody", { objectId: "crate" }).ok, true);
+    assert.equal(service.run("setRigidBody", {
+        objectId: "crate",
+        patch: { useGravity: false, constantForce: { x: -20, y: 0, z: -20 } },
+    }).ok, true);
+    const hash = worldHash(document);
+    const wall = worldOf(document).obstacles.find((entry) => entry.sourceId === "diamond");
+    const physics = await startPhysics(document);
+    assert.equal(worldHash(document), hash);
+    assert.ok([...physics.colliderContactIds.values()].includes("building:diamond"));
+    physics.rigidBodyById.get("crate").body.setEnabledRotations(false, false, false, true);
+    const dt = 1 / 60;
+    for (let step = 0; step < 180; step += 1) physics.step(dt);
+    const pose = poseOf(physics, "crate");
+    assert.ok(pose.position.x < wall.bounds.max.x, `x ${pose.position.x} bound ${wall.bounds.max.x}`);
+    assert.ok(pose.position.z < wall.bounds.max.z, `z ${pose.position.z}`);
+    const corner = (pose.position.x - 0.15) + (pose.position.z - 0.15);
+    assert.ok(corner > 1.1 && corner < 1.8, `corner ${corner}`);
+    physics.disposeRun();
 });
 
 test("CPU LiDAR hits a moved primitive at its live pose and misses the spawn pose", () => {

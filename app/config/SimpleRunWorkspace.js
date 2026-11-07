@@ -47,6 +47,8 @@ const PROFILE_ITEMS = EXECUTION_PROFILE_IDS.map((id) => ({
     label: EXECUTION_PROFILE_LABELS[id],
 }));
 
+const OVERRIDE_COLLAPSE_AFTER = 4;
+
 const LOGGING_LABELS = {
     required: "Required: reject run if unavailable",
     optional: "Optional: continue degraded",
@@ -297,6 +299,39 @@ export default function SimpleRunWorkspace({
         setStampIssues(grant.issues);
         onUpdate([], selected.manifest);
     };
+
+    const overrideList = classification.overrides.length === 0 ? null : (
+        <ul className="mt-3 space-y-3">
+            {classification.overrides.map((change) => (
+                <li key={change.path} className="text-[13px]">
+                    <p className="break-all font-mono text-[12px]">{change.path}</p>
+                    <p className="mt-1 break-all font-mono text-[12px]">
+                        {JSON.stringify(change.before)} → {JSON.stringify(change.after)}
+                    </p>
+                    <p className="mt-1 text-[12px] text-[var(--slate-muted)]">
+                        Effective {formatResolved(resolution?.baseline, change.path)} → {formatResolved(resolution?.draft, change.path)}
+                    </p>
+                    <div className="mt-1 flex gap-3">
+                        <button
+                            type="button"
+                            className="text-[12px] font-medium text-[var(--slate-fg-2)]"
+                            onClick={() => editOverride(change)}
+                        >
+                            Edit
+                        </button>
+                        <button
+                            type="button"
+                            className="text-[12px] font-medium text-[var(--slate-fg-2)] disabled:opacity-40"
+                            disabled={blocked}
+                            onClick={() => requestReset(change)}
+                        >
+                            Reset
+                        </button>
+                    </div>
+                </li>
+            ))}
+        </ul>
+    );
 
     return (
         <div className="mx-auto max-w-3xl space-y-4 p-6 max-[900px]:p-4">
@@ -586,14 +621,9 @@ export default function SimpleRunWorkspace({
                         <p className="text-[13px] font-medium">Custom advanced settings active</p>
                         <div className="mt-2 flex flex-wrap gap-2">
                             {advancedTabs.map((tab) => (
-                                <button
-                                    key={tab}
-                                    type="button"
-                                    className="text-[12px] font-medium text-[var(--slate-fg-2)]"
-                                    onClick={() => onOpenAdvanced?.(tab)}
-                                >
+                                <Button key={tab} size="compact" onClick={() => onOpenAdvanced?.(tab)}>
                                     {tab}
-                                </button>
+                                </Button>
                             ))}
                         </div>
                     </div>
@@ -602,38 +632,14 @@ export default function SimpleRunWorkspace({
                     <p className="mt-3 text-[12px] text-[var(--slate-muted)]">
                         No differences from {classification.baselineName}.
                     </p>
-                ) : (
-                    <ul className="mt-3 space-y-3">
-                        {classification.overrides.map((change) => (
-                            <li key={change.path} className="text-[13px]">
-                                <p className="break-all font-mono text-[12px]">{change.path}</p>
-                                <p className="mt-1 break-all font-mono text-[12px]">
-                                    {JSON.stringify(change.before)} → {JSON.stringify(change.after)}
-                                </p>
-                                <p className="mt-1 text-[12px] text-[var(--slate-muted)]">
-                                    Effective {formatResolved(resolution?.baseline, change.path)} → {formatResolved(resolution?.draft, change.path)}
-                                </p>
-                                <div className="mt-1 flex gap-3">
-                                    <button
-                                        type="button"
-                                        className="text-[12px] font-medium text-[var(--slate-fg-2)]"
-                                        onClick={() => editOverride(change)}
-                                    >
-                                        Edit
-                                    </button>
-                                    <button
-                                        type="button"
-                                        className="text-[12px] font-medium text-[var(--slate-fg-2)] disabled:opacity-40"
-                                        disabled={blocked}
-                                        onClick={() => requestReset(change)}
-                                    >
-                                        Reset
-                                    </button>
-                                </div>
-                            </li>
-                        ))}
-                    </ul>
-                )}
+                ) : classification.overrides.length > OVERRIDE_COLLAPSE_AFTER ? (
+                    <details className="mt-3">
+                        <summary className="cursor-pointer text-[12px] font-medium text-[var(--slate-fg-2)]">
+                            {classification.overrides.length} differences
+                        </summary>
+                        {overrideList}
+                    </details>
+                ) : overrideList}
             </Section>
 
             <DialogSurface

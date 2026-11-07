@@ -45,7 +45,7 @@ function fakeRapier({ throwOnBorrowedFree = true } = {}) {
             fixed: () => new BodyDescriptor(),
             kinematicPositionBased: () => new BodyDescriptor(),
         },
-        ColliderDesc: { cuboid: () => ({}) },
+        ColliderDesc: { cuboid: () => ({}), convexHull: () => ({}) },
     };
 }
 

@@ -9,6 +9,7 @@ import {
 import { createDefaultRunManifest } from "../../app/simulation/RunManifest.js";
 import { getBuiltInVehicleManifest } from "../../app/vehicles/BuiltInVehicleManifests.js";
 import { createWorldResource } from "../../app/simulation/world/WorldDescription.js";
+import { vehicleGroundFootprint } from "../../app/scenarios/route/geometry.js";
 import { firstDriveArea, pavementPoseIssue, polygonCentroidXZ } from "../../app/simulation/world/DriveAreas.js";
 import { StorageService } from "../storage/StorageService.js";
 
@@ -67,15 +68,8 @@ export function nodePairEndpoints(environment, startNodeId, finishNodeId) {
     return { edge: null, start, finish, startFraction: 0, finishFraction: 1 };
 }
 
-export function vehicleFootprint(position, yaw, size) {
-    const forward = { x: Math.cos(yaw), z: -Math.sin(yaw) };
-    const right = { x: Math.sin(yaw), z: Math.cos(yaw) };
-    const halfLength = size.x / 2;
-    const halfWidth = size.z / 2;
-    return [-1, 1].flatMap((along) => [-1, 1].map((across) => ({
-        x: position.x + along * halfLength * forward.x + across * halfWidth * right.x,
-        z: position.z + along * halfLength * forward.z + across * halfWidth * right.z,
-    })));
+export function vehicleFootprint(position, yaw, size, center = {}) {
+    return vehicleGroundFootprint({ position, yaw }, size, center).map(({ x, z }) => ({ x, z }));
 }
 
 function obstaclePolygon(obstacle) {
@@ -195,13 +189,13 @@ function segmentsIntersect(a, b, c, d) {
     return side(a, b, c) * side(a, b, d) < 0 && side(c, d, a) * side(c, d, b) < 0;
 }
 
-export function firstClearRouteIndex(polyline, size, obstacles) {
+export function firstClearRouteIndex(polyline, size, obstacles, center = {}) {
     const polygons = obstacles.map(obstaclePolygon).filter(Boolean);
     return polyline.findIndex((point, index) => {
         if (index >= polyline.length - 1) return false;
         const next = polyline[index + 1];
         const yaw = yawFromDirection(next.x - point.x, next.z - point.z);
-        const footprint = vehicleFootprint(point, yaw, size);
+        const footprint = vehicleFootprint(point, yaw, size, center);
         return !polygons.some((polygon) => polygonsOverlap(footprint, polygon));
     });
 }
@@ -488,7 +482,7 @@ export async function createPlanningBundle({
             const area = firstDriveArea(authoredAreas);
             const centroid = polygonCentroidXZ(area.footprint);
             const description = createWorldResource(environment).description;
-            const issue = pavementPoseIssue(description, { x: centroid.x, z: centroid.z, yaw: 0 }, size);
+            const issue = pavementPoseIssue(description, { x: centroid.x, z: centroid.z, yaw: 0 }, size, vehicle.boundingBox.center);
             if (issue) throw new Error(issue);
             const scenario = {
                 kind: "cev-sim.scenario",
@@ -543,7 +537,7 @@ export async function createPlanningBundle({
         });
         let verified = await verifyDraft(storage, scenario);
         const obstacles = planningObstacleFootprints(createWorldResource(environment).description);
-        const clearIndex = firstClearRouteIndex(verified.verification.polyline, size, obstacles);
+        const clearIndex = firstClearRouteIndex(verified.verification.polyline, size, obstacles, vehicle.boundingBox.center);
         if (clearIndex < 0) throw new Error("The route has no start pose clear of obstacles.");
         if (clearIndex > 0) {
             const polyline = verified.verification.polyline;

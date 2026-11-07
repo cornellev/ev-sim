@@ -32,6 +32,7 @@ import {
 } from "../app/3d/editor/objects/index.js";
 import {
     ENVIRONMENT_OBJECT_SCHEMA_VERSION,
+    ENVIRONMENT_PRIMITIVE_DOWNGRADE,
     ENVIRONMENT_SCHEMA_VERSION,
     ENVIRONMENT_SUPPORTED_SCHEMA_VERSIONS,
     assertNoObjectGraphDowngrade,
@@ -506,4 +507,79 @@ test("ED-03 the CEV_SIM_ENVIRONMENT_SCHEMA_V4 opt-out is retired from applicatio
         if (/CEV_SIM_ENVIRONMENT_SCHEMA_V4/.test(source) && !/retired in ED-03/.test(source)) offenders.push(path.relative(root, file));
     }
     assert.deepEqual(offenders, []);
+});
+
+test("a writer that declares scene primitive version 1 may clear the floor and the last primitive", async () => {
+    const { dir, service } = await tempService();
+    try {
+        const created = await service.createEnvironment({ id: "yard", name: "Yard", templateId: "blank" });
+        const withFloor = EnvironmentDocument.fromManifest(created.document);
+        withFloor.setScalar("floor", { enabled: true }, { notify: false });
+        const floorManifest = { ...created, document: withFloor.toManifest() };
+        await assert.rejects(
+            () => service.putEnvironment("yard", {
+                manifest: floorManifest,
+                expectedRevision: created.revision,
+            }),
+            (error) => error.code === ENVIRONMENT_PRIMITIVE_DOWNGRADE && error.statusCode === 409,
+        );
+        const saved = await service.putEnvironment("yard", {
+            manifest: floorManifest,
+            expectedRevision: created.revision,
+            supportedScenePrimitiveVersions: [1],
+        });
+        assert.equal(saved.document.floor.enabled, true);
+
+        const cleared = EnvironmentDocument.fromManifest(saved.document);
+        cleared.setScalar("floor", null, { notify: false });
+        const clearedManifest = { ...saved, document: cleared.toManifest() };
+        await assert.rejects(
+            () => service.putEnvironment("yard", {
+                manifest: clearedManifest,
+                expectedRevision: saved.revision,
+            }),
+            (error) => error.code === ENVIRONMENT_PRIMITIVE_DOWNGRADE && error.statusCode === 409,
+        );
+        const removed = await service.putEnvironment("yard", {
+            manifest: clearedManifest,
+            expectedRevision: saved.revision,
+            supportedScenePrimitiveVersions: [1],
+        });
+        assert.equal(removed.document.floor, undefined);
+        assert.equal(removed.document.objects.some((record) => record.typeId === "floor"), false);
+
+        const withPrimitive = EnvironmentDocument.fromManifest(removed.document);
+        withPrimitive.replaceDomainRecords("primitives", [[
+            "crate",
+            { id: "crate", shape: "box", position: { x: 1, y: 0.5, z: 2 }, rotationY: 0, size: { x: 1, y: 1, z: 1 }, color: "#a3a3a3", tags: ["unknown"] },
+        ]], { notify: false });
+        const primitiveManifest = { ...removed, document: withPrimitive.toManifest() };
+        const primitiveSaved = await service.putEnvironment("yard", {
+            manifest: primitiveManifest,
+            expectedRevision: removed.revision,
+            supportedScenePrimitiveVersions: [1],
+        });
+        assert.equal(primitiveSaved.document.primitives.length, 1);
+
+        const noPrimitive = EnvironmentDocument.fromManifest(primitiveSaved.document);
+        noPrimitive.replaceDomainRecords("primitives", [["crate", null]], { notify: false });
+        const noPrimitiveManifest = { ...primitiveSaved, document: noPrimitive.toManifest() };
+        await assert.rejects(
+            () => service.putEnvironment("yard", {
+                manifest: noPrimitiveManifest,
+                expectedRevision: primitiveSaved.revision,
+            }),
+            (error) => error.code === ENVIRONMENT_PRIMITIVE_DOWNGRADE && error.statusCode === 409,
+        );
+        const primitiveRemoved = await service.putEnvironment("yard", {
+            manifest: noPrimitiveManifest,
+            expectedRevision: primitiveSaved.revision,
+            supportedScenePrimitiveVersions: [1],
+        });
+        assert.equal(primitiveRemoved.document.primitives, undefined);
+        const stored = await service.getEnvironment("yard");
+        assert.equal(stored.revision, primitiveRemoved.revision);
+    } finally {
+        await fs.rm(dir, { recursive: true, force: true });
+    }
 });

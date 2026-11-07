@@ -79,7 +79,7 @@ function boxFromBounds(bounds) {
     };
 }
 
-/** Shape the vehicle sweep tests. The Rapier bounds cuboid on the entry is ignored. */
+/** Shape the vehicle sweep tests. Convex meshes and extruded footprints match the Rapier static colliders. */
 export function staticContactShape(entry) {
     if (!entry) return null;
     if (entry.convex) return mesh(entry.convex.vertices, entry.convex.triangles);
@@ -174,9 +174,7 @@ function snappedSpan(min, max) {
 
 function floorColliderActive(physics) {
     const plane = physics?.preparedWorldDescription?.groundPlane;
-    return (physics?.rigidBodyStates?.length ?? 0) > 0
-        && plane?.collider !== false
-        && finite(plane?.y) !== null;
+    return plane?.collider !== false && finite(plane?.y) !== null;
 }
 
 function floorContactGrid(physics, shapes) {

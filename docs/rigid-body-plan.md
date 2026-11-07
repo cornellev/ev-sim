@@ -3,8 +3,9 @@
 Optional Rapier rigid bodies on environment objects. This is not a `PHY-*`
 milestone. Kinematic and dynamic-bicycle vehicles keep their sweep with
 Rapier gravity off, and both characterization tapes stay pinned. The separate
-`RZ-*` program permits Rapier gravity and drive contact for contact-v2 vehicles;
-RZ-01 establishes identity and admission only, with release held for RZ-02–04.
+`RZ-*` program permits Rapier gravity and drive contact for contact-v2 vehicles.
+RZ-01 establishes identity and admission. RZ-02 builds the floor, obstacle
+hulls, and road trimeshes. Release is held for RZ-03–04.
 
 ## Contract
 
@@ -34,9 +35,15 @@ proxy. A world with none of these keeps its previous description and
 
 Dynamic bodies use the existing Rapier world gravity. Kinematic bodies and
 `useGravity: false` set gravity scale to 0. `applyForce` and `applyImpulse`
-queue until the next physics step. The floor collider, when the document floor
-is enabled and its collider is not turned off, collides with dynamic bodies
-and not with the vehicle. The vehicle
+queue until the next physics step. The floor slab is built whenever the document floor has a finite height,
+including a world with no rigid bodies. Turning the collider off keeps the
+slab for `CHASSIS_GROUP` and removes `DYNAMIC_GROUP`, so props fall
+through it. The sweep-driven vehicle collider is in `DYNAMIC_GROUP`, so
+chassis-only floors and roads do not hit it. Static obstacles are convex
+hulls, or one convex prism per footprint triangle. Legacy environment
+boxes stay bounds cuboids. Drivable surfaces are fixed trimeshes that
+collide with `CHASSIS_GROUP` only and are left out of the contact-id map.
+`worldHash` does not change. The vehicle
 hull sweep treats a rigid body as another obstacle, and the Rapier car
 collider uses that hull's center and yaw. A hit that still has time left
 stops the car short of the body. A dynamic body already overlapping the hull
@@ -59,6 +66,24 @@ and `lidarGeometryHash` stay the authored geometry. GPU LiDAR and photoreal
 cameras keep the authored pose.
 
 ## Progress and decision log
+
+### 2026-11-07 — RZ-02 gives Rapier the static world
+
+The floor slab is created for every finite ground plane, including a world
+with no rigid bodies and a floor whose collider is switched off. An off
+collider collides with `CHASSIS_GROUP` only. Sweep-driven vehicle colliders
+use `DYNAMIC_GROUP` membership so they stay out of those filters. Static
+obstacles use the convex mesh or per-triangle prism the sweep already
+tests. Legacy environment boxes stay cuboids. Each drivable surface becomes
+one fixed trimesh for `CHASSIS_GROUP` only, and those colliders are not
+contact ids. `worldHash`, backend hashes, and both pinned characterization
+tapes stay unchanged. The contact chassis is still RZ-03.
+
+Verification on 2026-11-07: `npm run fixtures:headless` rewrote only the
+already-known kinematic steering-sign mismatch, which was discarded. The
+dynamic-bicycle and contact tapes had no delta. `npm test` passed 2,570,
+failed the same kinematic characterization check, and cancelled one unrelated
+storage-timeout test.
 
 ### 2026-11-07 — RZ-01 versions the contact host
 

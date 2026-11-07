@@ -472,11 +472,16 @@ function scenePrimitiveContent(document) {
     return (Array.isArray(document?.primitives) && document.primitives.length > 0) || document?.floor?.enabled === true;
 }
 
-/** Reject writers that would drop stored primitives or an enabled floor. */
+/**
+ * Unaware full-document writers cannot replace a document that stores
+ * primitives or an enabled floor. A writer that declares version 1 may
+ * remove them. An empty list is omitted from the editor manifest.
+ */
 export function assertNoPrimitiveDowngrade(incoming, current, capabilities = []) {
     const incomingDocument = incoming?.document;
-    if (incomingDocument === undefined || incomingDocument === null) return;
+    if (incomingDocument == null) return;
     const supported = new Set((capabilities ?? []).map(Number));
+    if (supported.has(1)) return;
     const fail = (message) => {
         const error = new Error(message);
         error.code = ENVIRONMENT_PRIMITIVE_DOWNGRADE;
@@ -487,9 +492,7 @@ export function assertNoPrimitiveDowngrade(incoming, current, capabilities = [])
         fail("This environment contains scene primitives or an enabled floor; full-document writes must preserve them.");
     }
     if (!scenePrimitiveContent(incomingDocument)) return;
-    if (!supported.has(1)) {
-        fail("Writing scene primitives or a floor requires supportedScenePrimitiveVersions to include 1.");
-    }
+    fail("Writing scene primitives or a floor requires supportedScenePrimitiveVersions to include 1.");
 }
 
 /**

@@ -334,6 +334,15 @@ commands using the existing Rust consumers. Later-start checks used a loopback
 Zenoh test router. Browser UI acceptance remains unverified because automation
 could not reliably attach; detailed limits are recorded in the linked guide.
 
+### 2026-11-07 — Start clearance uses the complete vehicle footprint
+
+Drive-area maintenance replaces the crossing-corner start check with the shared
+perimeter-ordered ground footprint. Bundle generation, routed-start clearance,
+and episode start overrides include the vehicle bounding-box center. An obstacle
+wholly inside the car and an offset body outside pavement are rejected. This is
+a clearance correction; Protobuf, observation profiles, and valid world hashes
+are unchanged. The first-area centroid and fail-closed spawn policy stay intact.
+
 ### 2026-11-07 — Area-only free drive
 
 Road worlds that use `--finish none` still keep a verified route, as PLN-D06

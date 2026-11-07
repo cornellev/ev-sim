@@ -804,7 +804,11 @@ export function assertWorldResource(resource) {
     if (hash !== resource.hash) throw new Error(`Resolved world hash mismatch: expected ${resource.hash}, computed ${hash}.`);
     const describedVersion = resource.description.version;
     const roadSurfaces = (resource.description.drivableSurfaces ?? []).filter((surface) => surface?.kind !== "area-polygon");
+    const v5RoadMeshes = describedVersion === WORLD_DESCRIPTION_V5
+        && (resource.description.roads?.geometryVersion === 2
+            || roadSurfaces.some((surface) => surface?.kind === "road-mesh" || surface?.kind === "junction-mesh"));
     if (describedVersion === WORLD_DESCRIPTION_V2
+        || v5RoadMeshes
         || ((describedVersion === WORLD_DESCRIPTION_V3 || describedVersion === WORLD_DESCRIPTION_V4 || describedVersion === WORLD_DESCRIPTION_V5) && resource.description.roadGeometryPolicy)) {
         if (resource.description.roadGeometryPolicy?.id !== ROAD_GEOMETRY_POLICY_V1.id
             || resource.description.roadGeometryPolicy?.version !== ROAD_GEOMETRY_POLICY_V1.version) {
@@ -821,7 +825,10 @@ export function assertWorldResource(resource) {
         assertAssetProxies(resource.description);
     }
     if (resource.description.version === WORLD_DESCRIPTION_V4
-        || (resource.description.version === WORLD_DESCRIPTION_V5 && resource.description.primitivePolicy)) {
+        || (resource.description.version === WORLD_DESCRIPTION_V5
+            && (resource.description.primitivePolicy
+                || Object.hasOwn(resource.description, "primitives")
+                || Object.hasOwn(resource.description, "groundPlane")))) {
         assertScenePrimitives(resource.description);
     }
     assertDriveAreaSurfaces(resource.description);

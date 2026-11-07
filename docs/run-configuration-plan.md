@@ -452,3 +452,11 @@ when the run key is absent. `chooseMode` is the only writer. Opening the
 workspace does not write the key or the manifest. The first paint uses the
 fallback constant; a stored Advanced preference appears after the mount
 effect. Reading localStorage during render would disagree with the server HTML.
+
+### 2026-11-07 — Comparison baseline grants vehicle plugins
+
+The comparison baseline stamps the selected vehicle's plugin locks into
+`plugins.artifacts` so inherited plugin sensors and plants can resolve. A
+sensor lock grants `sensors.sample.range-image`. A plant lock grants
+`plant.step`. A stamp failure is a baseline issue and keeps grants already
+applied. Execution presets still do not rewrite the draft's plugin grants.

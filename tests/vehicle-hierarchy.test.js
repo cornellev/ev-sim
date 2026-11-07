@@ -17,15 +17,15 @@ function manifest(sensors) {
     };
 }
 
-test("a lidar sensor is one hierarchy row and does not share the LiDAR zone id", () => {
+test("a lidar sensor and its LiDAR zone have distinct hierarchy keys", () => {
     const rows = buildVehicleHierarchy(manifest([
         { id: "lidar", name: "lidar", type: "lidar3d" },
         { id: "helios", name: "helios", type: "vendor.robosense.helios32.lidar" },
     ]));
     const sensors = rows.filter((row) => row.kind === "sensor");
     assert.deepEqual(sensors.map((row) => row.id), ["lidar", "helios"]);
-    assert.equal(rows.some((row) => row.kind === "lidar" || row.label === "LiDAR zone"), false);
-    assert.equal(rows.some((row) => row.id === "lidar" && row.kind !== "sensor"), false);
+    assert.equal(rows.filter((row) => row.kind === "lidar" && row.label === "LiDAR zone").length, 1);
+    assert.notEqual(hierarchyVisibilityKey("sensor", "lidar"), hierarchyVisibilityKey("lidar", "lidar"));
     const keys = rows.map((row) => hierarchyVisibilityKey(row.kind, row.id));
     assert.equal(new Set(keys).size, keys.length);
 });

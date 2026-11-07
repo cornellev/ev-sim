@@ -5,8 +5,10 @@ import { worldSweepMesh } from "../simulation/world/RigidBodyRecords.js";
 import { compareUtf8 } from "../simulation/world/WorldDescription.js";
 import { boxSupportRadius, obbAsConvex, orientedBoxCenter, sweepAabbConvex, sweepObbConvex, sweepObbConvexHit } from "./SweptConvex.js";
 
-const DYNAMIC_GROUP = 0x0002;
+export const DYNAMIC_GROUP = 0x0002;
+export const CHASSIS_GROUP = 0x0004;
 const FLOOR_GROUP = 0x0008;
+const DISC_SEGMENTS = 64; // same fan as LidarGeometry INTERSECTION_SEGMENTS
 
 function collisionGroups(membership, filter) {
     return ((membership & 0xffff) << 16) | (filter & 0xffff);
@@ -264,6 +266,115 @@ function vehicleHalfExtents(vehicle) {
     };
 }
 
+function component(point, axis) {
+    const keys = ["x", "y", "z"];
+    const value = Array.isArray(point) ? point[axis] : point?.[keys[axis]];
+    return Number(axis === 1 ? value ?? 0 : value);
+}
+
+function packMesh(vertices, indices) {
+    const flat = new Float32Array(vertices.length * 3);
+    vertices.forEach((vertex, index) => {
+        flat[index * 3] = vertex[0];
+        flat[index * 3 + 1] = vertex[1];
+        flat[index * 3 + 2] = vertex[2];
+    });
+    return { vertices: flat, indices: new Uint32Array(indices) };
+}
+
+// Rapier contacts the front face. A downward triangle does not hold a body dropped onto it.
+function faceUp(mesh) {
+    const indices = new Uint32Array(mesh.indices);
+    const vertices = mesh.vertices;
+    for (let index = 0; index < indices.length; index += 3) {
+        const a = indices[index] * 3;
+        const b = indices[index + 1] * 3;
+        const c = indices[index + 2] * 3;
+        const e1x = vertices[b] - vertices[a];
+        const e1z = vertices[b + 2] - vertices[a + 2];
+        const e2x = vertices[c] - vertices[a];
+        const e2z = vertices[c + 2] - vertices[a + 2];
+        if (e1z * e2x - e1x * e2z < 0) {
+            const swap = indices[index + 1];
+            indices[index + 1] = indices[index + 2];
+            indices[index + 2] = swap;
+        }
+    }
+    return { vertices, indices };
+}
+
+function indexedMesh(sourceVertices, sourceIndices) {
+    const vertices = sourceVertices.map((point) => [component(point, 0), component(point, 1), component(point, 2)]);
+    const indices = [];
+    if (sourceIndices.length > 0 && Array.isArray(sourceIndices[0])) {
+        for (const triangle of sourceIndices) indices.push(triangle[0], triangle[1], triangle[2]);
+    } else {
+        for (const index of sourceIndices) indices.push(index);
+    }
+    return packMesh(vertices, indices);
+}
+
+function corridorMesh(surface, roads) {
+    const edge = (roads?.edges ?? []).find((entry) => entry.id === surface.sourceId) ?? null;
+    const nodes = new Map((roads?.nodes ?? []).map((node) => [node.id, node]));
+    const start = edge ? nodes.get(edge.startNodeId) : null;
+    const end = edge ? nodes.get(edge.endNodeId) : null;
+    const mid = (Number(surface.minY) + Number(surface.maxY)) * 0.5;
+    const startY = Number.isFinite(Number(start?.y)) ? Number(start.y) : mid;
+    const endY = Number.isFinite(Number(end?.y)) ? Number(end.y) : mid;
+    const yAt = [startY, endY, endY, startY];
+    const vertices = surface.footprint.map((point, index) => [point.x, yAt[index] ?? startY, point.z]);
+    return packMesh(vertices, [0, 1, 2, 0, 2, 3]);
+}
+
+function areaMesh(surface) {
+    const y = Number(surface.minY);
+    const vertices = surface.footprint.map((point) => [point.x, y, point.z]);
+    const indices = [];
+    for (const triangle of surface.triangles) indices.push(triangle[0], triangle[1], triangle[2]);
+    return packMesh(vertices, indices);
+}
+
+function discMesh(surface) {
+    const center = surface.center;
+    const vertices = [[center.x, center.y, center.z]];
+    const indices = [];
+    for (let index = 0; index < DISC_SEGMENTS; index += 1) {
+        const theta = index * Math.PI * 2 / DISC_SEGMENTS;
+        vertices.push([
+            center.x + Math.cos(theta) * surface.radius,
+            center.y,
+            center.z + Math.sin(theta) * surface.radius,
+        ]);
+    }
+    for (let index = 0; index < DISC_SEGMENTS; index += 1) {
+        indices.push(0, index + 1, ((index + 1) % DISC_SEGMENTS) + 1);
+    }
+    return packMesh(vertices, indices);
+}
+
+function drivableSurfaceMesh(surface, roads) {
+    const kind = surface?.kind;
+    const failed = () => new TypeError(`Drivable surface "${surface?.id}" trimesh failed.`);
+    if (kind === "road-mesh" || kind === "junction-mesh") {
+        if (!Array.isArray(surface.vertices) || !Array.isArray(surface.indices) || surface.indices.length < 3) throw failed();
+        return indexedMesh(surface.vertices, surface.indices);
+    }
+    if (kind === "area-polygon") {
+        if (!Array.isArray(surface.footprint) || !Array.isArray(surface.triangles) || !Number.isFinite(Number(surface.minY))) throw failed();
+        return areaMesh(surface);
+    }
+    if (kind === "road-corridor") {
+        if (!Array.isArray(surface.footprint) || surface.footprint.length < 3) throw failed();
+        return corridorMesh(surface, roads);
+    }
+    if (kind === "intersection-disc") {
+        if (!surface.center || !(Number(surface.radius) > 0)) throw failed();
+        return discMesh(surface);
+    }
+    throw failed();
+}
+
 function rigidBodyOwnsEntry(entry, ids) {
     if (!ids?.size) return false;
     if (ids.has(String(entry.contactId)) || ids.has(String(entry.id))) return true;
@@ -312,6 +423,7 @@ export class PhysicsEngine {
         this._pushes = [];
         this.activeContacts = new Set();
         this.pendingContacts = new Set();
+        this.colliderContactIds = new Map();
         this.episodeObstacles = [];
         this._initialization = loadPhysics().then(async (module) => {
             this.RAPIER = await initializeRapier(module);
@@ -329,6 +441,7 @@ export class PhysicsEngine {
         this.rigidBodyStates = [];
         this.rigidBodyById = new Map();
         this._rigidBodyPoses = [];
+        this.colliderContactIds = new Map();
         if (!world) return;
         if (typeof world.removeRigidBody === "function") {
             for (const body of bodies) {
@@ -355,6 +468,7 @@ export class PhysicsEngine {
         this.rigidbodies = [];
         this.staticColliders = [];
         this.vehicleStates = [];
+        this.colliderContactIds = new Map();
     }
 
     async start() {
@@ -450,11 +564,60 @@ export class PhysicsEngine {
                 y: Math.max(0.001, (entry.bounds.max.y - entry.bounds.min.y) / 2),
                 z: Math.max(0.001, (entry.bounds.max.z - entry.bounds.min.z) / 2),
             };
-            const body = this.world.createRigidBody(this.RAPIER.RigidBodyDesc.fixed().setTranslation(center.x, center.y, center.z));
-            this.world.createCollider(this.RAPIER.ColliderDesc.cuboid(half.x, half.y, half.z), body);
+            const shaped = Boolean(entry.convex || entry.footprint || entry.obstacle?.footprint);
+            const body = this.world.createRigidBody(shaped
+                ? this.RAPIER.RigidBodyDesc.fixed()
+                : this.RAPIER.RigidBodyDesc.fixed().setTranslation(center.x, center.y, center.z));
+            for (const collider of this._staticShapeColliders(entry, body, half)) this._rememberContact(collider, entry);
             this.rigidbodies.push(body);
             return { ...entry, center, half, body };
         });
+    }
+
+    _convexCollider(body, points, label) {
+        const flat = new Float32Array(points.length * 3);
+        points.forEach((point, index) => {
+            flat[index * 3] = component(point, 0);
+            flat[index * 3 + 1] = component(point, 1);
+            flat[index * 3 + 2] = component(point, 2);
+        });
+        const descriptor = this.RAPIER.ColliderDesc.convexHull(flat);
+        if (!descriptor) throw new TypeError(`Convex collider failed for ${label}.`);
+        return this.world.createCollider(descriptor, body);
+    }
+
+    _staticShapeColliders(entry, body, half) {
+        if (entry.convex) {
+            const vertices = entry.convex.vertices;
+            if (!Array.isArray(vertices) || vertices.length < 4) throw new TypeError(`Convex collider failed for ${entry.id}.`);
+            return [this._convexCollider(body, vertices, entry.id)];
+        }
+        const footprint = entry.footprint ?? entry.obstacle?.footprint;
+        const triangles = entry.triangles ?? entry.obstacle?.triangles;
+        const minY = Number(entry.minY ?? entry.obstacle?.minY);
+        const maxY = Number(entry.maxY ?? entry.obstacle?.maxY);
+        if (Array.isArray(footprint) && footprint.length >= 3) {
+            if (!Array.isArray(triangles) || triangles.length === 0 || !Number.isFinite(minY) || !Number.isFinite(maxY)) {
+                throw new TypeError(`Convex collider failed for ${entry.id}.`);
+            }
+            return triangles.map((triangle, index) => {
+                const points = [];
+                for (const vertex of triangle) {
+                    const point = footprint[vertex];
+                    if (!point) throw new TypeError(`Convex collider failed for ${entry.id}.`);
+                    points.push([point.x, minY, point.z], [point.x, maxY, point.z]);
+                }
+                return this._convexCollider(body, points, `${entry.id}:${index}`);
+            });
+        }
+        const descriptor = this.RAPIER.ColliderDesc.cuboid(half.x, half.y, half.z);
+        return [this.world.createCollider(descriptor, body)];
+    }
+
+    _rememberContact(collider, entry) {
+        const handle = collider?.handle;
+        if (handle === undefined || handle === null) return;
+        this.colliderContactIds.set(handle, String(entry.contactId ?? entry.id));
     }
 
     _buildVehicleStates() {
@@ -471,6 +634,8 @@ export class PhysicsEngine {
             const center = vector(vehicle.collisionCenter);
             const collider = this.RAPIER.ColliderDesc.cuboid(half.x, half.y, half.z);
             if (center.x || center.y || center.z) collider.setTranslation?.(center.x, center.y, center.z);
+            // Default membership is every bit, so a chassis-only floor or road would hit this sweep-driven body.
+            collider.setCollisionGroups?.(collisionGroups(DYNAMIC_GROUP, 0xffff));
             this.world.createCollider(collider, body);
             this.rigidbodies.push(body);
             return { id, vehicle, half, previous: position, body };
@@ -499,15 +664,35 @@ export class PhysicsEngine {
     }
 
     _buildFloorCollider() {
+        if (!this.world) return;
         const plane = this.preparedWorldDescription?.groundPlane;
-        if (plane?.collider === false) return;
         const y = Number(plane?.y);
         if (!Number.isFinite(y)) return;
+        const filter = CHASSIS_GROUP | (plane?.collider === false ? 0 : DYNAMIC_GROUP);
         const body = this.world.createRigidBody(this.RAPIER.RigidBodyDesc.fixed().setTranslation(0, y - 0.5, 0));
         const descriptor = this.RAPIER.ColliderDesc.cuboid(5000, 0.5, 5000);
-        descriptor.setCollisionGroups(collisionGroups(FLOOR_GROUP, DYNAMIC_GROUP));
+        descriptor.setCollisionGroups?.(collisionGroups(FLOOR_GROUP, filter));
         this.world.createCollider(descriptor, body);
         this.rigidbodies.push(body);
+    }
+
+    _buildDrivableColliders() {
+        if (!this.world) return;
+        const surfaces = this.preparedWorldDescription?.drivableSurfaces ?? [];
+        const roads = this.preparedWorldDescription?.roads;
+        for (const surface of surfaces) {
+            const mesh = faceUp(drivableSurfaceMesh(surface, roads));
+            const body = this.world.createRigidBody(this.RAPIER.RigidBodyDesc.fixed());
+            const descriptor = this.RAPIER.ColliderDesc.trimesh(
+                mesh.vertices,
+                mesh.indices,
+                this.RAPIER.TriMeshFlags?.FIX_INTERNAL_EDGES,
+            );
+            if (!descriptor) throw new TypeError(`Drivable surface "${surface.id}" trimesh failed.`);
+            descriptor.setCollisionGroups?.(collisionGroups(CHASSIS_GROUP, CHASSIS_GROUP));
+            this.world.createCollider(descriptor, body);
+            this.rigidbodies.push(body);
+        }
     }
 
     _buildRigidBodies() {
@@ -516,7 +701,6 @@ export class PhysicsEngine {
         this._rigidBodyPoses = [];
         const specs = this.preparedWorldDescription?.rigidBodies ?? [];
         if (!this.world || specs.length === 0) return;
-        this._buildFloorCollider();
         for (const spec of specs) {
             const dynamic = spec.bodyType !== "kinematic";
             const descriptor = (dynamic ? this.RAPIER.RigidBodyDesc.dynamic() : this.RAPIER.RigidBodyDesc.kinematicPositionBased())
@@ -814,8 +998,10 @@ export class PhysicsEngine {
         this._pushes = [];
         if (this.RAPIER) {
             this._buildStaticColliders();
+            this._buildFloorCollider();
             this._buildVehicleStates();
             this._buildRigidBodies();
+            this._buildDrivableColliders();
         }
         this.activeContacts.clear();
         this.pendingContacts.clear();

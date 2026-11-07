@@ -6,6 +6,7 @@
 import { compareUtf8 } from "../../math/compareUtf8.js";
 import { canonicalFiniteNumber } from "../kernel/SimulationHashes.js";
 import { convexHullXZ } from "../occupancy/OracleOccupancyGrid.js";
+import { vehicleGroundFootprint } from "../../scenarios/route/geometry.js";
 
 export const DRIVE_AREA_VERSION = 1;
 export const MIN_DRIVE_AREA_SIDE_M = 2;
@@ -268,6 +269,30 @@ export function driveAreaSurfacesFrom(environment) {
     ));
 }
 
+/** Mutable authoring records use a content key; resolved world surfaces are immutable. */
+export function createDriveAreaSurfaceCache() {
+    let key;
+    let prepared = { drivableSurfaces: [] };
+    let builds = 0;
+    return {
+        get builds() { return builds; },
+        get(environment) {
+            const source = areaSource(environment);
+            const compiled = !Array.isArray(source?.driveAreas) && Array.isArray(source?.drivableSurfaces);
+            const nextKey = compiled ? source.drivableSurfaces : JSON.stringify(authoredAreas(source), (_name, value) => (
+                typeof value === "number" && !Number.isFinite(value) ? String(value) : value
+            ));
+            if (nextKey !== key) {
+                const surfaces = driveAreaSurfacesFrom(source);
+                prepared = { drivableSurfaces: surfaces };
+                key = nextKey;
+                builds += 1;
+            }
+            return prepared;
+        },
+    };
+}
+
 /** Lowest UTF-8 area id that contains the point, or null. Roads are not consulted. */
 export function sampleContainingDriveArea(environment, x, z) {
     const hits = driveAreaSurfacesFrom(environment)
@@ -358,17 +383,6 @@ function polygonsOverlap(left, right) {
     )));
 }
 
-function vehicleCorners(position, yaw, size) {
-    const forward = { x: Math.cos(yaw), z: -Math.sin(yaw) };
-    const right = { x: Math.sin(yaw), z: Math.cos(yaw) };
-    const halfLength = Number(size?.x || 0) / 2;
-    const halfWidth = Number(size?.z || 0) / 2;
-    return [-1, 1].flatMap((along) => [-1, 1].map((across) => ({
-        x: position.x + along * halfLength * forward.x + across * halfWidth * right.x,
-        z: position.z + along * halfLength * forward.z + across * halfWidth * right.z,
-    })));
-}
-
 function drivableTriangles(description) {
     const triangles = [];
     for (const surface of description?.drivableSurfaces || []) {
@@ -390,9 +404,10 @@ function drivableTriangles(description) {
 }
 
 /** Null when the footprint is on pavement and clear of obstacles. */
-export function pavementPoseIssue(description, pose, size) {
+export function pavementPoseIssue(description, pose, size, center = {}) {
     if (!size?.x || !size?.z) return "A start pose requires the ego footprint.";
-    const corners = vehicleCorners(pose, pose.yaw, size);
+    const corners = vehicleGroundFootprint(pose, size, center);
+    if (!corners) return "The start pose is invalid.";
     if (planningObstacleRings(description).some((polygon) => polygonsOverlap(corners, polygon))) {
         return "The start pose overlaps an obstacle.";
     }

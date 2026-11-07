@@ -1036,6 +1036,10 @@ Record in the ledger: focused-suite pass counts, `npm run lint` result,
 
 ## Decision log
 
+### 2026-11-07 — A scene-primitive writer may clear the floor and primitives
+
+`assertNoPrimitiveDowngrade` rejected every full-document write that left both `document.primitives` and an enabled floor empty. The editor declares `supportedScenePrimitiveVersions: [1]` and omits those fields when they are unused, so turning the floor off or deleting the last primitive failed autosave with a 409. A writer that declares version 1 may omit them. A writer that does not is still rejected when the stored document has that content or the replacement introduces it. Schema, world description, and hashes are unchanged.
+
 ### 2026-10-29 — Asset loading and metric projection performance maintenance
 
 Exact immutable asset revision reads share one in-flight request and a bounded

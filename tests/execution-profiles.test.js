@@ -450,6 +450,65 @@ test("an already applied profile is a no-op and normalization is visible", () =>
     assert.equal(normalized.controls.keyboardDrive, false);
 });
 
+test("the comparison baseline grants the selected vehicle's plugin locks", () => {
+    const scenario = localScenario();
+    const sensorHash = "ab".repeat(32);
+    const plantHash = "cd".repeat(32);
+    const vehicle = structuredClone(bigCar);
+    vehicle.sensors.push({
+        id: "helios",
+        type: "vendor.robosense.helios32.lidar",
+        pose: { position: { x: 0, y: 0, z: 1 }, rotation: {} },
+        config: {},
+    });
+    vehicle.pluginLocks = [
+        {
+            pluginId: "vendor.robosense.helios32",
+            version: "0.2.0",
+            packageHash: sensorHash,
+            runtimeHash: "ef".repeat(32),
+            sensorTypes: ["vendor.robosense.helios32.lidar"],
+        },
+        {
+            pluginId: "vendor.example.plant",
+            version: "0.1.0",
+            packageHash: plantHash,
+            runtimeHash: "12".repeat(32),
+            plants: ["vendor.example.plant.bicycle"],
+        },
+    ];
+    const manifest = manifestFor(scenario);
+    const built = buildComparisonBaseline(manifest, "standard", { scenario, vehicleManifest: vehicle });
+    const helios = built.manifest.sensorRig.sensors.find((sensor) => sensor.id === "helios");
+    const sensorGrant = built.manifest.plugins.artifacts.find((entry) => entry.pluginId === "vendor.robosense.helios32");
+    const plantGrant = built.manifest.plugins.artifacts.find((entry) => entry.pluginId === "vendor.example.plant");
+
+    assert.equal(helios.type, "vendor.robosense.helios32.lidar");
+    assert.equal(sensorGrant.expectedHash, sensorHash);
+    assert.ok(sensorGrant.capabilities.includes("sensors.sample.range-image"));
+    assert.equal(plantGrant.expectedHash, plantHash);
+    assert.ok(plantGrant.capabilities.includes("plant.step"));
+
+    const granted = classifyConfiguration(built.manifest, { scenario, vehicleManifest: vehicle });
+    assert.ok(!granted.overrides.some((entry) => entry.path.startsWith("plugins")));
+    const missing = structuredClone(built.manifest);
+    delete missing.plugins;
+    const withheld = classifyConfiguration(missing, { scenario, vehicleManifest: vehicle });
+    assert.ok(withheld.overrides.some((entry) => entry.path === "plugins.artifacts[vendor.robosense.helios32]"));
+    assert.ok(withheld.overrides.some((entry) => entry.path === "plugins.artifacts[vendor.example.plant]"));
+
+    const plain = buildComparisonBaseline(manifest, "standard", { scenario, vehicleManifest: bigCar });
+    assert.equal(plain.manifest.plugins, undefined);
+    const preview = previewProfile(manifest, "standard", { scenario, vehicleManifest: vehicle });
+    assert.equal(preview.nextManifest.plugins, undefined);
+
+    const broken = structuredClone(vehicle);
+    broken.pluginLocks = [{ pluginId: " ", packageHash: sensorHash, sensorTypes: ["vendor.robosense.helios32.lidar"] }];
+    const failed = buildComparisonBaseline(manifest, "standard", { scenario, vehicleManifest: broken });
+    assert.ok(failed.issues.some((entry) => entry.path === "plugins"));
+    assert.equal(failed.manifest.plugins, undefined);
+});
+
 test("the comparison baseline stays latched until the manifest is reopened", () => {
     const draft = createDefaultRunManifest();
     const opened = retainComparisonProfile(null, draft, {});

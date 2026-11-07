@@ -115,7 +115,7 @@ test("control arcs and localization use the autonomy snapshot", () => {
     }), defaultVisibility());
     const arcs = projected.filter((primitive) => primitive.layerId === "controls");
     assert.equal(arcs.length, 2);
-    assert.ok(arcs[0].points.at(-1).z > 0.05);
+    assert.ok(arcs[0].points.at(-1).z < -0.05, "positive steering turns left toward world -Z");
     const estimate = projected.find((primitive) => primitive.layerId === "localization" && primitive.kind === "circle");
     assert.equal(estimate.center.x, 1);
 });

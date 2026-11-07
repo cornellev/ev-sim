@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { register } from "node:module";
 import test from "node:test";
+import { Euler, Vector3 } from "three";
 
 import {
     SensorTypeRegistry,
@@ -247,10 +248,6 @@ test("state-sensor vehicle mounts survive parent pose updates", async () => {
     await import("../app/3d/data/VehicleDatabase.js");
     const { Vehicle } = await import("../app/3d/vehicles/Vehicle.js");
     const { createVehicleSensorDevice } = await import("../app/3d/devices/SensorRuntimeRegistry.js");
-    const pose = () => ({
-        copy() { return this; },
-        add() { return this; },
-    });
     const devices = ["imu", "gnss", "wheel-odometry"].map((type) => createVehicleSensorDevice({
         id: type,
         type,
@@ -263,9 +260,9 @@ test("state-sensor vehicle mounts survive parent pose updates", async () => {
     devices.push({ id: "unhooked" });
     const vehicle = {
         devices,
-        position: pose(),
-        rotation: pose(),
-        sceneObject: { position: pose(), rotation: pose() },
+        position: new Vector3(),
+        rotation: new Euler(),
+        sceneObject: { position: new Vector3(), rotation: new Euler() },
     };
 
     for (const device of devices.slice(0, 3)) {

@@ -164,7 +164,7 @@ export class EnvironmentRegistry {
             if (!next.editorOnly && !isRoadAuthoringHandleKind(next.kind)) {
                 annotatePerceptionObject(next.object3D, {
                     sourceId: next.sourceId ?? next.id,
-                    semanticClass: next.kind,
+                    semanticClass: next.semanticClass || next.kind,
                     kind: next.kind,
                 });
             }
