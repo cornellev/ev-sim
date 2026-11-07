@@ -7,6 +7,7 @@ import {
     createPlanningOracleObservationSpace,
 } from "./PlanningOracleObservation.js";
 import { boxSpace, dictionarySpace, namedTensor, tensorMap } from "./TensorProtocol.js";
+import { isScanningLidarType } from "../sensors/SensorTypeRegistry.js";
 
 const FLOAT_BOUND = Number.MAX_VALUE;
 
@@ -46,7 +47,7 @@ function lidarDevices(sensorManager) {
     const devices = [];
     for (const list of [sensorManager?.lidar?.devices, sensorManager?.gpu?.devices, sensorManager?.devices]) {
         for (const device of list || []) {
-            if (device?.type !== "lidar3d" || seen.has(device)) continue;
+            if (!isScanningLidarType(device?.type) || seen.has(device)) continue;
             seen.add(device);
             devices.push(device);
         }

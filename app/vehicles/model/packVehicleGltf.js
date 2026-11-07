@@ -206,6 +206,21 @@ function repackBuffers(json, payloads, imageViewIndexes) {
     return bin;
 }
 
+// Exporter metadata. Profile forbids the bag, and its contents are unbounded.
+function stripGltfExtras(value) {
+    const pending = [value];
+    while (pending.length > 0) {
+        const current = pending.pop();
+        if (!current || typeof current !== "object") continue;
+        if (Array.isArray(current)) {
+            for (let index = current.length - 1; index >= 0; index -= 1) pending.push(current[index]);
+            continue;
+        }
+        delete current.extras;
+        for (const child of Object.values(current)) pending.push(child);
+    }
+}
+
 /**
  * Pack resolved glTF buffers into one GLB.
  * `buffers` aligns with `json.buffers`. `imageBytes` aligns with external images.
@@ -213,6 +228,7 @@ function repackBuffers(json, payloads, imageViewIndexes) {
 export function packVehicleGltf({ json, buffers = [], imageBytes = [], generator = null } = {}) {
     const document = structuredClone(json);
     if (!document || typeof document !== "object" || Array.isArray(document)) throw new Error("glTF JSON must be an object.");
+    stripGltfExtras(document);
     assertVehicleGltfGraph(document);
     assignOrdinalNames(document);
     if (generator) document.asset = { ...(document.asset ?? {}), generator };

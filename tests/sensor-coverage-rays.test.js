@@ -57,6 +57,25 @@ test("a single lidar step at the origin matches the spherical direction", () => 
     assert.equal(rays[0].index, 0);
 });
 
+test("a 2D lidar emits one ring in the sensor plane", () => {
+    const { rays, skipped } = enumerateCoverageRays({
+        sensors: [{
+            id: "bumper",
+            type: "lidar2d",
+            pose: pose(),
+            config: {
+                range: 20,
+                thetaStep: 90,
+                thetaRange: [0, 180],
+            },
+        }],
+    });
+    assert.equal(skipped.length, 0);
+    assert.equal(rays.length, 2);
+    assert.ok(rays.every((ray) => Math.abs(ray.direction.y) < 1e-9));
+    assert.ok(Math.abs(rays[0].direction.x - 1) < 1e-9);
+});
+
 test("a yawed lidar pose rotates the ray with the editor euler", () => {
     const { rays } = enumerateCoverageRays({
         sensors: [{

@@ -6,19 +6,19 @@ current detailed editor as Advanced Mode. Both views edit one run manifest.
 
 ## Status and scope
 
-- Status: CFG-03 is implemented. Its browser gate is still open because Playwright was not run. CFG-01's Advanced-workflow gate is still open for the same reason.
-- Next package: **CFG-04 — Effective summary and Custom Settings**.
+- Status: CFG-06 is implemented. Playwright was not run, so the browser gate is open. CFG-05, CFG-04, CFG-03, and CFG-01 browser gates remain open.
+- Next package: none. The code packages are complete. Browser acceptance is still open.
 - Delivery: six dependency-ordered PRs, each implemented in a separate session.
-- Last updated: **2026-11-06**.
+- Last updated: **2026-11-07**.
 
 | Package | Depends on | Status |
 | --- | --- | --- |
 | CFG-01 — Shared session and preservation safeguards | None | Implemented; Playwright not run |
 | CFG-02 — Two execution presets and comparison model | CFG-01 | Implemented |
 | CFG-03 — Simple workspace and mode switching | CFG-02 | Implemented; Playwright not run |
-| CFG-04 — Effective summary and Custom Settings | CFG-03 | Planned |
-| CFG-05 — Validation navigation and launch integration | CFG-04 | Planned |
-| CFG-06 — Acceptance, documentation, and default | CFG-05 | Planned |
+| CFG-04 — Effective summary and Custom Settings | CFG-03 | Implemented; Playwright build failed |
+| CFG-05 — Validation navigation and launch integration | CFG-04 | Implemented; Playwright build failed |
+| CFG-06 — Acceptance, documentation, and default | CFG-05 | Implemented; Playwright not run |
 
 Phase 1 covers Run Configuration only. Keep its existing workspace-switcher
 entry and existing browser launch path. Scenario Simple Mode, editor redesigns,
@@ -65,7 +65,7 @@ the existing application preference conventions.
 
 1. An explicit valid Run Configuration preference wins.
 2. Without one, honor the existing global Advanced preference when it is true.
-3. Otherwise default to Simple after CFG-06.
+3. Otherwise default to Simple.
 
 Persist only explicit mode choices. Keep switching functional for the current
 session when storage is unavailable. Changing the run preference must not
@@ -235,6 +235,8 @@ unsupported sensor/plugin placeholders and report their failures.
 inherited sensors. Overrides remain visible after reopening. Resets affect
 only reviewed fields, and delayed responses cannot restore stale values.
 
+**CFG-04 checks, 2026-11-07.** `node --experimental-default-type=module --test tests/effective-resolution.test.js tests/execution-profiles.test.js tests/simple-run-workspace.test.js` passed 23 tests. `npm run lint` exited 0 with the three existing warnings in `app/3d/overlay/map/MapSurface.js` and `app/marketplace/ui/MarketplaceWorkspace.js`. `npm test` ran 2455 tests: 2419 passed, 28 failed, and 8 skipped. Five failures match the CFG-01 suite and sit outside this package: the pinned headless characterization comparison, plan-view control arcs, plugin range-image parent updates, state-sensor vehicle mounts, and the lidar hierarchy row. The other 23 fail while importing `setDriveAreaElevation` from `app/3d/editor/document/documentMutations.js`, which this package does not change. The characterization fixture was left unchanged. `npx playwright test tests/ui/run-config-simple.spec.js` did not reach an assertion: the production build exited while prerendering `/` because the uncommitted `drive-area` object type has a legacy domain the registry rejects. Selecting a scenario, saving, and launching from Simple in the browser remain unverified.
+
 ### CFG-05 — Validation navigation and launch integration
 
 Give validation issues actionable locations. Focus available Simple fields;
@@ -252,6 +254,8 @@ remain visible and actionable. Revision conflicts and failed preparation
 preserve the draft. Valid server resolution is not presented as proof of an
 available external connection or successful runtime preparation.
 
+**CFG-05 checks, 2026-11-07.** `node --experimental-default-type=module --test tests/simple-run-workspace.test.js tests/run-config-session.test.js` passed 16 tests. `npm run lint` exited 0 with the three existing warnings in `app/3d/overlay/map/MapSurface.js` and `app/marketplace/ui/MarketplaceWorkspace.js`. `npm test` ran 1692 tests: 1534 passed, 156 failed, and 2 skipped. The failures sit outside this package. The uncommitted `drive-area` object type is rejected by the object registry and fails every file that imports it. The pinned headless characterization comparison, plan-view control arcs, state-sensor vehicle mounts, and the lidar hierarchy row still fail. Marketplace CLI assertions failed as well, including a writer-lock timeout. The characterization fixture was left unchanged. `npx playwright test tests/ui/run-config-simple.spec.js` did not reach an assertion: the production build exited while prerendering `/` because of that same `drive-area` type. Clicking a validation issue and launching from the browser remain unverified.
+
 ### CFG-06 — Acceptance, documentation, and default
 
 Update existing UI tests to choose Advanced explicitly when testing technical
@@ -262,6 +266,8 @@ default under the scoped preference rules.
 **Gate:** Required checks pass, with the pre-existing characterization failure
 tracked separately as described below. Final acceptance remains pending until
 that failure is resolved through the existing contract-review process.
+
+**CFG-06 checks, 2026-11-07.** `node --experimental-default-type=module --test tests/run-config-mode.test.js tests/run-config-session.test.js tests/simple-run-workspace.test.js tests/execution-profiles.test.js tests/effective-resolution.test.js` passed 36 tests. `npm run lint` exited 0 with the three existing warnings in `app/3d/overlay/map/MapSurface.js` and `app/marketplace/ui/MarketplaceWorkspace.js`. `npm test` ran 2553 tests: 2540 passed, 5 failed, and 8 skipped. The five failures match the CFG-01 suite and sit outside this package: the pinned headless characterization comparison, plan-view control arcs, plugin range-image parent updates, state-sensor vehicle mounts, and the lidar hierarchy row. The characterization fixture was left unchanged. Playwright was not run. Browser workflows, accessibility, and the production build remain unverified. Final acceptance stays pending while the characterization comparison fails.
 
 For every package, run focused checks first, then `npm run lint` and
 `npm test`. Run affected Playwright tests as UI packages land. Record actual
@@ -399,3 +405,50 @@ An execution profile confirms through `previewProfile` before `update`. A
 vehicle change that would add plugin locks confirms through
 `pluginGrantPreview`. Cancellation writes nothing. The resolved summary and
 Custom Settings stay in CFG-04.
+
+### 2026-11-07 — Resolve effective values without storing a profile
+
+Simple Mode reads effective values from `POST /run-manifests/:id/resolve`
+with the draft or baseline manifest in the body. It does not copy the
+response onto the draft. One resolve runs at a time, and the draft lane goes
+first. Each lane waits 400 ms after its latest submit, keeps only that body,
+and drops a response whose generation has changed. Invalid JSON suspends both
+lanes. Storage events for scenario, scenario catalog, environment, vehicle,
+script, bindings, and plugin clear the current results and resolve again.
+Run-manifest events do not.
+
+The comparison profile stays latched in ConfigPage for the open manifest and
+scenario. A scenario id whose document is not loaded does not create a latch.
+Confirming an execution profile replaces the latch. Opening another manifest
+infers again. The latch is not written to preferences or the manifest.
+
+Reset writes one override path back to its baseline value, normalizes with
+the authoring sensor registry, and applies only after the dialog lists every
+resulting change. Unknown sensor types stay on the manifest.
+
+### 2026-11-07 — Validation issues navigate without writing the draft
+
+`validationIssueTarget` maps an issue to a Simple control id or an Advanced
+tab and focus id. Show uses that target. A Simple control is focused only
+while Simple is visible. Otherwise the page selects the Advanced tab and
+calls `chooseMode`, which does not write the draft. Empty-path normalizer
+errors for `sensorTransports` and `renderRecipe` recover the path from the
+message. Unknown paths, including `dependencies`, open JSON. Parameter
+issues open Scenario, where those controls already live. A render recipe
+focuses a note on Sensors and stays editable in JSON.
+
+Launch holds `createLaunchGate` across save, validate, resolve, and prepare.
+A second click returns. Save stays optimistic. A revision conflict still
+throws before the draft is replaced, and a failed prepare still leaves the
+draft in place. The valid-manifest message stays hidden while the action is
+busy, the run is preparing, or the run is in error. The message says the
+check is not an external connection or a completed preparation.
+
+### 2026-11-07 — Simple is the unset default
+
+`RUN_CONFIG_MODE_FALLBACK` is `simple`. An explicit `cev-sim.ui.runConfig.mode`
+still wins. `cev-sim.ui.advancedAuthoring === "true"` still selects Advanced
+when the run key is absent. `chooseMode` is the only writer. Opening the
+workspace does not write the key or the manifest. The first paint uses the
+fallback constant; a stored Advanced preference appears after the mount
+effect. Reading localStorage during render would disagree with the server HTML.

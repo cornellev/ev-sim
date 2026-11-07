@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
     SensorTypeRegistry,
+    PLANAR_LIDAR_ELEVATION,
     changeRunSensorType,
     createRunSensor,
     getSensorType,
@@ -19,7 +20,7 @@ import { normalizeRunManifest, validateRunManifest } from "../app/simulation/Run
 import { normalizeVehicleManifest, validateVehicleManifest } from "../app/vehicles/VehicleManifest.js";
 
 test("built-in sensor definitions own defaults, fields, outputs, and determinism metadata", () => {
-    assert.deepEqual(listSensorTypes().map((definition) => definition.id), ["camera", "lidar3d", "imu", "gnss", "wheel-odometry"]);
+    assert.deepEqual(listSensorTypes().map((definition) => definition.id), ["camera", "lidar3d", "lidar2d", "imu", "gnss", "wheel-odometry"]);
 
     const camera = normalizeRunSensor({ type: "camera" });
     assert.equal(camera.rateHz, 30);
@@ -173,6 +174,35 @@ test("an isolated third sensor type drives normalization and runtime factories w
         "detections",
     ]);
     assert.equal(signals.at(-1).metadata.rosType, "custom/Detections");
+});
+
+test("lidar2d is one sensor-plane beam", () => {
+    const planar = normalizeRunSensor({
+        type: "lidar2d",
+        calibration: { elevation: { startDeg: -15, endDeg: 15, stepDeg: 2 } },
+    });
+    assert.deepEqual(planar.calibration.elevation, PLANAR_LIDAR_ELEVATION);
+    assert.equal(planar.calibration.azimuth.startDeg, -180);
+    assert.equal(planar.calibration.azimuth.endDeg, 180);
+    assert.deepEqual(validateRunSensorDefinition(planar), []);
+    const fields = getSensorType("lidar2d").run.fields.map((field) => field.path.join("."));
+    assert.equal(fields.includes("calibration.elevation.startDeg"), false);
+    assert.equal(fields.includes("calibration.azimuth.startDeg"), true);
+    assert.ok(ORACLE_PRODUCT_TOGGLES.lidar2d.some((entry) => entry.product === "semanticPointCloud"));
+    const vehicle = normalizeVehicleSensor({ type: "lidar2d", config: { phiRange: [-10, 10], phiStep: 2 } });
+    assert.equal("phiRange" in vehicle.config, false);
+    assert.equal("phiStep" in vehicle.config, false);
+    assert.deepEqual(vehicle.config.thetaRange, [-180, 180]);
+    const swept = normalizeRunSensor({
+        type: "lidar3d",
+        calibration: { elevation: { startDeg: -15, endDeg: 15, stepDeg: 2 } },
+    });
+    assert.deepEqual(changeRunSensorType(swept, "lidar2d").calibration.elevation, PLANAR_LIDAR_ELEVATION);
+    const tampered = {
+        ...planar,
+        calibration: { ...planar.calibration, elevation: { startDeg: 0, endDeg: 20, stepDeg: 1 } },
+    };
+    assert.ok(validateRunSensorDefinition(tampered).some((issue) => issue.path === "calibration.elevation"));
 });
 
 test("changing sensor type resets type-specific state while preserving common run settings", () => {

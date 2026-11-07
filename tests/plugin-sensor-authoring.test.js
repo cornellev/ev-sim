@@ -88,7 +88,7 @@ test("sensor catalog is revisioned, ordered, and built without executing modules
 
 test("sensor catalog entries fall back to the registry and keep package identity", () => {
     const fallback = sensorCatalogEntries({ sensors: [] });
-    assert.deepEqual(fallback.map((entry) => entry.type), ["camera", "lidar3d", "imu", "gnss", "wheel-odometry"]);
+    assert.deepEqual(fallback.map((entry) => entry.type), ["camera", "lidar3d", "lidar2d", "imu", "gnss", "wheel-odometry"]);
     assert.equal(sensorCatalogEntryKey(fallback[0]), "camera:builtin");
     assert.equal(sensorCatalogEntryLabel(fallback[0]), "Camera");
     assert.equal(sensorCatalogEntryLabel({ type: "unnamed" }), "unnamed");

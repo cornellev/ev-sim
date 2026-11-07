@@ -1,6 +1,6 @@
 import * as THREE from "three";
 
-import { getSensorType, sensorTypeRegistry } from "./SensorTypeRegistry.js";
+import { getSensorType, PLANAR_LIDAR_ELEVATION, sensorTypeRegistry } from "./SensorTypeRegistry.js";
 import { SensorRuntimeFactoryRegistry } from "./SensorRuntimeFactoryRegistry.js";
 import { ManifestCamera } from "./ManifestCamera.js";
 import { ManifestLidar3d } from "./ManifestLidar3d.js";
@@ -172,6 +172,31 @@ registerSensorRuntime("lidar3d", {
                 new THREE.MeshBasicMaterial({ color, wireframe: true, transparent: true, opacity: 0.35 }),
             ),
         );
+        return holder;
+    },
+    previewSignature: (sensor) => sensor.type,
+});
+
+registerSensorRuntime("lidar2d", {
+    createRunDevice: (config, options) => new ManifestLidar3d(config, options),
+    createVehicleDevice(entry) {
+        return new LiDAR3d(
+            toVector3(entry.pose.position),
+            toEuler(entry.pose.rotation),
+            entry.config.range,
+            entry.config.thetaStep,
+            [...entry.config.thetaRange],
+            PLANAR_LIDAR_ELEVATION.stepDeg,
+            [PLANAR_LIDAR_ELEVATION.startDeg, PLANAR_LIDAR_ELEVATION.endDeg],
+        );
+    },
+    createPreview(sensor) {
+        const color = getSensorType(sensor.type)?.color ?? 0x2dd4bf;
+        const holder = new THREE.Group();
+        holder.add(new THREE.Mesh(
+            new THREE.CylinderGeometry(0.16, 0.16, 0.02, 24),
+            new THREE.MeshStandardMaterial({ color, roughness: 0.35 }),
+        ));
         return holder;
     },
     previewSignature: (sensor) => sensor.type,

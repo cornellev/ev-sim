@@ -179,7 +179,8 @@ def test_capability_negotiation_checks_transport_profiles_and_backend() -> None:
         client._validate_capabilities(incompatible)
 
 
-def test_lidar_bundles_auto_select_the_locked_cpu_backend() -> None:
+@pytest.mark.parametrize("sensor_type", ["lidar3d", "lidar2d"])
+def test_lidar_bundles_auto_select_the_locked_cpu_backend(sensor_type: str) -> None:
     bundle = LoadedBundle(
         document={
             "resolved": {
@@ -191,7 +192,7 @@ def test_lidar_bundles_auto_select_the_locked_cpu_backend() -> None:
                         "configHash": "0" * 64,
                     }
                 ],
-                "manifest": {"sensorRig": {"sensors": [{"id": "lidar", "type": "lidar3d", "enabled": True}]}},
+                "manifest": {"sensorRig": {"sensors": [{"id": "lidar", "type": sensor_type, "enabled": True}]}},
             }
         },
         canonical_json=b"{}",

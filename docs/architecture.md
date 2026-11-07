@@ -181,7 +181,10 @@ drivable surfaces, exact obstacle/proxy geometry, aggregate bounds,
 route-network identity, and a world SHA-256. V1 remains the legacy road world;
 v2 adds compiled road geometry; v3 is selected only when a v2 asset pin has an
 enabled metric product and adds world-space `assetProxies` plus
-`metricWorldHash`. Schema v3 adds a server-owned `revision` and optional
+`metricWorldHash`. World description v4 is the primitives and floor description.
+v5 is used only when the document contains a drive area. A document with no
+areas keeps the previous version, bytes, and hash, and `roadNetworkHash`
+still describes roads only. Schema v3 adds a server-owned `revision` and optional
 `visualLayer` / `evidence` hash references; those fields are excluded from
 `worldHash`. Schema v4 adds `document.objects`, the editor's authoring overlay
 (names, hierarchy, locks, editor visibility) and optional
@@ -341,7 +344,7 @@ candidate-model provenance changes definition/resolved hashes for lineage but is
 projected out of simulation-semantic / episode / trajectory identity.
 
 PR 10 adds a portable `cev-sim.lidar-geometry` v1 resource to resolved runs
-only when an enabled `lidar3d` sensor exists. Canonical box and triangle twins
+only when an enabled `lidar3d` or `lidar2d` sensor exists. `lidar2d` is that scan with one beam in the sensor plane. Canonical box and triangle twins
 cover static world surfaces and actor-local vehicle geometry; the browser GLSL
 object database and headless CPU backend share their constructors and stable
 semantic/instance registry. The resource hash participates in resolved and

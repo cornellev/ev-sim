@@ -35,7 +35,7 @@ test("ED-03 the toolbar model shows scene tools in scene view and map tools in m
     const map = buildToolbarModel({ editorSnapshot: editor.snapshot(), busSnapshot: { canUndo: true, canRedo: false }, selectionSnapshot: { ids: ["e0"] } });
     assert.deepEqual(map.map((group) => group.id), ["map-tools", "transform", "view", "overlays", "history"]);
     assert.equal(ids(map, "tools"), null, "Q/W/E/R tools do not show in map view");
-    assert.deepEqual(ids(map, "map-tools"), ["map-select", "map-pan", "map-intersection", "map-road-pen", "map-building-rect"]);
+    assert.deepEqual(ids(map, "map-tools"), ["map-select", "map-pan", "map-intersection", "map-road-pen", "map-building-rect", "map-drive-area-rect"]);
     assert.equal(map[0].items.find((item) => item.id === "map-road-pen").active, true);
     assert.deepEqual(ids(map, "overlays"), ["overlay-grid", "overlay-floor", "overlay-satellite"], "satellite is map-only; chunks and bounds are scene-only");
     assert.equal(map.flatMap((group) => group.items).some((item) => /lidar|collision/i.test(`${item.id} ${item.label}`)), false);

@@ -10,6 +10,7 @@ import {
     namedTensor,
     tensorMap,
 } from "./TensorProtocol.js";
+import { isScanningLidarType } from "../sensors/SensorTypeRegistry.js";
 
 const FLOAT_BOUND = Number.MAX_VALUE;
 const UINT64_BOUND = Number.MAX_SAFE_INTEGER;
@@ -26,7 +27,7 @@ export function perceptionSensorDescriptor(sensor) {
             high: [255],
         };
     }
-    if (sensor.type === "lidar3d" && products.pointCloud === true) {
+    if (isScanningLidarType(sensor.type) && products.pointCloud === true) {
         const azimuth = sensor.calibration.azimuth;
         const elevation = sensor.calibration.elevation;
         return {

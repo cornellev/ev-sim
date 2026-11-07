@@ -24,6 +24,7 @@ import {
     validateObjectGraph,
 } from "../editor/objects/index.js";
 import { roadGeometryVersionOf, validateRoadDomain } from "../../roads/RoadGeometryRecord.js";
+import { normalizeDriveAreaList } from "../../simulation/world/DriveAreas.js";
 import { createGeoFrame, GEO_FRAME_VERSION } from "../earth/GeoFrame.js";
 
 export const ENVIRONMENT_SCHEMA_VERSION = 3;
@@ -43,6 +44,8 @@ export const ENVIRONMENT_ROAD_GEOMETRY_DOWNGRADE = "ENVIRONMENT_ROAD_GEOMETRY_DO
 export const ENVIRONMENT_ASSET_METRICS_INVALID = "ENVIRONMENT_ASSET_METRICS_INVALID";
 export const ENVIRONMENT_ASSET_METRICS_DOWNGRADE = "ENVIRONMENT_ASSET_METRICS_DOWNGRADE";
 export const ENVIRONMENT_PRIMITIVE_DOWNGRADE = "ENVIRONMENT_PRIMITIVE_DOWNGRADE";
+export const ENVIRONMENT_DRIVE_AREA_DOWNGRADE = "ENVIRONMENT_DRIVE_AREA_DOWNGRADE";
+export const ENVIRONMENT_DRIVE_AREA_INVALID = "ENVIRONMENT_DRIVE_AREA_INVALID";
 export const ENVIRONMENT_EDITOR_SOURCE_INVALID = "ENVIRONMENT_EDITOR_SOURCE_INVALID";
 export const ENVIRONMENT_EDITOR_SOURCE_DOWNGRADE = "ENVIRONMENT_EDITOR_SOURCE_DOWNGRADE";
 export const EDITOR_SOURCE_VERSION = 1;
@@ -301,7 +304,7 @@ export function serializeEnvironmentManifest(manifest, {
         visualLayer,
         evidence,
         document: document && typeof document === "object"
-            ? { ...document, environmentId: document.environmentId ?? id }
+            ? canonicalizeDriveAreas({ ...document, environmentId: document.environmentId ?? id })
             : document,
         createdAt: current?.createdAt ?? manifest.createdAt ?? now,
         updatedAt: now,
@@ -337,7 +340,20 @@ export function parseEnvironmentWriteEnvelope(body) {
         supportedScenePrimitiveVersions: Array.isArray(body.supportedScenePrimitiveVersions)
             ? [...new Set(body.supportedScenePrimitiveVersions.map(Number).filter(Number.isInteger))]
             : [],
+        supportedDriveAreaVersions: Array.isArray(body.supportedDriveAreaVersions)
+            ? [...new Set(body.supportedDriveAreaVersions.map(Number).filter(Number.isInteger))]
+            : [],
     };
+}
+
+function canonicalizeDriveAreas(document) {
+    if (!document || typeof document !== "object" || !Object.hasOwn(document, "driveAreas")) return document;
+    const areas = normalizeDriveAreaList(document.driveAreas);
+    if (areas.length === 0) {
+        const { driveAreas: _drop, ...rest } = document;
+        return rest;
+    }
+    return { ...document, driveAreas: areas };
 }
 
 function sourceRecordPresent(document = {}) {
@@ -474,6 +490,41 @@ export function assertNoPrimitiveDowngrade(incoming, current, capabilities = [])
     if (!supported.has(1)) {
         fail("Writing scene primitives or a floor requires supportedScenePrimitiveVersions to include 1.");
     }
+}
+
+/**
+ * Unaware full-document writers cannot replace a document that stores drive
+ * areas. A writer that declares version 1 may remove them.
+ */
+export function assertNoDriveAreaDowngrade(incoming, current, capabilities = []) {
+    const incomingDocument = incoming?.document;
+    if (incomingDocument == null) return;
+    const supported = new Set((capabilities ?? []).map(Number));
+    const currentAreas = Array.isArray(current?.document?.driveAreas) && current.document.driveAreas.length > 0;
+    const hasField = Object.hasOwn(incomingDocument, "driveAreas");
+    const incomingValue = hasField ? incomingDocument.driveAreas : undefined;
+    const incomingNonEmpty = Array.isArray(incomingValue) && incomingValue.length > 0;
+    const incomingMalformed = hasField && incomingValue != null && !Array.isArray(incomingValue);
+    if (!supported.has(1) && (currentAreas || incomingNonEmpty || incomingMalformed)) {
+        const error = new Error(currentAreas
+            ? "This environment contains drive areas; full-document writes must declare supportedDriveAreaVersions 1."
+            : "Writing drive areas requires supportedDriveAreaVersions to include 1.");
+        error.code = ENVIRONMENT_DRIVE_AREA_DOWNGRADE;
+        error.statusCode = 409;
+        throw error;
+    }
+    if (!hasField) return;
+    let normalized;
+    try {
+        normalized = normalizeDriveAreaList(incomingValue ?? []);
+    } catch (error) {
+        const wrapped = new Error(error.message);
+        wrapped.code = ENVIRONMENT_DRIVE_AREA_INVALID;
+        wrapped.statusCode = 400;
+        throw wrapped;
+    }
+    if (normalized.length === 0) delete incomingDocument.driveAreas;
+    else incomingDocument.driveAreas = normalized;
 }
 
 /** Reject writers that do not round-trip the optional ED-07 metric domain. */

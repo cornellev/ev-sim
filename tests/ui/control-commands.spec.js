@@ -1,6 +1,9 @@
 import { test, expect } from "@playwright/test";
 
+import { preferRunConfigMode } from "./runConfigView.js";
+
 async function openRunConfiguration(page) {
+    await preferRunConfigMode(page, "advanced");
     await page.goto("/");
     await page.keyboard.press("Escape");
     const dialog = page.getByRole("dialog", { name: "Workspaces" });

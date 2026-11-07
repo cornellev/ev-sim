@@ -7,9 +7,12 @@ import {
     classifyConfiguration,
     compareOverrides,
     inferExecutionProfile,
+    previewOverrideReset,
     previewProfile,
+    retainComparisonProfile,
+    valueAtOverridePath,
 } from "../app/config/executionProfiles.js";
-import { createDefaultRunManifest } from "../app/simulation/RunManifest.js";
+import { createDefaultRunManifest, normalizeRunManifest } from "../app/simulation/RunManifest.js";
 import { createDefaultScenario } from "../app/scenarios/ScenarioDocument.js";
 import { getBuiltInVehicleManifest } from "../app/vehicles/BuiltInVehicleManifests.js";
 
@@ -445,4 +448,93 @@ test("an already applied profile is a no-op and normalization is visible", () =>
     ]);
     assert.equal(preview.nextManifest.controls.keyboardDrive, undefined);
     assert.equal(normalized.controls.keyboardDrive, false);
+});
+
+test("the comparison baseline stays latched until the manifest is reopened", () => {
+    const draft = createDefaultRunManifest();
+    const opened = retainComparisonProfile(null, draft, {});
+    assert.equal(opened.retained.profileId, "external");
+
+    const edited = structuredClone(draft);
+    edited.clock.speed = 2;
+    const held = retainComparisonProfile(opened.retained, edited, {});
+    assert.equal(held.retained, opened.retained);
+    assert.equal(held.inference.comparisonProfileId, "external");
+    const classified = classifyConfiguration(edited, {
+        comparisonProfileId: held.inference.comparisonProfileId,
+        vehicleManifest: bigCar,
+    });
+    assert.equal(classified.label, "Custom");
+    assert.equal(classified.baselineName, "External Controller");
+    assert.equal(classified.baseline.clock.speed, 1);
+    assert.ok(classified.overrides.some((entry) => entry.path === "clock.speed"));
+
+    const reopened = retainComparisonProfile(null, edited, {});
+    assert.notEqual(reopened.retained, opened.retained);
+    assert.equal(reopened.retained.profileId, "standard");
+});
+
+test("a scenario that is not loaded does not latch a comparison profile", () => {
+    const scenario = localScenario();
+    const manifest = manifestFor(scenario);
+    const previous = { manifestId: manifest.id, scenarioId: scenario.id, profileId: "external" };
+    const held = retainComparisonProfile(previous, manifest, {});
+    assert.equal(held.retained, previous);
+    assert.equal(held.inference.comparisonProfileId, "external");
+
+    const fresh = retainComparisonProfile(null, manifest, {});
+    assert.equal(fresh.retained, null);
+    assert.equal(fresh.inference.comparisonProfileId, "standard");
+
+    const other = structuredClone(manifest);
+    other.id = "other-run";
+    assert.equal(retainComparisonProfile(previous, other, {}).retained, null);
+});
+
+test("reset restores only the reviewed field and keeps unknown sensors", () => {
+    const scenario = localScenario();
+    const context = { scenario, vehicleManifest: bigCar };
+    const baseline = buildComparisonBaseline(manifestFor(scenario), "standard", context).manifest;
+    const edited = structuredClone(baseline);
+    const lidar = edited.sensorRig.sensors.find((sensor) => sensor.id === "roof-lidar");
+    const previousRange = lidar.calibration.range;
+    lidar.calibration.range = previousRange === 99 ? 100 : 99;
+    const before = structuredClone(edited);
+    const preview = previewOverrideReset(edited, {
+        path: "sensorRig.sensors[roof-lidar].calibration.range",
+        before: previousRange,
+        after: lidar.calibration.range,
+    });
+
+    assert.deepEqual(edited, before);
+    assert.deepEqual(preview.changes.map((entry) => entry.path), [
+        "sensorRig.sensors[roof-lidar].calibration.range",
+    ]);
+    assert.equal(
+        valueAtOverridePath(preview.nextManifest, "sensorRig.sensors[roof-lidar].calibration.range").value,
+        previousRange,
+    );
+
+    const extra = structuredClone(baseline);
+    extra.sensorRig.sensors.push({ id: "extra-sensor", type: "imu" });
+    extra.sensorRig.sensors.push({
+        id: "plugin-range",
+        type: "example.unknown",
+        inheritedFrom: "plugin-range",
+    });
+    const normalized = normalizeRunManifest(normalizeRunManifest(extra));
+    const removal = previewOverrideReset(normalized, {
+        path: "sensorRig.sensors[extra-sensor]",
+        before: undefined,
+        after: normalized.sensorRig.sensors.find((sensor) => sensor.id === "extra-sensor"),
+    });
+
+    assert.ok(normalized.sensorRig.sensors.some((sensor) => sensor.id === "extra-sensor"));
+    assert.ok(!removal.nextManifest.sensorRig.sensors.some((sensor) => sensor.id === "extra-sensor"));
+    assert.equal(
+        removal.nextManifest.sensorRig.sensors.find((sensor) => sensor.id === "plugin-range")?.type,
+        "example.unknown",
+    );
+    assert.ok(removal.changes.every((change) => change.path.startsWith("sensorRig.sensors[extra-sensor]")));
+    assert.equal(removal.nextManifest.seed, normalized.seed);
 });

@@ -1,7 +1,7 @@
 # Vehicle editor plan
 
 This document records the vehicle-editor program decisions that are in force.
-VEH-01 through VEH-09 are implemented.
+VEH-01 through VEH-12 are implemented.
 
 ## Status
 
@@ -28,6 +28,12 @@ VEH-01 through VEH-09 are implemented.
   `tests/ui/vehicle-acceptance.spec.js` covers the workspace keyboard, dirty
   id guard, save conflict, dialog focus, and axe cases. Playwright was not
   run for this close.
+- Implemented: **VEH-10** — one hierarchy row selects one glTF node and the
+  Model tab names that part.
+- Implemented: **VEH-11** — the selected node draws a studio box and is not
+  a transform target.
+- Implemented: **VEH-12** — a click on an imported mesh selects that node.
+  A bound wheel still selects the wheel.
 - Built-in projections stay version 2. `createDefaultVehicleManifest()` stays
   version 2. New blanks created through publication are version 3. The editor
   publishes model replacement through a stage. The legacy asset upload route
@@ -366,4 +372,16 @@ Version 3 fields, a canonical asset closure, wheel suppression, and an acknowled
 A retried vehicle-bundle import with the same `operationId` returns the receipt manifest after recovery, before a conflicting id would be suffixed. That keeps the original publication when the preferred id already exists.
 
 `npm run lint` completed with zero errors and the three existing warnings. The focused identity, publication, marketplace, and headless acceptance tests passed. `npm test` passed 2147 tests with 7 skipped after the startup log check awaited `startup()`. `npm run test:headless` passed 117/117, `npm run test:lidar` passed 12/12, `npm run test:parity` passed, and `npm run test:marketplace` passed 156/156. `npm run fixtures:headless` left `characterization.v1.json` unchanged. Playwright was not run for this close.
+
+### VEH-10 — named model parts
+
+A hierarchy click on a glTF node selects `{ kind: "model-node", id: "node-N" }`. The Model row still selects the whole model. Part rows are depth-first, parent then children in index order, and the indent is one plus the ancestor count. The row tooltip and the Model tab show the path `root / chassis / door`, the node index, whether the node has a mesh, a bound wheel id, and whether the index is in `model.hiddenNodeIndices`. The floating chip uses the node name. The selected row scrolls into view. The selection clears when the model asset is gone or that index is no longer loaded. It is editor session state. No manifest field and no hash changes.
+
+### VEH-11 — part outline
+
+`model-node` detaches the transform gizmo and draws one `BoxHelper` in `0x38bdf8` on the mapped object. The helper is a child of the studio scene, so model bounds stay the same. The animation loop updates it. A hidden node or a missing mapping draws no box. Body, ego, the whole model, wheels, and sensors still use the gizmo.
+
+### VEH-12 — mesh pick
+
+The studio raycast includes the model. The closest visible hit wins, and a miss leaves the current selection. `pickFromHitObject` returns an existing `userData.pick` first, so a bound wheel stays a wheel and the placeholder stays the model. Otherwise the nearest `nodeMappings` entry is `node-N`. That selection opens the Model tab, highlights that hierarchy row, and draws the VEH-11 box. The 4 px click threshold is unchanged. Built-in vehicles still clear selection.
 

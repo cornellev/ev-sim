@@ -10,6 +10,7 @@ import {
     projectPointToRoadNetwork,
 } from "../../scenarios/route/roadGraph.js";
 import { finiteNumber } from "../../scenarios/route/geometry.js";
+import { sampleContainingDriveArea } from "../world/DriveAreas.js";
 
 const EPSILON = 1e-9;
 
@@ -164,14 +165,29 @@ export function createRoadGroundSampler(source) {
         },
         sample(x, z, yaw = 0) {
             const environment = resolveEnvironment(source);
-            if (!environment?.roads) return null;
-            const nextHash = hashEnvironmentRoadNetwork(environment);
-            if (!graph || nextHash !== hash) {
-                graph = buildDirectedRoadGraph(environment);
-                hash = nextHash;
-                graphBuilds += 1;
+            if (!environment) return null;
+            const nodes = environment.roads?.nodes;
+            const edges = environment.roads?.edges;
+            if (Array.isArray(nodes) && nodes.length > 0 && Array.isArray(edges) && edges.length > 0) {
+                const nextHash = hashEnvironmentRoadNetwork(environment);
+                if (!graph || nextHash !== hash) {
+                    graph = buildDirectedRoadGraph(environment);
+                    hash = nextHash;
+                    graphBuilds += 1;
+                }
+                const road = sampleRoadGround({ x, z }, graph, yaw);
+                if (road) return road;
             }
-            return sampleRoadGround({ x, z }, graph, yaw);
+            const area = sampleContainingDriveArea(environment, x, z);
+            if (!area) return null;
+            return {
+                y: area.y,
+                pitch: 0,
+                normal: area.normal,
+                kind: "area",
+                edgeId: null,
+                nodeId: null,
+            };
         },
     };
     return sampler;

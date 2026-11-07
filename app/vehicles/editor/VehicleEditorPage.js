@@ -82,8 +82,10 @@ import { VehicleToolbar } from "./workspace/VehicleToolbar.js";
 import { VehicleHierarchy } from "./workspace/VehicleHierarchy.js";
 import {
     clearModelNodeVisibility,
+    describeModelPart,
     hierarchyNodesFromLease,
     hierarchyVisibilityKey,
+    modelNodeIndex,
     MODEL_VISIBILITY_KEY,
     retainModelAndZoneVisibility,
     setVisibilityKey,
@@ -693,6 +695,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
         if (pick?.kind === "sensor") setTab("Sensors");
         if (pick?.kind === "wheel") setTab("Wheels");
         if (pick?.kind === "ego") setTab("Body");
+        if (pick?.kind === "model-node") setTab("Model");
     };
 
     // Drop a stale selection when its target leaves the draft.
@@ -701,7 +704,12 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
         if (selection.kind === "sensor" && !draft.sensors.some((entry) => entry.id === selection.id)) setSelection(null);
         if (selection.kind === "wheel" && !draft.wheels.some((entry) => entry.id === selection.id)) setSelection(null);
         if (selection.kind === "model" && !draft.model.asset) setSelection(null);
-    }, [draft, selection]);
+        if (selection.kind === "model-node") {
+            const index = modelNodeIndex(selection.id);
+            const known = modelNodes.some((node) => node.index === index);
+            if (!draft.model.asset || !known) setSelection(null);
+        }
+    }, [draft, selection, modelNodes]);
 
     // --- Catalog operations ---------------------------------------------------
 
@@ -1124,9 +1132,9 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                         linkedIds={draft ? highlightedLinkIds(draft.wheels, selection, snapshot.wheelLink) : []}
                         onToggleHidden={toggleRowHidden}
                         onSelect={(row, nextTab) => {
-                            if (row.kind === "wheel" || row.kind === "sensor") setSelection({ kind: row.kind, id: row.id });
+                            if (row.kind === "wheel" || row.kind === "sensor" || row.kind === "model-node") setSelection({ kind: row.kind, id: row.id });
                             else if (row.kind === "axle") setSelection({ kind: "axle", id: row.id.replace(/^axle-/, "") });
-                            else setSelection({ kind: row.kind === "model-node" ? "model" : row.kind, id: null });
+                            else setSelection({ kind: row.kind, id: null });
                             setTab(nextTab);
                         }}
                     />
@@ -1157,7 +1165,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                             <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-end gap-2 p-3">
                                 {selection && (
                                     <div className="pointer-events-auto flex items-center gap-2 rounded-[var(--radius)] border border-[var(--slate-border)] bg-[var(--slate-floating)] px-2.5 py-1.5">
-                                        <span className="text-[14px] font-medium text-[var(--slate-fg-2)]">{selectionLabel(selection)}</span>
+                                        <span className="text-[14px] font-medium text-[var(--slate-fg-2)]">{selectionLabel(selection, modelNodes)}</span>
                                         <button type="button" onClick={() => setSelection(null)} className="text-[12px] text-[var(--slate-muted)] hover:text-[var(--slate-fg)]">Deselect</button>
                                     </div>
                                 )}
@@ -1211,6 +1219,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                                                     detachModel={() => replaceOrDetachModel("")}
                                                     selection={selection}
                                                     setSelection={setSelection}
+                                                    nodes={modelNodes}
                                                     modelVisible={modelVisible}
                                                     setModelVisible={setModelVisible}
                                                     fitTarget={fitTarget}
@@ -1348,9 +1357,21 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     );
 }
 
-function ModelTab({ draft, commitPlacement, busy, modelFileRef, uploadModelFile, detachModel, selection, setSelection, modelVisible, setModelVisible, fitTarget, setFitTarget, fitModelToSize, fieldReset = 0 }) {    
+function ModelTab({ draft, commitPlacement, busy, modelFileRef, uploadModelFile, detachModel, selection, setSelection, nodes = [], modelVisible, setModelVisible, fitTarget, setFitTarget, fitModelToSize, fieldReset = 0 }) {
+    const part = selection?.kind === "model-node" ? describeModelPart(nodes, draft, selection.id) : null;
     return (
         <div className="space-y-4">
+            {part && (
+                <Section title="Selected part">
+                    <p className="text-[13px] font-medium text-[var(--slate-fg)]">{part.name}</p>
+                    <p className="mt-1 text-[11px] leading-relaxed text-[var(--slate-muted)]">{part.path}</p>
+                    <p className="mt-2 font-mono text-[11px] text-[var(--slate-muted)]">
+                        {`Node ${part.nodeIndex} · ${part.mesh ? "mesh" : "empty"}`}
+                        {part.wheelId ? ` · ${part.wheelId}` : ""}
+                        {part.semanticallyHidden ? " · hidden in the model" : ""}
+                    </p>
+                </Section>
+            )}
             <Section title="Source model">
                 <div className="flex items-center gap-2">
                     <Action compact icon={<FaUpload />} label={draft.model.asset ? "Replace model" : "Import GLB / GLTF"} onClick={() => modelFileRef.current?.click()} disabled={busy} />
@@ -2140,8 +2161,9 @@ function LimitNumber({ label, value, min, step, precision = 3, onChange }) {
     );
 }
 
-function selectionLabel(selection) {
+function selectionLabel(selection, nodes = []) {
     if (!selection?.kind) return "";
+    if (selection.kind === "model-node") return describeModelPart(nodes, null, selection.id)?.name || "Part";
     if (selection.kind === "wheel") return `Wheel ${selection.id}`;
     if (selection.kind === "sensor") return `Sensor ${selection.id}`;
     if (selection.kind === "axle") {

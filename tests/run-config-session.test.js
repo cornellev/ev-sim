@@ -7,11 +7,13 @@ import {
     RAW_MANIFEST_BUFFER_ID,
     advancedEditorA11yProps,
     applyReadyBuffers,
+    createLaunchGate,
     jsonBufferGate,
     jsonBufferMessage,
     planReadyFlush,
     runConfigHasUnsavedWork,
     stageJsonBuffer,
+    validationSuccessVisible,
     writeJsonBuffer,
 } from "../app/config/runConfigSession.js";
 
@@ -114,6 +116,23 @@ test("a clean draft with a pending buffer is still unsaved work", () => {
     assert.equal(runConfigHasUnsavedWork({ dirty: false, buffers }), true);
     assert.equal(runConfigHasUnsavedWork({ dirty: false, buffers: {} }), false);
     assert.equal(runConfigHasUnsavedWork({ dirty: true, buffers: {} }), true);
+});
+
+test("launch gate ignores a second enter until leave", () => {
+    const gate = createLaunchGate();
+    assert.equal(gate.enter(), true);
+    assert.equal(gate.enter(), false);
+    gate.leave();
+    assert.equal(gate.enter(), true);
+});
+
+test("validation success stays hidden while a run is preparing or failed", () => {
+    assert.equal(validationSuccessVisible({ ok: true, error: null, runStatus: "ready" }), true);
+    assert.equal(validationSuccessVisible({ ok: true, error: null, runStatus: "preparing" }), false);
+    assert.equal(validationSuccessVisible({ ok: true, error: null, runStatus: "error" }), false);
+    assert.equal(validationSuccessVisible({ ok: true, error: "preparation failed", runStatus: "ready" }), false);
+    assert.equal(validationSuccessVisible({ ok: true, error: null, runStatus: "ready", busy: true }), false);
+    assert.equal(validationSuccessVisible({ ok: false, error: null, runStatus: "ready" }), false);
 });
 
 test("advanced editor visibility props stay empty until the editor is hidden", () => {

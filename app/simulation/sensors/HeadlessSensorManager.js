@@ -10,6 +10,7 @@ import {
 import { loadHeadlessMessageCodec } from "./HeadlessMessageCodec.js";
 import { loadHeadlessVisualCaptureCodec } from "./HeadlessVisualCaptureCodec.js";
 import { PluginSensorManager } from "./PluginSensorManager.js";
+import { isScanningLidarType } from "./SensorTypeRegistry.js";
 
 function rigWith(sensors) {
     return { sensors };
@@ -39,13 +40,13 @@ export class HeadlessSensorManager {
         const pluginRecords = (options.sensorAdmission?.sensors ?? [])
             .filter((entry) => entry.kind === "plugin-range-image");
         const pluginTypes = new Set(pluginRecords.map((entry) => entry.sensor.type));
-        const needsMessageCodec = enabled.some((sensor) => ["camera", "lidar3d"].includes(sensor.type)
+        const needsMessageCodec = enabled.some((sensor) => sensor.type === "camera" || isScanningLidarType(sensor.type)
             || pluginTypes.has(sensor.type));
         const messageCodec = needsMessageCodec
             ? (options.messageCodec ?? this.options.messageCodec ?? await loadHeadlessMessageCodec())
             : (options.messageCodec ?? this.options.messageCodec ?? null);
         const unsupported = enabled.filter((sensor) => (
-            !STATE_SENSOR_TYPES.includes(sensor.type) && !["lidar3d", "camera"].includes(sensor.type)
+            !STATE_SENSOR_TYPES.includes(sensor.type) && sensor.type !== "camera" && !isScanningLidarType(sensor.type)
                 && !pluginTypes.has(sensor.type)
         ));
         if (unsupported.length > 0) {
@@ -53,7 +54,7 @@ export class HeadlessSensorManager {
             throw new Error(`Unsupported headless sensor request(s): ${ids.join(", ")}.`);
         }
         const stateSensors = enabled.filter((sensor) => STATE_SENSOR_TYPES.includes(sensor.type));
-        const lidarSensors = enabled.filter((sensor) => sensor.type === "lidar3d");
+        const lidarSensors = enabled.filter((sensor) => isScanningLidarType(sensor.type));
         const pluginSensors = enabled.filter((sensor) => pluginTypes.has(sensor.type));
         const cameraSensors = enabled.filter((sensor) => sensor.type === "camera");
         const selections = options.backendSelections ?? [];
@@ -75,7 +76,7 @@ export class HeadlessSensorManager {
             throw new Error("Plugin range-image sensors require exactly one CPU LiDAR backend selection.");
         }
         if (lidarSensors.length === 0 && pluginSensors.length === 0 && lidarSelections.length > 0) {
-            throw new Error("A CPU LiDAR backend was selected but the manifest has no enabled lidar3d sensor.");
+            throw new Error("A CPU LiDAR backend was selected but the manifest has no enabled lidar2d or lidar3d sensor.");
         }
         if (cameraSensors.length > 0 && gpuSelections.length !== 1) {
             throw new Error(`Exactly one GPU sensor backend selection is required for cameras; received ${gpuSelections.length}.`);

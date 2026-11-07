@@ -10,7 +10,7 @@ import {
     rangeImageDimensions,
 } from "./RangeImageLayout.js";
 import { normalizeSensorTransports } from "./SensorTransports.js";
-import { sensorTypeRegistry } from "./SensorTypeRegistry.js";
+import { isScanningLidarType, sensorTypeRegistry } from "./SensorTypeRegistry.js";
 
 export const DEFAULT_PLUGIN_SENSOR_WORKING_BYTES = 64 * 1024 * 1024;
 
@@ -218,8 +218,8 @@ export function planSensorAdmission({
         const plugin = pluginDefinition(sensorRegistry, sensor.type);
         if (!plugin) {
             const kind = getStateSensorModel(sensor.type)
-                ? "state" : sensor.type === "camera" ? "camera" : sensor.type === "lidar3d" ? "lidar3d" : "builtin";
-            if (sensor.type === "lidar3d") requiresLidarGeometry = true;
+                ? "state" : sensor.type === "camera" ? "camera" : isScanningLidarType(sensor.type) ? sensor.type : "builtin";
+            if (isScanningLidarType(sensor.type)) requiresLidarGeometry = true;
             const record = Object.freeze({ sensor, kind, plugin: null, products: Object.freeze([]), observation: null });
             sensors.push(record);
             admitted.set(sensor.id, record);

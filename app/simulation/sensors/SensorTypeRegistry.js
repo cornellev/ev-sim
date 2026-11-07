@@ -18,6 +18,13 @@ import { createPluginSensorTypeDefinition } from "../../plugin/PluginSensorContr
 
 const DEFAULT_SENSOR_TYPE = "lidar3d";
 
+// endDeg/stepDeg make the shared exclusive-end grid emit one beam at 0°. A missing elevation defaults to -20..20.
+export const PLANAR_LIDAR_ELEVATION = Object.freeze({ startDeg: 0, endDeg: 1, stepDeg: 1 });
+
+export function isScanningLidarType(type) {
+    return type === "lidar3d" || type === "lidar2d";
+}
+
 function anglePair(value, fallback) {
     if (!Array.isArray(value) || value.length !== 2) return [...fallback];
     const low = finite(value[0], fallback[0]);
@@ -268,6 +275,18 @@ const lidarVehicleFields = [
     { label: "Phi end (deg)", path: ["config", "phiRange", 1], control: "number", advanced: true },
 ];
 
+const lidar2dRunFields = lidarRunFields.flatMap((field) => {
+    if (field.path.includes("elevation")) return [];
+    if (field.path.join(".") !== "calibration.range") return [field];
+    return [
+        field,
+        { label: "Azimuth start (deg)", path: ["calibration", "azimuth", "startDeg"], control: "number" },
+        { label: "Azimuth end (deg)", path: ["calibration", "azimuth", "endDeg"], control: "number" },
+    ];
+});
+
+const lidar2dVehicleFields = lidarVehicleFields.filter((field) => field.path[1] !== "phiStep" && field.path[1] !== "phiRange");
+
 export const ORACLE_PRODUCT_TOGGLES = Object.freeze({
     camera: Object.freeze([
         { product: "depth", label: "Depth", outputKey: "depthTopicId", contractId: "front-camera-depth" },
@@ -279,6 +298,9 @@ export const ORACLE_PRODUCT_TOGGLES = Object.freeze({
         { product: "trafficControls", label: "Traffic controls", outputKey: "trafficControlsTopicId", contractId: "oracle-traffic-controls" },
     ]),
     lidar3d: Object.freeze([
+        { product: "semanticPointCloud", label: "Semantic point cloud", outputKey: "semanticPointCloudTopicId", contractId: "front-lidar-semantic" },
+    ]),
+    lidar2d: Object.freeze([
         { product: "semanticPointCloud", label: "Semantic point cloud", outputKey: "semanticPointCloudTopicId", contractId: "front-lidar-semantic" },
     ]),
 });
@@ -370,6 +392,60 @@ function validateLidarCalibration(sensor) {
             issues.push({ path: `calibration.${axis}`, message: `${axis} bounds must satisfy endDeg > startDeg.` });
         }
         if (!(step > 0)) issues.push({ path: `calibration.${axis}.stepDeg`, message: `${axis} stepDeg must be positive.` });
+    }
+    return issues;
+}
+
+function scanningLidarRunParts(source, elevation) {
+    const calibrationSource = object(source.calibration);
+    const products = object(calibrationSource.products);
+    return {
+        calibration: {
+            range: positive(calibrationSource.range, 20),
+            azimuth: {
+                startDeg: finite(calibrationSource.azimuth?.startDeg, -180),
+                endDeg: finite(calibrationSource.azimuth?.endDeg, 180),
+                stepDeg: positive(calibrationSource.azimuth?.stepDeg, 2),
+            },
+            elevation,
+            products: {
+                pointCloud: products.pointCloud !== false,
+                semanticPointCloud: products.semanticPointCloud === true,
+                diagnostics: products.diagnostics !== false,
+            },
+            labelCatalogVersion: positiveInteger(calibrationSource.labelCatalogVersion, 1),
+        },
+        schema: {
+            pointCloudTopicId: "sensor_msgs/PointCloud2",
+            semanticPointCloudTopicId: "sensor_msgs/PointCloud2",
+            diagnosticsTopicId: "diagnostic_msgs/DiagnosticArray",
+            ...object(source.schema),
+        },
+        health: {
+            deadlineNs: nonNegativeInteger(source.health?.deadlineNs, Math.round(1e9 / 10)),
+            observationalOracle: source.health?.observationalOracle !== false,
+        },
+        determinism: { comparison: "numeric-tolerance", crossDeviceByteEquality: true },
+    };
+}
+
+function validatePlanarLidarCalibration(sensor) {
+    const issues = [];
+    const calibration = object(sensor.calibration);
+    if (!(finite(calibration.range, 0) > 0)) issues.push({ path: "calibration.range", message: "LiDAR range must be positive." });
+    const azimuth = object(calibration.azimuth);
+    const start = finite(azimuth.startDeg, NaN);
+    const end = finite(azimuth.endDeg, NaN);
+    const step = finite(azimuth.stepDeg, NaN);
+    if (!(Number.isFinite(start) && Number.isFinite(end) && end > start)) {
+        issues.push({ path: "calibration.azimuth", message: "azimuth bounds must satisfy endDeg > startDeg." });
+    }
+    if (!(step > 0)) issues.push({ path: "calibration.azimuth.stepDeg", message: "azimuth stepDeg must be positive." });
+    const elevation = calibration.elevation ?? {};
+    if (elevation.startDeg !== PLANAR_LIDAR_ELEVATION.startDeg
+        || elevation.endDeg !== PLANAR_LIDAR_ELEVATION.endDeg
+        || elevation.stepDeg !== PLANAR_LIDAR_ELEVATION.stepDeg) {
+        issues.push({ path: "calibration.elevation", message: "2D LiDAR elevation is fixed to the sensor-plane beam." });
     }
     return issues;
 }
@@ -486,39 +562,11 @@ registerSensorType({
         ],
         normalize(source) {
             const calibrationSource = object(source.calibration);
-            const products = object(calibrationSource.products);
-            return {
-                calibration: {
-                    range: positive(calibrationSource.range, 20),
-                    azimuth: {
-                        startDeg: finite(calibrationSource.azimuth?.startDeg, -180),
-                        endDeg: finite(calibrationSource.azimuth?.endDeg, 180),
-                        stepDeg: positive(calibrationSource.azimuth?.stepDeg, 2),
-                    },
-                    elevation: {
-                        startDeg: finite(calibrationSource.elevation?.startDeg, -20),
-                        endDeg: finite(calibrationSource.elevation?.endDeg, 20),
-                        stepDeg: positive(calibrationSource.elevation?.stepDeg, 1),
-                    },
-                    products: {
-                        pointCloud: products.pointCloud !== false,
-                        semanticPointCloud: products.semanticPointCloud === true,
-                        diagnostics: products.diagnostics !== false,
-                    },
-                    labelCatalogVersion: positiveInteger(calibrationSource.labelCatalogVersion, 1),
-                },
-                schema: {
-                    pointCloudTopicId: "sensor_msgs/PointCloud2",
-                    semanticPointCloudTopicId: "sensor_msgs/PointCloud2",
-                    diagnosticsTopicId: "diagnostic_msgs/DiagnosticArray",
-                    ...object(source.schema),
-                },
-                health: {
-                    deadlineNs: nonNegativeInteger(source.health?.deadlineNs, Math.round(1e9 / 10)),
-                    observationalOracle: source.health?.observationalOracle !== false,
-                },
-                determinism: { comparison: "numeric-tolerance", crossDeviceByteEquality: true },
-            };
+            return scanningLidarRunParts(source, {
+                startDeg: finite(calibrationSource.elevation?.startDeg, -20),
+                endDeg: finite(calibrationSource.elevation?.endDeg, 20),
+                stepDeg: positive(calibrationSource.elevation?.stepDeg, 1),
+            });
         },
         validate: validateLidarCalibration,
     },
@@ -532,6 +580,37 @@ registerSensorType({
                 thetaRange: anglePair(config.thetaRange, [-180, 180]),
                 phiStep: positive(config.phiStep, 1),
                 phiRange: anglePair(config.phiRange, [-20, 20]),
+            };
+        },
+        validate: () => [],
+    },
+});
+
+registerSensorType({
+    id: "lidar2d",
+    label: "2D LiDAR",
+    idPrefix: "lidar",
+    accentClass: "text-teal-300",
+    color: 0x2dd4bf,
+    run: {
+        defaultRateHz: 10,
+        fields: lidar2dRunFields,
+        outputs: [
+            { key: "pointCloudTopicId", signal: "pointCloud", rosType: "sensor_msgs/PointCloud2", measured: true },
+            { key: "semanticPointCloudTopicId", signal: "semanticPointCloud", rosType: "sensor_msgs/PointCloud2", oracle: true },
+            { key: "diagnosticsTopicId", signal: "diagnostics", rosType: "diagnostic_msgs/DiagnosticArray", measured: true },
+        ],
+        normalize: (source) => scanningLidarRunParts(source, { ...PLANAR_LIDAR_ELEVATION }),
+        validate: validatePlanarLidarCalibration,
+    },
+    vehicle: {
+        fields: lidar2dVehicleFields,
+        normalize(source) {
+            const config = object(source.config);
+            return {
+                range: positive(config.range, 20),
+                thetaStep: positive(config.thetaStep, 2),
+                thetaRange: anglePair(config.thetaRange, [-180, 180]),
             };
         },
         validate: () => [],

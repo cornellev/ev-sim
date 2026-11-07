@@ -1,7 +1,6 @@
 export const RUN_CONFIG_MODE_STORAGE_KEY = "cev-sim.ui.runConfig.mode";
 
-// CFG-06 is the change that sets this to "simple".
-export const RUN_CONFIG_MODE_FALLBACK = "advanced";
+export const RUN_CONFIG_MODE_FALLBACK = "simple";
 
 export function readRunConfigModePreference(storage = null) {
     try {

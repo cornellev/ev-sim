@@ -20,6 +20,11 @@ import {
 import { roadGeometryVersionOf } from "../../../roads/RoadGeometryRecord.js";
 import { planRoadNetworkGeometry } from "../../../roads/RoadNetworkGeometry.js";
 import { createId, DEFAULT_ROAD_EDGE } from "./EnvironmentDocument.js";
+import {
+    normalizeDriveAreaFootprint,
+    normalizeDriveAreaRecord,
+    rectangleDriveAreaFootprint,
+} from "../../../simulation/world/DriveAreas.js";
 
 export const ROAD_EDGE_ISSUE_CODES = Object.freeze({
     EXPLICIT_FIELD_READONLY: "road.lane.explicit-field-readonly",
@@ -910,6 +915,69 @@ export function addBuildingRectangle(document, cornerA, cornerB, options = {}, r
     document.buildingsAuthored = true;
     if (runtime.notify !== false) document.notify();
     return { ok: true, record };
+}
+
+export function addDriveAreaRecord(document, area, runtime = {}) {
+    let record;
+    try {
+        record = normalizeDriveAreaRecord({
+            id: area?.id || createId("drive-area"),
+            y: area?.y ?? 0,
+            footprint: area?.footprint,
+        });
+    } catch (error) {
+        return { ok: false, error: error.message };
+    }
+    if (document.getDriveArea(record.id)) return { ok: false, error: `Drive area "${record.id}" already exists.` };
+    document.driveAreas.push(record);
+    if (runtime.notify !== false) document.notify();
+    return { ok: true, record };
+}
+
+export function addDriveAreaRectangle(document, cornerA, cornerB, options = {}, runtime = {}) {
+    let footprint;
+    try {
+        footprint = rectangleDriveAreaFootprint(cornerA, cornerB);
+    } catch (error) {
+        return { ok: false, error: error.message };
+    }
+    return addDriveAreaRecord(document, { id: options.id, y: options.y ?? 0, footprint }, runtime);
+}
+
+export function removeDriveArea(document, id, runtime = {}) {
+    const index = document.driveAreas.findIndex((area) => area.id === id);
+    if (index < 0) return { ok: false, error: `Drive area "${id}" does not exist.` };
+    const [record] = document.driveAreas.splice(index, 1);
+    if (runtime.notify !== false) document.notify();
+    return { ok: true, record };
+}
+
+export function setDriveAreaFootprint(document, id, footprint, runtime = {}) {
+    const area = document.getDriveArea(id);
+    if (!area) return { ok: false, error: `Drive area "${id}" does not exist.` };
+    let next;
+    try {
+        next = normalizeDriveAreaFootprint(footprint, `Drive area "${id}" footprint`);
+    } catch (error) {
+        return { ok: false, error: error.message };
+    }
+    area.footprint = next;
+    if (runtime.notify !== false) document.notify();
+    return { ok: true, record: area };
+}
+
+export function setDriveAreaElevation(document, id, y, runtime = {}) {
+    const area = document.getDriveArea(id);
+    if (!area) return { ok: false, error: `Drive area "${id}" does not exist.` };
+    let next;
+    try {
+        next = normalizeDriveAreaRecord({ ...area, y });
+    } catch (error) {
+        return { ok: false, error: error.message };
+    }
+    area.y = next.y;
+    if (runtime.notify !== false) document.notify();
+    return { ok: true, record: area };
 }
 
 /**

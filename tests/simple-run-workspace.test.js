@@ -7,7 +7,9 @@ import {
     longitudinalSpeed,
     pluginGrantPreview,
     scenarioSelectionState,
+    overrideEditTarget,
     simpleCreatedManifest,
+    validationIssueTarget,
     simpleEnvironment,
     withHeading,
     withLongitudinalSpeed,
@@ -137,4 +139,112 @@ test("environment summary reports a missing or stale reference without clearing 
     assert.equal(stale.missing, false);
     assert.equal(stale.stale, true);
     assert.equal(stale.name, "IGVC");
+});
+
+test("override edit targets focus simple fields or open an advanced tab", () => {
+    assert.deepEqual(overrideEditTarget("clock.pacing"), { surface: "simple", field: "pacing" });
+    assert.deepEqual(overrideEditTarget("logging.policy"), { surface: "simple", field: "recording" });
+    assert.deepEqual(
+        overrideEditTarget("initialState.vehicles[ego].pose.position.z"),
+        { surface: "simple", field: "position-z" },
+    );
+    assert.deepEqual(
+        overrideEditTarget("initialState.vehicles[ego].pose.position.z", { scenarioOwned: true }),
+        { surface: "advanced", tab: "Initial State" },
+    );
+    assert.deepEqual(
+        overrideEditTarget("plugins.artifacts[example.plant]"),
+        { surface: "advanced", tab: "Scripts" },
+    );
+    assert.deepEqual(
+        overrideEditTarget("sensorTransports.bindings[lidar/points/cloud/udp].endpointId"),
+        { surface: "advanced", tab: "Sensors" },
+    );
+    assert.deepEqual(overrideEditTarget("renderRecipe.shadows.enabled"), { surface: "advanced", tab: "Sensors" });
+    assert.deepEqual(overrideEditTarget("seed"), { surface: "advanced", tab: "Overview" });
+    assert.deepEqual(overrideEditTarget("future.setting"), { surface: "advanced", tab: "JSON" });
+});
+
+test("validation issues point at a simple field or an advanced section", () => {
+    const draft = {
+        scenario: null,
+        controls: { targetVehicleId: "ego" },
+        initialState: { vehicles: [{ id: "ego" }, { id: "other" }] },
+        sensorRig: { sensors: [{ id: "lidar" }] },
+        sensorTransports: { bindings: [{ sensorId: "lidar" }] },
+        topics: [{ schema: { type: "std_msgs/String" } }],
+    };
+    const before = structuredClone(draft);
+    const read = (path) => validationIssueTarget({ path }, draft);
+
+    assert.equal(read("name").simpleFocusId, "simple-field-name");
+    assert.equal(read("scenario.id").simpleFocusId, "simple-field-scenario");
+    assert.equal(read("scenario.egoVehicleId").simpleFocusId, "simple-field-vehicle");
+    assert.equal(read("environment.id").simpleFocusId, "simple-field-environment");
+    assert.equal(read("clock.pacing").simpleFocusId, "simple-field-pacing");
+    assert.equal(read("clock.speed").simpleFocusId, "simple-field-speed");
+    assert.equal(read("logging.policy").simpleFocusId, "simple-field-recording");
+    assert.equal(read("initialState.vehicles.0.pose.position.z").simpleFocusId, "simple-field-position-z");
+    assert.equal(read("initialState.vehicles.0.pose.rotation.y").simpleFocusId, "simple-field-heading");
+    assert.equal(read("initialState.vehicles.0.linearVelocity.x").simpleFocusId, "simple-field-longitudinal-speed");
+    assert.equal(read("initialState.vehicles.1.pose.position.x").simpleFocusId, null);
+
+    const owned = validationIssueTarget(
+        { path: "initialState.vehicles.0.pose.position.x" },
+        { ...draft, scenario: { id: "loop" } },
+    );
+    assert.equal(owned.simpleFocusId, null);
+    assert.equal(owned.tab, "Initial State");
+    assert.equal(owned.advancedFocusId, "run-focus-tab-Initial State");
+
+    const plugin = read("plugins.artifacts.0.expectedHash");
+    assert.equal(plugin.explanation, "Plugin selection");
+    assert.equal(plugin.tab, "Scripts");
+    assert.equal(plugin.advancedFocusId, "run-focus-plugins");
+    assert.equal(plugin.simpleFocusId, null);
+
+    const transport = read("sensorTransports.bindings.0.endpointId");
+    assert.equal(transport.explanation, "Sensor transport");
+    assert.equal(transport.tab, "Sensors");
+    assert.equal(transport.advancedFocusId, "run-focus-transport-lidar");
+    const thrownTransport = validationIssueTarget({
+        path: "",
+        message: "sensorTransports.bindings.0.adapter is unsupported.",
+    }, draft);
+    assert.equal(thrownTransport.path, "sensorTransports.bindings.0.adapter");
+    assert.equal(thrownTransport.advancedFocusId, "run-focus-transport-lidar");
+    assert.equal(read("sensorTransports.bindings.3.endpointId").advancedFocusId, "run-focus-sensors");
+
+    const parameter = read("parameters.0.target.path");
+    assert.equal(parameter.explanation, "Run parameter");
+    assert.equal(parameter.tab, "Scenario");
+    assert.equal(parameter.advancedFocusId, "run-focus-parameter-0");
+
+    const schema = read("sensorRig.sensors.0.schema.points");
+    assert.equal(schema.explanation, "Schema");
+    assert.equal(schema.tab, "Sensors");
+    assert.equal(schema.advancedFocusId, "run-focus-sensor-lidar");
+
+    const topic = read("topics.0.schema.type");
+    assert.equal(topic.explanation, "Schema");
+    assert.equal(topic.tab, "Topics");
+    assert.equal(topic.advancedFocusId, "run-focus-topic-0-schema");
+
+    const recipe = read("renderRecipe.shadows.enabled");
+    assert.equal(recipe.explanation, "Render recipe");
+    assert.equal(recipe.tab, "Sensors");
+    assert.equal(recipe.advancedFocusId, "run-focus-render-recipe");
+    const thrownRecipe = validationIssueTarget({
+        path: "",
+        message: "renderRecipe.shadows.enabled must be boolean.",
+    }, draft);
+    assert.equal(thrownRecipe.path, "renderRecipe.shadows.enabled");
+    assert.equal(thrownRecipe.advancedFocusId, "run-focus-render-recipe");
+
+    const unknown = read("future.setting");
+    assert.equal(unknown.tab, "JSON");
+    assert.equal(unknown.advancedFocusId, "run-focus-json");
+    assert.equal(unknown.simpleFocusId, null);
+    assert.equal(read("dependencies").tab, "JSON");
+    assert.deepEqual(draft, before);
 });

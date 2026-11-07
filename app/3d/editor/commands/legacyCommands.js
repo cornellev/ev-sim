@@ -9,6 +9,8 @@ import { createId } from "../document/EnvironmentDocument.js";
 import {
     addBuildingRecord,
     addBuildingRectangle,
+    addDriveAreaRecord,
+    addDriveAreaRectangle,
     addFeature as addFeatureRecord,
     addRoadEdge as addRoadEdgeRecord,
     connectEndpointToIntersection,
@@ -17,6 +19,7 @@ import {
     getOrCreateNode,
     moveRoadNode as moveRoadNodeRecord,
     removeBuilding as removeBuildingRecord,
+    removeDriveArea as removeDriveAreaRecord,
     removeFeature as removeFeatureRecord,
     removeIntersectionNode,
     removeRoadEdge,
@@ -26,6 +29,7 @@ import {
     updateRoadEdge as updateRoadEdgeRecord,
 } from "../document/documentMutations.js";
 import { BUILDING_TYPE_ID } from "../objects/types/building.js";
+import { DRIVE_AREA_TYPE_ID } from "../objects/types/driveArea.js";
 import { BUILTIN_PROP_TYPE_ID } from "../objects/types/builtinProp.js";
 import { FLOOR_TYPE_ID } from "../objects/types/floor.js";
 import { PRIMITIVE_TYPE_ID } from "../objects/types/primitive.js";
@@ -205,6 +209,42 @@ export function addBuilding({ cornerA, cornerB, footprint, buildingId, height, t
                 parentId,
             }, { notify: false });
             return commandSuccess({ building: result.record, objectId: result.record.buildingId, record: record.record });
+        },
+    };
+}
+
+export function addDriveArea({ cornerA, cornerB, footprint, driveAreaId, y, parentId = null, label = "Add drive area" } = {}) {
+    return {
+        id: "add-drive-area",
+        label,
+        run(ctx) {
+            const id = driveAreaId || createId("drive-area");
+            const result = Array.isArray(footprint)
+                ? addDriveAreaRecord(ctx.document, { id, y, footprint }, { notify: false })
+                : addDriveAreaRectangle(ctx.document, cornerA, cornerB, { id, y }, { notify: false });
+            if (!result.ok) return mutationFailure(result);
+            const definition = ctx.registry.get(DRIVE_AREA_TYPE_ID);
+            const record = ensureObjectRecord(ctx.document, {
+                id: result.record.id,
+                typeId: DRIVE_AREA_TYPE_ID,
+                typeVersion: definition.version,
+                name: "Drive area",
+                parentId,
+            }, { notify: false });
+            return commandSuccess({ driveArea: result.record, objectId: result.record.id, record: record.record });
+        },
+    };
+}
+
+export function removeDriveArea({ driveAreaId, label = "Remove drive area" } = {}) {
+    return {
+        id: "remove-drive-area",
+        label,
+        run(ctx) {
+            const result = removeDriveAreaRecord(ctx.document, driveAreaId, { notify: false });
+            if (!result.ok) return mutationFailure(result, String(driveAreaId));
+            removeObjectRecords(ctx.document, [driveAreaId], { notify: false });
+            return commandSuccess({ removed: String(driveAreaId) });
         },
     };
 }

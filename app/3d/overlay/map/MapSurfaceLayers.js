@@ -423,6 +423,26 @@ function EndpointNodes({ documentSnapshot, endpointNodes, viewport, size, layers
     });
 }
 
+function DriveAreas({ documentSnapshot, viewport, size, layers, mapSelection }) {
+    if (!layers.roads) return null;
+    return (documentSnapshot.driveAreas ?? []).map((area) => {
+        const points = area.footprint
+            .map((point) => worldToScreen({ x: point.x, z: point.z }, viewport, size))
+            .map((point) => `${point.x},${point.y}`)
+            .join(" ");
+        const selected = mapSelection?.type === MAP_SELECTION_TYPES.DRIVE_AREA && mapSelection.id === area.id;
+        return (
+            <polygon
+                key={area.id}
+                points={points}
+                fill={selected ? "rgba(163,230,53,0.28)" : "rgba(75,85,99,0.35)"}
+                stroke={selected ? "#a3e635" : "#64748b"}
+                strokeWidth={selected ? 2 : 1}
+            />
+        );
+    });
+}
+
 function Buildings({ documentSnapshot, viewport, size, layers, mapSelection }) {
     if (!layers.buildings) return null;
 
@@ -534,7 +554,8 @@ function RoadPenDraft({ draft, viewport, size }) {
 }
 
 function BuildingRectDraft({ draft, viewport, size }) {
-    if (draft?.type !== "building-rect" || !draft.cornerA || !draft.cornerB) return null;
+    if (!["building-rect", "drive-area-rect"].includes(draft?.type) || !draft.cornerA || !draft.cornerB) return null;
+    const drive = draft.type === "drive-area-rect";
 
     const minX = Math.min(draft.cornerA.x, draft.cornerB.x);
     const maxX = Math.max(draft.cornerA.x, draft.cornerB.x);
@@ -554,8 +575,8 @@ function BuildingRectDraft({ draft, viewport, size }) {
     return (
         <polygon
             points={points}
-            fill="rgba(56,189,248,0.15)"
-            stroke="#38bdf8"
+            fill={drive ? "rgba(163,230,53,0.18)" : "rgba(56,189,248,0.15)"}
+            stroke={drive ? "#a3e635" : "#38bdf8"}
             strokeWidth={1.5}
             strokeDasharray="4 3"
         />
@@ -635,6 +656,15 @@ export function MapSurfaceLayers({
                     size={size}
                     layers={layers}
                     showDetail={showDetail}
+                    mapSelection={mapSelection}
+                />
+            </g>
+            <g data-map-layer="drive-areas">
+                <DriveAreas
+                    documentSnapshot={documentSnapshot}
+                    viewport={viewport}
+                    size={size}
+                    layers={layers}
                     mapSelection={mapSelection}
                 />
             </g>

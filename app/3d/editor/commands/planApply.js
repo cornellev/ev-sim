@@ -7,6 +7,8 @@
 
 import {
     setBuildingFootprint,
+    setDriveAreaElevation,
+    setDriveAreaFootprint,
     setFeatureTransform,
     translateRoadNodes,
     updateBuildingRecord,
@@ -22,6 +24,8 @@ export const PLAN_STEP_OPS = Object.freeze([
     "move-node",
     "set-feature-transform",
     "set-building-footprint",
+    "set-drive-area-footprint",
+    "set-drive-area-elevation",
     "set-object-component",
     // ED-03 option writes
     "set-edge-options",
@@ -76,6 +80,10 @@ export function applyPlanSteps(document, steps, runtime = { notify: false }) {
             result = setFeatureTransform(document, step.featureId, { x: step.x, z: step.z, rotationY: step.rotationY }, quiet);
         } else if (step.op === "set-building-footprint") {
             result = setBuildingFootprint(document, step.buildingId, { footprint: step.footprint, height: step.height }, quiet);
+        } else if (step.op === "set-drive-area-footprint") {
+            result = setDriveAreaFootprint(document, step.driveAreaId, step.footprint, quiet);
+        } else if (step.op === "set-drive-area-elevation") {
+            result = setDriveAreaElevation(document, step.driveAreaId, step.y, quiet);
         } else if (step.op === "set-object-component") {
             result = setObjectComponent(document, step.objectId, step.key, step.value, quiet);
         } else if (step.op === "set-edge-options") {

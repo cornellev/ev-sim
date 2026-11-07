@@ -90,6 +90,7 @@ export function registerEnvironmentTools(server, storage) {
                     templateId: templateId ?? "blank",
                     supportedEditorSourceVersions: [1],
                     supportedScenePrimitiveVersions: [1],
+                    supportedDriveAreaVersions: [1],
                 });
                 storageEvents.publish({ domain: "environment", id, action: "created", revision: manifest.revision });
                 return ok({ ok: true, environment: summarizeManifest(manifest) });
@@ -462,6 +463,62 @@ export function registerEnvironmentTools(server, storage) {
                 if (!result.ok) return fail(result.error, { issues: result.issues });
                 await saveDocument(storage, environmentId, manifest, document);
                 return ok({ ok: true, removed: buildingId });
+            } catch (error) {
+                return fail(error);
+            }
+        },
+    );
+
+    server.registerTool(
+        "environment_add_drive_area",
+        {
+            title: "Add drive area",
+            description: "Add a paved drive area from a polygon or two rectangle corners.",
+            inputSchema: {
+                environmentId: z.string().min(1),
+                id: z.string().min(1).optional(),
+                y: z.number().optional(),
+                footprint: z.array(PointSchema).min(3).optional(),
+                cornerA: PointSchema.optional(),
+                cornerB: PointSchema.optional(),
+            },
+        },
+        async ({ environmentId, id, y, footprint, cornerA, cornerB }) => {
+            try {
+                const { manifest, document, service } = await loadDocument(storage, environmentId);
+                const result = service.run("addDriveArea", {
+                    driveAreaId: id,
+                    y,
+                    footprint,
+                    cornerA,
+                    cornerB,
+                });
+                if (!result.ok) return fail(result.error, { issues: result.issues });
+                await saveDocument(storage, environmentId, manifest, document);
+                return ok({ ok: true, driveArea: result.result.driveArea, objectId: result.result.objectId });
+            } catch (error) {
+                return fail(error);
+            }
+        },
+    );
+
+    server.registerTool(
+        "environment_remove_drive_area",
+        {
+            title: "Remove drive area",
+            description: "Remove a drive area by id.",
+            inputSchema: {
+                environmentId: z.string().min(1),
+                driveAreaId: z.string().min(1),
+            },
+        },
+        async ({ environmentId, driveAreaId }) => {
+            try {
+                const { manifest, document, service } = await loadDocument(storage, environmentId);
+                const result = service.run("removeDriveArea", { driveAreaId });
+                if (!result.ok) return fail(result.error, { issues: result.issues });
+                await saveDocument(storage, environmentId, manifest, document);
+                return ok({ ok: true, removed: driveAreaId });
             } catch (error) {
                 return fail(error);
             }
@@ -849,6 +906,7 @@ async function saveDocument(storage, environmentId, manifest, document) {
         supportedAssetMetricVersions: [1],
         supportedEditorSourceVersions: [1],
         supportedScenePrimitiveVersions: [1],
+        supportedDriveAreaVersions: [1],
     });
     storageEvents.publish({
         domain: "environment",

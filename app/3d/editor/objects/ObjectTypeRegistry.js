@@ -47,6 +47,7 @@ export const LEGACY_DOMAINS = Object.freeze([
     "sky",
     "primitives",
     "floor",
+    "driveAreas",
 ]);
 
 export const OBJECT_LAYERS = Object.freeze(["props", "roads", "buildings", "environment"]);

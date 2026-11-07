@@ -25,6 +25,7 @@ import {
 } from "./ChangeSet.js";
 import { createGeoFrame } from "../../earth/GeoFrame.js";
 import { normalizeFloor, normalizePrimitiveRecord } from "../../../simulation/world/PrimitiveRecords.js";
+import { normalizeDriveAreaRecord } from "../../../simulation/world/DriveAreas.js";
 
 const DEFAULT_ROAD_EDGE = Object.freeze({
     bidirectional: true,
@@ -73,6 +74,10 @@ export class EnvironmentDocument {
         /** @type {import("../../environment/visualization/BakeRunConfig.js").BuildingRecord[]} */
         this.buildings = Array.isArray(options.buildings)
             ? options.buildings.map(cloneBuilding)
+            : [];
+        /** Paved polygons. Omitted from snapshots while empty. */
+        this.driveAreas = Array.isArray(options.driveAreas)
+            ? options.driveAreas.map((record) => normalizeDriveAreaRecord(record))
             : [];
         /** @type {FeatureRecord[]} */
         this.features = Array.isArray(options.features)
@@ -130,6 +135,9 @@ export class EnvironmentDocument {
                     : {}),
             },
             buildings: this.buildings.map(cloneBuilding),
+            ...(this.driveAreas.length > 0
+                ? { driveAreas: this.driveAreas.map((record) => normalizeDriveAreaRecord(record)) }
+                : {}),
             features: this.features.map(cloneFeature),
             ...(this.primitives.length > 0
                 ? { primitives: this.primitives.map((record, index) => normalizePrimitiveRecord(record, index)) }
@@ -168,6 +176,9 @@ export class EnvironmentDocument {
         };
         this.buildings = Array.isArray(manifest.buildings)
             ? manifest.buildings.map(cloneBuilding)
+            : [];
+        this.driveAreas = Array.isArray(manifest.driveAreas)
+            ? manifest.driveAreas.map((record) => normalizeDriveAreaRecord(record))
             : [];
         this.features = Array.isArray(manifest.features)
             ? manifest.features.map(cloneFeature)
@@ -384,6 +395,10 @@ export class EnvironmentDocument {
         return this.buildings.find((building) => building.buildingId === buildingId) ?? null;
     }
 
+    getDriveArea(id) {
+        return this.driveAreas.find((area) => area.id === id) ?? null;
+    }
+
     getFeature(featureId) {
         return this.features.find((feature) => feature.id === featureId) ?? null;
     }
@@ -546,6 +561,8 @@ function domainArray(document, domain) {
             return document.roads.turnRules;
         case "buildings":
             return document.buildings;
+        case "driveAreas":
+            return document.driveAreas;
         case "features":
             return document.features;
         case "primitives":
@@ -565,6 +582,7 @@ const DOMAIN_CLONERS = Object.freeze({
     "roads.edges": cloneEdge,
     "roads.turnRules": cloneTurnRule,
     buildings: cloneBuilding,
+    driveAreas: (record) => normalizeDriveAreaRecord(record),
     features: cloneFeature,
     primitives: (record) => normalizePrimitiveRecord(record),
     objects: cloneObjectRecord,

@@ -9,6 +9,7 @@ import { createBuildingsProjector } from "./projectors/buildingsProjector.js";
 import { createFeaturesProjector } from "./projectors/featuresProjector.js";
 import { createObjectsProjector } from "./projectors/objectsProjector.js";
 import { createRoadsProjector } from "./projectors/roadsProjector.js";
+import { createDriveAreasProjector } from "./projectors/driveAreasProjector.js";
 import { createSkyProjector } from "./projectors/skyProjector.js";
 import { createSolidsProjector } from "./projectors/solidsProjector.js";
 import { createAssetInstancesProjector } from "./projectors/assetInstancesProjector.js";
@@ -19,6 +20,7 @@ import { createTileSourceProjector } from "./projectors/tileSourceProjector.js";
 export function createDefaultProjectors() {
     return [
         createRoadsProjector(),
+        createDriveAreasProjector(),
         createBuildingsProjector(),
         createFeaturesProjector(),
         createAssetInstancesProjector(),

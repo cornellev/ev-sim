@@ -514,25 +514,165 @@ export function compareOverrides(current, baseline, options = {}) {
     return changes.sort((left, right) => left.path.localeCompare(right.path));
 }
 
+function sameComparisonSession(previous, manifest, scenarioId) {
+    return Boolean(previous)
+        && previous.manifestId === (manifest?.id ?? null)
+        && previous.scenarioId === scenarioId
+        && (previous.profileId === "standard" || previous.profileId === "external");
+}
+
+export function retainComparisonProfile(previous, manifest, context = {}) {
+    const scenarioId = manifest?.scenario?.id ?? null;
+    const inference = inferExecutionProfile(manifest, context);
+    const withheld = Boolean(scenarioId) && !context.scenario;
+    const sameSession = sameComparisonSession(previous, manifest, scenarioId);
+    if (withheld) {
+        return {
+            retained: sameSession ? previous : null,
+            inference: {
+                ...inference,
+                comparisonProfileId: sameSession ? previous.profileId : inference.comparisonProfileId,
+            },
+        };
+    }
+    if (sameSession) {
+        return {
+            retained: previous,
+            inference: { ...inference, comparisonProfileId: previous.profileId },
+        };
+    }
+    const retained = {
+        manifestId: manifest?.id ?? null,
+        scenarioId,
+        profileId: inference.comparisonProfileId,
+    };
+    return {
+        retained,
+        inference: { ...inference, comparisonProfileId: retained.profileId },
+    };
+}
+
 export function classifyConfiguration(manifest, context = {}) {
     const inference = inferExecutionProfile(manifest, context);
-    const built = buildComparisonBaseline(manifest, inference.comparisonProfileId, context);
+    const comparisonProfileId = context.comparisonProfileId === "external" || context.comparisonProfileId === "standard"
+        ? context.comparisonProfileId
+        : inference.comparisonProfileId;
+    const built = buildComparisonBaseline(manifest, comparisonProfileId, context);
     const actorId = resolveInheritedVehicleSelection(manifest).actorId || "ego";
     const overrides = compareOverrides(manifest, built.manifest, {
         scenarioOwnsInitialState: Boolean(manifest?.scenario?.id),
         actorId,
     });
-    const matched = inference.profileId != null && overrides.length === 0;
+    const matched = inference.profileId != null
+        && inference.profileId === comparisonProfileId
+        && overrides.length === 0;
     return {
         profileId: inference.profileId,
-        comparisonProfileId: inference.comparisonProfileId,
+        comparisonProfileId,
         label: matched
             ? EXECUTION_PROFILE_LABELS[inference.profileId]
             : EXECUTION_PROFILE_LABELS.custom,
-        baselineName: EXECUTION_PROFILE_LABELS[inference.comparisonProfileId],
+        baselineName: EXECUTION_PROFILE_LABELS[comparisonProfileId],
         controlSource: inference.controlSource,
         baseline: built.manifest,
         baselineIssues: built.issues,
         overrides,
+    };
+}
+
+// shortcut: bracket ids that contain ] or . do not round-trip, upgrade if a catalog id needs encoding.
+function pathTokens(path) {
+    return String(path ?? "").split(".").filter(Boolean).map((part) => {
+        const match = /^([^[]+)(?:\[(.*)\])?$/.exec(part);
+        return match ? { key: match[1], id: match[2] ?? null } : { key: part, id: null };
+    });
+}
+
+function childAt(cursor, token, walked) {
+    if (cursor == null || typeof cursor !== "object") return { ok: false };
+    const here = walked ? `${walked}.${token.key}` : token.key;
+    if (token.id != null) {
+        const list = cursor[token.key];
+        if (!Array.isArray(list)) return { ok: false };
+        const index = list.findIndex((entry) => collectionId(here, entry) === token.id);
+        if (index < 0) return { ok: false };
+        return { ok: true, value: list[index], here };
+    }
+    if (Array.isArray(cursor) && /^\d+$/.test(token.key)) {
+        const index = Number(token.key);
+        if (index < 0 || index >= cursor.length) return { ok: false };
+        return { ok: true, value: cursor[index], here: token.key };
+    }
+    if (!Object.prototype.hasOwnProperty.call(cursor, token.key)) return { ok: false };
+    return { ok: true, value: cursor[token.key], here };
+}
+
+export function valueAtOverridePath(manifest, path) {
+    const tokens = pathTokens(path);
+    let cursor = manifest;
+    let walked = "";
+    for (const token of tokens) {
+        const step = childAt(cursor, token, walked);
+        if (!step.ok) return { ok: false, value: undefined };
+        cursor = step.value;
+        walked = token.id != null ? `${step.here}[${token.id}]` : step.here;
+    }
+    return { ok: tokens.length > 0, value: cursor };
+}
+
+function writeOverridePath(root, path, value) {
+    const tokens = pathTokens(path);
+    if (tokens.length === 0) return false;
+    let cursor = root;
+    let walked = "";
+    for (let index = 0; index < tokens.length - 1; index += 1) {
+        const token = tokens[index];
+        const step = childAt(cursor, token, walked);
+        if (!step.ok || step.value == null || typeof step.value !== "object") return false;
+        cursor = step.value;
+        walked = token.id != null ? `${step.here}[${token.id}]` : step.here;
+    }
+    const last = tokens.at(-1);
+    const here = walked ? `${walked}.${last.key}` : last.key;
+    if (last.id != null) {
+        const list = cursor?.[last.key];
+        if (!Array.isArray(list)) return false;
+        const index = list.findIndex((entry) => collectionId(here, entry) === last.id);
+        if (value === undefined) {
+            if (index >= 0) list.splice(index, 1);
+            return true;
+        }
+        if (index >= 0) list[index] = value;
+        else list.push(value);
+        return true;
+    }
+    if (Array.isArray(cursor) && /^\d+$/.test(last.key)) {
+        const index = Number(last.key);
+        if (value === undefined) {
+            if (index >= 0 && index < cursor.length) cursor.splice(index, 1);
+            return true;
+        }
+        cursor[index] = value;
+        return true;
+    }
+    if (cursor == null || typeof cursor !== "object" || Array.isArray(cursor)) return false;
+    if (value === undefined) delete cursor[last.key];
+    else cursor[last.key] = value;
+    return true;
+}
+
+export function previewOverrideReset(manifest, change, options = {}) {
+    const next = structuredClone(manifest);
+    if (!writeOverridePath(next, change?.path, change?.before)) {
+        return { nextManifest: manifest, changes: [] };
+    }
+    const normalized = normalizeRunManifest(next, options);
+    const changes = [];
+    diffValues(manifest, normalized, "", changes);
+    return {
+        nextManifest: changes.length === 0 ? manifest : normalized,
+        changes: changes
+            .map(({ path, before, after }) => ({ path, before, after }))
+            .sort((left, right) => left.path.localeCompare(right.path)),
     };
 }

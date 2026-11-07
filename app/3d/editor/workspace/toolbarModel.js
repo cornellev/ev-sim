@@ -45,6 +45,7 @@ const MAP_TOOL_ITEMS = Object.freeze([
     { id: "map-intersection", tool: MAP_TOOLS.INTERSECTION, label: "Place intersection", icon: "intersection" },
     { id: "map-road-pen", tool: MAP_TOOLS.ROAD_PEN, label: "Road pen", icon: "road" },
     { id: "map-building-rect", tool: MAP_TOOLS.BUILDING_RECT, label: "Building rectangle", icon: "building" },
+    { id: "map-drive-area-rect", tool: MAP_TOOLS.DRIVE_AREA_RECT, label: "Drive area", icon: "drive-area" },
 ]);
 
 export const LAYER_ITEMS = Object.freeze([

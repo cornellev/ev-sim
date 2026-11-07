@@ -349,6 +349,51 @@ export function handleBuildingRectUp({ editor, data }) {
     return { record: result.result.building };
 }
 
+export function handleDriveAreaRectDown({ worldPoint, editor }) {
+    const snapped = applySnap(worldPoint, editor);
+    editor.setMapDraft({
+        type: "drive-area-rect",
+        cornerA: { x: snapped.x, z: snapped.z },
+        cornerB: { x: snapped.x, z: snapped.z },
+    });
+}
+
+export function handleDriveAreaRectMove({ worldPoint, editor }) {
+    const draft = editor.snapshot().map.draft;
+    if (draft?.type !== "drive-area-rect" || !draft.cornerA) return;
+    const snapped = applySnap(worldPoint, editor);
+    editor.setMapDraft({
+        ...draft,
+        cornerB: { x: snapped.x, z: snapped.z },
+    });
+}
+
+export function handleDriveAreaRectUp({ editor, data }) {
+    const draft = editor.snapshot().map.draft;
+    if (draft?.type !== "drive-area-rect" || !draft.cornerA || !draft.cornerB) {
+        editor.clearMapDraft();
+        return null;
+    }
+    editor.clearMapDraft();
+    const result = busOf(data).execute(legacyCommands.addDriveArea({ cornerA: draft.cornerA, cornerB: draft.cornerB }));
+    if (!result.ok) return { error: result.error, issues: result.issues };
+    selectionOf(data)?.select(result.result.objectId);
+    data.simulation()?.render?.();
+    return { record: result.result.driveArea };
+}
+
+export function beginDriveAreaDrag({ data, driveAreaId, worldPoint }) {
+    selectionOf(data)?.select(driveAreaId);
+    const begun = busOf(data).beginGesture({ objectIds: [driveAreaId], label: "Move drive area" });
+    if (!begun.ok) return null;
+    return {
+        type: "move-drive-area",
+        driveAreaId,
+        gestureId: begun.gestureId,
+        start: { x: worldPoint.x, z: worldPoint.z },
+    };
+}
+
 export function handlePrimitivePlace({ worldPoint, editor, data }) {
     const shape = editor.snapshot().activePlacement?.kind === "primitive" ? editor.snapshot().activePlacement.id : null;
     if (!shape) return null;

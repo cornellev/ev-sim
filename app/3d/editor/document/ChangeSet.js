@@ -13,6 +13,7 @@ export const CHANGE_DOMAINS = Object.freeze([
     "roads.edges",
     "roads.turnRules",
     "buildings",
+    "driveAreas",
     "features",
     "primitives",
     "objects",
@@ -59,6 +60,8 @@ export function domainKeyOf(domain, record) {
             return `${String(record.assetId)}@${Number(record.revision)}`;
         case "buildings":
             return record.buildingId === undefined || record.buildingId === null ? null : String(record.buildingId);
+        case "driveAreas":
+            return record.id === undefined || record.id === null ? null : String(record.id);
         case "roads.turnRules":
             return [record.nodeId, record.fromEdgeId, record.toEdgeId].map(String).join(TURN_RULE_SEPARATOR);
         default:
@@ -76,6 +79,8 @@ export function domainRecordsOf(snapshot, domain) {
             return snapshot?.roads?.turnRules ?? [];
         case "buildings":
             return snapshot?.buildings ?? [];
+        case "driveAreas":
+            return snapshot?.driveAreas ?? [];
         case "features":
             return snapshot?.features ?? [];
         case "primitives":

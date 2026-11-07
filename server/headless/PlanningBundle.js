@@ -9,6 +9,7 @@ import {
 import { createDefaultRunManifest } from "../../app/simulation/RunManifest.js";
 import { getBuiltInVehicleManifest } from "../../app/vehicles/BuiltInVehicleManifests.js";
 import { createWorldResource } from "../../app/simulation/world/WorldDescription.js";
+import { firstDriveArea, pavementPoseIssue, polygonCentroidXZ } from "../../app/simulation/world/DriveAreas.js";
 import { StorageService } from "../storage/StorageService.js";
 
 const STATE_SENSOR_TYPES = new Set(["imu", "gnss", "wheel-odometry"]);
@@ -357,8 +358,13 @@ function applyStartPose(manifest, point, yaw) {
     const vehicles = manifest.initialState?.vehicles || [];
     const vehicle = vehicles.find((entry) => entry.id === "ego") ?? vehicles[0];
     if (!vehicle) throw new Error("The planning bundle manifest has no ego vehicle.");
+    const elevation = Number(point.y);
     vehicle.pose = {
-        position: { x: point.x, y: vehicle.pose?.position?.y ?? 0, z: point.z },
+        position: {
+            x: point.x,
+            y: Number.isFinite(elevation) ? elevation : (vehicle.pose?.position?.y ?? 0),
+            z: point.z,
+        },
         rotation: { x: 0, y: yaw, z: 0, order: vehicle.pose?.rotation?.order || "XYZ" },
     };
     vehicle.linearVelocity = { x: 0, y: 0, z: 0 };
@@ -471,6 +477,55 @@ export async function createPlanningBundle({
         const vehicle = await resolvePlanningVehicle(live, storage, selectedVehicleId, Boolean(dataDir));
         const size = vehicle?.boundingBox?.size;
         if (!size?.x || !size?.z) throw new Error(`Vehicle "${selectedVehicleId}" has no bounding box.`);
+        const roads = environment.document?.roads ?? {};
+        const authoredAreas = environment.document?.driveAreas ?? [];
+        const areaOnly = (roads.nodes?.length ?? 0) === 0 && (roads.edges?.length ?? 0) === 0 && authoredAreas.length > 0;
+        if ((roadId || startNodeId || finishNodeId) && areaOnly) {
+            throw new Error("Area-only bundle creation does not accept road or node selectors.");
+        }
+        if (areaOnly) {
+            if (finish !== "none") throw new Error("Area-only bundle creation requires --finish none.");
+            const area = firstDriveArea(authoredAreas);
+            const centroid = polygonCentroidXZ(area.footprint);
+            const description = createWorldResource(environment).description;
+            const issue = pavementPoseIssue(description, { x: centroid.x, z: centroid.z, yaw: 0 }, size);
+            if (issue) throw new Error(issue);
+            const scenario = {
+                kind: "cev-sim.scenario",
+                version: 1,
+                id: bundleId,
+                name: bundleId,
+                description: "Road-free drive area generated for planner and controller testing.",
+                folderId: null,
+                environment: { id: selectedEnvironmentId, expectedHash: null },
+                freeDrive: true,
+                actors: [{ id: initial.id, name: "Ego", role: "ego", vehicleId: null, enabled: true }],
+                routes: [],
+                zones: [],
+                triggers: [freeDriveTrigger(initial.id)],
+                completion: { conditions: [] },
+                expectedOutcomes: [],
+                sensorAliases: [],
+                parameters: [],
+            };
+            const storedScenario = await storage.createScenario(scenario);
+            const manifest = applyVehiclePluginSelection(stateSensorManifest(source, {
+                environmentId: selectedEnvironmentId,
+                storedScenario,
+                bundleId,
+                sensors,
+                maxSteps,
+                vehicleType: selectedVehicleId,
+            }), vehicle);
+            applyStartPose(manifest, { x: centroid.x, y: area.y, z: centroid.z }, 0);
+            const created = await storage.createRunManifest(manifest);
+            const validation = await storage.validateRunManifest(created.id);
+            if (!validation.ok) {
+                const message = validation.issues.map((entry) => `${entry.path}: ${entry.message}`).join("\n");
+                throw new Error(message || "Run manifest validation failed.");
+            }
+            return await storage.exportRunManifest(created.id);
+        }
         const networkRoute = Boolean(startNodeId && finishNodeId && !roadId);
         const endpoints = selectRouteEndpoints(environment, {
             initialPosition: initial.pose?.position || { x: 0, z: 0 },

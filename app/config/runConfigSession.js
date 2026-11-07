@@ -68,6 +68,26 @@ export function runConfigHasUnsavedWork({ dirty = false, buffers = {} } = {}) {
     return Boolean(dirty) || jsonBufferGate(buffers).blocked;
 }
 
+export function createLaunchGate() {
+    let active = false;
+    return {
+        enter() {
+            if (active) return false;
+            active = true;
+            return true;
+        },
+        leave() {
+            active = false;
+        },
+    };
+}
+
+export function validationSuccessVisible({ ok = false, error = null, runStatus = null, busy = false } = {}) {
+    if (!ok || error || busy) return false;
+    if (runStatus === "preparing" || runStatus === "error") return false;
+    return true;
+}
+
 export function stageJsonBuffer(buffers, id, { label, text, error = null, parsed, patch = null }) {
     if (error) {
         return {

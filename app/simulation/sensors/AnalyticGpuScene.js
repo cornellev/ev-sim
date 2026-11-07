@@ -6,6 +6,7 @@
 import { eulerToQuaternion, quaternionMultiply } from "../../autonomy/CoordinateFrames.js";
 import { cross3a, sub3a } from "../../math/linalg.js";
 import { BOX_FACES } from "./BoxFaces.js";
+import { isScanningLidarType } from "./SensorTypeRegistry.js";
 
 function quaternionOf(rotation = {}) {
     return eulerToQuaternion(rotation);
@@ -147,7 +148,7 @@ export function prepareAnalyticGpuFrame({ scene, jobs }) {
             if (!next.analyticPose) next.analyticPose = fallbackCameraPose(job);
             return next;
         }
-        if (job.type === "lidar3d") next.lidarPose = lidarPose(job);
+        if (isScanningLidarType(job.type)) next.lidarPose = lidarPose(job);
         return next;
     });
 }

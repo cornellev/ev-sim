@@ -72,6 +72,17 @@ export function modelNodeViewportHidden(hiddenIds, index, nodes, { includeModel 
     return false;
 }
 
+export function modelNodeId(index) {
+    return `node-${index}`;
+}
+
+export function modelNodeIndex(id) {
+    const match = /^node-(\d+)$/.exec(String(id ?? ""));
+    if (!match) return null;
+    const index = Number(match[1]);
+    return Number.isInteger(index) ? index : null;
+}
+
 export function hierarchyNodesFromLease(lease) {
     const nodes = lease?.gltfJson?.nodes;
     if (!Array.isArray(nodes)) return [];
@@ -88,7 +99,80 @@ export function hierarchyNodesFromLease(lease) {
         index,
         name: node?.name ? String(node.name) : `part-${index}`,
         parentIndex: parentIndex.has(index) ? parentIndex.get(index) : null,
+        mesh: Number.isInteger(node?.mesh) && node.mesh >= 0 ? node.mesh : null,
     }));
+}
+
+/** Ancestor names from the root through this node, joined for the part readout. */
+export function modelPartPath(nodes, index) {
+    const byIndex = nodesByIndex(nodes);
+    const names = [];
+    const seen = new Set();
+    let current = index;
+    while (Number.isInteger(current) && byIndex.has(current) && !seen.has(current)) {
+        seen.add(current);
+        names.push(byIndex.get(current).name);
+        current = byIndex.get(current).parentIndex;
+    }
+    return names.reverse().join(" / ");
+}
+
+export function describeModelPart(nodes, manifest, id) {
+    const index = modelNodeIndex(id);
+    if (index == null) return null;
+    const node = (nodes ?? []).find((entry) => entry.index === index);
+    if (!node) return null;
+    const wheel = (manifest?.wheels ?? []).find((entry) => (
+        entry.visual?.kind === "model-node" && entry.visual.nodeIndex === index
+    ));
+    return {
+        name: node.name,
+        path: modelPartPath(nodes, index),
+        nodeIndex: index,
+        mesh: Number.isInteger(node.mesh),
+        wheelId: wheel?.id ?? null,
+        semanticallyHidden: (manifest?.model?.hiddenNodeIndices ?? []).includes(index),
+    };
+}
+
+function modelNodesInTreeOrder(nodes) {
+    const byIndex = nodesByIndex(nodes);
+    const children = new Map();
+    const roots = [];
+    for (const node of nodes ?? []) {
+        const parent = Number.isInteger(node.parentIndex) && byIndex.has(node.parentIndex) ? node.parentIndex : null;
+        if (parent == null) roots.push(node);
+        else {
+            const list = children.get(parent) ?? [];
+            list.push(node);
+            children.set(parent, list);
+        }
+    }
+    const byIndexOrder = (left, right) => left.index - right.index;
+    roots.sort(byIndexOrder);
+    for (const list of children.values()) list.sort(byIndexOrder);
+    const ordered = [];
+    const seen = new Set();
+    const walk = (node, depth) => {
+        if (seen.has(node.index)) return;
+        seen.add(node.index);
+        ordered.push({ node, depth });
+        for (const child of children.get(node.index) ?? []) walk(child, depth + 1);
+    };
+    for (const root of roots) walk(root, 1);
+    for (const node of [...(nodes ?? [])].sort(byIndexOrder)) {
+        if (!seen.has(node.index)) walk(node, 1);
+    }
+    return ordered;
+}
+
+export function hierarchySelectionMatches(row, selection) {
+    if (!selection?.kind || !row) return false;
+    if (row.kind === "wheel" || row.kind === "sensor" || row.kind === "model-node") {
+        return selection.kind === row.kind && selection.id === row.id;
+    }
+    if (row.kind === "axle") return selection.kind === "axle" && selection.id === row.id.replace(/^axle-/, "");
+    return selection.kind === row.kind;
 }
 
 function withVisibility(row, hiddenIds, inherited) {
@@ -115,12 +199,13 @@ export function buildVehicleHierarchy(manifest, { nodes = [], hiddenIds = [] } =
         }, hidden, false),
     ];
     const semanticHidden = new Set(manifest.model?.hiddenNodeIndices ?? []);
-    for (const node of nodes) {
+    for (const { node, depth } of modelNodesInTreeOrder(nodes)) {
         rows.push(withVisibility({
-            id: `node-${node.index}`,
+            id: modelNodeId(node.index),
             kind: "model-node",
             label: semanticHidden.has(node.index) ? `${node.name} (hidden)` : node.name,
-            depth: 1,
+            path: modelPartPath(nodes, node.index),
+            depth,
             disabled: false,
             nodeIndex: node.index,
         }, hidden, modelNodeViewportHidden(hidden, node.index, byIndex, { includeModel: true, includeSelf: false })));

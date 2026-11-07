@@ -1,8 +1,10 @@
 import { threePoseToRep103 } from "../../autonomy/CoordinateFrames.js";
 import {
     createRunSensor,
+    isScanningLidarType,
     normalizeRunSensor,
     normalizeVehicleSensor,
+    PLANAR_LIDAR_ELEVATION,
     sensorTypeRegistry,
 } from "./SensorTypeRegistry.js";
 
@@ -237,7 +239,7 @@ function lockedCalibration(existing = {}, vehicleSensor, definition) {
             verticalFovDeg: config.fov,
         };
     }
-    if (vehicleSensor.type === "lidar3d") {
+    if (isScanningLidarType(vehicleSensor.type)) {
         return {
             ...calibration,
             range: config.range,
@@ -246,11 +248,13 @@ function lockedCalibration(existing = {}, vehicleSensor, definition) {
                 endDeg: config.thetaRange?.[1],
                 stepDeg: config.thetaStep,
             },
-            elevation: {
-                startDeg: config.phiRange?.[0],
-                endDeg: config.phiRange?.[1],
-                stepDeg: config.phiStep,
-            },
+            elevation: vehicleSensor.type === "lidar2d"
+                ? { ...PLANAR_LIDAR_ELEVATION }
+                : {
+                    startDeg: config.phiRange?.[0],
+                    endDeg: config.phiRange?.[1],
+                    stepDeg: config.phiStep,
+                },
         };
     }
     if (vehicleSensor.type === "imu") {
@@ -282,6 +286,8 @@ function inheritedFieldPaths(sensor, definition) {
         paths.push("rateHz", "calibration.scanLayout", "calibration.parameters", "calibration.products");
     } else if (sensor.type === "camera") {
         paths.push("calibration.width", "calibration.height", "calibration.verticalFovDeg");
+    } else if (sensor.type === "lidar2d") {
+        paths.push("calibration.range", "calibration.azimuth");
     } else if (sensor.type === "lidar3d") {
         paths.push("calibration.range", "calibration.azimuth", "calibration.elevation");
     } else if (sensor.type === "imu") {

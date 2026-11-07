@@ -373,6 +373,7 @@ export function normalizeScenario(value, { allowMissingKind = false } = {}) {
             type: text(entry?.type) || null,
         })),
         parameters: (Array.isArray(source.parameters) ? source.parameters : []).map(normalizeParameter),
+        ...(source.freeDrive === true ? { freeDrive: true } : {}),
     };
 }
 
@@ -591,11 +592,21 @@ export function validateScenario(value, { requireVerifiedRoutes = true } = {}) {
             issues.push({ path: `routes.${index}.controller.topicId`, message: "External ROS controller requires a topic id." });
         }
     });
-    scenario.actors.forEach((actor, index) => {
-        if (!routeActors.has(actor.id)) {
-            issues.push({ path: `actors.${index}`, message: `Actor "${actor.id}" requires a route and start pose.` });
+    if (scenario.freeDrive === true) {
+        if (scenario.routes.length > 0) {
+            issues.push({ path: "routes", message: "A free-drive scenario cannot include routes." });
         }
-    });
+        const enabled = scenario.actors.filter((actor) => actor.enabled !== false);
+        if (enabled.length !== 1 || enabled[0].role !== "ego") {
+            issues.push({ path: "actors", message: "A free-drive scenario requires exactly one enabled ego actor." });
+        }
+    } else {
+        scenario.actors.forEach((actor, index) => {
+            if (!routeActors.has(actor.id)) {
+                issues.push({ path: `actors.${index}`, message: `Actor "${actor.id}" requires a route and start pose.` });
+            }
+        });
+    }
 
     const zones = new Map(scenario.zones.map((zone) => [zone.id, zone]));
     scenario.zones.forEach((zone, index) => {

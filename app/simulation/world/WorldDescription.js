@@ -19,18 +19,23 @@ import { normalizePerceptionClassName } from "../../autonomy/PerceptionLabelCata
 import { compilePrimitiveSolid, SCENE_PRIMITIVE_POLICY } from "./PrimitiveSolids.js";
 import { compileRigidBodies } from "./RigidBodyRecords.js";
 import { FLOOR_OBJECT_ID, FLOOR_PLANE_Y, normalizeFloor } from "./PrimitiveRecords.js";
+import { compileDriveAreaSurfaces, triangulateFootprint } from "./DriveAreas.js";
 
 export const WORLD_DESCRIPTION_KIND = "cev-sim.world-description";
 export const WORLD_DESCRIPTION_VERSION = 1;
 export const WORLD_DESCRIPTION_V2 = 2;
 export const WORLD_DESCRIPTION_V3 = 3;
 export const WORLD_DESCRIPTION_V4 = 4;
+export const WORLD_DESCRIPTION_V5 = 5;
 export const SUPPORTED_WORLD_DESCRIPTION_VERSIONS = Object.freeze([
     WORLD_DESCRIPTION_VERSION,
     WORLD_DESCRIPTION_V2,
     WORLD_DESCRIPTION_V3,
     WORLD_DESCRIPTION_V4,
+    WORLD_DESCRIPTION_V5,
 ]);
+
+export { triangulateFootprint };
 
 const DEFAULT_ROAD_WIDTH = 7;
 
@@ -252,50 +257,6 @@ function normalizeFootprint(source, label) {
     }, 0) * 0.5;
     if (Math.abs(area) <= 1e-12) throw new TypeError(`${label} has zero area.`);
     return area > 0 ? points : [...points].reverse();
-}
-
-function pointInTriangle(point, a, b, c) {
-    const cross = (left, middle, right) => (
-        (middle.x - left.x) * (right.z - left.z)
-        - (middle.z - left.z) * (right.x - left.x)
-    );
-    const ab = cross(a, b, point);
-    const bc = cross(b, c, point);
-    const ca = cross(c, a, point);
-    return ab >= -1e-12 && bc >= -1e-12 && ca >= -1e-12;
-}
-
-/** Deterministic ear clipping for counter-clockwise simple XZ polygons. */
-export function triangulateFootprint(footprint) {
-    if (footprint.length === 3) return [[0, 1, 2]];
-    const remaining = footprint.map((_, index) => index);
-    const triangles = [];
-    while (remaining.length > 3) {
-        let ear = -1;
-        for (let offset = 0; offset < remaining.length; offset += 1) {
-            const previous = remaining[(offset - 1 + remaining.length) % remaining.length];
-            const current = remaining[offset];
-            const next = remaining[(offset + 1) % remaining.length];
-            const a = footprint[previous];
-            const b = footprint[current];
-            const c = footprint[next];
-            const convex = (b.x - a.x) * (c.z - b.z) - (b.z - a.z) * (c.x - b.x) > 1e-12;
-            if (!convex) continue;
-            const contains = remaining.some((candidate) => (
-                candidate !== previous && candidate !== current && candidate !== next
-                && pointInTriangle(footprint[candidate], a, b, c)
-            ));
-            if (!contains) {
-                ear = offset;
-                triangles.push([previous, current, next]);
-                break;
-            }
-        }
-        if (ear < 0) throw new TypeError("Building footprint must be a simple polygon.");
-        remaining.splice(ear, 1);
-    }
-    triangles.push([remaining[0], remaining[1], remaining[2]]);
-    return triangles;
 }
 
 function footprintBounds(footprint, minY, maxY) {
@@ -765,6 +726,25 @@ function withRigidBodies(description, document) {
     return canonicalizeSimulationValue({ ...description, rigidBodies });
 }
 
+function boundsWithDriveAreas(description, surfaces) {
+    let bounds = aggregateBounds(description.roads, surfaces, description.obstacles);
+    if (Array.isArray(description.primitives) && description.primitives.length > 0) bounds = boundsWithPoints(bounds, description.primitives);
+    if (Array.isArray(description.assetProxies) && description.assetProxies.length > 0) bounds = boundsWithAssetProxies(bounds, description.assetProxies);
+    return bounds;
+}
+
+function withDriveAreas(description, document) {
+    const areas = compileDriveAreaSurfaces(document?.driveAreas);
+    if (areas.length === 0) return description;
+    const drivableSurfaces = [...description.drivableSurfaces, ...areas];
+    return canonicalizeSimulationValue({
+        ...description,
+        version: WORLD_DESCRIPTION_V5,
+        drivableSurfaces,
+        bounds: boundsWithDriveAreas(description, drivableSurfaces),
+    });
+}
+
 export function createWorldDescription(value = {}) {
     const manifest = sourceManifest(value) ?? {};
     const document = manifest.document ?? {};
@@ -803,7 +783,7 @@ export function createWorldDescription(value = {}) {
             ...(groundPlane ? { groundPlane } : {}),
             ...(solids.length > 0 ? { bounds: boundsWithPoints(base.bounds, solids) } : {}),
         });
-    return withRigidBodies(described, document);
+    return withDriveAreas(withRigidBodies(described, document), document);
 }
 
 export function hashWorldDescription(description) {
@@ -823,23 +803,28 @@ export function assertWorldResource(resource) {
     const hash = hashWorldDescription(resource.description);
     if (hash !== resource.hash) throw new Error(`Resolved world hash mismatch: expected ${resource.hash}, computed ${hash}.`);
     const describedVersion = resource.description.version;
+    const roadSurfaces = (resource.description.drivableSurfaces ?? []).filter((surface) => surface?.kind !== "area-polygon");
     if (describedVersion === WORLD_DESCRIPTION_V2
-        || ((describedVersion === WORLD_DESCRIPTION_V3 || describedVersion === WORLD_DESCRIPTION_V4) && resource.description.roadGeometryPolicy)) {
+        || ((describedVersion === WORLD_DESCRIPTION_V3 || describedVersion === WORLD_DESCRIPTION_V4 || describedVersion === WORLD_DESCRIPTION_V5) && resource.description.roadGeometryPolicy)) {
         if (resource.description.roadGeometryPolicy?.id !== ROAD_GEOMETRY_POLICY_V1.id
             || resource.description.roadGeometryPolicy?.version !== ROAD_GEOMETRY_POLICY_V1.version) {
             throw new Error("Resolved world uses an unsupported road geometry policy.");
         }
         const authorRoads = authorRoadsFromMetric(resource.description.roads);
         const expected = compiledRoadSurfaces(compileRoadNetworkGeometry(planRoadNetworkGeometry(authorRoads)));
-        if (JSON.stringify(canonicalizeSimulationValue(expected)) !== JSON.stringify(resource.description.drivableSurfaces)) {
+        if (JSON.stringify(canonicalizeSimulationValue(expected)) !== JSON.stringify(roadSurfaces)) {
             throw new Error("Resolved world road surfaces do not match their canonical road inputs.");
         }
     }
     if (resource.description.version === WORLD_DESCRIPTION_V3
-        || (resource.description.version === WORLD_DESCRIPTION_V4 && Array.isArray(resource.description.assetProxies))) {
+        || ((resource.description.version === WORLD_DESCRIPTION_V4 || resource.description.version === WORLD_DESCRIPTION_V5) && Array.isArray(resource.description.assetProxies))) {
         assertAssetProxies(resource.description);
     }
-    if (resource.description.version === WORLD_DESCRIPTION_V4) assertScenePrimitives(resource.description);
+    if (resource.description.version === WORLD_DESCRIPTION_V4
+        || (resource.description.version === WORLD_DESCRIPTION_V5 && resource.description.primitivePolicy)) {
+        assertScenePrimitives(resource.description);
+    }
+    assertDriveAreaSurfaces(resource.description);
     return resource.description;
 }
 
@@ -869,7 +854,7 @@ function assertAssetProxies(description) {
         for (const proxy of instance.lidar ?? []) assertProxyMesh(proxy);
     }
     if (description.metricWorldHash !== simulationSha256(description.assetProxies)) throw new TypeError("World metricWorldHash does not match asset proxies.");
-    if (description.version === WORLD_DESCRIPTION_V4) return;
+    if (description.version === WORLD_DESCRIPTION_V4 || description.version === WORLD_DESCRIPTION_V5) return;
     if (JSON.stringify(canonicalizeSimulationValue(boundsWithAssetProxies(aggregateBounds(description.roads, description.drivableSurfaces, description.obstacles), description.assetProxies))) !== JSON.stringify(description.bounds)) throw new TypeError("World v3 bounds do not include its asset proxies.");
 }
 
@@ -913,5 +898,29 @@ function assertScenePrimitives(description) {
         : expectedBounds;
     if (JSON.stringify(canonicalizeSimulationValue(withProxies)) !== JSON.stringify(description.bounds)) {
         throw new TypeError("World v4 bounds do not include its primitives.");
+    }
+}
+
+function assertDriveAreaSurfaces(description) {
+    const areas = (description.drivableSurfaces ?? []).filter((surface) => surface?.kind === "area-polygon");
+    if (description.version !== WORLD_DESCRIPTION_V5) {
+        if (areas.length > 0) throw new TypeError("Drive area surfaces require world description version 5.");
+        return;
+    }
+    if (areas.length === 0) throw new TypeError("World description v5 requires at least one drive area.");
+    const seen = new Set();
+    for (const surface of areas) {
+        const expected = compileDriveAreaSurfaces([{
+            id: surface.sourceId,
+            y: surface.minY,
+            footprint: surface.footprint,
+        }])[0];
+        if (!expected || seen.has(expected.sourceId) || JSON.stringify(canonicalizeSimulationValue(expected)) !== JSON.stringify(canonicalizeSimulationValue(surface))) {
+            throw new TypeError(`Drive area "${surface?.sourceId ?? ""}" does not match its canonical footprint.`);
+        }
+        seen.add(expected.sourceId);
+    }
+    if (JSON.stringify(canonicalizeSimulationValue(boundsWithDriveAreas(description, description.drivableSurfaces))) !== JSON.stringify(description.bounds)) {
+        throw new TypeError("World v5 bounds do not include its drive areas.");
     }
 }

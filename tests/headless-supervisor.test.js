@@ -409,7 +409,7 @@ test("insecure TCP requires opt-in for remote hosts and works on loopback", asyn
     assert.equal(lidar.id, "deterministic-cpu-bvh-lidar");
     assert.equal(lidar.version, "1");
     assert.equal(lidar.available, true);
-    assert.deepEqual(lidar.sensorTypes, ["lidar3d"]);
+    assert.deepEqual(lidar.sensorTypes, ["lidar3d", "lidar2d"]);
 });
 
 test("multiple batches coexist and malformed requests fail in response envelopes", { timeout: 30_000 }, async (t) => {

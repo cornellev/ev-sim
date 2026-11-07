@@ -1,6 +1,6 @@
 'use client';
 
-import { cloneElement, isValidElement, useEffect, useMemo, useRef, useState } from "react";
+import { cloneElement, isValidElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertDialog } from "radix-ui";
 import {
     IconCheck,
@@ -20,6 +20,7 @@ import {
     createRunSensor,
     getSensorFieldValue,
     getSensorType,
+    isScanningLidarType,
     ORACLE_PRODUCT_TOGGLES,
     sensorTypeRegistry,
 } from "../3d/devices/SensorTypeRegistry.js";
@@ -99,24 +100,25 @@ import {
     RUN_CONFIG_MODE_FALLBACK,
     RUN_CONFIG_MODE_STORAGE_KEY,
 } from "./runConfigMode.js";
-import { SIMPLE_VEHICLE_OPTIONS as BUILT_IN_VEHICLE_OPTIONS, simpleCreatedManifest } from "./simpleRunModel.js";
+import { SIMPLE_VEHICLE_OPTIONS as BUILT_IN_VEHICLE_OPTIONS, simpleCreatedManifest, validationIssueTarget } from "./simpleRunModel.js";
 import SimpleRunWorkspace from "./SimpleRunWorkspace.js";
 import {
     EMBEDDED_BINDINGS_BUFFER_ID,
     RAW_MANIFEST_BUFFER_ID,
     advancedEditorA11yProps,
     applyReadyBuffers,
+    createLaunchGate,
     jsonBufferGate,
     jsonBufferMessage,
     listJsonBuffers,
     planReadyFlush,
     runConfigHasUnsavedWork,
     stageJsonBuffer,
+    validationSuccessVisible,
     writeJsonBuffer,
 } from "./runConfigSession.js";
 import {
     AdvancedFields,
-    AdvancedValidationBanner,
     AuthoringModeProvider,
     AsyncState,
     Button,
@@ -197,28 +199,10 @@ function parseInputValue(value) {
     try { return JSON.parse(value); } catch { return value; }
 }
 
-function validationIssueLocation(path = "") {
-    if (path.startsWith("observationProfile")) return "Observation";
-    if (path.startsWith("sensorRig")) return "Sensors";
-    if (path.startsWith("topics")) return "Topics";
-    if (path.startsWith("scenario")) return "Scenario";
-    if (path.startsWith("initialState")) return "Initial State";
-    if (path.startsWith("clock")) return "Clock";
-    if (path.startsWith("controls")) return "Controls";
-    if (path.startsWith("scripts")) return "Scripts";
-    if (path.startsWith("assertions")) return "Assertions";
-    if (path.startsWith("logging")) return "Logging";
-    if (path.startsWith("provenance")) return "Provenance";
-    if (path.startsWith("parameters") || path.startsWith("environment")) return "Overview";
-    if (path === "dependencies") return "Overview";
-    return null;
-}
-
 function formatValidationIssue(issue) {
-    const path = issue?.path ? String(issue.path) : "manifest";
-    const location = validationIssueLocation(path);
-    const locationHint = location ? ` (${location})` : "";
-    return `${path}${locationHint}: ${issue?.message || "Invalid value."}`;
+    const target = validationIssueTarget(issue);
+    const path = target.path || "manifest";
+    return `${path} (${target.tab}): ${issue?.message || "Invalid value."}`;
 }
 
 function formatValidationIssues(issues = [], { prefix = "Manifest validation failed" } = {}) {
@@ -306,11 +290,19 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
     const [runState, setRunState] = useState(() => controller.getSnapshot());
     const sensorSessionRef = useRef(null);
     if (!sensorSessionRef.current) sensorSessionRef.current = new BrowserSensorAuthoringSession();
+    const launchGateRef = useRef(null);
+    if (!launchGateRef.current) launchGateRef.current = createLaunchGate();
+    const focusRequest = useRef(null);
+    const [focusTick, setFocusTick] = useState(0);
     const [sensorCatalog, setSensorCatalog] = useState({ revision: 0, sensors: [] });
     const [sensorRegistryTick, setSensorRegistryTick] = useState(0);
     const [environmentsReady, setEnvironmentsReady] = useState(false);
     const sessionModeRef = useRef(null);
     const [mode, setMode] = useState(RUN_CONFIG_MODE_FALLBACK);
+    const [comparisonLatch, setComparisonLatch] = useState(null);
+    const onComparisonLatch = useCallback((next) => {
+        setComparisonLatch((current) => (current === next ? current : next));
+    }, []);
     const authoringOptions = () => ({
         sensorRegistry: sensorSessionRef.current?.registry ?? sensorTypeRegistry,
     });
@@ -377,6 +369,31 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
         setMode(next);
         sessionModeRef.current = writeRunConfigModePreference(next) ? null : next;
     };
+
+    const openValidationIssue = (issue) => {
+        const target = validationIssueTarget(issue, draftRef.current);
+        if (mode === "simple" && target.simpleFocusId) {
+            const node = document.getElementById(target.simpleFocusId);
+            node?.focus();
+            node?.scrollIntoView?.({ block: "nearest" });
+            return;
+        }
+        focusRequest.current = { id: target.advancedFocusId, tab: target.tab };
+        setTab(target.tab);
+        if (mode !== "advanced") chooseMode("advanced");
+        setFocusTick((value) => value + 1);
+    };
+
+    useEffect(() => {
+        const pending = focusRequest.current;
+        if (!pending || mode !== "advanced" || tab !== pending.tab) return;
+        const node = document.getElementById(pending.id)
+            || (pending.id === "run-focus-render-recipe" ? document.getElementById("run-focus-sensors") : null);
+        focusRequest.current = null;
+        if (!node) return;
+        node.focus();
+        node.scrollIntoView?.({ block: "nearest" });
+    }, [focusTick, mode, tab]);
 
     useEffect(() => {
         let mounted = true;
@@ -742,7 +759,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
         });
     };
 
-    const save = async () => perform(async () => {
+    const save = async ({ nested = false } = {}) => perform(async () => {
         rejectPendingJson();
         const local = validateRunManifest(draft, authoringOptions());
         if (!local.ok) {
@@ -766,7 +783,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
             controller.selectManifest(stored.id);
         }
         return stored;
-    });
+    }, { nested });
 
     const validate = async () => perform(async () => {
         rejectPendingJson();
@@ -776,18 +793,25 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
         return result;
     });
 
-    const launch = async () => perform(async () => {
-        rejectPendingJson();
-        let current = saved;
-        if (dirty) current = await save();
-        const manifestId = current.id;
-        const result = await validateRunManifestOnServer(manifestId, current);
-        setValidation(result);
-        if (!result.ok) throw new Error(formatValidationIssues(result.issues, { prefix: "Cannot launch until validation passes" }));
-        const resolved = await resolveRunManifest(manifestId);
-        await controller.prepare(resolved, { autoplay: true });
-        onLaunch?.(resolved);
-    }, { nested: true });
+    const launch = async () => {
+        if (!launchGateRef.current.enter()) return;
+        try {
+            await perform(async () => {
+                rejectPendingJson();
+                let current = saved;
+                if (dirty) current = await save({ nested: true });
+                const manifestId = current.id;
+                const result = await validateRunManifestOnServer(manifestId, current);
+                setValidation(result);
+                if (!result.ok) throw new Error(formatValidationIssues(result.issues, { prefix: "Cannot launch until validation passes" }));
+                const resolved = await resolveRunManifest(manifestId);
+                await controller.prepare(resolved, { autoplay: true });
+                onLaunch?.(resolved);
+            });
+        } finally {
+            launchGateRef.current.leave();
+        }
+    };
 
     const perform = async (operation, { nested = false } = {}) => {
         if (!nested) setBusy(true);
@@ -972,6 +996,9 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                                 vehicleCatalog={vehicleCatalog}
                                 sensorCatalog={sensorCatalog}
                                 sensorRegistry={authoringOptions().sensorRegistry}
+                                resolutionSuspended={jsonBlocked}
+                                comparisonLatch={comparisonLatch}
+                                onComparisonLatch={onComparisonLatch}
                                 onUpdate={update}
                                 onOpenAdvanced={(nextTab) => {
                                     setTab(nextTab);
@@ -980,13 +1007,14 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                             >
                                 <ConfigurationAttention
                                     attention={configurationAttention}
-                                    validation={validation}
+                                    draft={draft}
                                     environmentError={environmentError}
                                     error={error}
+                                    onOpenIssue={openValidationIssue}
                                     onDiscardBuffer={discardBuffer}
                                     onRetryEnvironments={loadEnvironmentCatalog}
                                 />
-                                {validation?.ok && <StatusMessage className="mb-4" tone="success" title="Manifest and dependencies are valid." />}
+                                <ValidationOutcome validation={validation} error={error} runStatus={runState.status} busy={busy} />
                                 {migrationPending && <StatusMessage className="mb-4" tone="info" title={`Run manifest v${saved.version} is ready to migrate`}>Saving writes the normalized v{RUN_MANIFEST_VERSION} document. Manifests before v8 also gain missing candidate perception and localization return topics.</StatusMessage>}
                             </SimpleRunWorkspace>
                         )}
@@ -1008,13 +1036,14 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
 
                             <ConfigurationAttention
                                 attention={configurationAttention}
-                                validation={validation}
+                                draft={draft}
                                 environmentError={environmentError}
                                 error={error}
+                                onOpenIssue={openValidationIssue}
                                 onDiscardBuffer={discardBuffer}
                                 onRetryEnvironments={loadEnvironmentCatalog}
                             />
-                            {validation?.ok && <StatusMessage className="mb-4" tone="success" title="Manifest and dependencies are valid." />}
+                            <ValidationOutcome validation={validation} error={error} runStatus={runState.status} busy={busy} />
                             {migrationPending && <StatusMessage className="mb-4" tone="info" title={`Run manifest v${saved.version} is ready to migrate`}>Saving writes the normalized v{RUN_MANIFEST_VERSION} document. Manifests before v8 also gain missing candidate perception and localization return topics.</StatusMessage>}
 
                             <TabsList aria-label="Run manifest sections" className="mb-5 overflow-x-auto">
@@ -1024,6 +1053,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                             <div key={editorSession} className="border-t border-[var(--slate-border)] pt-5">
                                 {TABS.map((item) => (
                                     <TabsContent key={item} value={item} forceMount>
+                                        <div id={`run-focus-tab-${item}`} tabIndex={-1}>
                                         {item === "Overview" && <Overview draft={draft} environments={environments} update={update} />}
                                         {item === "Scenario" && <ScenarioSelection draft={draft} scenarios={scenarioCatalog} scenarioCatalogState={scenarioCatalogState} scenarioCatalogError={scenarioCatalogError} retryScenarios={loadScenarioCatalog} vehicleCatalog={vehicleCatalog} update={update} />}
                                         {item === "Initial State" && <InitialState draft={draft} update={update} vehicleCatalog={vehicleCatalog} />}
@@ -1060,7 +1090,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                                         {item === "Provenance" && <Provenance draft={draft} update={update} />}
                                         {item === "JSON" && (
                                             <div className="space-y-3">
-                                                <textarea aria-label="Raw run manifest JSON" spellCheck={false} value={raw} onChange={(event) => applyRaw(event.target.value)} className="sf-input min-h-[520px] resize-y p-4 font-mono text-[12px] leading-relaxed" />
+                                                <textarea id="run-focus-json" aria-label="Raw run manifest JSON" spellCheck={false} value={raw} onChange={(event) => applyRaw(event.target.value)} className="sf-input min-h-[520px] resize-y p-4 font-mono text-[12px] leading-relaxed" />
                                                 {buffers[RAW_MANIFEST_BUFFER_ID]?.error && (
                                                     <p className="text-[11px] text-[var(--slate-danger)]">{buffers[RAW_MANIFEST_BUFFER_ID].error}</p>
                                                 )}
@@ -1072,6 +1102,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                                                 </details>
                                             </div>
                                         )}
+                                        </div>
                                     </TabsContent>
                                 ))}
                             </div>
@@ -1112,18 +1143,27 @@ function AdvancedRunEditor({ hidden = false, children }) {
     return <div {...advancedEditorA11yProps(hidden)}>{children}</div>;
 }
 
+function ValidationOutcome({ validation, error, runStatus, busy = false }) {
+    if (!validationSuccessVisible({ ok: validation?.ok, error, runStatus, busy })) return null;
+    return (
+        <StatusMessage className="mb-4" tone="success" title="Manifest and dependencies are valid.">
+            This checks the saved manifest and its dependencies. It does not mean an external controller is connected or that runtime preparation succeeded.
+        </StatusMessage>
+    );
+}
+
 function ConfigurationAttention({
     attention,
-    validation,
+    draft,
     environmentError,
     error,
+    onOpenIssue,
     onDiscardBuffer,
     onRetryEnvironments,
 }) {
     if (!attention?.sections?.length) return null;
     return (
         <StatusMessage className="mb-4" tone="danger" title={attention.title}>
-            <AdvancedValidationBanner issues={validation?.issues || []} />
             <div className="space-y-3">
                 {attention.sections.map((section) => (
                     <div key={section.key}>
@@ -1136,15 +1176,16 @@ function ConfigurationAttention({
                         {section.issues && (
                             <ul className="mt-1 space-y-1.5 text-[13px]">
                                 {section.issues.map((issue, index) => {
-                                    const path = issue.path ? String(issue.path) : "manifest";
-                                    const location = validationIssueLocation(path);
+                                    const target = validationIssueTarget(issue, draft);
+                                    const path = target.path || "manifest";
                                     return (
                                         <li key={`${path}-${index}`} className="rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-2)] px-3 py-2">
-                                            <p className="font-mono text-[11px] text-[var(--slate-muted)]">
-                                                {path}
-                                                {location ? ` · open ${location}` : ""}
-                                            </p>
+                                            <p className="text-[12px] font-medium text-[var(--slate-fg-2)]">{target.explanation}</p>
                                             <p className="mt-1 text-[var(--slate-fg)]">{issue.message}</p>
+                                            <p className="mt-1 font-mono text-[11px] text-[var(--slate-muted)]">{path}</p>
+                                            <button type="button" className="mt-2 text-[11px] font-medium text-[var(--slate-fg-2)]" onClick={() => onOpenIssue(issue)}>
+                                                Show
+                                            </button>
                                         </li>
                                     );
                                 })}
@@ -1390,7 +1431,7 @@ function RunParameterDeclarations({ parameters, update }) {
             {parameters.length === 0 ? <p className="text-[12px] text-[var(--slate-muted)]">This run configuration declares no sweepable parameters.</p> : (
                 <div className="space-y-3">
                     {parameters.map((parameter, index) => (
-                        <div key={`${parameter.id}-${index}`} className="rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] p-4">
+                        <div key={`${parameter.id}-${index}`} id={`run-focus-parameter-${index}`} tabIndex={-1} className="rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] p-4">
                             <div className="grid gap-3 md:grid-cols-4">
                                 <Field label="Stable ID"><input value={parameter.id} onChange={(event) => replace(index, { ...parameter, id: event.target.value })} /></Field>
                                 <Field label="Name"><input value={parameter.name} onChange={(event) => replace(index, { ...parameter, name: event.target.value })} /></Field>
@@ -1494,7 +1535,7 @@ function Observation({ draft, update }) {
     const choices = observationProfileChoices();
     const selectedId = draft.observationProfile?.id || "measured-state";
     const selected = choices.find((choice) => choice.id === selectedId) || choices[0];
-    const hasLidar = (draft.sensorRig?.sensors || []).some((sensor) => sensor.enabled !== false && sensor.type === "lidar3d");
+    const hasLidar = (draft.sensorRig?.sensors || []).some((sensor) => sensor.enabled !== false && isScanningLidarType(sensor.type));
     const choose = (id) => {
         if (id === "measured-state") {
             update(["observationProfile"], null);
@@ -1896,7 +1937,12 @@ function Sensors({
         }
     };
     return (
-        <div className="space-y-4">
+        <div id="run-focus-sensors" tabIndex={-1} className="space-y-4">
+            {draft.renderRecipe && (
+                <p id="run-focus-render-recipe" tabIndex={-1} className="text-[12px] text-[var(--slate-muted)]">
+                    Render recipe is stored on this run. Edit it in the JSON tab.
+                </p>
+            )}
             <div className="rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] p-4">
                 <Toggle
                     label="Inherit sensors from the selected vehicle"
@@ -1997,7 +2043,7 @@ function Sensors({
                 };
                 const oracleIndex = index >= 0 ? index : draft.sensorRig.sensors.length;
                 return (
-                    <div key={sensor.inheritedFrom || sensor.id} data-sensor-id={sensor.id} className="rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] p-4">
+                    <div key={sensor.inheritedFrom || sensor.id} id={`run-focus-sensor-${sensor.id}`} tabIndex={-1} data-sensor-id={sensor.id} className="rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] p-4">
                         {inherited && <p className="mb-3 text-[12px] font-medium text-[var(--slate-muted)]">From vehicle</p>}
                         <div className="grid gap-3 md:grid-cols-4">
                             <Toggle label="Enabled" value={sensor.enabled} onChange={(value) => change(["enabled"], value)} />
@@ -2165,7 +2211,7 @@ function SensorTransportControls({ draft, sensor, definition, update }) {
         update([], copy);
     };
     return (
-        <div className="mt-4 space-y-3 rounded-[var(--radius)] border border-[var(--slate-border-60)] p-3">
+        <div id={`run-focus-transport-${sensor.id}`} tabIndex={-1} className="mt-4 space-y-3 rounded-[var(--radius)] border border-[var(--slate-border-60)] p-3">
             <p className="text-[13px] font-medium text-[var(--slate-fg-2)]">Vendor packet streams</p>
             <p className="text-[11px] text-[var(--slate-muted)]">
                 Native recording is available. Classic PCAP is written by headless workers. Live UDP runs only on a configured supervisor (`packetTransports`); browser launch and direct unsupervised CLI remain unsupported. Endpoint IDs may stay unresolved while authoring.
@@ -2442,6 +2488,7 @@ function Scripts({
                 </p>
                 <div className="flex items-center justify-between gap-2">
                     <select
+                        id="run-focus-plugins"
                         aria-label="Installed plugin packages"
                         className="sf-input min-w-0 flex-1"
                         defaultValue=""
@@ -2716,6 +2763,7 @@ function TopicCard({ topic, index, contracts, update, onRemove }) {
                 </Field>
                 <Field label="ROS type">
                     <input
+                        id={`run-focus-topic-${index}-schema`}
                         value={rosType}
                         onChange={(event) => update(["topics", index], {
                             ...topic,

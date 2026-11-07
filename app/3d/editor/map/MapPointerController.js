@@ -2,6 +2,7 @@ import { findNearestNode } from "../document/documentMutations.js";
 import { MAP_SELECTION_TYPES, MAP_TOOLS } from "../EditorState.js";
 import { pickMapTarget } from "./mapHitTest.js";
 import {
+    beginDriveAreaDrag,
     beginFeatureDrag,
     beginPrimitiveDrag,
     beginAssetDrag,
@@ -17,6 +18,9 @@ import {
     handleBuildingRectDown,
     handleBuildingRectMove,
     handleBuildingRectUp,
+    handleDriveAreaRectDown,
+    handleDriveAreaRectMove,
+    handleDriveAreaRectUp,
     handleFeaturePlace,
     handlePrimitivePlace,
     handleIntersectionPlace,
@@ -91,7 +95,7 @@ export class MapPointerController {
         this.clearConnectPreview(ctx?.data?.editor?.());
         if (interaction?.gestureId) cancelDrag({ interaction, data: ctx?.data });
         if (interaction?.type === "move-road-sub") interaction.controller?.cancelSubDrag?.();
-        if (interaction?.type === "building-rect") ctx?.data?.editor?.()?.clearMapDraft?.();
+        if (interaction?.type === "building-rect" || interaction?.type === "drive-area-rect") ctx?.data?.editor?.()?.clearMapDraft?.();
     }
 
     handleWheel({ data, containerRect, size }, event) {
@@ -145,6 +149,12 @@ export class MapPointerController {
         if (tool === MAP_TOOLS.BUILDING_RECT) {
             handleBuildingRectDown({ worldPoint: world, editor });
             this.activeInteraction = { type: "building-rect" };
+            return true;
+        }
+
+        if (tool === MAP_TOOLS.DRIVE_AREA_RECT) {
+            handleDriveAreaRectDown({ worldPoint: world, editor });
+            this.activeInteraction = { type: "drive-area-rect" };
             return true;
         }
 
@@ -209,6 +219,14 @@ export class MapPointerController {
                 selection?.select(pick.id);
                 this.activeInteraction = pendingObject(
                     () => beginPrimitiveDrag({ document, data, primitiveId: pick.id, worldPoint: worldStart }),
+                );
+                return true;
+            }
+
+            if (pick?.type === MAP_SELECTION_TYPES.DRIVE_AREA && !isAdditive(event)) {
+                selection?.select(pick.id);
+                this.activeInteraction = pendingObject(
+                    () => beginDriveAreaDrag({ data, driveAreaId: pick.id, worldPoint: worldStart }),
                 );
                 return true;
             }
@@ -297,7 +315,7 @@ export class MapPointerController {
             return;
         }
 
-        if (this.activeInteraction?.type === "move-feature" || this.activeInteraction?.type === "move-primitive") {
+        if (this.activeInteraction?.type === "move-feature" || this.activeInteraction?.type === "move-primitive" || this.activeInteraction?.type === "move-drive-area") {
             const world = getWorldFromEvent(event);
             if (world) updateFeatureDrag({ interaction: this.activeInteraction, editor, data, worldPoint: world });
             return;
@@ -374,6 +392,9 @@ export class MapPointerController {
         if (tool === MAP_TOOLS.BUILDING_RECT && this.activeInteraction?.type === "building-rect") {
             handleBuildingRectMove({ worldPoint: world, editor });
         }
+        if (tool === MAP_TOOLS.DRIVE_AREA_RECT && this.activeInteraction?.type === "drive-area-rect") {
+            handleDriveAreaRectMove({ worldPoint: world, editor });
+        }
     }
 
     handlePointerUp(ctx, event) {
@@ -393,6 +414,10 @@ export class MapPointerController {
             handleBuildingRectUp({ editor, data });
             return;
         }
+        if (interaction.type === "drive-area-rect") {
+            handleDriveAreaRectUp({ editor, data });
+            return;
+        }
 
         const world = getWorldFromEvent(event);
         if (interaction.type === "move-node") {
@@ -401,7 +426,7 @@ export class MapPointerController {
             return;
         }
 
-        if (interaction.type === "move-feature" || interaction.type === "move-primitive") {
+        if (interaction.type === "move-feature" || interaction.type === "move-primitive" || interaction.type === "move-drive-area") {
             finishFeatureDrag({ interaction, editor, data, worldPoint: world });
             return;
         }

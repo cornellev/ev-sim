@@ -2,6 +2,7 @@ import { Euler, Vector3 } from "three";
 
 import { cameraScanAngles } from "../../../3d/devices/cameraScanAngles.js";
 import { CPU_LIDAR_NEAR_METERS } from "../../../simulation/sensors/CpuLidarScene.js";
+import { PLANAR_LIDAR_ELEVATION } from "../../../simulation/sensors/SensorTypeRegistry.js";
 import { assertRangeImageLayout } from "../../../simulation/sensors/RangeImageLayout.js";
 
 const NOT_RANGING = new Set(["imu", "gnss", "wheel-odometry"]);
@@ -32,6 +33,25 @@ export function enumerateCoverageRays(manifest, definitions) {
                 continue;
             }
             appendRangeImage(rays, sensor, layout);
+            continue;
+        }
+        if (type === "lidar2d") {
+            const config = sensor?.config ?? {};
+            const range = Number(config.range);
+            const thetaStep = Number(config.thetaStep);
+            const thetaRange = pair(config.thetaRange, [-180, 180]);
+            if (!(range > 0) || !(thetaStep > 0) || !thetaRange) {
+                skipped.push({ id, type, reason: "invalid-layout" });
+                continue;
+            }
+            appendUniformGrid(rays, sensor, {
+                range,
+                thetaStep,
+                phiStep: PLANAR_LIDAR_ELEVATION.stepDeg,
+                thetaRange,
+                phiRange: [PLANAR_LIDAR_ELEVATION.startDeg, PLANAR_LIDAR_ELEVATION.endDeg],
+                minRangeM: CPU_LIDAR_NEAR_METERS,
+            });
             continue;
         }
         if (type === "lidar3d" || type === "camera") {

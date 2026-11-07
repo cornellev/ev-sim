@@ -159,12 +159,15 @@ context manager. `sim.run_config` keeps the bundle directory alive until the
 environment is closed. `config.save(path)` copies the bundle. `config.world`
 is the `PlanningWorld`.
 
-Free drive still contains a verified ego route, because a headless episode
-requires one. `--finish none` replaces the finish-zone trigger with a trigger
-on the flag `cev-sim.free-drive.stop`, which nothing sets. The episode then
-ends on collision, off-road, `max_steps`, or when the caller stops.
-A goal is a protocol 1.5 reset override, not a finish zone, so changing it
-does not rebuild the bundle.
+On a road world, free drive still contains a verified ego route. `--finish none`
+replaces the finish-zone trigger with a trigger on the flag
+`cev-sim.free-drive.stop`, which nothing sets. On an area-only world the same
+flag selects `freeDrive`: the bundle has no route, `load_world()` reports
+route length 0, and `world.goal` is `None`. The start pose is the manifest
+pose. The episode ends on collision, off-road, `max_steps`, or when the caller
+stops. A goal is a protocol 1.5 reset override, not a finish zone, so changing
+it does not rebuild the bundle. `env.goal()` returns `None` when the oracle
+goal is invalid.
 
 `environments.list()` and `vehicles.list()` return `CatalogEntry` records
 (`id`, `name`, `built_in`) from `cev-sim catalog`.
@@ -214,7 +217,7 @@ actual final observation; callers must reset before stepping again.
 are frozen configuration values exported by `cev_sim`. The default episode
 uses one fixed step per action, no policy-step bound, the measured-state and
 default route-safety profiles, bundle-selected physics, and deterministic
-state sensors. If the bundle manifest enables `lidar3d`, the client also adds
+state sensors. If the bundle manifest enables `lidar3d` or `lidar2d`, the client also adds
 the locked `DEFAULT_CPU_LIDAR_BACKEND` selection and verifies that the
 supervisor advertises `deterministic-cpu-bvh-lidar` version `1`. CPU point
 clouds are published to topics and SFLog; the default Python observation

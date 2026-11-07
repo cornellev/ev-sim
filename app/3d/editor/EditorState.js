@@ -23,6 +23,7 @@ export const MAP_TOOLS = Object.freeze({
     ROAD_PEN: "road-pen",
     INTERSECTION: "intersection",
     BUILDING_RECT: "building-rect",
+    DRIVE_AREA_RECT: "drive-area-rect",
     FEATURE_PLACE: "feature-place",
     ASSET_PLACE: "asset-place",
     PRIMITIVE_PLACE: "primitive-place",
@@ -30,6 +31,7 @@ export const MAP_TOOLS = Object.freeze({
 
 export const MAP_SELECTION_TYPES = Object.freeze({
     BUILDING: "building",
+    DRIVE_AREA: "drive-area",
     FEATURE: "feature",
     ROAD: "road",
     INTERSECTION: "intersection",

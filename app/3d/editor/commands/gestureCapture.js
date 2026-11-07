@@ -21,6 +21,7 @@ export function captureRecords(document, closure) {
         "roads.edges": new Map(),
         features: new Map(),
         buildings: new Map(),
+        driveAreas: new Map(),
         primitives: new Map(),
         objects: new Map(),
         scalars: new Map(),
@@ -29,6 +30,7 @@ export function captureRecords(document, closure) {
     for (const edgeId of closure.edgeIds ?? []) cloneInto(capture["roads.edges"], edgeId, index.edges.get(String(edgeId)));
     for (const featureId of closure.featureIds ?? []) cloneInto(capture.features, featureId, index.features.get(String(featureId)));
     for (const buildingId of closure.buildingIds ?? []) cloneInto(capture.buildings, buildingId, index.buildings.get(String(buildingId)));
+    for (const areaId of closure.driveAreaIds ?? []) cloneInto(capture.driveAreas, areaId, index.driveAreas.get(String(areaId)));
     for (const primitiveId of closure.primitiveIds ?? []) cloneInto(capture.primitives, primitiveId, index.primitives.get(String(primitiveId)));
     const objectIds = new Set([...(closure.groups ?? []), ...(closure.objectIds ?? [])]);
     for (const objectId of objectIds) cloneInto(capture.objects, objectId, index.objects.get(String(objectId)));

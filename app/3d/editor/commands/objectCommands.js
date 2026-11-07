@@ -9,8 +9,10 @@
 import { createId } from "../document/EnvironmentDocument.js";
 import {
     addBuildingRecord,
+    addDriveAreaRecord,
     addFeature,
     removeBuilding,
+    removeDriveArea,
     removeFeature,
     removeIntersectionNode,
     removeRoadEdge,
@@ -27,6 +29,7 @@ import { OBJECT_TYPE_ERROR_CODES, ObjectTypeError } from "../objects/ObjectTypeR
 import { STANDARD_COMPONENT_KEYS, compareObjectRecords, createObjectRecord, normalizeObjectRecord } from "../objects/objectRecord.js";
 import { GROUP_TYPE_ID } from "../objects/types/group.js";
 import { BUILDING_TYPE_ID } from "../objects/types/building.js";
+import { DRIVE_AREA_TYPE_ID } from "../objects/types/driveArea.js";
 import { BUILTIN_PROP_TYPE_ID } from "../objects/types/builtinProp.js";
 import { INTERSECTION_TYPE_ID } from "../objects/types/intersection.js";
 import { ROAD_TYPE_ID } from "../objects/types/road.js";
@@ -68,6 +71,7 @@ const LEGACY_DUPLICABLE_TYPE_IDS = new Set([
     GROUP_TYPE_ID,
     BUILTIN_PROP_TYPE_ID,
     BUILDING_TYPE_ID,
+    DRIVE_AREA_TYPE_ID,
     ROAD_TYPE_ID,
     INTERSECTION_TYPE_ID,
     ASSET_INSTANCE_TYPE_ID,
@@ -439,7 +443,7 @@ export function deleteObjects({ objectIds = [], label = "Delete" } = {}) {
 
             const document = ctx.document;
             const byType = (typeId) => closure.filter((id) => byId.get(id).typeId === typeId);
-            const removed = { intersections: [], roads: [], buildings: [], features: [], primitives: [], groups: [] };
+            const removed = { intersections: [], roads: [], buildings: [], driveAreas: [], features: [], primitives: [], groups: [] };
             for (const id of byType(INTERSECTION_TYPE_ID)) {
                 if (document.getNode(id)) {
                     const result = removeIntersectionNode(document, id, { notify: false });
@@ -460,6 +464,13 @@ export function deleteObjects({ objectIds = [], label = "Delete" } = {}) {
                     if (!result.ok) return commandFailure(commandIssue(COMMAND_ISSUE_CODES.MUTATION_FAILED, result.error, { objectId: id }));
                 }
                 removed.buildings.push(id);
+            }
+            for (const id of byType(DRIVE_AREA_TYPE_ID)) {
+                if (document.getDriveArea(id)) {
+                    const result = removeDriveArea(document, id, { notify: false });
+                    if (!result.ok) return commandFailure(commandIssue(COMMAND_ISSUE_CODES.MUTATION_FAILED, result.error, { objectId: id }));
+                }
+                removed.driveAreas.push(id);
             }
             for (const id of byType(BUILTIN_PROP_TYPE_ID)) {
                 if (document.getFeature(id)) {
@@ -591,6 +602,12 @@ export function duplicateObjects({ objectIds = [], label = "Duplicate" } = {}) {
                     newId = buildingIdFromFootprint(building.footprint, document.buildings.length + createdIds.length + 1);
                     while (document.getBuilding(newId)) newId = `${newId}-copy`;
                     const added = addBuildingRecord(document, { ...structuredClone(building), buildingId: newId, meshName: newId }, { notify: false });
+                    if (!added.ok) throw new Error(added.error);
+                } else if (record.typeId === DRIVE_AREA_TYPE_ID) {
+                    const area = document.getDriveArea(id);
+                    if (!area) throw new Error(`Drive area "${id}" is missing.`);
+                    newId = createId("drive-area");
+                    const added = addDriveAreaRecord(document, { ...structuredClone(area), id: newId }, { notify: false });
                     if (!added.ok) throw new Error(added.error);
                 } else if (record.typeId === ROAD_TYPE_ID) {
                     newId = roadDuplicate.edgeIdFor(id);

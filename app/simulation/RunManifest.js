@@ -1,6 +1,7 @@
 import {
     applySensorOracleProduct,
     createRunSensor,
+    isScanningLidarType,
     listSensorTypes,
     normalizeRunSensor,
     ORACLE_PRODUCT_TOGGLES,
@@ -927,9 +928,9 @@ export function validateRunManifest(value, {
                 issues.push({ path: "observationProfile.configHash", message: `Observation profile ${profile.id}@${profile.version} does not match its published config hash.` });
             }
         }
-        const hasLidar = (manifest.sensorRig?.sensors || []).some((sensor) => sensor.enabled !== false && sensor.type === "lidar3d");
+        const hasLidar = (manifest.sensorRig?.sensors || []).some((sensor) => sensor.enabled !== false && isScanningLidarType(sensor.type));
         if (profile.id === "sensor-occupancy" && !hasLidar) {
-            issues.push({ path: "sensorRig.sensors", message: "Sensor occupancy requires an enabled lidar3d sensor." });
+            issues.push({ path: "sensorRig.sensors", message: "Sensor occupancy requires an enabled lidar2d or lidar3d sensor." });
         }
     }
     return { ok: issues.length === 0, manifest, issues };

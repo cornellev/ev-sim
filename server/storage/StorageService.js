@@ -29,6 +29,7 @@ import {
     ENVIRONMENT_UNGUARDED_WRITE,
     assertNoAssetMetricsDowngrade,
     assertNoPrimitiveDowngrade,
+    assertNoDriveAreaDowngrade,
     assertNoObjectGraphDowngrade,
     assertNoRoadGeometryDowngrade,
     assertNoEditorSourceDowngrade,
@@ -583,6 +584,7 @@ export class StorageService {
                 supportedAssetMetricVersions: [1],
                 supportedEditorSourceVersions: [1],
                 supportedScenePrimitiveVersions: [1],
+                supportedDriveAreaVersions: [1],
             });
             const committedHash = marketplaceEnvironmentContentHash(committed);
             if (committedHash !== contentHash) throw new Error("Committed marketplace environment content changed during serialization.");
@@ -1002,6 +1004,7 @@ export class StorageService {
                     supportedAssetMetricVersions: [1],
                     supportedEditorSourceVersions: options.supportedEditorSourceVersions ?? [1],
                     supportedScenePrimitiveVersions: [1],
+                    supportedDriveAreaVersions: [1],
                 }
                 : parseEnvironmentWriteInput(input);
             return this._commitEnvironment(environmentId, parsed.manifest, {
@@ -1012,6 +1015,7 @@ export class StorageService {
                 supportedAssetMetricVersions: parsed.supportedAssetMetricVersions,
                 supportedEditorSourceVersions: parsed.supportedEditorSourceVersions,
                 supportedScenePrimitiveVersions: parsed.supportedScenePrimitiveVersions,
+                supportedDriveAreaVersions: parsed.supportedDriveAreaVersions,
                 trustedAssetPins: options.trustedAssetPins === true,
             });
         });
@@ -1456,10 +1460,19 @@ export class StorageService {
         if (scenario.environment.expectedHash && scenario.environment.expectedHash !== environmentHash) {
             throw new Error(`Environment "${scenario.environment.id}" changed: expected ${scenario.environment.expectedHash}, received ${environmentHash}.`);
         }
-        for (const route of scenario.routes) {
-            const routeValidation = validateRouteVerification(route, world.description);
-            if (!routeValidation.ok) {
-                throw new Error(`Route "${route.id}" must be re-verified: ${routeValidation.issues.map((issue) => issue.message).join(" ")}`);
+        if (scenario.freeDrive === true) {
+            const nodes = world.description.roads?.nodes ?? [];
+            const edges = world.description.roads?.edges ?? [];
+            const areas = (world.description.drivableSurfaces ?? []).filter((surface) => surface?.kind === "area-polygon");
+            if (nodes.length !== 0 || edges.length !== 0 || areas.length < 1) {
+                throw new Error("A free-drive scenario requires a world with no roads and at least one drive area.");
+            }
+        } else {
+            for (const route of scenario.routes) {
+                const routeValidation = validateRouteVerification(route, world.description);
+                if (!routeValidation.ok) {
+                    throw new Error(`Route "${route.id}" must be re-verified: ${routeValidation.issues.map((issue) => issue.message).join(" ")}`);
+                }
             }
         }
 
@@ -2129,6 +2142,7 @@ export class StorageService {
                     vehicles: buildScenarioInitialVehicles(
                         resolvedScenario.scenario,
                         selectedScenario.egoVehicleId,
+                        manifest.initialState?.vehicles,
                     ),
                 },
                 clock: scenarioUsesExternalController(resolvedScenario.scenario)
@@ -3932,6 +3946,7 @@ export class StorageService {
         supportedAssetMetricVersions = [1],
         supportedEditorSourceVersions = [1],
         supportedScenePrimitiveVersions = [1],
+        supportedDriveAreaVersions = [1],
         trustedAssetPins = false,
     } = {}) {
         const current = await this._readEnvironment(environmentId);
@@ -3946,6 +3961,7 @@ export class StorageService {
                 assertNoRoadGeometryDowngrade(manifest, current, supportedRoadGeometryVersions);
                 assertNoAssetMetricsDowngrade(manifest, current, supportedAssetMetricVersions);
                 assertNoPrimitiveDowngrade(manifest, current, supportedScenePrimitiveVersions);
+                assertNoDriveAreaDowngrade(manifest, current, supportedDriveAreaVersions);
             } catch (error) {
                 throw environmentPolicyError(error);
             }
@@ -4642,10 +4658,25 @@ function scenarioUsesExternalController(scenario) {
     return scenario.routes.some((route) => route.controller?.kind === "external-ros");
 }
 
-function buildScenarioInitialVehicles(scenario, egoVehicleId) {
+function buildScenarioInitialVehicles(scenario, egoVehicleId, preservedVehicles = []) {
     const routes = new Map(scenario.routes.map((route) => [route.actorId, route]));
+    const preserved = new Map((preservedVehicles ?? []).map((vehicle) => [vehicle.id, vehicle]));
     return scenario.actors.filter((actor) => actor.enabled !== false).map((actor) => {
         const route = routes.get(actor.id);
+        if (!route) {
+            const prior = preserved.get(actor.id);
+            if (!prior?.pose?.position) {
+                throw new Error(`Actor "${actor.id}" has no route and no preserved start pose.`);
+            }
+            return {
+                id: actor.id,
+                role: actor.id === "ego" ? "ego" : actor.role,
+                type: actor.id === "ego" ? egoVehicleId : actor.vehicleId,
+                pose: structuredClone(prior.pose),
+                linearVelocity: structuredClone(prior.linearVelocity ?? { x: 0, y: 0, z: 0 }),
+                steeringAngle: Number(prior.steeringAngle || 0),
+            };
+        }
         const start = route?.waypoints?.[0];
         const routeStart = route?.verification?.polyline?.[0];
         const routeNext = route?.verification?.polyline?.[1];

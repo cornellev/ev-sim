@@ -149,7 +149,7 @@ class PlanningWorld:
     drivable_surfaces: tuple[DrivableSurface, ...]
     vehicle: VehicleModel
     start: Pose2D
-    goal: Pose2D
+    goal: Pose2D | None
 
     def occupancy_grid(
         self,
@@ -177,9 +177,13 @@ class PlanningWorld:
         return OccupancyGrid(cells=cells, origin_x=min_x, origin_z=min_z, resolution_m=float(resolution_m))
 
     def _default_bounds(self) -> tuple[float, float, float, float]:
-        points = [self.route_polyline]
+        points = []
+        if len(self.route_polyline):
+            points.append(self.route_polyline)
         points.extend(surface.vertices for surface in self.drivable_surfaces if len(surface.vertices))
         points.extend(obstacle.footprint for obstacle in self.obstacles if len(obstacle.footprint))
+        if not points:
+            raise CevSimConfigurationError("occupancy bounds need a route or a drive area")
         stacked = np.vstack(points)
         pad = max(self.vehicle.length_m, self.vehicle.width_m, 1.0)
         return (
@@ -195,29 +199,47 @@ def load_world(bundle: BundleInput) -> PlanningWorld:
     resolved = document["resolved"]
     manifest = document["manifest"]
     scenario = ((resolved.get("scenario") or {}).get("scenario") or {})
-    route = _ego_route(scenario, manifest)
-    verification = route.get("verification") or {}
-    polyline = _points(verification.get("polyline"))
-    distances = np.asarray(verification.get("cumulativeDistances") or [], dtype=np.float64)
-    if len(polyline) < 2 or len(distances) != len(polyline):
-        raise CevSimConfigurationError("The bundle route needs a verified polyline and cumulative distances")
     description = ((resolved.get("world") or {}).get("description") or {})
+    free_drive = scenario.get("freeDrive") is True and not (scenario.get("routes") or [])
+    if free_drive:
+        if not _area_only_world(description):
+            raise CevSimConfigurationError("A free-drive bundle requires a world with no roads and at least one drive area")
+        polyline = np.zeros((0, 2), dtype=np.float64)
+        distances = np.zeros((0,), dtype=np.float64)
+        route_length = 0.0
+        goal = None
+    else:
+        route = _ego_route(scenario, manifest)
+        verification = route.get("verification") or {}
+        polyline = _points(verification.get("polyline"))
+        distances = np.asarray(verification.get("cumulativeDistances") or [], dtype=np.float64)
+        if len(polyline) < 2 or len(distances) != len(polyline):
+            raise CevSimConfigurationError("The bundle route needs a verified polyline and cumulative distances")
+        route_length = float(verification.get("totalLength") or distances[-1])
+        goal = _goal_pose(scenario, route, polyline)
     obstacles = _planning_obstacles(description)
     surfaces = tuple(_surface(entry, index) for index, entry in enumerate(description.get("drivableSurfaces") or []))
     surfaces = tuple(surface for surface in surfaces if len(surface.vertices) >= 3)
     vehicle = _vehicle(resolved, manifest)
     start = _start_pose(manifest, polyline)
-    goal = _goal_pose(scenario, route, polyline)
     return PlanningWorld(
         route_polyline=polyline,
         route_distances=distances,
-        route_length_m=float(verification.get("totalLength") or distances[-1]),
+        route_length_m=route_length,
         obstacles=obstacles,
         drivable_surfaces=surfaces,
         vehicle=vehicle,
         start=start,
         goal=goal,
     )
+
+
+def _area_only_world(description: dict[str, Any]) -> bool:
+    roads = description.get("roads") or {}
+    nodes = roads.get("nodes") or []
+    edges = roads.get("edges") or []
+    areas = [surface for surface in (description.get("drivableSurfaces") or []) if surface.get("kind") == "area-polygon"]
+    return len(nodes) == 0 and len(edges) == 0 and len(areas) > 0
 
 
 def _ego_route(scenario: dict[str, Any], manifest: dict[str, Any]) -> dict[str, Any]:
@@ -354,15 +376,25 @@ def _start_pose(manifest: dict[str, Any], polyline: np.ndarray) -> Pose2D:
         None,
     )
     vehicle = vehicle or (vehicles[0] if vehicles else None)
+    has_route = len(polyline) >= 2
     if vehicle and isinstance(vehicle.get("pose"), dict):
         position = vehicle["pose"].get("position") or {}
         rotation = vehicle["pose"].get("rotation") or {}
-        return Pose2D(
-            x=float(position.get("x", polyline[0, 0])),
-            z=float(position.get("z", polyline[0, 1])),
-            yaw=float(rotation.get("y", yaw_from_direction(*(polyline[1] - polyline[0])))),
-            speed_mps=0.0,
-        )
+        x = position.get("x")
+        z = position.get("z")
+        yaw = rotation.get("y") if isinstance(rotation, dict) else None
+        if x is None or z is None or yaw is None:
+            if not has_route:
+                raise CevSimConfigurationError("The bundle start pose is missing")
+            if x is None:
+                x = polyline[0, 0]
+            if z is None:
+                z = polyline[0, 1]
+            if yaw is None:
+                yaw = yaw_from_direction(*(polyline[1] - polyline[0]))
+        return Pose2D(x=float(x), z=float(z), yaw=float(yaw), speed_mps=0.0)
+    if not has_route:
+        raise CevSimConfigurationError("The bundle start pose is missing")
     delta = polyline[1] - polyline[0]
     yaw = yaw_from_direction(float(delta[0]), float(delta[1]))
     return Pose2D(x=float(polyline[0, 0]), z=float(polyline[0, 1]), yaw=yaw)

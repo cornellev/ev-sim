@@ -8,6 +8,7 @@ const ENTITY_PREFIX_BY_TYPE = Object.freeze({
     road: "road",
     intersection: "intersection",
     building: "building",
+    "drive-area": "drive-area",
     "builtin-prop": "fusion",
     "asset-instance": "asset",
     tile: "asset",
@@ -18,6 +19,7 @@ const TYPE_BY_ENTITY_KIND = Object.freeze({
     road: "road",
     intersection: "intersection",
     building: "building",
+    "drive-area": "drive-area",
     primitive: "primitive",
     "asset-instance": "asset-instance",
     tile: "tile",
@@ -100,6 +102,7 @@ export function objectIdForMapTarget(target) {
 
 const MAP_TYPE_BY_TYPE_ID = Object.freeze({
     building: "building",
+    "drive-area": "drive-area",
     "builtin-prop": "feature",
     road: "road",
     intersection: "intersection",

@@ -5,6 +5,7 @@ import { expect, test } from "@playwright/test";
 import { PluginStore } from "../../server/storage/PluginStore.js";
 import { pluginFixtureResource } from "../helpers/pluginFixtures.js";
 import { openWorkspace } from "./openWorkspace.js";
+import { preferRunConfigMode } from "./runConfigView.js";
 
 const storageRoot = path.resolve(process.env.CEV_SIM_DATA_DIR ?? ".playwright-data/storage");
 
@@ -20,6 +21,7 @@ test.beforeAll(async () => {
 
 test("Config Scripts tab locks an installed plugin and surfaces missing-package diagnostics", async ({ page }) => {
     test.setTimeout(180_000);
+    await preferRunConfigMode(page, "advanced");
     await page.goto("/");
     await openWorkspace(page, "Run configuration");
     await page.getByRole("button", { name: "New" }).first().click();

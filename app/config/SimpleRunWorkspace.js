@@ -6,15 +6,24 @@ import { subscribeStorageEvents } from "../client/storageEvents.js";
 import {
     EXECUTION_PROFILE_IDS,
     EXECUTION_PROFILE_LABELS,
-    inferExecutionProfile,
+    classifyConfiguration,
+    previewOverrideReset,
     previewProfile,
+    retainComparisonProfile,
+    valueAtOverridePath,
 } from "./executionProfiles.js";
+import {
+    RESOLUTION_DOMAINS,
+    createEffectiveResolver,
+    summaryRows,
+} from "./effectiveResolution.js";
 import { applyScenarioSelectionToManifest } from "./ConfigCatalogLoader.js";
 import {
     PROFILE_SURFACE_TABS,
     SIMPLE_VEHICLE_OPTIONS,
     applySimpleVehicleSelection,
     longitudinalSpeed,
+    overrideEditTarget,
     pluginGrantPreview,
     scenarioSelectionState,
     sensorInheritanceStatus,
@@ -26,6 +35,7 @@ import {
     withPositionAxis,
 } from "./simpleRunModel.js";
 import { RUN_LOGGING_POLICIES, RUN_PACING_MODES } from "../simulation/RunManifest.js";
+import { resolveRunManifest } from "../simulation/RunManifestClient.js";
 import { resolveInheritedVehicleSelection } from "../simulation/sensors/SensorInheritance.js";
 import { getScenario } from "../scenarios/ScenarioClient.js";
 import { Button, DialogSurface, Field as SharedField, SegmentedControl, StatusMessage } from "../ui";
@@ -55,6 +65,9 @@ export default function SimpleRunWorkspace({
     vehicleCatalog = [],
     sensorCatalog = { sensors: [] },
     sensorRegistry,
+    resolutionSuspended = false,
+    comparisonLatch = null,
+    onComparisonLatch = null,
     children = null,
     onUpdate,
     onOpenAdvanced,
@@ -65,7 +78,12 @@ export default function SimpleRunWorkspace({
     const [vehicleRequest, setVehicleRequest] = useState(0);
     const [preview, setPreview] = useState(null);
     const [grantPreview, setGrantPreview] = useState(null);
+    const [resetPreview, setResetPreview] = useState(null);
     const [stampIssues, setStampIssues] = useState([]);
+    const [dependencyEpoch, setDependencyEpoch] = useState(0);
+    const [resolution, setResolution] = useState(null);
+    const resolverRef = useRef(null);
+    const epochRef = useRef(0);
     const vehicleChangeRequest = useRef(0);
 
     const scenarioState = scenarioSelectionState(draft, scenarios, scenarioCatalogState);
@@ -86,27 +104,53 @@ export default function SimpleRunWorkspace({
         environmentsReady ? environments : null,
         scenario,
     );
-    const inference = inferExecutionProfile(draft, { scenario });
-    const activeIssues = inference.profileId
-        ? previewProfile(draft, inference.profileId, { scenario }).issues
+    const session = retainComparisonProfile(comparisonLatch, draft, { scenario });
+    const classification = useMemo(() => classifyConfiguration(draft, {
+        scenario,
+        vehicleManifest,
+        comparisonProfileId: session.inference.comparisonProfileId,
+    }), [draft, scenario, vehicleManifest, session.inference.comparisonProfileId]);
+    const activeIssues = classification.profileId
+        ? previewProfile(draft, classification.profileId, { scenario }).issues
         : [];
     const sensors = sensorInheritanceStatus(draft, vehicleManifest);
     const target = simpleVehicleTarget(draft);
     const targetIndex = target
         ? draft.initialState.vehicles.findIndex((vehicle) => vehicle.id === target.id)
         : -1;
-    const profileStale = Boolean(preview && (preview.draft !== draft || preview.scenario !== scenario));
+    const profileStale = Boolean(preview && (
+        preview.draft !== draft || preview.scenario !== scenario || preview.epoch !== dependencyEpoch
+    ));
     const profileConfirmable = Boolean(
         preview
         && !profileStale
         && preview.result.ready
         && preview.result.changes.length > 0,
     );
-    const grantStale = Boolean(grantPreview && grantPreview.draft !== draft);
+    const grantStale = Boolean(grantPreview && (
+        grantPreview.draft !== draft || grantPreview.epoch !== dependencyEpoch
+    ));
+    const resetStale = Boolean(resetPreview && (
+        resetPreview.draft !== draft || resetPreview.epoch !== dependencyEpoch
+    ));
+    const resetConfirmable = Boolean(resetPreview && !resetStale && resetPreview.result.changes.length > 0);
+    const baselineHeld = Boolean(draft.scenario?.id) && !scenario;
+    const baselineKey = baselineResolutionKey(draft, classification, selection, vehicleManifest, dependencyEpoch);
+    const currentManifest = resolution?.draft.status === "ready" ? resolution.draft.result?.manifest ?? null : null;
+    const baselineManifest = resolution?.baseline.status === "ready" ? resolution.baseline.result?.manifest ?? null : null;
+    const rows = summaryRows(currentManifest, baselineManifest);
+    const advancedTabs = advancedOverrideTabs(classification.overrides, {
+        scenarioOwned: Boolean(draft.scenario?.id),
+        actorId: selection.actorId || "ego",
+    });
 
     useEffect(() => {
         draftVersion.current += 1;
     }, [draft]);
+
+    useEffect(() => {
+        epochRef.current = dependencyEpoch;
+    }, [dependencyEpoch]);
 
     useEffect(() => {
         let cancelled = false;
@@ -140,6 +184,55 @@ export default function SimpleRunWorkspace({
         }
     }), [selection.vehicleId]);
 
+    useEffect(() => subscribeStorageEvents((event) => {
+        if (RESOLUTION_DOMAINS.has(event.domain)) setDependencyEpoch((value) => value + 1);
+    }), []);
+
+    useEffect(() => {
+        onComparisonLatch?.(session.retained);
+    }, [onComparisonLatch, session.retained]);
+
+    useEffect(() => {
+        const resolver = createEffectiveResolver({
+            resolve: (manifest) => resolveRunManifest(manifest.id, manifest),
+        });
+        resolverRef.current = resolver;
+        const unsubscribe = resolver.subscribe(setResolution);
+        return () => {
+            unsubscribe();
+            resolver.dispose();
+            resolverRef.current = null;
+        };
+    }, []);
+
+    useEffect(() => {
+        const resolver = resolverRef.current;
+        if (!resolver) return;
+        if (resolutionSuspended || !draft?.id) {
+            resolver.submit({ lane: "draft", key: "suspended", body: null, suspended: true });
+            return;
+        }
+        resolver.submit({
+            lane: "draft",
+            key: `${dependencyEpoch}:${draft.id}`,
+            body: draft,
+        });
+    }, [dependencyEpoch, draft, resolutionSuspended]);
+
+    useEffect(() => {
+        const resolver = resolverRef.current;
+        if (!resolver) return;
+        if (resolutionSuspended || baselineHeld) {
+            resolver.submit({ lane: "baseline", key: "suspended", body: null, suspended: true });
+            return;
+        }
+        resolver.submit({
+            lane: "baseline",
+            key: baselineKey,
+            body: classification.baseline,
+        });
+    }, [baselineHeld, baselineKey, classification.baseline, resolutionSuspended]);
+
     const replaceVehicle = (nextVehicle) => {
         if (targetIndex < 0) return;
         onUpdate(["initialState", "vehicles", targetIndex], nextVehicle);
@@ -149,7 +242,33 @@ export default function SimpleRunWorkspace({
         if (blocked) return;
         const result = previewProfile(draft, profileId, { scenario });
         if (result.changes.length === 0 && result.issues.length === 0) return;
-        setPreview({ draft, scenario, result });
+        setPreview({ draft, scenario, epoch: dependencyEpoch, result });
+    };
+
+    const editOverride = (change) => {
+        const target = overrideEditTarget(change.path, {
+            scenarioOwned: Boolean(draft.scenario?.id),
+            actorId: selection.actorId || "ego",
+        });
+        if (target.surface === "simple") {
+            document.getElementById(`simple-field-${target.field}`)?.focus();
+            return;
+        }
+        onOpenAdvanced?.(target.tab);
+    };
+
+    const requestReset = (change) => {
+        if (blocked) return;
+        try {
+            const result = previewOverrideReset(draft, change, { sensorRegistry });
+            setResetPreview({ draft, epoch: dependencyEpoch, result });
+        } catch (caught) {
+            setResetPreview({
+                draft,
+                epoch: dependencyEpoch,
+                result: { nextManifest: draft, changes: [], error: caught.message },
+            });
+        }
     };
 
     const changeVehicle = async (vehicleId) => {
@@ -157,6 +276,7 @@ export default function SimpleRunWorkspace({
         const request = ++vehicleChangeRequest.current;
         const source = draft;
         const version = draftVersion.current;
+        const epoch = epochRef.current;
         let manifest = getBuiltInVehicleManifest(vehicleId);
         if (!manifest) {
             try {
@@ -170,7 +290,7 @@ export default function SimpleRunWorkspace({
         const grant = pluginGrantPreview(selected.manifest, sensorCatalog, sensorRegistry);
         const issues = [...selected.issues, ...grant.issues];
         if (grant.required) {
-            setGrantPreview({ draft: source, stamped: grant.manifest, issues });
+            setGrantPreview({ draft: source, epoch, stamped: grant.manifest, issues });
             setStampIssues([]);
             return;
         }
@@ -184,6 +304,7 @@ export default function SimpleRunWorkspace({
             <section className="rounded-[var(--radius)] border border-[var(--slate-border)] bg-[var(--slate-surface-1)] p-4">
                 <Field label="Name">
                     <input
+                        id="simple-field-name"
                         value={draft.name}
                         disabled={blocked}
                         onChange={(event) => onUpdate(["name"], event.target.value)}
@@ -195,6 +316,7 @@ export default function SimpleRunWorkspace({
                 <div className="grid gap-4 md:grid-cols-2">
                     <Field label="Scenario">
                         <select
+                            id="simple-field-scenario"
                             value={scenarioState.selectedId}
                             disabled={blocked}
                             onChange={(event) => {
@@ -214,6 +336,7 @@ export default function SimpleRunWorkspace({
                     {environment.editable && (
                         <Field label="Environment">
                             <select
+                                id="simple-field-environment"
                                 value={environment.id}
                                 disabled={blocked}
                                 onChange={(event) => onUpdate(["environment", "id"], event.target.value)}
@@ -259,6 +382,7 @@ export default function SimpleRunWorkspace({
             <Section title="Vehicle">
                 <Field label={draft.scenario ? "Ego vehicle" : "Vehicle"}>
                     <select
+                        id="simple-field-vehicle"
                         aria-invalid={vehicleState.missing || undefined}
                         value={vehicleState.selectedId}
                         disabled={blocked}
@@ -287,18 +411,20 @@ export default function SimpleRunWorkspace({
             <Section title="Execution">
                 <SegmentedControl
                     label="Execution profile"
-                    value={inference.profileId || ""}
+                    value={classification.profileId || ""}
                     items={PROFILE_ITEMS}
                     disabled={blocked}
                     onValueChange={requestProfile}
                 />
-                {!inference.profileId && (
-                    <p className="mt-3 text-[12px] text-[var(--slate-muted)]">{EXECUTION_PROFILE_LABELS.custom}</p>
+                {classification.label === EXECUTION_PROFILE_LABELS.custom && (
+                    <p className="mt-3 text-[12px] text-[var(--slate-muted)]">
+                        Custom, compared with {classification.baselineName}
+                    </p>
                 )}
                 <p className="mt-3 text-[13px] text-[var(--slate-fg-2)]">
-                    Control source: {inference.controlSource.kind}
-                    {inference.controlSource.scriptId ? ` · ${inference.controlSource.scriptId}` : ""}
-                    {inference.controlSource.topicId ? ` · ${inference.controlSource.topicId}` : ""}
+                    Control source: {classification.controlSource.kind}
+                    {classification.controlSource.scriptId ? ` · ${classification.controlSource.scriptId}` : ""}
+                    {classification.controlSource.topicId ? ` · ${classification.controlSource.topicId}` : ""}
                 </p>
                 {activeIssues.length > 0 && (
                     <ul className="mt-3 space-y-2 text-[13px]">
@@ -320,6 +446,7 @@ export default function SimpleRunWorkspace({
                 <div className="mt-4 grid gap-4 md:grid-cols-2">
                     <Field label="Pacing">
                         <select
+                            id="simple-field-pacing"
                             value={draft.clock.pacing}
                             disabled={blocked}
                             onChange={(event) => onUpdate(["clock", "pacing"], event.target.value)}
@@ -329,6 +456,7 @@ export default function SimpleRunWorkspace({
                     </Field>
                     <Field label="Speed">
                         <input
+                            id="simple-field-speed"
                             type="number"
                             min="0"
                             step="0.1"
@@ -339,6 +467,7 @@ export default function SimpleRunWorkspace({
                     </Field>
                     <Field label="Recording policy">
                         <select
+                            id="simple-field-recording"
                             value={draft.logging.policy}
                             disabled={blocked}
                             onChange={(event) => onUpdate(["logging", "policy"], event.target.value)}
@@ -359,6 +488,7 @@ export default function SimpleRunWorkspace({
                         {["x", "y", "z"].map((axis) => (
                             <Field key={axis} label={`Position ${axis} (m)`}>
                                 <input
+                                    id={`simple-field-position-${axis}`}
                                     type="number"
                                     step="any"
                                     value={target.pose.position[axis]}
@@ -369,6 +499,7 @@ export default function SimpleRunWorkspace({
                         ))}
                         <Field label="Heading (rad)">
                             <input
+                                id="simple-field-heading"
                                 type="number"
                                 step="any"
                                 value={target.pose.rotation.y}
@@ -378,6 +509,7 @@ export default function SimpleRunWorkspace({
                         </Field>
                         <Field label="Longitudinal speed (m/s)">
                             <input
+                                id="simple-field-longitudinal-speed"
                                 type="number"
                                 step="any"
                                 value={longitudinalSpeed(target)}
@@ -407,6 +539,103 @@ export default function SimpleRunWorkspace({
                 </div>
             </Section>
 
+            <Section title="Effective summary">
+                <ResolutionStatus lane={resolution?.draft} noun="Effective configuration" />
+                {resolution?.draft.status === "ready" && (
+                    <>
+                        {resolution.baseline.status !== "ready" && (
+                            <ResolutionStatus className="mt-3" lane={resolution.baseline} noun="Comparison baseline" />
+                        )}
+                        <dl className="mt-3 grid gap-3 text-[13px]">
+                            {rows.map((row) => (
+                                <div key={row.id} className="grid grid-cols-[9rem_minmax(0,1fr)] gap-3">
+                                    <dt className="text-[var(--slate-muted)]">{row.label}</dt>
+                                    <dd>
+                                        <span>{displaySummary(row.current)}</span>
+                                        <span className="mt-1 block text-[12px] text-[var(--slate-muted)]">
+                                            Baseline: {baselineSummary(resolution.baseline, row.baseline)}
+                                        </span>
+                                        {row.id === "sensors" && sensors.inheriting && (
+                                            <span className="mt-1 block text-[12px] text-[var(--slate-muted)]">
+                                                Inherited mounts: {sensors.inherited}. Extras: {sensors.extras}.
+                                            </span>
+                                        )}
+                                    </dd>
+                                </div>
+                            ))}
+                        </dl>
+                    </>
+                )}
+                {classification.baselineIssues.length > 0 && (
+                    <ul className="mt-3 space-y-1 text-[12px] text-[var(--slate-warning)]">
+                        {classification.baselineIssues.map((issue) => (
+                            <li key={`${issue.path}:${issue.message}`}>{issue.message}</li>
+                        ))}
+                    </ul>
+                )}
+            </Section>
+
+            <Section title="Custom settings">
+                <p className="text-[13px] text-[var(--slate-fg-2)]">
+                    {classification.label === EXECUTION_PROFILE_LABELS.custom
+                        ? `Compared with ${classification.baselineName}`
+                        : classification.label}
+                </p>
+                {advancedTabs.length > 0 && (
+                    <div className="mt-3">
+                        <p className="text-[13px] font-medium">Custom advanced settings active</p>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                            {advancedTabs.map((tab) => (
+                                <button
+                                    key={tab}
+                                    type="button"
+                                    className="text-[12px] font-medium text-[var(--slate-fg-2)]"
+                                    onClick={() => onOpenAdvanced?.(tab)}
+                                >
+                                    {tab}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                )}
+                {classification.overrides.length === 0 ? (
+                    <p className="mt-3 text-[12px] text-[var(--slate-muted)]">
+                        No differences from {classification.baselineName}.
+                    </p>
+                ) : (
+                    <ul className="mt-3 space-y-3">
+                        {classification.overrides.map((change) => (
+                            <li key={change.path} className="text-[13px]">
+                                <p className="break-all font-mono text-[12px]">{change.path}</p>
+                                <p className="mt-1 break-all font-mono text-[12px]">
+                                    {JSON.stringify(change.before)} → {JSON.stringify(change.after)}
+                                </p>
+                                <p className="mt-1 text-[12px] text-[var(--slate-muted)]">
+                                    Effective {formatResolved(resolution?.baseline, change.path)} → {formatResolved(resolution?.draft, change.path)}
+                                </p>
+                                <div className="mt-1 flex gap-3">
+                                    <button
+                                        type="button"
+                                        className="text-[12px] font-medium text-[var(--slate-fg-2)]"
+                                        onClick={() => editOverride(change)}
+                                    >
+                                        Edit
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="text-[12px] font-medium text-[var(--slate-fg-2)] disabled:opacity-40"
+                                        disabled={blocked}
+                                        onClick={() => requestReset(change)}
+                                    >
+                                        Reset
+                                    </button>
+                                </div>
+                            </li>
+                        ))}
+                    </ul>
+                )}
+            </Section>
+
             <DialogSurface
                 open={Boolean(preview)}
                 onOpenChange={(open) => { if (!open) setPreview(null); }}
@@ -420,7 +649,13 @@ export default function SimpleRunWorkspace({
                             disabled={!profileConfirmable || blocked}
                             onClick={() => {
                                 if (!profileConfirmable) return;
+                                const applied = preview.result.profileId;
                                 if (onUpdate([], preview.result.nextManifest) === false) return;
+                                onComparisonLatch?.({
+                                    manifestId: draft.id,
+                                    scenarioId: draft.scenario?.id ?? null,
+                                    profileId: applied,
+                                });
                                 setPreview(null);
                             }}
                         >
@@ -507,7 +742,115 @@ export default function SimpleRunWorkspace({
                     </div>
                 )}
             </DialogSurface>
+
+            <DialogSurface
+                open={Boolean(resetPreview)}
+                onOpenChange={(open) => { if (!open) setResetPreview(null); }}
+                title="Reset setting"
+                description="Review the fields this reset changes. Cancellation leaves the draft unchanged."
+                footer={(
+                    <>
+                        <Button onClick={() => setResetPreview(null)}>Cancel</Button>
+                        <Button
+                            variant="primary"
+                            disabled={!resetConfirmable || blocked}
+                            onClick={() => {
+                                if (!resetConfirmable) return;
+                                if (onUpdate([], resetPreview.result.nextManifest) === false) return;
+                                setResetPreview(null);
+                            }}
+                        >
+                            Reset
+                        </Button>
+                    </>
+                )}
+            >
+                {resetPreview && (
+                    <div className="space-y-3 text-[13px]">
+                        {resetStale && (
+                            <p className="text-[var(--slate-warning)]">This preview is out of date. Close it and choose Reset again.</p>
+                        )}
+                        {resetPreview.result.error && <p>{resetPreview.result.error}</p>}
+                        {resetPreview.result.changes.length > 0 && (
+                            <ul className="space-y-1.5">
+                                {resetPreview.result.changes.map((change) => (
+                                    <li key={change.path} className="break-all font-mono text-[12px]">
+                                        {change.path}: {JSON.stringify(change.before)} → {JSON.stringify(change.after)}
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
+                        {resetPreview.result.changes.length === 0 && !resetPreview.result.error && (
+                            <p>This reset does not change the draft.</p>
+                        )}
+                    </div>
+                )}
+            </DialogSurface>
         </div>
+    );
+}
+
+function baselineResolutionKey(draft, classification, selection, vehicleManifest, epoch) {
+    return JSON.stringify({
+        epoch,
+        profileId: classification.comparisonProfileId,
+        scenarioId: draft.scenario?.id ?? null,
+        scenarioHash: draft.scenario?.expectedHash ?? null,
+        environmentId: draft.environment?.id ?? null,
+        environmentHash: draft.environment?.expectedHash ?? null,
+        vehicleId: selection.vehicleId ?? null,
+        actorId: selection.actorId ?? null,
+        vehicleMark: vehicleManifest?.revision
+            ?? vehicleManifest?.definitionHash
+            ?? (vehicleManifest ? "loaded" : null),
+        loggingPolicy: classification.comparisonProfileId === "external" ? (draft.logging?.policy ?? null) : null,
+        controlKind: classification.controlSource?.kind ?? null,
+        controlTopic: classification.controlSource?.topicId ?? null,
+    });
+}
+
+function advancedOverrideTabs(overrides, options) {
+    const tabs = [];
+    for (const change of overrides ?? []) {
+        const target = overrideEditTarget(change.path, options);
+        if (target.surface === "advanced" && !tabs.includes(target.tab)) tabs.push(target.tab);
+    }
+    return tabs;
+}
+
+function displaySummary(value) {
+    return value == null || value === "" ? "None" : String(value);
+}
+
+function laneWord(lane) {
+    if (lane?.status === "checking") return "Checking";
+    if (lane?.status === "failed") return "Failed";
+    return "Unresolved";
+}
+
+function baselineSummary(lane, value) {
+    if (lane?.status !== "ready") return laneWord(lane);
+    return displaySummary(value);
+}
+
+function formatResolved(lane, path) {
+    if (lane?.status !== "ready") return laneWord(lane);
+    const read = valueAtOverridePath(lane.result?.manifest, path);
+    return read.ok ? JSON.stringify(read.value) : "unavailable";
+}
+
+function ResolutionStatus({ lane, noun, className = "" }) {
+    const status = lane?.status ?? "unresolved";
+    if (status === "ready") return null;
+    const title = status === "failed"
+        ? `${noun} is unavailable`
+        : status === "checking"
+            ? `Checking ${noun.charAt(0).toLowerCase()}${noun.slice(1)}`
+            : `${noun} is unresolved`;
+    return (
+        <StatusMessage className={className || undefined} tone={status === "failed" ? "danger" : "info"} title={title}>
+            {status === "failed" ? lane?.error : null}
+        </StatusMessage>
     );
 }
 

@@ -22,6 +22,120 @@ export const PROFILE_SURFACE_TABS = Object.freeze({
     sensors: "Sensors",
 });
 
+export function overrideEditTarget(path, { scenarioOwned = false, actorId = "ego" } = {}) {
+    if (!scenarioOwned) {
+        const pose = `initialState.vehicles[${actorId}].pose`;
+        if (path === `${pose}.position.x`) return { surface: "simple", field: "position-x" };
+        if (path === `${pose}.position.y`) return { surface: "simple", field: "position-y" };
+        if (path === `${pose}.position.z`) return { surface: "simple", field: "position-z" };
+        if (path === `${pose}.rotation.y`) return { surface: "simple", field: "heading" };
+    }
+    if (path === "clock.pacing") return { surface: "simple", field: "pacing" };
+    if (path === "clock.speed") return { surface: "simple", field: "speed" };
+    if (path === "logging.policy") return { surface: "simple", field: "recording" };
+    return { surface: "advanced", tab: advancedTabForOverride(path) };
+}
+
+function advancedTabForOverride(path) {
+    if (path.startsWith("sensorRig") || path.startsWith("sensorTransports") || path.startsWith("renderRecipe")) return "Sensors";
+    if (path.startsWith("plugins") || path.startsWith("scripts")) return "Scripts";
+    if (path.startsWith("topics") || path.startsWith("schemas")) return "Topics";
+    if (path.startsWith("initialState")) return "Initial State";
+    if (path.startsWith("clock")) return "Clock";
+    if (path.startsWith("controls")) return "Controls";
+    if (path.startsWith("observationProfile")) return "Observation";
+    if (path.startsWith("assertions")) return "Assertions";
+    if (path.startsWith("logging")) return "Logging";
+    if (path.startsWith("provenance")) return "Provenance";
+    if (path.startsWith("scenario") || path.startsWith("parameters")) return "Scenario";
+    if (path === "seed" || path === "name" || path === "id" || path === "description" || path.startsWith("environment")) return "Overview";
+    return "JSON";
+}
+
+function recoveredIssuePath(issue) {
+    const path = String(issue?.path || "").trim();
+    if (path) return path;
+    const message = String(issue?.message || "");
+    const match = message.match(/^(sensorTransports(?:\.[A-Za-z0-9_]+)*|renderRecipe(?:\.[A-Za-z0-9_]+)*)\b/);
+    return match ? match[1] : "";
+}
+
+function issueExplanation(path, tab) {
+    if (path === "plugins" || path.startsWith("plugins.")) return "Plugin selection";
+    if (path.startsWith("sensorTransports")) return "Sensor transport";
+    if (path.startsWith("parameters") || path.startsWith("scenario.parameterValues")) return "Run parameter";
+    if (path.startsWith("schemas") || path.includes(".schema")) return "Schema";
+    if (path.startsWith("renderRecipe")) return "Render recipe";
+    return tab;
+}
+
+function targetVehicleIndex(draft) {
+    const vehicles = Array.isArray(draft?.initialState?.vehicles) ? draft.initialState.vehicles : [];
+    const targetId = draft?.controls?.targetVehicleId || "ego";
+    const target = vehicles.findIndex((vehicle) => vehicle?.id === targetId);
+    if (target >= 0) return target;
+    const ego = vehicles.findIndex((vehicle) => vehicle?.id === "ego");
+    return ego >= 0 ? ego : 0;
+}
+
+function simpleFocusForIssue(path, draft) {
+    if (path === "name") return "simple-field-name";
+    if (path === "scenario.id") return "simple-field-scenario";
+    if (path === "scenario.egoVehicleId") return "simple-field-vehicle";
+    if (path === "environment.id" && !draft?.scenario) return "simple-field-environment";
+    if (path === "clock.pacing") return "simple-field-pacing";
+    if (path === "clock.speed") return "simple-field-speed";
+    if (path === "logging.policy") return "simple-field-recording";
+    if (draft?.scenario) return null;
+    const prefix = `initialState.vehicles.${targetVehicleIndex(draft)}`;
+    if (path === `${prefix}.pose.position.x`) return "simple-field-position-x";
+    if (path === `${prefix}.pose.position.y`) return "simple-field-position-y";
+    if (path === `${prefix}.pose.position.z`) return "simple-field-position-z";
+    if (path === `${prefix}.pose.rotation.y`) return "simple-field-heading";
+    if (path === `${prefix}.linearVelocity.x`) return "simple-field-longitudinal-speed";
+    return null;
+}
+
+function advancedFocusForIssue(path, draft, tab) {
+    if (path === "plugins" || path.startsWith("plugins.")) return "run-focus-plugins";
+    const transport = path.match(/^sensorTransports\.bindings\.(\d+)/);
+    if (transport) {
+        const binding = draft?.sensorTransports?.bindings?.[Number(transport[1])];
+        return binding?.sensorId ? `run-focus-transport-${binding.sensorId}` : "run-focus-sensors";
+    }
+    if (path.startsWith("sensorTransports")) return "run-focus-sensors";
+    const parameter = path.match(/^parameters\.(\d+)/);
+    if (parameter) return `run-focus-parameter-${parameter[1]}`;
+    const sensor = path.match(/^sensorRig\.sensors\.(\d+)/);
+    if (sensor) {
+        const entry = draft?.sensorRig?.sensors?.[Number(sensor[1])];
+        return entry?.id ? `run-focus-sensor-${entry.id}` : "run-focus-sensors";
+    }
+    if (path.startsWith("sensorRig")) return "run-focus-sensors";
+    const topicSchema = path.match(/^topics\.(\d+)\.schema/);
+    if (topicSchema) return `run-focus-topic-${topicSchema[1]}-schema`;
+    if (path.startsWith("schemas.")) {
+        const type = path.slice("schemas.".length);
+        const index = (draft?.topics ?? []).findIndex((topic) => (topic?.schema?.type || topic?.type) === type);
+        return index >= 0 ? `run-focus-topic-${index}-schema` : "run-focus-tab-Topics";
+    }
+    if (path.startsWith("renderRecipe")) return "run-focus-render-recipe";
+    if (tab === "JSON") return "run-focus-json";
+    return `run-focus-tab-${tab}`;
+}
+
+export function validationIssueTarget(issue, draft = null) {
+    const path = recoveredIssuePath(issue);
+    const tab = advancedTabForOverride(path);
+    return {
+        path,
+        explanation: issueExplanation(path, tab),
+        simpleFocusId: simpleFocusForIssue(path, draft),
+        tab,
+        advancedFocusId: advancedFocusForIssue(path, draft, tab),
+    };
+}
+
 export function simpleCreatedManifest(id, name) {
     const manifest = createDefaultRunManifest({ id, name });
     const vehicleId = manifest.initialState?.vehicles?.[0]?.type;

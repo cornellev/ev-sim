@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { prepareAnalyticGpuFrame } from "../../app/simulation/sensors/AnalyticGpuScene.js";
+import { isScanningLidarType } from "../../app/simulation/sensors/SensorTypeRegistry.js";
 import { supervisorError } from "./HeadlessProtocol.js";
 import {
     assertVisualCaptureInput,
@@ -790,7 +791,7 @@ export class ChromiumWebGlRendererAdapter {
                     gl.viewport(0, 0, width, height);
                     gl.clearColor(...clearColor);
                     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-                    const renderResources = job.type === "lidar3d" ? renderLidar(job) : [];
+                    const renderResources = isScanningLidarType(job.type) ? renderLidar(job) : [];
                     if (draw) draw();
                     const byteLength = width * height * 4 * (float ? 4 : 1);
                     gl.bindBuffer(gl.PIXEL_PACK_BUFFER, pbo);

@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { preferRunConfigMode } from "./runConfigView.js";
+
 async function openWorkspace(page, label) {
     const opener = page.getByRole("button", { name: "Open workspace switcher" }).first();
     if (await opener.isVisible()) {
@@ -14,6 +16,10 @@ async function openWorkspace(page, label) {
     const discard = page.getByRole("button", { name: "Discard and switch" });
     if (await discard.isVisible()) await discard.click();
 }
+
+test.beforeEach(async ({ page }) => {
+    await preferRunConfigMode(page, "advanced");
+});
 
 test("run configuration catalogs synchronized perception and oracle topic contracts", async ({ page }) => {
     test.setTimeout(90_000);

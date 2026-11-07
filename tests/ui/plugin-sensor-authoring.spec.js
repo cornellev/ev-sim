@@ -5,6 +5,7 @@ import { expect, test } from "@playwright/test";
 import { PluginStore } from "../../server/storage/PluginStore.js";
 import { pluginFixtureResource } from "../helpers/pluginFixtures.js";
 import { openWorkspace } from "./openWorkspace.js";
+import { preferRunConfigMode } from "./runConfigView.js";
 
 const storageRoot = path.resolve(process.env.CEV_SIM_DATA_DIR ?? ".playwright-data/storage");
 const SENSOR_TYPE = "test.range-image-fixture.synthetic-3x4";
@@ -74,6 +75,7 @@ export default pluginUi;
 test("Config creates, grants, edits, saves, and reloads a custom range-image sensor", async ({ page, request }) => {
     test.setTimeout(180_000);
     await waitForSensorType(request, SENSOR_TYPE);
+    await preferRunConfigMode(page, "advanced");
     await page.goto("/");
     await openWorkspace(page, "Run configuration");
     await page.getByRole("button", { name: "New" }).first().click();
@@ -109,6 +111,7 @@ test("Config creates, grants, edits, saves, and reloads a custom range-image sen
 test("Config adds, saves, reloads, and removes UDP bindings", async ({ page, request }) => {
     test.setTimeout(180_000);
     await waitForSensorType(request, SENSOR_TYPE);
+    await preferRunConfigMode(page, "advanced");
     await page.goto("/");
     await openWorkspace(page, "Run configuration");
     await page.getByRole("button", { name: "New" }).first().click();
@@ -174,6 +177,7 @@ test("Vehicle editor adds a custom sensor preview and round-trips export/import"
 test("throwing custom sensor view falls back without changing configuration", async ({ page, request }) => {
     test.setTimeout(180_000);
     await waitForSensorType(request, "test.range-image-throwing.synthetic-3x4");
+    await preferRunConfigMode(page, "advanced");
     await page.goto("/");
     await openWorkspace(page, "Run configuration");
     await page.getByRole("button", { name: "New" }).first().click();

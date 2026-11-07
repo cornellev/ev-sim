@@ -11,6 +11,7 @@ import {
     LIDAR_GEOMETRY_VERSION,
 } from "../app/simulation/lidar/LidarGeometry.js";
 import { CPU_LIDAR_NEAR_METERS, CpuLidarScene } from "../app/simulation/sensors/CpuLidarScene.js";
+import { createRunSensor } from "../app/simulation/sensors/SensorTypeRegistry.js";
 import { compareUtf8 } from "../app/simulation/world/WorldDescription.js";
 import { transformRigidBodyPoint } from "../app/simulation/world/RigidBodyRecords.js";
 import {
@@ -86,6 +87,32 @@ test("single traversal is byte-identical to all-hits for varied poses, UTF-8 tie
             }
         }
     } finally { scene.dispose(); }
+});
+
+test("lidar2d capture is the elevation-0 ring", () => {
+    const wall = createTriangleLidarTwin({
+        id: "wall", sourceId: "wall",
+        vertices: [{ x: 5, y: -1, z: -1 }, { x: 5, y: 1, z: -1 }, { x: 5, y: 0, z: 1 }],
+        semanticId: 1, instanceId: 4,
+    });
+    const scene = new CpuLidarScene(resource([wall]));
+    const planar = createRunSensor("lidar2d", {
+        id: "lidar",
+        parentId: "ego",
+        calibration: { range: 20, azimuth: { startDeg: -180, endDeg: 180, stepDeg: 2 } },
+    });
+    const ring = sensor({
+        calibration: {
+            range: 20,
+            azimuth: planar.calibration.azimuth,
+            elevation: { startDeg: 0, endDeg: 1, stepDeg: 1 },
+        },
+    });
+    const hit = scene.capture(sensor({ calibration: planar.calibration }), [ego]);
+    assert.equal(hit.length, 180 * 4);
+    assert.equal(hit[90 * 4], 5);
+    assert.deepEqual(Array.from(hit), Array.from(scene.capture(ring, [ego])));
+    scene.dispose();
 });
 
 test("CPU BVH LiDAR resolves nearest deterministic labels and all-zero no-hit sentinels", () => {

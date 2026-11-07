@@ -85,12 +85,14 @@ environment-editor program and is not added here.
 
 ### PLN-D06 — Free drive keeps a route and drops the finish line
 
-Headless episodes still require a verified ego route. `create-bundle
---finish none` keeps that route and replaces the finish-zone trigger with a
-trigger on the flag `cev-sim.free-drive.stop`, which nothing sets. The episode
-ends on collision, off-road, the step limit, or when the caller
-stops. `configure` always requests `--finish none`. The default `create-bundle`
-finish remains `route`, so existing bundles stay the same.
+On a world that contains roads, a headless episode still requires a verified
+ego route. `create-bundle --finish none` keeps that route and replaces the
+finish-zone trigger with a trigger on the flag `cev-sim.free-drive.stop`,
+which nothing sets. The episode ends on collision, off-road, the step limit,
+or when the caller stops. `configure` always requests `--finish none`. The
+default `create-bundle` finish remains `route`, so existing road bundles stay
+the same. An area-only world uses the same flag for a route-free episode; that
+path is specified in [drive-area-plan.md](drive-area-plan.md).
 
 `configure` defaults to `planning-oracle@1`. `CevSimEnv` and
 `gym.make("CevSim-v0")` stay on `measured-state`.
@@ -331,3 +333,13 @@ late-planner, and mid-run-attachment checks produced trajectories and stamped
 commands using the existing Rust consumers. Later-start checks used a loopback
 Zenoh test router. Browser UI acceptance remains unverified because automation
 could not reliably attach; detailed limits are recorded in the linked guide.
+
+### 2026-11-07 — Area-only free drive
+
+Road worlds that use `--finish none` still keep a verified route, as PLN-D06
+recorded. A world with no road nodes, no road edges, and at least one drive
+area now admits a route-free `freeDrive` episode under that same flag. Python
+`load_world()` returns an empty route and `goal=None` for that bundle. Routed
+bundles with a missing or broken route stay rejected. The observation layout
+and the `measured-state` hashes are unchanged. See
+[drive-area-plan.md](drive-area-plan.md).

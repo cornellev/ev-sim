@@ -1,4 +1,5 @@
 import { validateSharedTensorReference } from "./SharedTensorArena.js";
+import { isScanningLidarType } from "../../app/simulation/sensors/SensorTypeRegistry.js";
 
 export const SHARED_TENSOR_INLINE_THRESHOLD_BYTES = 64 * 1024;
 
@@ -48,7 +49,7 @@ export function perceptionTensorBytes(sensor, pluginObservation = null) {
     if (sensor?.type === "camera" && products.rgb === true) {
         return Number(sensor.calibration.height) * Number(sensor.calibration.width) * 4;
     }
-    if (sensor?.type === "lidar3d" && products.pointCloud === true) {
+    if (isScanningLidarType(sensor?.type) && products.pointCloud === true) {
         const azimuth = sensor.calibration.azimuth;
         const elevation = sensor.calibration.elevation;
         const width = Math.ceil((azimuth.endDeg - azimuth.startDeg) / azimuth.stepDeg);
@@ -76,7 +77,7 @@ function rawGpuTensorBytes(sensor, { pbr = false } = {}) {
             + (products.instance === true ? 4 : 0)
         );
     }
-    if (sensor?.type === "lidar3d") {
+    if (isScanningLidarType(sensor?.type)) {
         const azimuth = sensor.calibration?.azimuth;
         const elevation = sensor.calibration?.elevation;
         const width = Math.ceil((azimuth.endDeg - azimuth.startDeg) / azimuth.stepDeg);

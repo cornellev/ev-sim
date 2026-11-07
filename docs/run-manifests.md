@@ -19,7 +19,11 @@ Config/Vehicle controls remain a later plugin milestone.
 
 ## Operator workflow
 
-Open **Config** from the workspace switcher. The page supports catalog create, duplicate, delete, bundle import/export, structured editing, raw JSON editing, server validation, optimistic revision saves, and **Validate & Run**. The Overview **Stable ID** edits the draft only. Save moves `run-manifests/<id>.json` to that id and changes `definitionHash`. An invalid id, a collision, `igvc-default`, or a revision conflict throws and leaves the open draft on the stored id. Experiment suites, logs, and results keep the previous id. Unsaved edits are protected during catalog changes and browser navigation. Use the header **Advanced** switch to reveal frames, noise, latency, and contract fields while keeping essential sensor and topic settings visible by default; the preference persists across Config and Vehicle Editor. The **Controls** tab authors the target vehicle, authority (`candidate` / `reference`), watchdog, stale policy (`stop` default, or `hold` / `fallback`), and per-run actuator overrides. **Keyboard drive**, off unless saved on, lets WASD command the target vehicle when the run has no scenario and authority is candidate, and is projected out of simulation and episode identity. The **Provenance** tab authors hash-locked `provenance.candidateModels[]` references (role, model id, optional version, required SHA-256 digest) used as evidence lineage.
+Open **Run configuration** from the workspace switcher. The header **Simple / Advanced** control changes presentation only. Both views edit one draft and share catalog create, duplicate, delete, bundle import and export, **Validate**, optimistic revision saves, and **Launch**. With no `cev-sim.ui.runConfig.mode` value, a stored `cev-sim.ui.advancedAuthoring` of `true` opens Advanced. Otherwise the page opens Simple. Choosing a view writes only `cev-sim.ui.runConfig.mode`. That write does not change the global authoring preference, which still belongs to the other editors. Inside this workspace the Advanced view shows every technical field.
+
+Simple edits the run name, scenario, ego vehicle, execution profile, pacing, speed, and recording policy. The execution profile is **Standard Simulation** or **External Controller**. Applying one confirms the reviewed field changes first. The profile is inferred from the manifest and is not stored. A run with no scenario can edit position, heading, and longitudinal speed; a scenario run shows the scenario's initial state. **Customize**, **Edit**, and validation targets open the matching Advanced tab.
+
+Advanced is the existing tabbed editor. The Overview **Stable ID** edits the draft only. Save moves `run-manifests/<id>.json` to that id and changes `definitionHash`. An invalid id, a collision, `igvc-default`, or a revision conflict throws and leaves the open draft on the stored id. Experiment suites, logs, and results keep the previous id. Unsaved edits, including invalid JSON, are protected during catalog changes and browser navigation. Invalid JSON blocks Save and Launch in both views. The **Controls** tab authors the target vehicle, authority (`candidate` / `reference`), watchdog, stale policy (`stop` default, or `hold` / `fallback`), and per-run actuator overrides. **Keyboard drive**, off unless saved on, lets WASD command the target vehicle when the run has no scenario and authority is candidate, and is projected out of simulation and episode identity. The **Provenance** tab authors hash-locked `provenance.candidateModels[]` references (role, model id, optional version, required SHA-256 digest) used as evidence lineage. Below 1024px the catalog list is replaced by the header manifest selector and the header **New**, **Import**, **Duplicate**, **Export bundle**, **Export template**, and **Delete** actions.
 
 Stop finalizes the active result and SFLog and releases the workspace switcher. Reset does that, then resolves the newest saved revision, rebuilds run-scoped resources, and leaves the replacement run paused at step zero. If the environment changed, the workspace loads that environment before applying the pending run. Run Configuration stays available while that replacement is prepared and has not been started.
 
@@ -32,7 +36,7 @@ using the existing orchestrator connection.
 
 ## Portable bundles
 
-`cev-sim.run-bundle` version 1 includes the authoring manifest and its resolved environment, normalized `world: { description, hash }`, sorted backend selections, exact compiled script artifacts and bindings, ROS schemas, autonomy catalog metadata, contract endpoints, dependency hashes, full `resolvedHash`, and `simulationSemanticHash`. `dependencyHashes.world` repeats the canonical world SHA-256. Runs with enabled `lidar3d` additionally contain `lidarGeometry: { description, hash }` and `dependencyHashes.lidarGeometry`; runs with enabled cameras additionally contain `renderScene: { description, hash }` and `dependencyHashes.renderScene`. The initial scene provider is `canonical-analytic@1`, with stable material, semantic, instance, and dynamic-node IDs. Bundles without those sensors omit the corresponding conditional resources. Import verifies old and new bundles in the exact form received; old LiDAR/camera bundles must be re-resolved when their portable resources are unavailable. The additive fields do not change the v1 bundle schema. Manifest v10 adds sidecar-facing candidate-model provenance only. `resolvedHash` identifies normalized resolved content including provenance; exact byte integrity uses `bundleBytesHash`. `simulationSemanticHash` uses the world hash—not the authored environment hash—as environment identity, and projects out logging, `manifest.provenance`, artifact/resource policy, wall pacing, presentation-only settings, and the v10→v9 semantic shape before feeding `episodeHash`. Existing dependencies are reused only when hashes match; conflicting resources receive an eight-character hash suffix and all references are remapped.
+`cev-sim.run-bundle` version 1 includes the authoring manifest and its resolved environment, normalized `world: { description, hash }`, sorted backend selections, exact compiled script artifacts and bindings, ROS schemas, autonomy catalog metadata, contract endpoints, dependency hashes, full `resolvedHash`, and `simulationSemanticHash`. `dependencyHashes.world` repeats the canonical world SHA-256. Runs with an enabled `lidar3d` or `lidar2d` sensor additionally contain `lidarGeometry: { description, hash }` and `dependencyHashes.lidarGeometry`; runs with enabled cameras additionally contain `renderScene: { description, hash }` and `dependencyHashes.renderScene`. The initial scene provider is `canonical-analytic@1`, with stable material, semantic, instance, and dynamic-node IDs. Bundles without those sensors omit the corresponding conditional resources. Import verifies old and new bundles in the exact form received; old LiDAR/camera bundles must be re-resolved when their portable resources are unavailable. The additive fields do not change the v1 bundle schema. Manifest v10 adds sidecar-facing candidate-model provenance only. `resolvedHash` identifies normalized resolved content including provenance; exact byte integrity uses `bundleBytesHash`. `simulationSemanticHash` uses the world hash—not the authored environment hash—as environment identity, and projects out logging, `manifest.provenance`, artifact/resource policy, wall pacing, presentation-only settings, and the v10→v9 semantic shape before feeding `episodeHash`. Existing dependencies are reused only when hashes match; conflicting resources receive an eight-character hash suffix and all references are remapped.
 
 Effective plugin selections add sorted `resolved.plugins`, exact portable
 `resolved.pluginPackages`, and `dependencyHashes.plugins`. Bundle verification
@@ -397,7 +401,7 @@ Headless prepare uses that manifest profile when the episode spec does not
 set one. An explicit episode profile wins. The Run Configuration
 Observation tab edits the preset. `planning-occupancy@1` is a 1000 by 1000
 world costmap at 5 cm. `sensor-occupancy@1` adds the latest lidar grid and
-requires an enabled `lidar3d`.
+requires an enabled `lidar3d` or `lidar2d`.
 
 The state-sensor backend is kind `STATE_SENSOR`, capability
 `deterministic-state-sensors`, version `1`, with config hash
@@ -406,7 +410,7 @@ The state-sensor backend is kind `STATE_SENSOR`, capability
 The CPU LiDAR backend is kind `CPU_LIDAR`, capability
 `deterministic-cpu-bvh-lidar`, version `1`, with config hash
 `488de17bbf8ecf635c18841cd64a9638e011a94a8d9fbb93e4a53943f38bd96d`.
-Exactly one locked selection is required when `lidar3d` is enabled and is
+Exactly one locked selection is required when `lidar3d` or `lidar2d` is enabled and is
 forbidden when it is unused. Point clouds retain the existing metric-v2
 Float32 and PointCloud2 schemas; they route through telemetry/topics/SFLog and
 are not added to the measured-state policy observation.
@@ -416,8 +420,8 @@ config hash
 `70349dfde6494414249bbcf6e1befc13ce82b817a63eb01baac4f5402ce62c31`.
 This version preserves authored channel and azimuth order, applies channel
 azimuth correction, and returns metric-v2 measured range/incidence with zero
-semantic/instance slots to the plugin hook. Built-in `lidar3d` in the same CPU
-rig stays on its uniform sampling branch. Each mapped custom observation is
+semantic/instance slots to the plugin hook. Built-in `lidar3d` and `lidar2d` stay
+on the uniform sampling branch. Each mapped custom observation is
 `float32[channelCount,azimuthCount,2]`; packet-only sensors add no tensor.
 
 The GPU sensor backend is kind `GPU_SENSOR`, capability

@@ -31,5 +31,6 @@ export { BUILDING_TYPE_ID } from "./types/building.js";
 export { ASSET_INSTANCE_TYPE_ID } from "./types/assetInstance.js";
 export { PRIMITIVE_TYPE_ID } from "./types/primitive.js";
 export { FLOOR_TYPE_ID } from "./types/floor.js";
+export { DRIVE_AREA_TYPE_ID } from "./types/driveArea.js";
 
 registerBuiltinObjectTypes();

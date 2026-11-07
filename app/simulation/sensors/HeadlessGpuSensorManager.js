@@ -7,6 +7,7 @@ import { compareUtf8 } from "../world/WorldDescription.js";
 import { assertGpuSensorBackendSelection } from "./GpuSensorBackend.js";
 import { buildLidarCapture } from "./LidarProducts.js";
 import { reduceLidarOccupancy } from "../occupancy/reduceLidarOccupancy.js";
+import { isScanningLidarType } from "./SensorTypeRegistry.js";
 
 function clone(value) {
     return cloneJson(value);
@@ -165,7 +166,7 @@ class HeadlessGpuSensorDevice {
                 ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength)
                 : new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4);
         }
-        if (this.type === "lidar3d") {
+        if (isScanningLidarType(this.type)) {
             const occupancyCells = this.sensorOccupancy && raw instanceof Float32Array
                 ? reduceLidarOccupancy(this, raw, this.manager.vehicles()) || []
                 : null;
@@ -567,7 +568,7 @@ export class HeadlessGpuSensorManager {
     async configureFromManifest(sensorRig = {}, options = {}) {
         this.disposeRun();
         const configs = (sensorRig.sensors || [])
-            .filter((sensor) => sensor.enabled !== false && ["camera", "lidar3d"].includes(sensor.type))
+            .filter((sensor) => sensor.enabled !== false && (sensor.type === "camera" || isScanningLidarType(sensor.type)))
             .sort((left, right) => compareUtf8(left.id, right.id));
         if (configs.length === 0 || options.enabled === false) return this.devices;
         assertGpuSensorBackendSelection(options.backendSelection);
@@ -600,7 +601,7 @@ export class HeadlessGpuSensorManager {
         this.pbr = this.renderScene?.description?.provider?.id === "pbr-mesh"
             && this.renderScene?.description?.provider?.version === 1;
         const cameras = configs.filter((sensor) => sensor.type === "camera");
-        const lidars = configs.filter((sensor) => sensor.type === "lidar3d");
+        const lidars = configs.filter((sensor) => isScanningLidarType(sensor.type));
         if (cameras.length > 0 && !this.renderScene) throw new Error("GPU cameras require a resolved render-scene resource.");
         if (lidars.length > 0 && !this.lidarGeometry) throw new Error("GPU LiDAR requires a dedicated resolved LiDAR geometry resource.");
         if (this.pbr) {
@@ -677,7 +678,7 @@ export class HeadlessGpuSensorManager {
             for (const entry of group) {
                 const route = entry.request.provider?.id === "pbr-mesh"
                     ? "pbr-camera"
-                    : entry.device.type === "lidar3d" ? "lidar" : "analytic-camera";
+                    : isScanningLidarType(entry.device.type) ? "lidar" : "analytic-camera";
                 const routed = routes.get(route) || [];
                 routed.push(entry);
                 routes.set(route, routed);

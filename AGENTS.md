@@ -64,6 +64,23 @@ Update the progress and decision log in
 `docs/environment-editor-plan.md` whenever an ED PR changes a contract, hash,
 acceptance criterion, or milestone status.
 
+## Drive-area roadmap
+
+Before changing drive areas, area pavement, area-only episodes, or the
+`freeDrive` scenario flag, read:
+
+1. [`docs/drive-area-plan.md`](docs/drive-area-plan.md)
+2. [`docs/environment-editor.md`](docs/environment-editor.md)
+3. [`docs/run-manifests.md`](docs/run-manifests.md)
+4. [`docs/architecture.md`](docs/architecture.md)
+
+This is a separate `DRV-*` program. Do not treat it as a headless PR 13 or an
+ED, VIS, or PLN milestone. Environment documents stay schema v4. World
+description v5 is used only when a drive area exists.
+
+Update the progress and decision log in `docs/drive-area-plan.md` whenever a
+DRV change alters a contract, hash, acceptance criterion, or milestone status.
+
 ## Simulator-plugin roadmap
 
 Before changing simulator plugin packages, registration, loading, storage,
@@ -162,9 +179,11 @@ program changes a contract, hash, acceptance criterion, or milestone status.
 Before changing Run Configuration simple mode, the shared editor session, or
 run-config JSON buffers, read [`docs/run-configuration-plan.md`](docs/run-configuration-plan.md).
 
-This is a separate `CFG-*` program. CFG-03 is implemented and CFG-04 is next.
-`cev-sim.ui.runConfig.mode` is `simple` or `advanced`. The initial default
-stays Advanced until CFG-06.
+This is a separate `CFG-*` program. CFG-06 is implemented. Playwright for that
+package was not run.
+`cev-sim.ui.runConfig.mode` is `simple` or `advanced`. An explicit value wins.
+A true `cev-sim.ui.advancedAuthoring` value selects Advanced when the run key
+is absent. Otherwise the mode is Simple.
 
 Update the progress and decision log in `docs/run-configuration-plan.md`
 whenever a CFG package changes a contract, acceptance criterion, or milestone

@@ -4,6 +4,7 @@ import { compareUtf8 } from "../world/WorldDescription.js";
 import { assertCpuLidarBackendSelection } from "./CpuLidarBackend.js";
 import { buildLidarCapture } from "./LidarProducts.js";
 import { reduceLidarOccupancy } from "../occupancy/reduceLidarOccupancy.js";
+import { isScanningLidarType } from "./SensorTypeRegistry.js";
 
 function clone(value) {
     return cloneJson(value);
@@ -138,7 +139,7 @@ export class HeadlessCpuLidarSensorManager {
     async configureFromManifest(sensorRig = {}, options = {}) {
         this.disposeRun();
         const configs = (Array.isArray(sensorRig.sensors) ? sensorRig.sensors : [])
-            .filter((sensor) => sensor.enabled !== false && sensor.type === "lidar3d")
+            .filter((sensor) => sensor.enabled !== false && isScanningLidarType(sensor.type))
             .sort((left, right) => compareUtf8(left.id, right.id));
         if (configs.length === 0 || options.enabled === false) return this.devices;
         assertCpuLidarBackendSelection(options.backendSelection);

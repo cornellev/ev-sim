@@ -1,9 +1,9 @@
 """Start a simulator session from a saved environment and vehicle.
 
 ``configure`` builds a temporary run bundle. ``launch`` starts one worker.
-A session with ``goal=None`` is a free drive: the simulator still has a
-verified route, because headless episodes require one, but that route does
-not end the episode.
+A session with ``goal=None`` does not add a finish line. On a road world the
+simulator still keeps the verified route. On an area-only world,
+``--finish none`` starts a route-free episode.
 """
 
 from __future__ import annotations
@@ -119,7 +119,8 @@ def configure(
 
     ``goal=None`` does not add a finish line. Pass ``goal=(x, z)`` to stop
     when the car gets that close. ``start=(x, z)`` faces the car along the
-    nearest route segment.     ``logging=False`` discards artifacts.
+    nearest route segment, or keeps the bundle yaw when the world has no route.
+    ``logging=False`` discards artifacts.
     ``logging="runs/name"`` keeps an evaluation log there.
     ``view="occupancy"`` publishes the 5 cm costmap. ``view="sensor-occupancy"``
     also publishes the latest lidar grid and requires ``sensors="all"``.
@@ -232,7 +233,7 @@ def _reset_options(
     options: dict[str, Any] = {}
     if start is not None:
         if len(start) == 2:
-            yaw = yaw_along_route(world, start[0], start[1])
+            yaw = world.start.yaw if len(world.route_polyline) < 2 else yaw_along_route(world, start[0], start[1])
             options["start_pose"] = (start[0], start[1], yaw)
         else:
             options["start_pose"] = start

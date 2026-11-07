@@ -1,6 +1,8 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 
+import { preferRunConfigMode } from "./runConfigView.js";
+
 async function openWorkspaceDialog(page) {
     const dialog = page.getByRole("dialog", { name: "Workspaces" });
     const opener = page.getByRole("button", { name: "Open workspace switcher" }).first();
@@ -66,6 +68,7 @@ test("global workspace shortcut is suppressed while editing", async ({ page }) =
 
 test("run configuration tabs show only the selected section", async ({ page }) => {
     test.setTimeout(60_000);
+    await preferRunConfigMode(page, "advanced");
     await page.goto("/");
     await openWorkspace(page, "Run configuration");
 

@@ -337,5 +337,13 @@ export function pickMapTarget(worldPoint, documentSnapshot, viewport, layers, sc
         }
     }
 
-    return pickAssetTarget(worldPoint, documentSnapshot, viewport, layers, radiusWorld, runtimeAssetBounds, size);
+    const asset = pickAssetTarget(worldPoint, documentSnapshot, viewport, layers, radiusWorld, runtimeAssetBounds, size);
+    if (asset) return asset;
+
+    if (layers.roads) {
+        for (const area of documentSnapshot.driveAreas ?? []) {
+            if (pointInPolygonXZ(worldPoint, area.footprint)) return { type: "drive-area", id: area.id };
+        }
+    }
+    return null;
 }

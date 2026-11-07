@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { preferRunConfigMode } from "./runConfigView.js";
+
 async function openWorkspace(page, label) {
     const opener = page.getByRole("button", { name: "Open workspace switcher" }).first();
     if (await opener.isVisible()) {
@@ -17,6 +19,7 @@ async function openWorkspace(page, label) {
 
 test("run configuration catalogs candidate perception and localization return contracts", async ({ page }) => {
     test.setTimeout(90_000);
+    await preferRunConfigMode(page, "advanced");
     await page.goto("/");
     await openWorkspace(page, "Run configuration");
 

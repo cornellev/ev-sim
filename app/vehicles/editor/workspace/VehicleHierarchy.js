@@ -1,5 +1,6 @@
 'use client';
 
+import { useCallback, useEffect, useRef } from "react";
 import {
     IconAntennaBars5,
     IconBox,
@@ -15,7 +16,7 @@ import {
     IconSatellite,
     IconWheel,
 } from "@tabler/icons-react";
-import { buildVehicleHierarchy, hierarchyVisibilityKey } from "./vehicleHierarchyModel.js";
+import { buildVehicleHierarchy, hierarchySelectionMatches, hierarchyVisibilityKey } from "./vehicleHierarchyModel.js";
 
 const TAB_FOR_KIND = {
     body: "Body",
@@ -51,18 +52,18 @@ function rowIcon(row) {
     return KIND_ICONS[row.kind] ?? IconBox;
 }
 
-function selectionMatchesRow(row, selection) {
-    if (!selection?.kind) return false;
-    if (row.kind === "wheel" || row.kind === "sensor") return selection.kind === row.kind && selection.id === row.id;
-    if (row.kind === "axle") return selection.kind === "axle" && selection.id === row.id.replace(/^axle-/, "");
-    if (row.kind === "model-node") return selection.kind === "model";
-    return selection.kind === row.kind;
-}
-
 export function VehicleHierarchy({ manifest, nodes, selection, onSelect, onToggleHidden, linkedIds = [], hiddenIds = [] }) {
     const rows = buildVehicleHierarchy(manifest, { nodes, hiddenIds });
+    const selectedRef = useRef(null);
+    const bindSelected = useCallback((node) => {
+        if (node) selectedRef.current = node;
+    }, []);
+    const selectedKey = selection?.kind ? `${selection.kind}:${selection.id ?? ""}` : "";
+    useEffect(() => {
+        selectedRef.current?.scrollIntoView({ block: "nearest" });
+    }, [selectedKey]);
     const onKeyDown = (event) => {
-        const current = rows.findIndex((row) => selectionMatchesRow(row, selection));
+        const current = rows.findIndex((row) => hierarchySelectionMatches(row, selection));
         if (event.key !== "ArrowDown" && event.key !== "ArrowUp" && event.key !== "Home" && event.key !== "End") return;
         event.preventDefault();
         const nextIndex = event.key === "Home"
@@ -73,7 +74,7 @@ export function VehicleHierarchy({ manifest, nodes, selection, onSelect, onToggl
         const row = rows[nextIndex];
         if (row) onSelect(row, TAB_FOR_KIND[row.kind]);
     };
-    const isSelected = (row) => selectionMatchesRow(row, selection);
+    const isSelected = (row) => hierarchySelectionMatches(row, selection);
     return (
         <div
             role="tree"
@@ -95,6 +96,7 @@ export function VehicleHierarchy({ manifest, nodes, selection, onSelect, onToggl
                 return (
                     <div
                         key={hierarchyVisibilityKey(row.kind, row.id)}
+                        ref={selected ? bindSelected : undefined}
                         role="treeitem"
                         aria-selected={selected}
                         data-linked={linked ? "true" : undefined}
@@ -104,6 +106,7 @@ export function VehicleHierarchy({ manifest, nodes, selection, onSelect, onToggl
                         <button
                             type="button"
                             disabled={row.disabled}
+                            title={row.path || undefined}
                             className="flex min-w-0 flex-1 items-center gap-1.5 py-0.5 text-left disabled:cursor-default"
                             onClick={() => onSelect(row, TAB_FOR_KIND[row.kind])}
                         >

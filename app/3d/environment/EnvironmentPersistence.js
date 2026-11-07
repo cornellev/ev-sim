@@ -362,6 +362,7 @@ export class EnvironmentPersistence {
                     supportedAssetMetricVersions: [1],
                     supportedEditorSourceVersions: [1],
                     supportedScenePrimitiveVersions: [1],
+                    supportedDriveAreaVersions: [1],
                 },
                 { keepalive },
             );

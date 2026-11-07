@@ -3,6 +3,7 @@
 import { createElement } from "react";
 import {
     IconBuilding,
+    IconSquare,
     IconCube,
     IconFolder,
     IconMap,
@@ -23,6 +24,7 @@ const ICONS = Object.freeze({
     road: IconRoad,
     intersection: IconTrafficLights,
     building: IconBuilding,
+    "drive-area": IconSquare,
     "builtin-prop": IconTrafficCone,
     "asset-instance": IconCube,
     primitive: IconCube,

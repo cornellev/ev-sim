@@ -24,6 +24,7 @@ import {
     sortObjectRecords,
 } from "./objectRecord.js";
 import { BUILDING_TYPE_ID } from "./types/building.js";
+import { DRIVE_AREA_TYPE_ID } from "./types/driveArea.js";
 import { BUILTIN_PROP_TYPE_ID, getBuiltinPropAsset } from "./types/builtinProp.js";
 import { FLOOR_TYPE_ID } from "./types/floor.js";
 import { GROUP_TYPE_ID } from "./types/group.js";
@@ -95,6 +96,10 @@ export function legacyIndex(snapshot = {}) {
             buildings.set(String(building.buildingId), building);
         }
     }
+    const driveAreas = new Map();
+    for (const area of Array.isArray(snapshot.driveAreas) ? snapshot.driveAreas : []) {
+        if (area?.id !== undefined && area?.id !== null) driveAreas.set(String(area.id), area);
+    }
     const features = new Map();
     for (const feature of Array.isArray(snapshot.features) ? snapshot.features : []) {
         if (feature?.id !== undefined && feature?.id !== null) features.set(String(feature.id), feature);
@@ -108,6 +113,7 @@ export function legacyIndex(snapshot = {}) {
         edges,
         junctions,
         buildings,
+        driveAreas,
         features,
         primitives,
         degree,
@@ -124,6 +130,8 @@ export function legacyRecordFor(index, definition, id, context = {}) {
             return index.features.get(id) ?? null;
         case "buildings":
             return index.buildings.get(id) ?? null;
+        case "driveAreas":
+            return index.driveAreas?.get(id) ?? null;
         case "roads.edges":
             return index.edges.get(id) ?? null;
         case "roads.nodes":
@@ -149,6 +157,7 @@ export function legacyTypeIdFor(index, id) {
     if (index.primitives?.has(id)) return PRIMITIVE_TYPE_ID;
     if (index.features.has(id)) return BUILTIN_PROP_TYPE_ID;
     if (index.buildings.has(id)) return BUILDING_TYPE_ID;
+    if (index.driveAreas?.has(id)) return DRIVE_AREA_TYPE_ID;
     if (index.edges.has(id)) return ROAD_TYPE_ID;
     if (index.junctions.has(id)) return INTERSECTION_TYPE_ID;
     return null;
@@ -176,6 +185,7 @@ export function deriveObjectGraph(snapshot = {}, { startOrder = 0 } = {}) {
     for (const id of sortedIds(index.edges)) push(id, ROAD_TYPE_ID, "Road");
     for (const id of sortedIds(index.junctions)) push(id, INTERSECTION_TYPE_ID, "Intersection");
     for (const id of sortedIds(index.buildings)) push(id, BUILDING_TYPE_ID, "Building");
+    for (const id of sortedIds(index.driveAreas)) push(id, DRIVE_AREA_TYPE_ID, "Drive area");
     for (const id of sortedIds(index.features)) {
         const feature = index.features.get(id);
         push(id, BUILTIN_PROP_TYPE_ID, getBuiltinPropAsset(feature?.type)?.label ?? String(feature?.type ?? "Prop"));
@@ -480,6 +490,7 @@ export function validateObjectRecords(records, index, registry = objectTypeRegis
         ...index.edges.keys(),
         ...index.junctions.keys(),
         ...index.buildings.keys(),
+        ...index.driveAreas.keys(),
         ...index.features.keys(),
         ...index.primitives.keys(),
         ...(index.floorEnabled ? [FLOOR_OBJECT_ID] : []),

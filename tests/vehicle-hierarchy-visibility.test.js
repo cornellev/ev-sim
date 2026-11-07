@@ -40,17 +40,26 @@ test("glTF parent indexes come from node children", () => {
             nodes: [
                 { name: "root", children: [1, 2] },
                 { name: "spare", children: [3] },
-                { name: "wheel" },
+                { name: "wheel", mesh: 0 },
                 {},
             ],
         },
     });
     assert.deepEqual(listed.map((node) => node.parentIndex), [null, 0, 0, 1]);
     assert.equal(listed[3].name, "part-3");
+    assert.equal(listed[2].mesh, 0);
+    assert.equal(listed[0].mesh, null);
 });
 
 test("viewport hide is inherited and stays separate from semantic hidden nodes", () => {
     const shown = buildVehicleHierarchy(manifest(), { nodes });
+    const parts = shown.filter((entry) => entry.kind === "model-node");
+    assert.deepEqual(parts.map((entry) => [entry.id, entry.depth]), [
+        ["node-0", 1],
+        ["node-1", 2],
+        ["node-2", 2],
+        ["node-3", 3],
+    ]);
     assert.equal(row(shown, "model-node", "node-1").label, "spare (hidden)");
     assert.equal(row(shown, "model-node", "node-1").ownHidden, false);
     assert.equal(row(shown, "model-node", "node-1").hidden, false);

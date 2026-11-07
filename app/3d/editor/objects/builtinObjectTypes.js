@@ -8,6 +8,7 @@ import { createAssetInstanceType, ASSET_INSTANCE_TYPE_ID } from "./types/assetIn
 import { createBuildingType, BUILDING_TYPE_ID } from "./types/building.js";
 import { createBuiltinPropType, BUILTIN_PROP_TYPE_ID } from "./types/builtinProp.js";
 import { createFloorType, FLOOR_TYPE_ID } from "./types/floor.js";
+import { createDriveAreaType, DRIVE_AREA_TYPE_ID } from "./types/driveArea.js";
 import { createGroupType, GROUP_TYPE_ID } from "./types/group.js";
 import { createIntersectionType, INTERSECTION_TYPE_ID } from "./types/intersection.js";
 import { createRoadType, ROAD_TYPE_ID } from "./types/road.js";
@@ -26,6 +27,7 @@ export const BUILTIN_OBJECT_TYPE_IDS = Object.freeze([
     ASSET_INSTANCE_TYPE_ID,
     PRIMITIVE_TYPE_ID,
     FLOOR_TYPE_ID,
+    DRIVE_AREA_TYPE_ID,
 ]);
 
 const FACTORIES = Object.freeze([
@@ -41,6 +43,7 @@ const FACTORIES = Object.freeze([
     () => createAssetInstanceType(2),
     createPrimitiveType,
     createFloorType,
+    createDriveAreaType,
 ]);
 
 /** @param {ObjectTypeRegistry} [registry] */

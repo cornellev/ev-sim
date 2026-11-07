@@ -32,9 +32,14 @@ box is clear of obstacles. A source manifest with no IMU, GNSS, or wheel
 odometry receives those three sensors, so the bundle can still run. `--vehicle` selects a built-in or stored vehicle
 and uses that vehicle's box for the clearance check. A stored vehicle that names `dynamics.plant` must also carry a matching plugin lock. `create-bundle` copies those locks onto the run and embeds the packages installed in `--data-dir`. A missing package fails before export. A vehicle with no plugin locks keeps the plugin-free `world-bound@2` bundle. `--finish route`, the
 default, ends the episode in a zone at the far end of the route. `--finish none`
-keeps the verified route and replaces that zone with a trigger on the flag
-`cev-sim.free-drive.stop`, which nothing sets, so arriving does not end the
-episode. `--data-dir` is read-only. The command deletes its temporary workspace
+on a world that still has roads keeps the verified route and replaces that
+zone with a trigger on the flag `cev-sim.free-drive.stop`, which nothing sets,
+so arriving does not end the episode. The same flag on a world with no road
+nodes, no road edges, and at least one drive area writes a route-free episode.
+That form rejects `--finish route` and road or node selectors. The start pose
+is the first area's centroid; a pose in the gap, on an obstacle, or too small
+for the vehicle fails before export. An unsuccessful road selection in a world
+that contains roads remains an error. `--data-dir` is read-only. The command deletes its temporary workspace
 and writes only `--output`.
 
 `catalog` prints one JSON object, `cev-sim.headless.catalog` version 1, with

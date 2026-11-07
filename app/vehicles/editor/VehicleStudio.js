@@ -12,7 +12,8 @@ import {
 } from "../../3d/vehicles/presentBoundWheels.js";
 import { applyEditorVisibility, isObjectShown } from "./editorVisibility.js";
 import { gizmoHoldsPresentedWheel, syncPresentedWheelPositions } from "./presentedWheelSync.js";
-import { hierarchyNodesFromLease } from "./workspace/vehicleHierarchyModel.js";
+import { hierarchyNodesFromLease, modelNodeIndex } from "./workspace/vehicleHierarchyModel.js";
+import { pickFromHitObject } from "./modelPartPick.js";
 import { VehicleModelLoader, publishedVehicleModelSource, stagedVehicleModelSource } from "../../3d/vehicles/VehicleModelLoader.js";
 import { sensorRuntimeRegistry } from "../../3d/devices/SensorRuntimeRegistry.js";
 import { enumerateCoverageRays } from "./coverage/enumerateCoverageRays.js";
@@ -36,6 +37,7 @@ import {
     slerpDirection,
 } from "./alignOrbitAxis.js";
 import { VehicleFloorUnitGrid } from "./VehicleFloorUnitGrid.js";
+import { applySensorMarkerPose } from "./sensorMarkerPose.js";
 
 const COLORS = {
     background: 0x09090b,
@@ -46,6 +48,7 @@ const COLORS = {
     egoCenter: 0x34d399,
     zone: 0x34d399,
     selection: 0xe0f2fe,
+    part: 0x38bdf8,
 };
 
 /**
@@ -192,6 +195,7 @@ export class VehicleStudio {
         this._placementDrag = null;
         this._wheelDrag = null;
         this._cancelWheelDrag = false;
+        this._syncingManifest = false;
         this._linkedWheelId = null;
         this._editorHiddenIds = new Set();
         this._loadToken = 0;
@@ -211,6 +215,8 @@ export class VehicleStudio {
 
         this._raycaster = new THREE.Raycaster();
         this._pointer = new THREE.Vector2();
+        this._partHelper = null;
+        this._partObject = null;
         this._pointerDown = null;
         this._onPointerDown = (event) => {
             this._pointerDown = { x: event.clientX, y: event.clientY };
@@ -242,6 +248,7 @@ export class VehicleStudio {
             this.orbit.update();
             this._publishCamera();
             this._syncFloorGrid();
+            if (this._selection?.kind === "model-node") this._syncPartOutline();
             this.renderer.render(this.scene, this.camera);
         };
         animate();
@@ -262,6 +269,7 @@ export class VehicleStudio {
         this._resizeObserver.disconnect();
         this.renderer.domElement.removeEventListener("pointerdown", this._onPointerDown);
         this.renderer.domElement.removeEventListener("pointerup", this._onPointerUp);
+        this._clearPartOutline();
         this.gizmo.detach();
         this.gizmo.dispose?.();
         this.orbit.dispose();
@@ -364,18 +372,23 @@ export class VehicleStudio {
      * @param {string|null} modelUrl resolved asset URL, or null when no model
      */
     setManifest(manifest, modelUrl, stagedResources = undefined) {
-        this._manifest = manifest;
-        this._modelUrl = modelUrl;
-        if (stagedResources !== undefined) this._stagedResources = stagedResources;
-        if (this._presentationSuspended && !this._placementDrag) this._presentationSuspended = false;
-        this._syncModel(manifest, modelUrl, this._stagedResources ?? null);
-        if (!this._canonical || this._presentationSuspended) this._syncWheels(manifest.wheels);
-        this._applyWheelLinkTint();
-        this._syncSensors(manifest.sensors);
-        this._syncBody(manifest);
-        this._syncZone(manifest.lidarZone);
-        this._applySteeringPreview();
-        this._applyEditorVisibility();
+        this._syncingManifest = true;
+        try {
+            this._manifest = manifest;
+            this._modelUrl = modelUrl;
+            if (stagedResources !== undefined) this._stagedResources = stagedResources;
+            if (this._presentationSuspended && !this._placementDrag) this._presentationSuspended = false;
+            this._syncModel(manifest, modelUrl, this._stagedResources ?? null);
+            if (!this._canonical || this._presentationSuspended) this._syncWheels(manifest.wheels);
+            this._applyWheelLinkTint();
+            this._syncSensors(manifest.sensors);
+            this._syncBody(manifest);
+            this._syncZone(manifest.lidarZone);
+            this._applySteeringPreview();
+            this._applyEditorVisibility();
+        } finally {
+            this._syncingManifest = false;
+        }
     }
 
     setSteeringPreview(angle) {
@@ -419,6 +432,7 @@ export class VehicleStudio {
             this.modelRoot.clear();
             this._modelObject = null;
             this._placeholder = null;
+            this._clearPartOutline();
             this.onModelLease?.(null);
             if (source) {
                 const token = ++this._loadToken;
@@ -639,7 +653,7 @@ export class VehicleStudio {
     }
 
     _onGizmoChange() {
-        if (this._cancelWheelDrag) return;
+        if (this._syncingManifest || this._cancelWheelDrag) return;
         const drag = this._placementDrag;
         if (drag?.kind === "body" && this._modelObject && drag.modelPosition) {
             this._modelObject.position.set(
@@ -718,13 +732,7 @@ export class VehicleStudio {
         this._syncMarkerGroup(this.sensorsGroup, sensors, "sensor", (sensor) => (
             this.sensorRuntime.createPreview(sensor)
         ), (object, sensor) => {
-            object.position.set(sensor.pose.position.x, sensor.pose.position.y, sensor.pose.position.z);
-            object.rotation.set(
-                sensor.pose.rotation.x,
-                sensor.pose.rotation.y,
-                sensor.pose.rotation.z,
-            );
-            if (sensor.pose.rotation.order) object.rotation.order = sensor.pose.rotation.order;
+            applySensorMarkerPose(object, sensor, this._isDragging(object));
             return this.sensorRuntime.previewSignature(sensor);
         });
     }
@@ -849,14 +857,58 @@ export class VehicleStudio {
     /** @param {{kind: string, id: string|null} | null} selection */
     setSelection(selection) {
         const next = selection?.kind ? selection : null;
-        const target = this._objectForSelection(next);
-        const current = this._selection?.kind ? this._selection : null;
-        const shown = Boolean(target && isObjectShown(target));
-        const same = current?.kind === next?.kind && (current?.id ?? null) === (next?.id ?? null);
         this._selection = next;
-        if (same && shown && this.gizmo.object === target) return;
+        if (next?.kind === "model-node") {
+            this.gizmo.detach();
+            this._syncPartOutline();
+            return;
+        }
+        this._clearPartOutline();
+        const target = this._objectForSelection(next);
+        const shown = Boolean(target && isObjectShown(target));
+        if (shown && this.gizmo.object === target) return;
         this.gizmo.detach();
         if (shown) this.gizmo.attach(target);
+    }
+
+    _clearPartOutline() {
+        const helper = this._partHelper;
+        this._partHelper = null;
+        this._partObject = null;
+        if (!helper) return;
+        helper.removeFromParent();
+        helper.dispose();
+    }
+
+    _objectForNodeIndex(nodeIndex) {
+        for (const [object, mapping] of this._modelLease?.nodeMappings ?? []) {
+            if (mapping?.nodeIndex === nodeIndex) return object;
+        }
+        return null;
+    }
+
+    _syncPartOutline() {
+        const index = modelNodeIndex(this._selection?.id);
+        const object = index == null ? null : this._objectForNodeIndex(index);
+        if (!object || !isObjectShown(object)) {
+            this._clearPartOutline();
+            return;
+        }
+        if (!this._partHelper || this._partObject !== object) {
+            this._clearPartOutline();
+            const helper = new THREE.BoxHelper(object, COLORS.part);
+            helper.name = "VehiclePartSelection";
+            helper.renderOrder = 999;
+            if (helper.material) {
+                helper.material.depthTest = false;
+                helper.material.transparent = true;
+                helper.material.opacity = 0.95;
+            }
+            this.scene.add(helper);
+            this._partHelper = helper;
+            this._partObject = object;
+        }
+        this._partHelper.update();
     }
 
     setGizmoMode(mode) {
@@ -896,12 +948,10 @@ export class VehicleStudio {
             -((event.clientY - rect.top) / rect.height) * 2 + 1,
         );
         this._raycaster.setFromCamera(this._pointer, this.camera);
-        const pickables = [...this.wheelsGroup.children, ...this.sensorsGroup.children, this.egoMarker];
+        const pickables = [...this.wheelsGroup.children, ...this.sensorsGroup.children, this.egoMarker, this.modelRoot];
         const hits = this._raycaster.intersectObjects(pickables, true)
             .filter((hit) => isObjectShown(hit.object));
-        const pick = hits.find((hit) => hit.object.userData.pick)?.object.userData.pick
-            ?? hits[0]?.object.parent?.userData.pick
-            ?? null;
+        const pick = hits.length ? pickFromHitObject(hits[0].object, this._modelLease?.nodeMappings) : null;
         if (pick) this.onSelect?.({ ...pick });
     }
 

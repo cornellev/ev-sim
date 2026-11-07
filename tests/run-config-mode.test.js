@@ -26,10 +26,9 @@ test("explicit run configuration mode wins over the global advanced preference",
     assert.equal(resolveRunConfigMode({ stored: "advanced", advancedAuthoring: false }), "advanced");
 });
 
-test("missing run mode honors global advanced, otherwise stays advanced until CFG-06", () => {
+test("missing run mode honors global advanced and otherwise defaults to simple", () => {
     assert.equal(resolveRunConfigMode({ stored: null, advancedAuthoring: true }), "advanced");
-    assert.equal(resolveRunConfigMode({ stored: null, advancedAuthoring: false }), "advanced");
-    assert.equal(resolveRunConfigMode({ stored: null, advancedAuthoring: false, fallback: "simple" }), "simple");
+    assert.equal(resolveRunConfigMode({ stored: null, advancedAuthoring: false }), "simple");
 });
 
 test("invalid stored mode is ignored and a write does not touch advanced authoring", () => {

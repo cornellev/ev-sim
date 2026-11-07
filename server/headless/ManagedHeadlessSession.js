@@ -28,6 +28,7 @@ import {
     assertEnabledCameraRenderRuntime,
 } from "../../app/simulation/render/RenderSceneProviderRegistry.js";
 import { createHeadlessArtifactSink, resolveArtifactPolicy } from "./HeadlessArtifactSink.js";
+import { isScanningLidarType } from "../../app/simulation/sensors/SensorTypeRegistry.js";
 import { HeadlessRunnerError } from "./HeadlessRunnerErrors.js";
 import { assertDirectUdpDisabled, markResetRequiredFailure } from "./HeadlessSession.js";
 import { cloneRunBundle, verifyRunBundle } from "./RunBundle.js";
@@ -86,7 +87,7 @@ export function validateManagedRun(resolved) {
         pluginSensorRecords.get(sensor.id)?.type === sensor.type
     ));
     const unsupportedSensors = sensors.filter((sensor) => (
-        !getStateSensorModel(sensor.type) && !["lidar3d", "camera"].includes(sensor.type)
+        !getStateSensorModel(sensor.type) && sensor.type !== "camera" && !isScanningLidarType(sensor.type)
         && pluginSensorRecords.get(sensor.id)?.type !== sensor.type
     ));
     if (unsupportedSensors.length > 0) {
@@ -95,7 +96,7 @@ export function validateManagedRun(resolved) {
     if (sensors.length > 0 && resolved.manifest.clock?.modules?.sensors === false) {
         invalid("UNSUPPORTED_CAPABILITY", "Managed experiments cannot run enabled sensors while the sensors clock module is disabled.");
     }
-    const lidarSensors = sensors.filter((sensor) => sensor.type === "lidar3d");
+    const lidarSensors = sensors.filter((sensor) => isScanningLidarType(sensor.type));
     const cameraSensors = sensors.filter((sensor) => sensor.type === "camera");
     if ((lidarSensors.length > 0 || pluginSensors.length > 0) && !resolved.lidarGeometry) {
         invalid("BUNDLE_INVALID", "LiDAR geometry twins are missing; re-resolve and export the run manifest.");
@@ -135,7 +136,7 @@ export function validateManagedRun(resolved) {
         invalid("UNSUPPORTED_CAPABILITY", `Managed experiments do not support backend kind(s): ${unknown.map((entry) => entry.kind).join(", ")}.`);
     }
     if (lidarSensors.length === 0 && pluginSensors.length === 0 && lidar.length > 0) {
-        invalid("UNSUPPORTED_CAPABILITY", "A CPU LiDAR backend was selected but the manifest has no enabled lidar3d sensor.");
+        invalid("UNSUPPORTED_CAPABILITY", "A CPU LiDAR backend was selected but the manifest has no enabled lidar2d or lidar3d sensor.");
     }
     if (gpu.length > 0 && cameraSensors.length === 0 && (lidarSensors.length === 0 || lidar.length > 0)) {
         invalid("UNSUPPORTED_CAPABILITY", "The managed GPU sensor backend selection is unused.");
@@ -162,7 +163,7 @@ export function managedEpisodeIdentity(resolved) {
         && !backends.some((entry) => Number(entry.kind) === 2)) {
         backends.push(createStateSensorBackendSelection());
     }
-    if (sensors.some((sensor) => sensor.type === "lidar3d")
+    if (sensors.some((sensor) => isScanningLidarType(sensor.type))
         && !backends.some((entry) => [3, GPU_SENSOR_BACKEND_KIND].includes(Number(entry.kind)))) {
         backends.push(createCpuLidarBackendSelection());
     }

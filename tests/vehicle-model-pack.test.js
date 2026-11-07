@@ -93,3 +93,19 @@ test("VEH-02a assigns ordinal names and rejects animation, skins, and unknown ex
     assert.throws(() => packVehicleGltf({ json: { asset: { version: "2.0" }, skins: [{}] } }), /Skins are not permitted/);
     assert.throws(() => packVehicleGltf({ json: { asset: { version: "2.0" }, extensionsUsed: ["NOPE"] } }), /not permitted/);
 });
+
+test("VEH-02a drops glTF extras before packing", () => {
+    const clean = { asset: { version: "2.0" }, nodes: [{ name: "Door" }], materials: [{}] };
+    const dirty = {
+        asset: { version: "2.0" },
+        nodes: [{ name: "Door", extras: { truthId: "building-1" } }],
+        materials: [{ extras: { note: true } }],
+    };
+    const packed = packVehicleGltf({ json: dirty });
+    const parsed = readPackedGlb(packed.glbBytes);
+    assert.equal(parsed.json.nodes[0].extras, undefined);
+    assert.equal(parsed.json.materials[0].extras, undefined);
+    assert.deepEqual(dirty.nodes[0].extras, { truthId: "building-1" });
+    const cleanPacked = packVehicleGltf({ json: clean });
+    assert.deepEqual([...packed.glbBytes], [...cleanPacked.glbBytes]);
+});

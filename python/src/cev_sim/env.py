@@ -347,11 +347,19 @@ class CevSimEnv(gym.Env[dict[str, np.ndarray[Any, Any]], np.ndarray[Any, Any]]):
         """Latest steering angle in radians."""
         return float(self._oracle("oracle/ego/steering", 1)[0])
 
-    def goal(self) -> np.ndarray[Any, Any]:
-        """Latest ``oracle/goal`` as ``(x, z, yaw)``.
+    def goal(self) -> np.ndarray[Any, Any] | None:
+        """Latest ``oracle/goal`` as ``(x, z, yaw)``, or ``None`` when it is invalid.
 
-        In a free drive this is the far end of the verified route, not a finish line.
+        A routed free drive still publishes the far end of the verified route.
+        An area-only episode has no oracle goal until a reset override sets one.
         """
+        if self._closed or self._batch is None:
+            raise CevSimConfigurationError("Environment is closed")
+        if self._last_observation is None:
+            raise CevSimConfigurationError("reset() before reading the observation")
+        validity = self._last_observation.get("oracle/goal/validity")
+        if validity is not None and not bool(np.asarray(validity).reshape(-1)[0]):
+            return None
         return self._oracle("oracle/goal", 3)
 
     def occupancy(self) -> Any:

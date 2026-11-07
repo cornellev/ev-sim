@@ -181,7 +181,9 @@ def _resolved_backends(bundle: LoadedBundle, configuration: EpisodeConfig) -> tu
         sensor_rig = manifest.get("sensorRig", {}) if isinstance(manifest, Mapping) else {}
         sensors = sensor_rig.get("sensors", []) if isinstance(sensor_rig, Mapping) else []
         requests_lidar = isinstance(sensors, list) and any(
-            isinstance(sensor, Mapping) and sensor.get("enabled", True) is not False and sensor.get("type") == "lidar3d"
+            isinstance(sensor, Mapping)
+            and sensor.get("enabled", True) is not False
+            and sensor.get("type") in {"lidar3d", "lidar2d"}
             for sensor in sensors
         )
         if requests_lidar and not any(entry.kind == CPU_LIDAR_KIND for entry in backends):

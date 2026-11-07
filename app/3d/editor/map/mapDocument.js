@@ -70,6 +70,11 @@ export function collectMapFitPoints(document) {
             points.push({ x: finite(corner.x), z: finite(corner.z) });
         }
     }
+    for (const area of document?.driveAreas ?? []) {
+        for (const corner of area.footprint ?? []) {
+            points.push({ x: finite(corner.x), z: finite(corner.z) });
+        }
+    }
     for (const feature of document?.features ?? []) {
         points.push({ x: finite(feature.x), z: finite(feature.z) });
     }

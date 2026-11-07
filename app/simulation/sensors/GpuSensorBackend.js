@@ -88,7 +88,7 @@ export function gpuSensorBackendCapability({ available = false, unavailableReaso
         version: GPU_SENSOR_BACKEND_VERSION,
         kind: GPU_SENSOR_BACKEND_KIND,
         description: "Pooled hardware-backed headless Chromium WebGL2 camera and LiDAR sensors.",
-        sensorTypes: ["camera", "lidar3d"],
+        sensorTypes: ["camera", "lidar3d", "lidar2d"],
         features: ["rgba8", "metric-v2", "pbo-fence-readback", "pooled-renderer", "shared-memory"],
         available: Boolean(available),
         unavailableReason: available ? "" : String(unavailableReason || "GPU sensor backend unavailable."),
@@ -105,7 +105,7 @@ export function routedGpuSensorBackendCapability({
         version: GPU_SENSOR_BACKEND_V2_VERSION,
         kind: GPU_SENSOR_BACKEND_KIND,
         description: "Provider-routed PBR cameras and dedicated analytic LiDAR through pooled hardware-backed Chromium WebGL2.",
-        sensorTypes: ["camera", "lidar3d"],
+        sensorTypes: ["camera", "lidar3d", "lidar2d"],
         features: [
             "rgba8", "camera-info", "analytic-depth", "analytic-semantic", "analytic-instance",
             "metric-v2", "pbo-fence-readback", "provider-routing", "product-routing",

@@ -24,7 +24,8 @@ import {
     createSensorOccupancyObservationSpace,
     PlanningOccupancyObservationBuilder,
 } from "./PlanningOccupancyObservation.js";
-import { assertStartPoseClear, goalReached } from "./EpisodeOverrides.js";
+import { assertStartPoseClear, goalReached, manifestStartPose } from "./EpisodeOverrides.js";
+import { areaOnlyWorld } from "../world/DriveAreas.js";
 import { canonicalEpisodeOverrides } from "../kernel/SimulationHashes.js";
 import {
     MEASURED_PERCEPTION_PROFILE_ID,
@@ -61,7 +62,7 @@ import {
     normalizeAction,
 } from "./TensorProtocol.js";
 import { verifyPluginPackage } from "../../plugin/PluginPackage.js";
-import { createSensorDefinitionRegistry } from "../sensors/SensorTypeRegistry.js";
+import { createSensorDefinitionRegistry, isScanningLidarType } from "../sensors/SensorTypeRegistry.js";
 import { planSensorAdmission } from "../sensors/SensorAdmission.js";
 
 export const TERMINATION_REASON = Object.freeze({
@@ -115,7 +116,7 @@ function manifestObservationProfile(resolvedRun) {
 
 export function normalizeEpisodeSpec(resolvedRun, spec = {}) {
     const requestsLidar = resolvedRun.manifest.sensorRig?.sensors?.some(
-        (sensor) => sensor.enabled !== false && sensor.type === "lidar3d",
+        (sensor) => sensor.enabled !== false && isScanningLidarType(sensor.type),
     ) || (resolvedRun.pluginSensors?.description?.sensors?.length ?? 0) > 0;
     const requestsCamera = resolvedRun.manifest.sensorRig?.sensors?.some(
         (sensor) => sensor.enabled !== false && sensor.type === "camera",
@@ -306,7 +307,7 @@ export class HeadlessEpisode {
         } catch (error) {
             throw new HeadlessEpisodeError("UNSUPPORTED_CAPABILITY", error.message, error.details ?? null);
         }
-        const lidarSensors = enabledSensors.filter((sensor) => sensor.type === "lidar3d");
+        const lidarSensors = enabledSensors.filter((sensor) => isScanningLidarType(sensor.type));
         const pluginRangeImageSensors = sensorAdmission.sensors.filter((entry) => entry.kind === "plugin-range-image");
         const cameraSensors = enabledSensors.filter((sensor) => sensor.type === "camera");
         const stateSensorConfigs = enabledSensors.filter((sensor) => getStateSensorModel(sensor.type));
@@ -385,34 +386,45 @@ export class HeadlessEpisode {
             if (!mapCamera && !vehicleIds.has(sensor.parentId)) throw new HeadlessEpisodeError("BUNDLE_INVALID", `Sensor ${sensor.id} references unknown parent vehicle ${sensor.parentId}.`);
             sensorIds.add(sensor.id);
         }
-        const route = resolveEgoRoute(resolvedRun);
-        if (!route?.verification || !Array.isArray(route.polyline) || route.polyline.length < 2 || !(Number(route.totalLength) > 0)) {
-            throw new HeadlessEpisodeError(
-                "BUNDLE_INVALID",
-                "A verified, non-empty ego route is required; select and verify a scenario before export, or generate a deployment bundle with `cev-sim create-smoke-bundle`.",
-                {
-                    manifestScenarioId: resolvedRun.manifest.scenario?.id ?? null,
-                    resolvedScenarioId: resolvedRun.scenario?.scenario?.id ?? null,
-                },
-            );
-        }
-        const routeValidation = validateRouteVerification(route, resolvedRun.environment?.manifest, {
-            // Immutable exported bundles retain their historical proof bytes;
-            // authoring/server validation still requires the current algorithm.
-            allowLegacyVersions: true,
-        });
-        if (!routeValidation.ok) {
-            throw new HeadlessEpisodeError("BUNDLE_INVALID", "The ego route verification is stale or non-canonical.", routeValidation.issues);
-        }
-        const roads = resolvedRun.world.description.roads;
-        if (!(roads?.nodes?.length > 0) || !(roads?.edges?.length > 0) || !(resolvedRun.world.description.drivableSurfaces?.length > 0)) {
-            throw new HeadlessEpisodeError("BUNDLE_INVALID", "Road-network and drivable-surface data are required.");
-        }
+        const scenario = resolvedRun.scenario?.scenario;
+        const freeDrive = scenario?.freeDrive === true;
+        let route = null;
         const controlTarget = resolvedRun.manifest.controls.targetVehicleId || "ego";
-        if (route.actorId !== controlTarget) {
-            throw new HeadlessEpisodeError("BUNDLE_INVALID", `The candidate control target ${controlTarget} does not own the verified ego route ${route.id}.`);
+        if (freeDrive) {
+            if ((scenario.routes?.length ?? 0) > 0 || !areaOnlyWorld(resolvedRun.world.description)) {
+                throw new HeadlessEpisodeError("BUNDLE_INVALID", "A free-drive scenario requires a world with no roads and at least one drive area.");
+            }
+            assertStartPoseClear(resolvedRun, spec.overrides?.startPose ?? manifestStartPose(resolvedRun));
+        } else {
+            route = resolveEgoRoute(resolvedRun);
+            if (!route?.verification || !Array.isArray(route.polyline) || route.polyline.length < 2 || !(Number(route.totalLength) > 0)) {
+                throw new HeadlessEpisodeError(
+                    "BUNDLE_INVALID",
+                    "A verified, non-empty ego route is required; select and verify a scenario before export, or generate a deployment bundle with `cev-sim create-smoke-bundle`.",
+                    {
+                        manifestScenarioId: resolvedRun.manifest.scenario?.id ?? null,
+                        resolvedScenarioId: resolvedRun.scenario?.scenario?.id ?? null,
+                    },
+                );
+            }
+            const routeValidation = validateRouteVerification(route, resolvedRun.environment?.manifest, {
+                // Immutable exported bundles retain their historical proof bytes;
+                // authoring/server validation still requires the current algorithm.
+                allowLegacyVersions: true,
+            });
+            if (!routeValidation.ok) {
+                throw new HeadlessEpisodeError("BUNDLE_INVALID", "The ego route verification is stale or non-canonical.", routeValidation.issues);
+            }
+            const roads = resolvedRun.world.description.roads;
+            if (!(roads?.nodes?.length > 0) || !(roads?.edges?.length > 0) || !(resolvedRun.world.description.drivableSurfaces?.length > 0)) {
+                throw new HeadlessEpisodeError("BUNDLE_INVALID", "Road-network and drivable-surface data are required.");
+            }
+            if (route.actorId !== controlTarget) {
+                throw new HeadlessEpisodeError("BUNDLE_INVALID", `The candidate control target ${controlTarget} does not own the verified ego route ${route.id}.`);
+            }
         }
-        const initialVehicle = (resolvedRun.manifest.initialState?.vehicles || []).find((entry) => entry.id === route.actorId)
+        const actorId = freeDrive ? controlTarget : route.actorId;
+        const initialVehicle = (resolvedRun.manifest.initialState?.vehicles || []).find((entry) => entry.id === actorId)
             ?? resolvedRun.manifest.initialState?.vehicles?.[0];
         const vehicleDependency = (resolvedRun.vehicles || []).find((entry) => entry.actorId === initialVehicle?.id)
             ?? resolvedRun.vehicles?.[0];
@@ -435,10 +447,10 @@ export class HeadlessEpisode {
                 "measured-perception requires at least one measured RGB camera or measured LiDAR point-cloud product.",
             );
         }
-        if (sensorOccupancy && !enabledSensors.some((sensor) => sensor.type === "lidar3d")) {
+        if (sensorOccupancy && !enabledSensors.some((sensor) => isScanningLidarType(sensor.type))) {
             throw new HeadlessEpisodeError(
                 "BUNDLE_INVALID",
-                "sensor-occupancy requires an enabled lidar3d sensor.",
+                "sensor-occupancy requires an enabled lidar2d or lidar3d sensor.",
             );
         }
         const actorCount = planningActorIds(resolvedRun).length;

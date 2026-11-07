@@ -184,6 +184,21 @@ function surfaceTriangles(surface, instanceId, roads = null) {
             triangleIndex: index,
         }));
     }
+    if (surface.kind === "area-polygon") {
+        if (!Array.isArray(surface.footprint) || !Array.isArray(surface.triangles) || !Number.isFinite(Number(surface.minY))) {
+            throw new TypeError(`Drive area surface "${surface.id}" is malformed.`);
+        }
+        const y = Number(surface.minY);
+        return surface.triangles.map((face, index) => createTriangleLidarTwin({
+            id: `${surface.id}:${index}`,
+            sourceId: surface.sourceId,
+            vertices: face.map((pointIndex) => ({ ...surface.footprint[pointIndex], y })),
+            tags,
+            semanticId: perceptionClassId("road"),
+            instanceId,
+            triangleIndex: index,
+        }));
+    }
     if (surface.kind !== "intersection-disc") throw new TypeError(`Unsupported drivable surface kind "${surface.kind}".`);
     const result = [];
     for (let index = 0; index < INTERSECTION_SEGMENTS; index += 1) {

@@ -93,6 +93,7 @@ export class EnvironmentLoader {
             })),
             primitives: manifest.document?.primitives ?? [],
             floor: manifest.document?.floor ?? null,
+            driveAreas: manifest.document?.driveAreas ?? [],
             features: description.features.map((feature) => ({
                 id: feature.id,
                 type: feature.type,
