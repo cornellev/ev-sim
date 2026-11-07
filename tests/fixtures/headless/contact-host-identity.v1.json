@@ -1,0 +1,89 @@
+{
+  "kind": "cev-sim.contact-host-identity",
+  "version": 1,
+  "cases": [
+    {
+      "id": "kinematic",
+      "options": {},
+      "resolvedHash": "fd1a02d7b5ae09d718abe42f19ffc8122c8597140335a420db0eeebd0bc81a91",
+      "simulationSemanticHash": "e2ee331012e36d9e341722d60c813ad414efd7e58fc621920de34937224152a0",
+      "episodeHash": "206100a810ea2ddf6b688ec242f878b70c82225129c3bd85d8c20814378eb8f4",
+      "vehicleHash": "a3af7f670a3561272633dd3f5829ce4f7470a7dff36ac9f200c76ab0f47d1a0b"
+    },
+    {
+      "id": "dynamic",
+      "options": {
+        "model": "dynamic-bicycle-v1"
+      },
+      "resolvedHash": "b5b87ac72ff36fc43787f2a59dbf7ec5cf2bf8db0f0dc5fdbe54c347c78c3936",
+      "simulationSemanticHash": "2e70d70155e00830cf27df016a0074a28e5216a97bf9de6a31b062d88076d833",
+      "episodeHash": "fd8cbefd455cd1b5086ba1694e4bfb482ef63b47013cbd4caf378774ea4c9075",
+      "vehicleHash": "f48aafd7c5ddf571eb82af18a04ae84086e118b18c6cf5be7b4a87a2fe4c92ed"
+    },
+    {
+      "id": "contact-v1",
+      "options": {
+        "model": "contact-bicycle-v1"
+      },
+      "resolvedHash": "0e60f6bfbbba007b2cbf314a46927bb6f0101390964e0f77c2c981e5b921f44c",
+      "simulationSemanticHash": "37e1cc578747056f088547e503641e18f4273674ad08c1ea6815706668283d4b",
+      "episodeHash": "4d4b5d3e7f45d7ec3f27fd33068c42636fc7d9271a3ee766147d68114856c3f6",
+      "vehicleHash": "6801ab254004b10fbd8cd8c2ff17bc85e3f893d069b49e0fb343fd9542b86cad"
+    },
+    {
+      "id": "kinematic-plugin",
+      "options": {
+        "plugin": true
+      },
+      "resolvedHash": "8a06b36b051bc082ca1e718be500f46838b1ef5fc45d3e1b7b5ada12291b8f4e",
+      "simulationSemanticHash": "83ce54f989c9c82454d9b6828e3306a3048ddf2083c20b50e26902a098366cb2",
+      "episodeHash": "6ea9fa00684fcbe83a3f532020464235a985fcfd373d12ce378db5404372739d",
+      "vehicleHash": "b4ec64f023335ed6d1b8d1f7af13fdcd6af32e464b48abd1b21d2fcebb9c8168"
+    },
+    {
+      "id": "dynamic-plugin",
+      "options": {
+        "plugin": true,
+        "model": "dynamic-bicycle-v1"
+      },
+      "resolvedHash": "8ad553f5a79ae904e110ff0166474659beaccb5cb529aa800cb6103cdfbdc92b",
+      "simulationSemanticHash": "8cfae80602226d1c9af14efd01955b5a16e2e9d3523176197886ef4e3ff30635",
+      "episodeHash": "0ac3d9704fc28e6438cb96911e7617092c64f09adfc36e40c6dd39347c1b8fe9",
+      "vehicleHash": "c08a2e9025f8ce6ef9c6eb4f05f2a8c79d5d04cda3cbc6e7a0582e8fd3762f6b"
+    },
+    {
+      "id": "contact-plugin",
+      "options": {
+        "plugin": true,
+        "model": "contact-bicycle-v1"
+      },
+      "resolvedHash": "e837788c66c412950edba2fd82be0de7fe160b660b94bf506d38ff17f6feb0e4",
+      "simulationSemanticHash": "f6411986bad98d6ae660b6fafe697d5222c60ab90b67b18e8b648f50b1f976b3",
+      "episodeHash": "ecc580435b774fbbb34a9c87470fd9e12e36f6b4f90569eeecc1de3cdd31c48a",
+      "vehicleHash": "78c5c6b7a6999a9b1ed77bd3342f543ae45678c278fb72ffe1fd1babedaba451"
+    },
+    {
+      "id": "nested-contact-v1",
+      "options": {
+        "model": "contact-bicycle-v1",
+        "nested": true
+      },
+      "resolvedHash": "3217e9d843d4f436ef6e44ec7031335254ae81d175d003f14f6a7a09d037b65c",
+      "simulationSemanticHash": "42f1484c0aa269983e9007a7b489804a245acf8f0e3db2a6280e75ef1d585a32",
+      "episodeHash": "ba1658273ce5661c19ec7c6096c1e17cb18c9aa38b8958835b2ebc0b8071fd5e",
+      "vehicleHash": "6801ab254004b10fbd8cd8c2ff17bc85e3f893d069b49e0fb343fd9542b86cad"
+    },
+    {
+      "id": "nested-contact-plugin",
+      "options": {
+        "plugin": true,
+        "model": "contact-bicycle-v1",
+        "nested": true
+      },
+      "resolvedHash": "4e20d9b06f67d0bd05d39ea4a7aa70f5584ffbd4cda465041984910b570770ad",
+      "simulationSemanticHash": "109a5533f599e4213bab5f7e82eeade7300dc146f630350a5373ecc0f0deb9c1",
+      "episodeHash": "5742bbdf47a3fe589a5a57f5a88ad01a1667b03863a128d10777814d20d1f424",
+      "vehicleHash": "78c5c6b7a6999a9b1ed77bd3342f543ae45678c278fb72ffe1fd1babedaba451"
+    }
+  ]
+}

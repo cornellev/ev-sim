@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { PLANT_CONTACT_BICYCLE_MODEL } from "../app/plugin/PlantModule.js";
 import { buildImuMeasurement, captureVehicleSnapshot, createMeasurementSeedState } from "../app/autonomy/LocalizationMeasurements.js";
 import { applyManualDrive } from "../app/3d/vehicles/VehiclePlantAdapter.js";
 import { createPhysicsBackendSelection } from "../app/physics/PhysicsBackend.js";
@@ -265,7 +266,7 @@ test("a contact plugin force stepper matches the built-in plant", () => {
     const shared = { id: "contact-car", kinematics: { wheelbase: 1.5 }, wheels };
     const plugin = new KinematicVehiclePlant(createVehiclePlantDefinition(entry, {
         manifest: normalizeVehicleManifest({ ...shared, dynamics: { plant: "acme.dynamics.bicycle.bicycle" } }),
-    }, { plantModel: CONTACT_BICYCLE_MODEL }), {
+    }, { plantModel: PLANT_CONTACT_BICYCLE_MODEL }), {
         stepper: {
             step(state, dt) {
                 const forces = axleContactForces({

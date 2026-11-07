@@ -5,7 +5,7 @@ import {
     sensorTypeRegistry,
     validateVehicleSensorDefinition,
 } from "../simulation/sensors/SensorTypeRegistry.js";
-import { PLANT_CONTACT_BICYCLE_MODEL, PLANT_DYNAMIC_BICYCLE_MODEL } from "../plugin/PlantModule.js";
+import { PLANT_DYNAMIC_BICYCLE_MODEL } from "../plugin/PlantModule.js";
 import {
     collectVehiclePluginLockIssues,
     reconcileVehiclePluginLocks,
@@ -54,7 +54,7 @@ export const DEFAULT_ACTUATOR_LIMITS = Object.freeze({
 
 export const KINEMATIC_BICYCLE_MODEL = "kinematic-bicycle-v1";
 export const DYNAMIC_BICYCLE_MODEL = PLANT_DYNAMIC_BICYCLE_MODEL;
-export const CONTACT_BICYCLE_MODEL = PLANT_CONTACT_BICYCLE_MODEL;
+export const CONTACT_BICYCLE_MODEL = "contact-bicycle-v2";
 
 /** Defaults for `dynamic-bicycle-v1`. `lf`/`lr` are derived, not stored. */
 export const DEFAULT_DYNAMIC_BICYCLE = Object.freeze({
@@ -89,19 +89,20 @@ function dynamicsNumber(source, key, fallback, nonNegative) {
     return canonicalFiniteNumber(number);
 }
 
-function normalizeVehicleDynamics(value) {
+export function normalizeVehicleDynamics(value) {
     if (value == null) return undefined;
     const source = object(value);
     const unknown = Object.keys(source).find((key) => !DYNAMICS_KEYS.has(key));
     if (unknown) throw new Error(`vehicle manifest.dynamics contains unknown field "${unknown}".`);
     const plant = text(source.plant);
-    const model = text(source.model);
+    const authoredModel = text(source.model);
+    const model = authoredModel === "contact-bicycle-v1" ? CONTACT_BICYCLE_MODEL : authoredModel;
     if (model && !VEHICLE_MOTION_MODELS.has(model)) {
         throw new Error(`vehicle manifest.dynamics.model "${model}" is not a known motion model.`);
     }
     const dynamic = PHYSICAL_BICYCLE_MODELS.has(model);
     if (DYNAMIC_BICYCLE_FIELDS.some(([key]) => source[key] !== undefined) && !dynamic) {
-        throw new Error("vehicle manifest.dynamics physical fields require model \"dynamic-bicycle-v1\" or \"contact-bicycle-v1\".");
+        throw new Error(`vehicle manifest.dynamics physical fields require model "${DYNAMIC_BICYCLE_MODEL}" or "${CONTACT_BICYCLE_MODEL}".`);
     }
     if (plant && dynamic) {
         throw new Error(`vehicle manifest.dynamics.plant cannot be combined with model "${model}".`);

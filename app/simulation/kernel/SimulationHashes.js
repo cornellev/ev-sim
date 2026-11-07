@@ -278,6 +278,7 @@ function projectLockedVehicleRecord(record) {
         hash: simulationSha256({
             manifest,
             assetHashes: record.assetHashes ?? {},
+            ...(Object.hasOwn(record, "contactHost") ? { contactHost: record.contactHost } : {}),
         }),
     };
 }

@@ -1,5 +1,6 @@
 import { CandidateOutputRuntime } from "../../autonomy/CandidateOutputRuntime.js";
 import { settleContactVehicles } from "../vehicles/contactBicycle.js";
+import { assertResolvedContactHosts } from "../vehicles/ContactHostContract.js";
 import { ControlRuntime } from "../../autonomy/ControlRuntime.js";
 import { getBuiltInVehicleManifest } from "../../vehicles/BuiltInVehicleManifests.js";
 import { AssertionEngine } from "../AssertionEngine.js";
@@ -400,6 +401,7 @@ export class SimulationKernel {
             ?? [];
         let sensorAdmission;
         try {
+            assertResolvedContactHosts(resolved, candidatePluginSession?.plants);
             sensorAdmission = planSensorAdmission({
                 manifest: resolved.manifest,
                 sensorRegistry: candidatePluginSession?.sensorRegistry ?? sensorTypeRegistry,

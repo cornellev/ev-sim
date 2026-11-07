@@ -763,6 +763,16 @@ change the outstanding PR-12 hosted, soak, NVIDIA x64, or Jetson ARM64 gates.
 
 ## Decision log
 
+- **2026-11-07 — RZ-01 versions the contact host independently of packages.**
+  Plugin `model: "contact-bicycle-v1"`, ABI 1, package/runtime hashes, and
+  saved `pluginLocks` stay unchanged. Exact package plant declarations cause
+  newly resolved root/nested vehicle records to carry numeric `contactHost: 2`.
+  The vehicle semantic lock projection binds that marker. Kinematic-ABI and
+  dynamic-bicycle plugins get no marker and retain their identities. Execution
+  rejects unmarked contact-plugin records; integrity inspection and authoring
+  import preserve historical bundles, and re-resolution needs no Reimport.
+  This is a separate RZ preparation step, with release held for RZ-02–04.
+
 - **2026-10-27 — Stable contact stopping and bounded rolling impulse.** The
   contact host uses a damped speed/stop controller shared by built-in and WASM
   plants. All three Rust dynamics examples and the local model limit rolling

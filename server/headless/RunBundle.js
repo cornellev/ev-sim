@@ -16,6 +16,7 @@ import {
 } from "../../app/simulation/visual/VisualLayer.js";
 import { computeSimulationSemanticHash } from "../../app/simulation/kernel/SimulationHashes.js";
 import { HeadlessEpisodeError } from "../../app/simulation/headless/HeadlessErrors.js";
+import { assertResolvedContactHosts } from "../../app/simulation/vehicles/ContactHostContract.js";
 import { verifyPluginPackage } from "../../app/plugin/PluginPackage.js";
 import {
     assertPluginSensorsResource,
@@ -227,6 +228,12 @@ function verifyBundleStructure(verified, { requireRuntime = false } = {}) {
         });
     } catch (error) {
         invalid("BUNDLE_INVALID", error.message);
+    }
+    if (requireRuntime) {
+        const plants = new Map(verifiedPackages.flatMap(({ document }) => (
+            (document.plants ?? []).map((plant) => [plant.id, plant])
+        )));
+        assertResolvedContactHosts(resolved, plants);
     }
     let sensorAdmission;
     let expectedPluginSensors;

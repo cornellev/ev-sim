@@ -8,6 +8,7 @@ import test from "node:test";
 import { captureVehicleSnapshot } from "../app/autonomy/LocalizationMeasurements.js";
 import { applyManualDrive } from "../app/3d/vehicles/VehiclePlantAdapter.js";
 import { assertPluginDocument } from "../app/plugin/PluginDocument.js";
+import { PLANT_CONTACT_BICYCLE_MODEL } from "../app/plugin/PlantModule.js";
 import { HeadlessVehicleManager } from "../app/simulation/headless/HeadlessVehicleManager.js";
 import { absorbDynamicClamp, stepDynamicBicycle } from "../app/simulation/vehicles/dynamicBicycle.js";
 import {
@@ -127,7 +128,7 @@ function runTape(plugin, javascript) {
 test("contact plant packages declare the model and the kinematic fixture does not", async () => {
     for (const id of ["longitudinal", "cornering", "bicycle"]) {
         const document = JSON.parse(await fs.readFile(`examples/plugins/acme.dynamics.${id}/plugin.json`, "utf8"));
-        assert.equal(assertPluginDocument(document).plants[0].model, CONTACT_BICYCLE_MODEL);
+        assert.equal(assertPluginDocument(document).plants[0].model, PLANT_CONTACT_BICYCLE_MODEL);
     }
     const fixture = JSON.parse(await fs.readFile("tests/fixtures/plugins/test.plant-fixture/plugin.json", "utf8"));
     assert.equal(assertPluginDocument(fixture).plants[0].model, undefined);

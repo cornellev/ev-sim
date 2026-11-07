@@ -1,8 +1,10 @@
 # Rigid body components
 
 Optional Rapier rigid bodies on environment objects. This is not a `PHY-*`
-milestone. The bicycle plant, Rapier gravity on the vehicle, and
-`tests/fixtures/headless/characterization.v1.json` stay as they are.
+milestone. Kinematic and dynamic-bicycle vehicles keep their sweep with
+Rapier gravity off, and both characterization tapes stay pinned. The separate
+`RZ-*` program permits Rapier gravity and drive contact for contact-v2 vehicles;
+RZ-01 establishes identity and admission only, with release held for RZ-02–04.
 
 ## Contract
 
@@ -57,6 +59,20 @@ and `lidarGeometryHash` stay the authored geometry. GPU LiDAR and photoreal
 cameras keep the authored pose.
 
 ## Progress and decision log
+
+### 2026-11-07 — RZ-01 versions the contact host
+
+Vehicle `contact-bicycle-v2` and resolved contact-plugin `contactHost: 2`
+identify the separate Rapier chassis transition. The plugin force declaration
+stays `contact-bicycle-v1` on ABI 1; saved locks and package hashes do not
+change. Raw legacy built-in contact records and unmarked contact-plugin
+records require re-resolution before execution, while integrity inspection
+and authoring import remain available. The shared guard covers root and
+nested scenario vehicles and preserves an active run on failed preparation.
+RZ-01 retains the JS contact integrator and changes no collider, gravity,
+rigid-body component, backend config, `worldHash`, or recorded motion samples.
+The pre-existing kinematic steering-sign characterization mismatch remains
+a separate acceptance blocker; neither pinned older tape may be repinned.
 
 ### 2026-10-20 — component, Rapier step, CPU LiDAR
 

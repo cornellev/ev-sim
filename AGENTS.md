@@ -150,9 +150,13 @@ characterization tape, read:
 4. [`docs/architecture.md`](docs/architecture.md)
 
 This is a separate `PHY-*` program. Do not treat it as a headless PR 13.
-Do not add suspension springs, wheel spin, or Rapier drive contact. The
-kinematic `bicycle` plant and `tests/fixtures/headless/characterization.v1.json`
-stay pinned. A plugin `dynamics.plant` remains an override of the built-in plant.
+Do not add suspension springs or wheel spin. Rapier drive contact stays off
+the kinematic `bicycle` and `dynamic-bicycle` plants. Those plants and their
+`characterization.v1.json` and `characterization.dynamic-bicycle.v1.json`
+tapes stay pinned. The separate `RZ-*` program permits a Rapier chassis only
+for `contact-bicycle-v2` and contact plugins with resolved `contactHost: 2`.
+RZ-01 establishes identity and admission; release waits for RZ-02–04.
+A plugin `dynamics.plant` remains an override of the built-in plant.
 
 Update the progress and decision log in `docs/physics-plan.md` whenever a PHY
 milestone changes a contract, hash, acceptance criterion, or milestone status.
@@ -167,9 +171,10 @@ environment-editor rigid-body component, read:
 3. [`docs/environment-editor.md`](docs/environment-editor.md)
 4. [`docs/architecture.md`](docs/architecture.md)
 
-This is a separate program from `PHY-*`. The bicycle plant stays kinematic or
-dynamic-bicycle. Rapier gravity stays off the vehicle. Worlds with no rigid
-body keep their current `worldHash`.
+This is a separate program from `PHY-*`. Kinematic and dynamic-bicycle plants
+keep their sweep and have no Rapier gravity. The separate `RZ-*` contact-v2
+program may use Rapier gravity and drive contact; RZ-01 does not implement
+that motion. Worlds with no rigid body keep their current `worldHash`.
 
 Update the progress and decision log in `docs/rigid-body-plan.md` whenever this
 program changes a contract, hash, acceptance criterion, or milestone status.

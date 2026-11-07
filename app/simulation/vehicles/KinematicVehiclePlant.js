@@ -1,5 +1,5 @@
 import { PLUGIN_ERROR_CODES, pluginError } from "../../plugin/PluginErrors.js";
-import { PLANT_STATE_LENGTH } from "../../plugin/PlantModule.js";
+import { PLANT_CONTACT_BICYCLE_MODEL, PLANT_STATE_LENGTH } from "../../plugin/PlantModule.js";
 import { getBuiltInVehicleManifest } from "../../vehicles/BuiltInVehicleManifests.js";
 import { CONTACT_BICYCLE_MODEL, DYNAMIC_BICYCLE_MODEL, normalizeVehicleManifest } from "../../vehicles/VehicleManifest.js";
 import { euler, finiteOr as finite, pose, vec3 } from "../../util/plainGeometry.js";
@@ -53,7 +53,7 @@ export function createVehiclePlantDefinition(entry = {}, dependency = null, opti
         throw new TypeError("Dynamic bicycle motion requires manifest.dynamics.model \"dynamic-bicycle-v1\".");
     }
     if (motionModel === "contact-bicycle" && !contactBicycle) {
-        throw new TypeError("Contact bicycle motion requires manifest.dynamics.model \"contact-bicycle-v1\".");
+        throw new TypeError(`Contact bicycle motion requires manifest.dynamics.model "${CONTACT_BICYCLE_MODEL}".`);
     }
     return {
         kind: VEHICLE_PLANT_KIND,
@@ -68,7 +68,7 @@ export function createVehiclePlantDefinition(entry = {}, dependency = null, opti
         dimensions: { ...vec3(manifest.boundingBox?.size) },
         boundingBoxCenter: vec3(manifest.boundingBox?.center),
         groundClearance: groundClearance(manifest.wheels),
-        ...(motionModel === "contact-bicycle" || options.plantModel === CONTACT_BICYCLE_MODEL ? {
+        ...(motionModel === "contact-bicycle" || options.plantModel === PLANT_CONTACT_BICYCLE_MODEL ? {
             contactWheels: manifest.wheels.map((wheel) => ({
                 position: vec3(wheel.position), radius: wheel.radius, width: wheel.width, steerable: wheel.steerable,
             })),
@@ -111,7 +111,7 @@ function isDynamicPlugin(plant) {
 }
 
 function isContactPlugin(plant) {
-    return plant?.motionModel === "plugin" && plant.definition?.plant?.model === CONTACT_BICYCLE_MODEL;
+    return plant?.motionModel === "plugin" && plant.definition?.plant?.model === PLANT_CONTACT_BICYCLE_MODEL;
 }
 
 function isContactMotion(plant) {

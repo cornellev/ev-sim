@@ -116,6 +116,7 @@ import {
 import { Semaphore, createMutex } from "./visual-assets/semaphore.js";
 import { fsyncDir, maybeFault, writeExclusiveFile } from "./visual-assets/atomicFs.js";
 import { computeSimulationSemanticHash } from "../../app/simulation/kernel/SimulationHashes.js";
+import { contactHostForVehicle } from "../../app/simulation/vehicles/ContactHostContract.js";
 import {
     computeVehicleBundleHash,
     verifyVehicleBundle,
@@ -144,6 +145,7 @@ import {
     VEHICLE_BUNDLE_VERSION,
     assertNoVehicleManifestDowngrade,
     isValidVehicleId,
+    normalizeVehicleDynamics,
     normalizeVehicleManifest,
     validateVehicleManifest,
 } from "../../app/vehicles/VehicleManifest.js";
@@ -3713,6 +3715,22 @@ export class StorageService {
                 throw new Error(`Vehicle "${vehicleId}" is missing model asset "${modelAsset}".`);
             }
         }
+        // Resolution migrates authoring dynamics, never received immutable bundles.
+        if (manifest.dynamics?.model === "contact-bicycle-v1") {
+            manifest = { ...manifest, dynamics: normalizeVehicleDynamics(manifest.dynamics) };
+        }
+        let contactHost;
+        const plantId = manifest.dynamics?.plant;
+        if (plantId) {
+            const lock = manifest.pluginLocks?.find((entry) => entry.plants?.includes(plantId));
+            if (!lock) throw new Error(`Vehicle "${vehicleId}" plant "${plantId}" has no matching plugin lock.`);
+            const resource = await this.plugins.getPackage(lock.packageHash);
+            const verified = verifyPluginPackage(resource);
+            verifyVehiclePluginLockAgainstPackage(lock, verified, `vehicles.${vehicleId}.pluginLocks`);
+            contactHost = contactHostForVehicle(manifest, new Map(
+                verified.document.plants.map((plant) => [plant.id, plant]),
+            ));
+        }
         Object.assign(assetHashes, await hashPublicVehicleAssets(manifest));
         return {
             actorId,
@@ -3720,6 +3738,7 @@ export class StorageService {
             manifest,
             assetHashes,
             hash: semanticHash({ manifest, assetHashes }),
+            ...(contactHost !== undefined ? { contactHost } : {}),
         };
     }
 

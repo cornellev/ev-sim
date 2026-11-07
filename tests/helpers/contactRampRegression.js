@@ -10,11 +10,12 @@ import { createVehiclePlantDefinition, KinematicVehiclePlant } from "../../app/s
 import { sampleContactSupport, settleContactVehicles } from "../../app/simulation/vehicles/contactBicycle.js";
 import { createRoadGroundSampler } from "../../app/simulation/vehicles/roadGroundSampler.js";
 import { CONTACT_BICYCLE_MODEL, normalizeVehicleManifest } from "../../app/vehicles/VehicleManifest.js";
+import { PLANT_CONTACT_BICYCLE_MODEL } from "../../app/plugin/PlantModule.js";
 
 export async function replayContactRamp({ browser = false, manifest = null, stepper = null, fixture: recording = null, releaseSeconds = 5, axle = null } = {}) {
     const fixture = recording ?? JSON.parse(await readFile(new URL("../fixtures/headless/contact-ramp-regression.v1.json", import.meta.url)));
     const source = manifest ?? normalizeVehicleManifest({ ...fixture.vehicle, dynamics: { model: CONTACT_BICYCLE_MODEL } });
-    const options = { plantModel: CONTACT_BICYCLE_MODEL, stepper };
+    const options = { plantModel: PLANT_CONTACT_BICYCLE_MODEL, stepper };
     let vehicle;
     if (browser) {
         vehicle = {

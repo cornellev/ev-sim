@@ -85,6 +85,21 @@ and GitHub source stay outside it. The semantic projection of a plugin lock
 drops `packageHash` and keeps `pluginId`, `version`, `runtimeHash`,
 `sensorTypes`, and `plants`.
 
+RZ-01 adds numeric `contactHost: 2` beside `manifest`, `assetHashes`, and `hash`
+in resolved vehicle records whose exact selected plugin plant declares
+`model: "contact-bicycle-v1"`. Root and nested scenario records carry it.
+The semantic lock projection binds it when recomputing vehicle dependency
+hashes; the ordinary vehicle content hash remains manifest plus assets.
+Saved manifests, locks, packages, and plugin force ABI 1 do not change.
+Built-in contact authoring v1 normalizes to `contact-bicycle-v2`, including
+when resolving an old saved vehicle without rewriting its file. Execution
+rejects resolved built-in v1 contact records and contact plugins without
+exact numeric marker 2, with an `UNSUPPORTED_CAPABILITY` re-resolution error.
+Inspection and authoring import still verify original hashes before any
+migration; hash projection never backfills a missing marker. Run-bundle v1,
+identity profiles, backend hashes, and `worldHash` are unchanged. RZ-01 is
+preparatory and release waits for the RZ-02–04 Rapier implementation.
+
 VIS-12a activates manifest v11 and the plugin-free
 `resolved.identityProfile = { id: "world-bound", version: 2 }`, semantic and
 episode identity v2, protocol 1.3 identity negotiation, and protocol 1.4

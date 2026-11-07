@@ -37,6 +37,26 @@ This program does not take that layer.
 | PHY-02: dynamic bicycle plant and controls | Complete | `tests/dynamic-bicycle.test.js`; obstacle clamp in `tests/oriented-vehicle-collision.test.js`; kinematic tape unchanged |
 | PHY-03: sensors and a second characterization tape | Complete | `tests/localization-sensors.test.js`; browser/headless parity in `tests/headless-vehicle.test.js`; `tests/dynamic-bicycle-characterization.test.js`; `characterization.v1.json` unchanged |
 
+## Rapier contact transition (`RZ-*`)
+
+This separate program moves only contact vehicles onto a Rapier chassis.
+The restrictions on Rapier drive contact and gravity below continue to apply
+to the PHY kinematic and dynamic-bicycle plants. Their motion and both tapes
+stay pinned. Suspension, wheel spin, and per-wheel rays remain out of scope.
+
+RZ-01 prepares identity and admission; it retains the current JavaScript
+contact integrator. Release is held until RZ-02 (world colliders), RZ-03
+(chassis), and RZ-04 (integrator deletion and v2 motion tape) are complete.
+
+| RZ-01 work package | Implementation | Acceptance |
+| --- | --- | --- |
+| WP01: compatibility baselines | Eight pre-change full, semantic, episode, and vehicle hashes captured | Historical root/nested bundles remain inspectable |
+| WP02: model/ABI split | Vehicle model v2; authoring v1 dynamics migrate during normalization and resolution | Plugin force ABI/model stays v1 |
+| WP03: plugin host identity | Resolved vehicle record carries `contactHost: 2` | Root/nested semantic vehicle hashes bind it |
+| WP04: execution admission | Shared bundle/kernel guard, before vehicle normalization or active-run teardown | Old bundles require re-resolution; inspection/import remain available |
+| WP05: regression coverage | Migration, integrity, admission, recovery, dispatch, and plugin parity tests | Verification recorded below |
+| WP06: guidance and release gate | Physics/rigid-body/plugin and manifest contracts updated | Release pending RZ-02–04 and the pinned-tape gate |
+
 ## What is modeled
 
 A single-track dynamic bicycle on the paved surface. Two axles, one center of
@@ -138,7 +158,8 @@ saturate. There is no vertical ODE.
 - Four separate wheels, wheel spin, drive shafts, or engine and brake maps
 - Longitudinal load transfer and roll or camber
 - Full Pacejka or TMeasy, and world-varying mu
-- Airborne 6-DOF, Rapier dynamic vehicles, and road meshes as drive contact
+- Airborne 6-DOF; Rapier dynamic vehicles and road-mesh drive contact for the
+  kinematic and dynamic-bicycle plants (contact-v2 belongs to `RZ-*`)
 - Replacing `tests/fixtures/headless/characterization.v1.json` in place
 
 ## Architecture
@@ -155,7 +176,8 @@ flowchart LR
 scenario keyframes, linear motion, and a plugin plant. `dynamic-bicycle` is a
 sibling branch. `HeadlessVehicleManager` and `attachVehiclePlant` dispatch on
 the definition. Do not put the integrator in a Three.js vehicle class. Do not
-enable Rapier gravity on the vehicle.
+enable Rapier gravity on kinematic or dynamic-bicycle vehicles. The separate
+contact-v2 host belongs to `RZ-*`.
 
 ## Model identity
 
@@ -163,7 +185,7 @@ enable Rapier gravity on the vehicle.
 | --- | --- |
 | `kinematic-bicycle-v1` | Current built-in bicycle. Omitted `dynamics` normalizes to this. |
 | `dynamic-bicycle-v1` | This plant. Manifest physical fields are filled from the defaults above. The plant integrates and the host drapes height and pitch. |
-| `contact-bicycle-v1` | Tire forces at the two axles. The host adds gravity, integrates the body, and lifts the car only after it has gone through the pavement. |
+| `contact-bicycle-v2` | Contact host identity for the Rapier chassis transition. RZ-01 reserves it while retaining JS integration; RZ-03 supplies Rapier motion. The plugin force model remains `contact-bicycle-v1`. |
 
 These ids are vehicle-manifest model ids. They are not `backendSelections`
 entries, and this program does not add a protobuf backend kind. A dynamic
@@ -174,14 +196,27 @@ dynamics. `VEHICLE_PLANT_VERSION` stays 1. `PHYSICS_BACKEND_CONFIG` stays as
 it is.
 
 `dynamics.plant` cannot be combined with `dynamic-bicycle-v1` or
-`contact-bicycle-v1`. A plugin plant replaces the built-in model. The built-in
+`contact-bicycle-v2`. A plugin plant replaces the built-in model. The built-in
 model is not implemented as a plugin.
 
-New editor vehicles and URDF imports use `contact-bicycle-v1`.
-`createBlankVehicleManifest()`, built-in vehicles, existing documents, received
-bundles, and `characterization.v1.json` stay on the kinematic bicycle.
+New editor vehicles and URDF imports use `contact-bicycle-v2`.
+`createBlankVehicleManifest()`, built-in vehicles, documents with omitted or
+explicit kinematic dynamics, and `characterization.v1.json` stay on the
+kinematic bicycle.
 `characterization.dynamic-bicycle.v1.json` stays the draped dynamic plant.
-`characterization.contact-bicycle.v1.json` records the contact plant.
+Legacy authoring `contact-bicycle-v1` dynamics normalize to v2, including at
+new run resolution without saving the vehicle. Received resolved v1 contact
+records cannot execute. `characterization.contact-bicycle.v1.json` retains its
+ID, format version, and samples during RZ-01; only its model metadata becomes
+v2. RZ-04 replaces it with the v2 motion tape.
+
+Contact-plugin manifests and saved locks stay unchanged. Their resolved
+vehicle records add numeric `contactHost: 2`, derived from the exactly locked
+package's selected plant declaration. The semantic lock projection includes
+that marker when recomputing vehicle hashes and both root/nested dependency
+maps. Ordinary vehicle content hashes still identify manifest plus assets.
+Hashing never infers a missing marker, so historical integrity hashes remain
+valid. Execution requires the marker; inspection and authoring import do not.
 
 ## Locked decisions
 
@@ -220,6 +255,63 @@ PHY-03 runs browser/headless plant parity at the existing `1e-9` tolerance and
 writes a second characterization tape.
 
 ## Progress and decision log
+
+### 2026-11-07 — RZ-01 contact host identity and admission
+
+Split vehicle `contact-bicycle-v2` from plugin `contact-bicycle-v1`. A single
+DOM-free guard checks raw root/nested records in bundle execution and kernel
+pre-activation. Legacy built-in contact models, missing/unsupported plugin
+host markers, and markers on unrelated plants fail with
+`UNSUPPORTED_CAPABILITY` and "re-resolve this run". A rejected kernel
+candidate is disposed and leaves the active run intact. Integrity-only
+inspection and authoring import keep authentic received content unchanged.
+Re-resolution migrates old saved contact dynamics and stamps contact-plugin
+records without rewriting saved vehicles or reimporting packages.
+
+Vehicle/run-bundle versions, identity profiles, ABI 1 and its 13-slot state,
+`VEHICLE_PLANT_VERSION`, package/runtime hashes, backend config, and world
+identity are unchanged. RZ-01 changes no tire forces or motion samples.
+
+Before edits, `headless-contract.test.js` failed on four legacy steering-angle
+signs and three trajectory hashes after the control-sign correction in
+`5304766` (`rep103SteeringToThree` and its inverse became identity mappings).
+This is a separate compatibility blocker: the pinned fixture must not be
+regenerated to accept it. Resolving that earlier sign-contract change is
+separate from RZ-01; production steering and the frozen recorder are unchanged.
+RZ-01 implementation is complete, but acceptance and release remain pending
+the existing failures below and RZ-02–04.
+
+Verification on 2026-11-07 (Node 22.22.2, macOS arm64):
+
+- `npm run lint`: zero errors, the same three existing hook warnings. ESLint
+  on every changed JavaScript file also passes.
+- Focused acceptance: 69 passed, zero failed/skipped, including the real
+  compiled contact-plugin parity check with `CEV_PLANT_CARGO=1` and the wasm32
+  target installed. The exact focused command is:
+
+  ```sh
+  CEV_PLANT_CARGO=1 node --experimental-default-type=module --test \
+    tests/contact-host-contract.test.js tests/physics-contract.test.js \
+    tests/contact-bicycle.test.js tests/contact-bicycle-characterization.test.js \
+    tests/dynamic-bicycle-characterization.test.js tests/contact-stopping.test.js \
+    tests/dynamic-bicycle-plant-plugin.test.js tests/headless-plant-plugin.test.js \
+    tests/plugin-admission.test.js tests/simulation-hashes.test.js \
+    tests/vehicle-urdf-import.test.js
+  ```
+
+- `npm test` with loopback networking available: 2,549 passed, six failed,
+  eight skipped. Besides the pre-existing kinematic characterization failure,
+  the control-arc sign assertion, both sensor parent-rotation mock failures,
+  and the LiDAR hierarchy-row assertion reproduce on an exported pre-RZ-01
+  `34d4fbc` tree. The timeline subscriber-count failure passes in isolation
+  on both that tree and RZ-01. No unrelated fixes are included.
+- `npm run fixtures:headless`: generator exits successfully. The dynamic
+  tape and contact samples have no delta; only the already-known seven-field
+  kinematic mismatch is produced. That generated kinematic delta was inspected
+  and discarded. Both older tapes remain byte-for-byte committed, and the
+  contact fixture has only the reviewed `model` metadata change.
+- `git diff --check` passes. Backend config, Protobuf, plugin package sources,
+  and the ordinary vehicle plant ABI files have no changes.
 
 ### 2026-10-27 — Contact stopping without speed hunting
 

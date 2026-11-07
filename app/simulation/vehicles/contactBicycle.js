@@ -1,5 +1,5 @@
 import { PLANT_CONTACT_BICYCLE_MODEL } from "../../plugin/PlantModule.js";
-import { CONTACT_BICYCLE_MODEL, DEFAULT_DYNAMIC_BICYCLE } from "../../vehicles/VehicleManifest.js";
+import { DEFAULT_DYNAMIC_BICYCLE } from "../../vehicles/VehicleManifest.js";
 import { deriveAxleDistances, GRAVITY } from "./dynamicBicycle.js";
 
 const VX_REST = 1e-3;
@@ -54,7 +54,7 @@ export function isContactBicycle(vehicle) {
     if (!vehicle) return false;
     if (vehicle.motionModel === "contact-bicycle") return true;
     if (vehicle.plant?.motionModel === "contact-bicycle") return true;
-    if (vehicle.motionModel === "plugin" && vehicle.definition?.plant?.model === CONTACT_BICYCLE_MODEL) return true;
+    if (vehicle.motionModel === "plugin" && vehicle.definition?.plant?.model === PLANT_CONTACT_BICYCLE_MODEL) return true;
     if (vehicle.plant?.motionModel === "plugin" && vehicle.plant.definition?.plant?.model === PLANT_CONTACT_BICYCLE_MODEL) return true;
     return false;
 }
