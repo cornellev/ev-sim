@@ -16,7 +16,7 @@ import { normalizeRigidBody } from "../../../simulation/world/RigidBodyRecords.j
 export function attachmentContext(record, document) {
     const feature = document?.getFeature?.(record?.id) ?? null;
     const asset = record?.components?.asset;
-    return {
+    const context = {
         typeId: record?.typeId ?? "",
         objectId: record?.id ?? "",
         name: record?.name ?? "",
@@ -25,6 +25,10 @@ export function attachmentContext(record, document) {
         nodeId: record?.typeId === "intersection" ? record.id : "",
         assetId: feature?.type ?? asset?.assetId ?? "",
     };
+    if (record?.typeId === "drive-area") {
+        context.driveArea = document?.getDriveArea?.(record.id) ?? null;
+    }
+    return context;
 }
 
 function programInputs(artifact, parameters = {}) {

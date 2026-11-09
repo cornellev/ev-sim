@@ -25,6 +25,7 @@ import {
     normalizeDriveAreaFootprint,
     pavementPoseIssue,
     pointInDriveAreaSurface,
+    measureDriveArea,
     polygonCentroidXZ,
     rectangleDriveAreaFootprint,
     triangulateFootprint,
@@ -175,6 +176,30 @@ test("polygons, shared triangles, and world v5 stay canonical", () => {
     assert.equal(mixed.groundPlane.id, "floor");
     assert.equal(mixed.groundPlane.y, 0);
     assertWorldResource(createWorldResource(mixed));
+});
+
+test("drive area measurement uses the polygon centroid and axis-aligned size", () => {
+    const rectangle = measureDriveArea({
+        id: "lot",
+        y: 1,
+        footprint: [{ x: 0, z: 0 }, { x: 10, z: 0 }, { x: 10, z: 4 }, { x: 0, z: 4 }],
+    });
+    assert.equal(rectangle.ok, true);
+    assert.deepEqual(rectangle.position, { x: 5, y: 1, z: 2 });
+    assert.equal(rectangle.width, 10);
+    assert.equal(rectangle.depth, 4);
+    assert.equal(rectangle.area, 40);
+
+    const measured = measureDriveArea({ id: "c", y: 0, footprint: C_FOOTPRINT });
+    const vertexAverageX = C_FOOTPRINT.reduce((sum, point) => sum + point.x, 0) / C_FOOTPRINT.length;
+    assert.equal(measured.ok, true);
+    assert.equal(measured.position.x, 2.5);
+    assert.equal(measured.position.z, 4);
+    assert.notEqual(measured.position.x, vertexAverageX);
+    assert.equal(measured.width, 6);
+    assert.equal(measured.depth, 8);
+    assert.equal(measured.area, 32);
+    assert.equal(measureDriveArea(null).ok, false);
 });
 
 test("commands draw, move, elevate, duplicate, delete, and undo an area", () => {

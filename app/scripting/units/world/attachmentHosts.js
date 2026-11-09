@@ -4,6 +4,8 @@
  * `general` matches any selected object and is not a scene-object type.
  */
 
+import { measureDriveArea } from "../../../simulation/world/DriveAreas.js";
+
 export const ATTACHMENT_HOSTS = Object.freeze({
     general: Object.freeze({
         typeId: null,
@@ -63,6 +65,18 @@ export const ATTACHMENT_HOSTS = Object.freeze({
             Object.freeze({ label: "name", type: "string" }),
         ]),
     }),
+    "drive-area": Object.freeze({
+        typeId: "drive-area",
+        label: "Drive area",
+        fields: Object.freeze([
+            Object.freeze({ label: "objectId", type: "string" }),
+            Object.freeze({ label: "name", type: "string" }),
+            Object.freeze({ label: "position", type: "vec3" }),
+            Object.freeze({ label: "width", type: "float64" }),
+            Object.freeze({ label: "depth", type: "float64" }),
+            Object.freeze({ label: "area", type: "float64" }),
+        ]),
+    }),
 });
 
 export const ATTACHMENT_HOST_TYPE_IDS = Object.freeze(Object.keys(ATTACHMENT_HOSTS));
@@ -76,6 +90,7 @@ export const ATTACHMENT_BLOCK_HOSTS = Object.freeze({
     IntersectionAttachmentBlock: "intersection",
     PropAttachmentBlock: "builtin-prop",
     AssetAttachmentBlock: "asset-instance",
+    DriveAreaAttachmentBlock: "drive-area",
 });
 
 export function normalizeHostType(value) {
@@ -115,19 +130,25 @@ export function hostFields(hostType) {
     return ATTACHMENT_HOSTS[normalizeHostType(hostType)]?.fields ?? [];
 }
 
+export function emptyAttachmentValue(field) {
+    if (field?.type === "float64") return 0;
+    if (field?.type === "vec3") return { x: 0, y: 0, z: 0 };
+    return "";
+}
+
 function text(value) {
     return value == null ? "" : String(value);
 }
 
 /**
  * @param {string} hostType
- * @param {{ typeId?: string, objectId?: string, name?: string, edgeId?: string, buildingId?: string, nodeId?: string, assetId?: string }|null} attachment
+ * @param {{ typeId?: string, objectId?: string, name?: string, edgeId?: string, buildingId?: string, nodeId?: string, assetId?: string, driveArea?: object }|null} attachment
  */
 export function readAttachmentFields(hostType, attachment) {
     const normalized = normalizeHostType(hostType);
     const spec = ATTACHMENT_HOSTS[normalized ?? ""];
     const values = {};
-    for (const field of spec?.fields ?? []) values[field.label] = "";
+    for (const field of spec?.fields ?? []) values[field.label] = emptyAttachmentValue(field);
     if (!spec || !attachment) return { found: false, values };
     if (normalized !== "general" && attachment.typeId !== spec.typeId) {
         return { found: false, values };
@@ -151,6 +172,15 @@ export function readAttachmentFields(hostType, attachment) {
     } else if (spec.typeId === "intersection") {
         values.nodeId = text(attachment.nodeId || objectId);
         values.name = name;
+    } else if (spec.typeId === "drive-area") {
+        values.objectId = objectId;
+        values.name = name;
+        const measured = measureDriveArea(attachment.driveArea);
+        if (!measured.ok) return { found: false, values };
+        values.position = measured.position;
+        values.width = measured.width;
+        values.depth = measured.depth;
+        values.area = measured.area;
     } else {
         values.objectId = objectId;
         values.assetId = text(attachment.assetId);

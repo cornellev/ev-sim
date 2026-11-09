@@ -418,6 +418,7 @@ function markingMesh(points, type, roadOptions) {
     const dashGap = Math.max(0, Number(roadOptions.dashGap ?? DEFAULT_ROAD_OPTIONS.dashGap));
     const cycle = dashLength + dashGap;
     const halfWidth = Math.max(0.005, Number(roadOptions.laneMarkingWidth ?? DEFAULT_ROAD_OPTIONS.laneMarkingWidth) * 0.5);
+    const paint = Number(roadOptions.markingElevation ?? DEFAULT_ROAD_OPTIONS.markingElevation);
     const vertices = [];
     const indices = [];
     let distance = 0;
@@ -435,10 +436,10 @@ function markingMesh(points, type, roadOptions) {
         const nz = dx / length * halfWidth;
         const offset = vertices.length;
         vertices.push(
-            { x: start.x + nx, y: start.y, z: start.z + nz },
-            { x: start.x - nx, y: start.y, z: start.z - nz },
-            { x: end.x + nx, y: end.y, z: end.z + nz },
-            { x: end.x - nx, y: end.y, z: end.z - nz },
+            { x: start.x + nx, y: start.y + paint, z: start.z + nz },
+            { x: start.x - nx, y: start.y + paint, z: start.z - nz },
+            { x: end.x + nx, y: end.y + paint, z: end.z + nz },
+            { x: end.x - nx, y: end.y + paint, z: end.z - nz },
         );
         indices.push(offset, offset + 2, offset + 1, offset + 1, offset + 2, offset + 3);
     }
@@ -490,23 +491,46 @@ export function disposeRoadRuntimeObject(value) {
     });
 }
 
+function shoulderStrips(surface) {
+    const strips = [
+        stripVertices(surface.leftBoundary, surface.carriagewayLeft),
+        stripVertices(surface.carriagewayRight, surface.rightBoundary),
+    ].filter((strip) => strip.indices.length > 0);
+    if (strips.length === 0) return null;
+    const vertices = [];
+    const indices = [];
+    for (const strip of strips) {
+        const offset = vertices.length;
+        vertices.push(...strip.vertices);
+        for (const index of strip.indices) indices.push(offset + index);
+    }
+    return { vertices, indices };
+}
+
 function compiledRoadObject(entry, roadOptions) {
     const root = new THREE.Group();
     root.name = "Road";
     root.userData.bakeRoadSurface = true;
-    const shoulderGeometry = indexedGeometry(entry.surface.vertices, entry.surface.indices);
+    const pavedGeometry = indexedGeometry(entry.surface.vertices, entry.surface.indices);
+    const triangles = truthTriangles(pavedGeometry, entry.surface.indices);
+    pavedGeometry.dispose();
+    if (Number(entry.edge.shoulderWidth) > 0) {
+        const strips = shoulderStrips(entry.surface);
+        if (strips) {
+            const shoulderMesh = new THREE.Mesh(indexedGeometry(strips.vertices, strips.indices), new THREE.MeshStandardMaterial({
+                color: roadOptions.shoulderColor ?? DEFAULT_ROAD_OPTIONS.shoulderColor,
+                roughness: roadOptions.shoulderRoughness ?? 1,
+                metalness: roadOptions.metalness ?? 0.02,
+                side: THREE.DoubleSide,
+            }));
+            shoulderMesh.name = "RoadShoulder";
+            shoulderMesh.receiveShadow = true;
+            shoulderMesh.userData.bakeRoadSurface = true;
+            root.add(shoulderMesh);
+        }
+    }
     const carriageway = stripVertices(entry.surface.carriagewayLeft, entry.surface.carriagewayRight);
     const roadGeometry = indexedGeometry(carriageway.vertices, carriageway.indices);
-    const shoulderMesh = new THREE.Mesh(shoulderGeometry, new THREE.MeshStandardMaterial({
-        color: roadOptions.shoulderColor ?? DEFAULT_ROAD_OPTIONS.shoulderColor,
-        roughness: roadOptions.shoulderRoughness ?? 1,
-        metalness: roadOptions.metalness ?? 0.02,
-        side: THREE.DoubleSide,
-    }));
-    shoulderMesh.name = "RoadShoulder";
-    shoulderMesh.receiveShadow = true;
-    shoulderMesh.userData.bakeRoadSurface = true;
-    root.add(shoulderMesh);
     const roadMesh = new THREE.Mesh(roadGeometry, new THREE.MeshStandardMaterial({
         color: roadOptions.surfaceColor ?? DEFAULT_ROAD_OPTIONS.surfaceColor,
         roughness: roadOptions.surfaceRoughness ?? 0.95,
@@ -567,7 +591,7 @@ function compiledRoadObject(entry, roadOptions) {
         oneWay: entry.edge.bidirectional === false,
         direction: entry.edge.bidirectional === false ? Number(entry.edge.direction ?? 1) : 0,
         parent: null,
-        triangles: truthTriangles(shoulderGeometry, entry.surface.indices),
+        triangles,
         network: { geometryVersion: 2, edgeId: entry.edge.id, startName: entry.edge.startNodeId, endName: entry.edge.endNodeId, bidirectional: entry.edge.bidirectional !== false },
     };
 }
@@ -606,8 +630,8 @@ function compiledIntersectionObject(junction, roads, roadOptions) {
         metalness: roadOptions.metalness ?? 0.02,
         side: THREE.DoubleSide,
         polygonOffset: true,
-        polygonOffsetFactor: -1,
-        polygonOffsetUnits: -1,
+        polygonOffsetFactor: -2,
+        polygonOffsetUnits: -2,
     }));
     mesh.receiveShadow = true;
     mesh.userData.bakeRoadSurface = true;

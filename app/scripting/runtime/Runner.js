@@ -93,7 +93,10 @@ export class VisualScriptRunner {
             getScopeId: () => this.scopeId,
             getLoopPassUnits: (uuid) => this._loopPassUnits(uuid),
             invalidateOutputs: (uuids) => {
-                for (const uuid of uuids) this.outputMemo?.delete(uuid);
+                for (const uuid of uuids) {
+                    this.outputMemo?.delete(uuid);
+                    this.units.get(uuid)?.clearResample?.();
+                }
             },
             setLoopFrame: (uuid, frame) => {
                 if (frame) this.loopFrames.set(uuid, frame);
@@ -127,7 +130,12 @@ export class VisualScriptRunner {
 
     _loopPassUnits(uuid) {
         if (!this.loopPassCache.has(uuid)) {
-            this.loopPassCache.set(uuid, loopPassUnits(this.artifact.transitions.success, uuid));
+            const resampleUuids = new Set();
+            for (const node of this.artifact.nodes) {
+                const BlockClass = this.getBlockClass(node.type);
+                if (BlockClass?.resampleEachPass) resampleUuids.add(node.uuid);
+            }
+            this.loopPassCache.set(uuid, loopPassUnits(this.artifact.transitions.success, uuid, resampleUuids));
         }
         return this.loopPassCache.get(uuid);
     }

@@ -22,6 +22,15 @@ function hostLabel(hostType) {
     return ATTACHMENT_HOSTS[hostType]?.label ?? hostType ?? "any object";
 }
 
+function displayAttachmentValue(value) {
+    if (value != null && typeof value === "object") {
+        const coords = ["x", "y", "z"].map((key) => Number(value[key]));
+        if (coords.every(Number.isFinite)) return coords.join(", ");
+        return JSON.stringify(value);
+    }
+    return value ?? "";
+}
+
 export function ScriptAttachmentSection({ data, section, onResult }) {
     const document = data?.environment?.()?.getDocument?.();
     const record = document?.getObject?.(section.record?.id) ?? section.record;
@@ -219,7 +228,7 @@ function AttachmentCard({ data, document, record, attachment, script, onResult, 
                     {Object.entries(derived.values).map(([label, value]) => (
                         <label key={label} className="grid grid-cols-[1fr_1.4fr] items-center gap-2">
                             <span className="text-[var(--slate-muted)]">{label}</span>
-                            <input readOnly aria-label={label} value={value} className="rounded border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] px-2 py-1 font-mono" />
+                            <input readOnly aria-label={label} value={displayAttachmentValue(value)} className="rounded border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] px-2 py-1 font-mono" />
                         </label>
                     ))}
                 </div>

@@ -34,6 +34,30 @@ test("ED-04 world, browser materialization, and portable LiDAR share indexed roa
     assert.equal(twins[0].id, "road-surface:curve:0");
 });
 
+test("compiled junction paint wins the mouth edge without moving paved triangles", () => {
+    const polyline = { version: 1, kind: "polyline", knots: [{ id: "start" }, { id: "end" }] };
+    const plan = planRoadNetworkGeometry({
+        geometryVersion: 2,
+        nodes: [
+            { id: "a", x: 0, y: 2, z: 0 },
+            { id: "b", x: 30, y: 2, z: 0 },
+            { id: "c", x: 30, y: 2, z: 30 },
+        ],
+        edges: [
+            { id: "ab", startNodeId: "a", endNodeId: "b", width: 7, geometry: polyline },
+            { id: "bc", startNodeId: "b", endNodeId: "c", width: 7, geometry: polyline },
+        ],
+    });
+    const browser = materializeCompiledRoadNetwork(null, plan);
+    assert.equal(browser.intersections.length, 1);
+    const surface = browser.intersections[0].root.children.find((child) => child.userData?.bakeRoadSurface === true);
+    assert.equal(surface.material.polygonOffsetFactor, -2);
+    assert.equal(surface.material.polygonOffsetUnits, -2);
+    const junction = plan.junctions[0];
+    const compiledY = junction.surface.vertices[junction.surface.indices[0]].y;
+    assert.equal(browser.intersections[0].triangles[0].a.y, Math.fround(compiledY));
+});
+
 test("ED-04 compiler cache reuses untouched runtime inputs", async () => {
     const document = await authored();
     const cache = new Map();

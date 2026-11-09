@@ -19,6 +19,7 @@ Both keys are omitted when absent. They do not enter `worldHash`. Features, grou
 | OSC-04 | done | Program type `scene_object`. Optional `sceneType` on program inputs filters the inspector picker. `sceneTypes` accepts more than one host type. An empty id is the root only when both are omitted. |
 | OSC-05 | done | Place Feature and Create Group call `runtimeContext.author`. `runObjectScript` records ops. `applyObjectScript` replaces that attachment's output in one undo step. Bake clears `authoredBy`. Duplicate drops `authoredBy` and lifts a copy out of a generated group. Template: **Props along road**. |
 | OSC-06 | done | MCP `environment_attach_script`, `environment_set_script_parameters`, `environment_run_object_script`. `environment_add_object` accepts `parentId`. |
+| OSC-07 | done | Drive Area Attachment. One host per script. Emits object id, name, centroid, axis-aligned size, and polygon area. |
 
 ## Run
 
@@ -54,5 +55,6 @@ The inspector **Add Script** button lists library scripts whose host matches the
 | Intersection Attachment | intersection | intersections | `nodeId`, `name` |
 | Prop Attachment | builtin-prop | builtin props | `objectId`, `assetId` (legacy feature type), `name` |
 | Asset Attachment | asset-instance | asset instances | `objectId`, `assetId` (`components.asset.assetId`), `name` |
+| Drive Area Attachment | drive-area | drive areas | `objectId`, `name`, `position` (`vec3`), `width`, `depth`, `area` |
 
-Every block also emits `found: boolean`. A script with no attachment block fits any object, and so does a script whose only attachment block is General Attachment. Two different attachment hosts make the script invalid to attach. Derive From Attachment is the old dropdown form of the same fields. Old graphs still open it. New graphs use the named blocks.
+Every block also emits `found: boolean`. A script with no attachment block fits any object, and so does a script whose only attachment block is General Attachment. Two different attachment hosts make the script invalid to attach. Drive Area Attachment carries `objectId` and `name` itself, so a drive-area script does not also use General Attachment. `position` is the polygon centroid at the area elevation. `width` and `depth` are the axis-aligned X and Z extents in metres. `area` is the polygon area in square metres. A drive-area object with a missing or unmeasurable footprint still emits `objectId` and `name`, with the measurements at zero and `found` false. Derive From Attachment is the old dropdown form of the same fields. Old graphs still open it. New graphs use the named blocks.

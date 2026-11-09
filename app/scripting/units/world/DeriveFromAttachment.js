@@ -28,6 +28,7 @@ export const BuildingAttachmentUnit = attachmentUnit("Building Attachment", "bui
 export const IntersectionAttachmentUnit = attachmentUnit("Intersection Attachment", "intersection");
 export const PropAttachmentUnit = attachmentUnit("Prop Attachment", "builtin-prop");
 export const AssetAttachmentUnit = attachmentUnit("Asset Attachment", "asset-instance");
+export const DriveAreaAttachmentUnit = attachmentUnit("Drive Area Attachment", "drive-area");
 
 export function DeriveFromAttachmentUnit({ _uuid, initialState = {} }) {
     const [hostType, setHostType] = useState(() => normalizeHostType(initialState.hostType) ?? "road");
@@ -71,6 +72,7 @@ export {
     GeneralAttachmentBlock,
     GroupAttachmentBlock,
     IntersectionAttachmentBlock,
+    DriveAreaAttachmentBlock,
     PropAttachmentBlock,
     RoadAttachmentBlock,
 } from "./DeriveFromAttachment.block.js";

@@ -5,7 +5,7 @@ import { createEnvironmentCommandService } from "../app/3d/editor/commands/index
 import { EnvironmentDocument, resetDocumentIdCounter } from "../app/3d/editor/document/EnvironmentDocument.js";
 import { applyObjectScript } from "../app/3d/editor/scripts/applyObjectScript.js";
 import { buildPropsAlongRoadDocument } from "../app/3d/editor/scripts/propsAlongRoadTemplate.js";
-import { runObjectScript } from "../app/3d/editor/scripts/runObjectScript.js";
+import { attachmentContext, runObjectScript } from "../app/3d/editor/scripts/runObjectScript.js";
 import { ScriptManager } from "../app/scripting/ScriptManager.js";
 import { registerBuiltInBlocks } from "../app/scripting/registerBuiltInBlocks.js";
 import { ObjectIdToSceneObjectBlock } from "../app/scripting/units/conversions/Conversions.block.js";
@@ -23,8 +23,8 @@ import {
     GetRigidBodyBlock,
     MakeRigidBodyBlock,
 } from "../app/scripting/units/world/RigidBodyBlocks.block.js";
-import { GeneralAttachmentBlock, RoadAttachmentBlock } from "../app/scripting/units/world/DeriveFromAttachment.block.js";
-import { scriptHostType } from "../app/scripting/units/world/attachmentHosts.js";
+import { DriveAreaAttachmentBlock, GeneralAttachmentBlock, RoadAttachmentBlock } from "../app/scripting/units/world/DeriveFromAttachment.block.js";
+import { readAttachmentFields, scriptHostType } from "../app/scripting/units/world/attachmentHosts.js";
 import { buildObstaclesAlongRoadDocument } from "../app/3d/editor/scripts/obstaclesAlongRoadTemplate.js";
 import { hashAssetMetric } from "../app/editor-assets/AssetDefinition.js";
 import { createWorldResource } from "../app/simulation/world/WorldDescription.js";
@@ -403,6 +403,91 @@ test("an attachment script declares one host, and general fits any object", () =
     assert.equal(generalOut.get("found"), true);
     assert.equal(generalOut.get("objectId"), "edge-1");
     assert.equal(generalOut.get("name"), "Main");
+});
+
+test("a drive area attachment reports size and location and fits only a drive area", () => {
+    resetDocumentIdCounter();
+    registerBuiltInBlocks();
+    const document = new EnvironmentDocument({ environmentId: "yard" });
+    const service = createEnvironmentCommandService({ document });
+    const created = service.run("addDriveArea", {
+        driveAreaId: "lot",
+        y: 1,
+        cornerA: { x: 0, z: 0 },
+        cornerB: { x: 10, z: 4 },
+    });
+    assert.equal(created.ok, true, JSON.stringify(created.issues));
+    const record = document.getObject("lot");
+    const attachment = attachmentContext(record, document);
+    const read = readAttachmentFields("drive-area", attachment);
+    assert.equal(read.found, true);
+    assert.equal(read.values.objectId, "lot");
+    assert.equal(read.values.name, "Drive area");
+    assert.deepEqual(read.values.position, { x: 5, y: 1, z: 2 });
+    assert.equal(read.values.width, 10);
+    assert.equal(read.values.depth, 4);
+    assert.equal(read.values.area, 40);
+
+    const block = new DriveAreaAttachmentBlock("area");
+    block.setManager({ getRuntimeContext: () => ({ attachment }) });
+    const out = block.execute();
+    assert.equal(out.get("found"), true);
+    assert.deepEqual(out.get("position"), { x: 5, y: 1, z: 2 });
+    out.get("position").x = 99;
+    assert.equal(block.execute().get("position").x, 5);
+
+    const wrong = readAttachmentFields("drive-area", { typeId: "road", objectId: "edge", name: "Main" });
+    assert.equal(wrong.found, false);
+    assert.equal(wrong.values.objectId, "");
+    assert.equal(wrong.values.width, 0);
+    assert.deepEqual(wrong.values.position, { x: 0, y: 0, z: 0 });
+
+    const missing = readAttachmentFields("drive-area", {
+        typeId: "drive-area",
+        objectId: "lot",
+        name: "Lot",
+        driveArea: null,
+    });
+    assert.equal(missing.found, false);
+    assert.equal(missing.values.objectId, "lot");
+    assert.equal(missing.values.name, "Lot");
+    assert.equal(missing.values.area, 0);
+    assert.deepEqual(missing.values.position, { x: 0, y: 0, z: 0 });
+
+    const host = scriptHostType({ nodes: [{ type: "DriveAreaAttachmentBlock" }] });
+    assert.equal(host.ok, true);
+    assert.equal(host.hostType, "drive-area");
+    assert.equal(host.typeId, "drive-area");
+    const mixed = scriptHostType({
+        nodes: [{ type: "DriveAreaAttachmentBlock" }, { type: "RoadAttachmentBlock" }],
+    });
+    assert.equal(mixed.ok, false);
+
+    const manager = new ScriptManager();
+    manager.addUnit(new DriveAreaAttachmentBlock("area-node"));
+    const config = { outputs: [{ id: "found", label: "found", type: "boolean" }] };
+    const head = new OutputNodeBlock("head");
+    head.hydrateState(config);
+    manager.addUnit(head);
+    manager.storeData("head", config);
+    const connected = manager.connectUnitsDetailed("area-node", "found", "head", "found");
+    assert.equal(connected.ok, true, connected.error);
+    const artifact = manager.compile("drive-area-attachment");
+
+    const accepted = runObjectScript({ artifact, record, document });
+    assert.equal(accepted.ok, true, accepted.error);
+    assert.deepEqual(accepted.ops, []);
+
+    const road = service.run("createRoad", { points: [{ x: 0, z: 0 }, { x: 10, z: 0 }] });
+    assert.equal(road.ok, true, JSON.stringify(road.issues));
+    const rejected = runObjectScript({
+        artifact,
+        record: document.getObject(road.result.edge.id),
+        document,
+    });
+    assert.equal(rejected.ok, false);
+    assert.match(rejected.error, /drive-area/);
+    assert.deepEqual(rejected.ops, []);
 });
 
 test("Clone Object refuses to write without an editor host", () => {

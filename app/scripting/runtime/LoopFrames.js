@@ -64,12 +64,18 @@ export function loopBodyRegion(edges, repeatUuid) {
     return bodyRegion(indexEdges(edges), repeatUuid).region;
 }
 
+function inRegion(region, repeatUuid, edge, endpoint) {
+    return edge.type !== REPEAT_REF_TYPE && edge.from !== repeatUuid && region.has(endpoint);
+}
+
 /**
  * Blocks a Repeat re-runs on every pass: those downstream of its Index blocks,
- * plus the `unit` chain that ends at `body`. Everything else in the body region
- * is pulled by data only and keeps its first result for the whole loop.
+ * plus the `unit` chain that ends at `body`. `resampleUuids` that feed that
+ * set, and the pure blocks on the path between them and that set, are included
+ * so a memoized draw cannot stick for the whole loop. Everything else in the
+ * body region is pulled by data only and keeps its first result.
  */
-export function loopPassUnits(edges, repeatUuid) {
+export function loopPassUnits(edges, repeatUuid, resampleUuids = new Set()) {
     const index = indexEdges(edges);
     const { bodyEdge, region } = bodyRegion(index, repeatUuid);
     if (!bodyEdge) return new Set();
@@ -84,5 +90,17 @@ export function loopPassUnits(edges, repeatUuid) {
         .filter((edge) => edge.type === UNIT_TYPE && region.has(edge.from))
         .map((edge) => edge.from));
 
-    return new Set([...dependents, ...chain]);
+    const pass = new Set([...dependents, ...chain]);
+    if (resampleUuids.size === 0 || pass.size === 0) return pass;
+
+    const ancestors = walk(pass, (uuid) => (index.incoming.get(uuid) || [])
+        .filter((edge) => inRegion(region, repeatUuid, edge, edge.from))
+        .map((edge) => edge.from));
+    const resampleAncestors = [...ancestors].filter((uuid) => resampleUuids.has(uuid));
+    if (resampleAncestors.length === 0) return pass;
+
+    const bridge = walk(resampleAncestors, (uuid) => (index.outgoing.get(uuid) || [])
+        .filter((edge) => inRegion(region, repeatUuid, edge, edge.to) && ancestors.has(edge.to))
+        .map((edge) => edge.to));
+    return new Set([...pass, ...bridge]);
 }

@@ -2,6 +2,8 @@ import { BlockOutput, UnitBlock } from "../../ScriptManager.js";
 import { runtimeRandom } from "../../runtime/RuntimeRandom.js";
 
 export class RandomNumberBlock extends UnitBlock {
+    static resampleEachPass = true;
+
     constructor(uuid) {
         super(uuid);
 
@@ -23,7 +25,11 @@ export class RandomNumberBlock extends UnitBlock {
     hydrateRuntimeState(state = {}) {
         this.cachedValue = Number.isFinite(state.cachedValue) ? state.cachedValue : null;
     }
-    
+
+    clearResample() {
+        this.cachedValue = null;
+    }
+
     execute() {
         this.cachedValue ??= runtimeRandom(this);
         return new BlockOutput()

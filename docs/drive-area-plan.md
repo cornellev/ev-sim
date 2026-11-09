@@ -37,6 +37,10 @@ No vertex editor, polygon holes, slopes, spawn search, wandering traffic, new pe
 
 ## Decision log
 
+### 2026-11-07 — Drive Area Attachment
+
+Object scripts can read a drive area through Drive Area Attachment. The block does not clone an area and does not change pavement, world description versions, or hashes.
+
 ### 2026-11-07 — Drive-area repair pass
 
 Start clearance and routed-start selection use the shared, perimeter-ordered

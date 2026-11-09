@@ -140,6 +140,7 @@ import {
     AssetAttachmentBlock,
     BuildingAttachmentBlock,
     DeriveFromAttachmentBlock,
+    DriveAreaAttachmentBlock,
     GeneralAttachmentBlock,
     GroupAttachmentBlock,
     IntersectionAttachmentBlock,
@@ -674,6 +675,9 @@ export const UNIT_CATALOG_META = [
     }),
     entry("AssetAttachmentBlock", "Asset Attachment", "simulator", AssetAttachmentBlock, ["attachment", "host", "asset"], {
         notes: "Declares an asset instance host and reads objectId, assetId, and name.",
+    }),
+    entry("DriveAreaAttachmentBlock", "Drive Area Attachment", "simulator", DriveAreaAttachmentBlock, ["attachment", "host", "drive", "area", "size"], {
+        notes: "Declares a drive-area host. Emits objectId, name, centroid position, axis-aligned width and depth, and polygon area. The script attaches only to drive areas.",
     }),
     entry("PlaceFeatureBlock", "Place Feature", "simulator", PlaceFeatureBlock, ["place", "feature", "prop", "barrel", "permanent"], {
         authoring: true,

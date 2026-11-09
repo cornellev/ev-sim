@@ -189,6 +189,7 @@ function syncFloor(context) {
     });
     mesh = new THREE.Mesh(geometry, material);
     mesh.name = FLOOR_NAME;
+    mesh.position.y = -0.02;
     mesh.renderOrder = -1;
     mesh.raycast = () => {};
     mesh.userData.skipEnvironmentSelection = true;

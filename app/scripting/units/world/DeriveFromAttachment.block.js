@@ -1,6 +1,6 @@
 import { BlockOutput, UnitBlock } from "../../ScriptManager.js";
 import { defineBlock, freezePorts } from "../defineBlock.js";
-import { hostFields, normalizeHostType, readAttachmentFields } from "./attachmentHosts.js";
+import { emptyAttachmentValue, hostFields, normalizeHostType, readAttachmentFields } from "./attachmentHosts.js";
 
 function runtimeContext(unit) {
     return unit.manager?.getRuntimeContext?.() ?? {};
@@ -14,10 +14,19 @@ export function deriveAttachmentPorts(state = {}) {
     ]);
 }
 
+function attachmentValue(field, value) {
+    if (field.type === "vec3") {
+        const point = value && typeof value === "object" ? value : {};
+        const component = (componentValue) => Number.isFinite(Number(componentValue)) ? Number(componentValue) : 0;
+        return { x: component(point.x), y: component(point.y), z: component(point.z) };
+    }
+    return value ?? emptyAttachmentValue(field);
+}
+
 function attachmentOutput(unit, hostType) {
     const read = readAttachmentFields(hostType, runtimeContext(unit).attachment ?? null);
     const output = new BlockOutput().set("found", read.found);
-    for (const field of hostFields(hostType)) output.set(field.label, read.values[field.label] ?? "");
+    for (const field of hostFields(hostType)) output.set(field.label, attachmentValue(field, read.values[field.label]));
     return output;
 }
 
@@ -40,6 +49,7 @@ export const BuildingAttachmentBlock = defineAttachmentBlock("BuildingAttachment
 export const IntersectionAttachmentBlock = defineAttachmentBlock("IntersectionAttachmentBlock", "intersection");
 export const PropAttachmentBlock = defineAttachmentBlock("PropAttachmentBlock", "builtin-prop");
 export const AssetAttachmentBlock = defineAttachmentBlock("AssetAttachmentBlock", "asset-instance");
+export const DriveAreaAttachmentBlock = defineAttachmentBlock("DriveAreaAttachmentBlock", "drive-area");
 
 export class DeriveFromAttachmentBlock extends UnitBlock {
     static blockType = "DeriveFromAttachmentBlock";

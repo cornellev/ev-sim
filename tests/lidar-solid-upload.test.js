@@ -219,7 +219,7 @@ test("primitive solids and asset lidar proxies upload without the floor or colli
     assert.equal(database.textures.data._spherePosData[1], 2);
     assert.equal(database.textures.data._spherePosData[2], 3);
     assert.equal(database.textures.data._spherePosData[3], 2);
-    assert.equal(scene.getObjectByName("SimulationFloor")?.name, "SimulationFloor");
+    assert.equal(scene.getObjectByName("SimulationFloor")?.position.y, -0.02);
     assert.equal(database.triangles().some((triangle) => triangle.environmentSourceId === "floor"), false);
     assert.equal(database.triangles().some((triangle) => triangle.environmentGeometryType === "road"), true);
 
@@ -257,7 +257,7 @@ test("primitive solids and asset lidar proxies upload without the floor or colli
     assert.equal(database.textures.data._spherePosData[3], 0);
     assert.equal(database.triangles().filter((triangle) => triangle.environmentGeometryType === "asset-lidar").length, lidarFaces);
     assert.equal(database.triangles().some((triangle) => triangle.environmentGeometryType === "road"), true);
-    assert.equal(scene.getObjectByName("SimulationFloor")?.name, "SimulationFloor");
+    assert.equal(scene.getObjectByName("SimulationFloor")?.position.y, -0.02);
 
     assets.reset();
     assert.equal(database.triangles().filter((triangle) => triangle.environmentGeometryType === "asset-lidar").length, 0);

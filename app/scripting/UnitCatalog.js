@@ -207,6 +207,7 @@ import {
 import {
     AssetAttachmentUnit,
     BuildingAttachmentUnit,
+    DriveAreaAttachmentUnit,
     DeriveFromAttachmentUnit,
     GeneralAttachmentUnit,
     GroupAttachmentUnit,
@@ -497,6 +498,7 @@ const COMPONENT_BY_TYPE = new Map([
     ["IntersectionAttachmentBlock", IntersectionAttachmentUnit],
     ["PropAttachmentBlock", PropAttachmentUnit],
     ["AssetAttachmentBlock", AssetAttachmentUnit],
+    ["DriveAreaAttachmentBlock", DriveAreaAttachmentUnit],
     ["PlaceFeatureBlock", PlaceFeatureUnit],
     ["CloneObjectBlock", CloneObjectUnit],
     ["CreateGroupBlock", CreateGroupUnit],

@@ -27,6 +27,12 @@ function markingsOf(road) {
     return markings;
 }
 
+function meshesNamed(road, name) {
+    const meshes = [];
+    road.root.traverse((object) => { if (object.name === name) meshes.push(object); });
+    return meshes;
+}
+
 test("ED-05 scene markings honor authored per-boundary styles and expose lane records to the runtime", () => {
     const scene = new THREE.Scene();
     const plan = planRoadNetworkGeometry(roads());
@@ -75,4 +81,19 @@ test("ED-05 per-lane widths size the debug lane ribbons and the display model ma
     const model = roadDisplayModel(plan.edgeById.get("ab").edge);
     assert.deepEqual(model.lanes.map((lane) => lane.offset), [3.75, 0.25, -3.5]);
     assert.deepEqual(road.lanes.map((points) => points[0].z), [3.75, 0.25, -3.5], "runtime lane centerlines sit on the display model offsets");
+});
+
+test("compiled pavement draws the carriageway once and lifts paint off that surface", () => {
+    const bare = materializeCompiledRoadNetwork(null, planRoadNetworkGeometry(roads())).roads[0];
+    assert.equal(meshesNamed(bare, "RoadShoulder").length, 0);
+    const paintY = markingsOf(bare)[0].geometry.getAttribute("position").getY(0);
+    assert.ok(Math.abs(paintY - 0.02) < 1e-6);
+
+    const wide = materializeCompiledRoadNetwork(null, planRoadNetworkGeometry(roads(undefined, { shoulderWidth: 1 }))).roads[0];
+    const shoulders = meshesNamed(wide, "RoadShoulder");
+    assert.equal(shoulders.length, 1);
+    const position = shoulders[0].geometry.getAttribute("position");
+    let maxAbsZ = 0;
+    for (let index = 0; index < position.count; index += 1) maxAbsZ = Math.max(maxAbsZ, Math.abs(position.getZ(index)));
+    assert.ok(maxAbsZ > 5.5, "shoulder strip sits outside the carriageway");
 });

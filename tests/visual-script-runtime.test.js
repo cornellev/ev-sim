@@ -31,6 +31,7 @@ import { SignalStore } from "../app/scripting/runtime/SignalStore.js";
 import { OutputNodeBlock, ProgramInputBlock } from "../app/scripting/units/program/ProgramIO.block.js";
 import { normalizeOutputNodeState, parseValueByType } from "../app/scripting/units/program/ProgramTypes.js";
 import { NumberUnitClass } from "../app/scripting/units/math/Number.block.js";
+import { RandomNumberBlock } from "../app/scripting/units/math/Random.block.js";
 import { WeightedSelectBlock } from "../app/scripting/units/math/Randomization.block.js";
 import { registerBuiltInBlocks } from "../app/scripting/registerBuiltInBlocks.js";
 import { AndBlock, OrBlock } from "../app/scripting/units/statements/LogicBlocks.block.js";
@@ -2582,6 +2583,45 @@ class LoopPairBlock extends UnitBlock {
     }
 }
 
+class LoopScaleBlock extends UnitBlock {
+    static blockType = "LoopScaleBlock";
+
+    register() {
+        this.registerInput("value", "float64");
+        this.registerOutput("out", "float64");
+    }
+
+    valid() {
+        return this.hasInput("value");
+    }
+
+    execute() {
+        loopLog.push("scale");
+        return new BlockOutput().set("out", this.getInput("value"));
+    }
+}
+
+class LoopSampleBlock extends UnitBlock {
+    static blockType = "LoopSampleBlock";
+
+    register() {
+        this.registerInput("value", "float64");
+        this.registerInput("tag", "string");
+        this.registerOutput("then", UNIT_TYPE);
+    }
+
+    valid() {
+        return this.hasInput("value") && this.hasInput("tag");
+    }
+
+    execute() {
+        const value = this.getInput("value");
+        const tag = this.getInput("tag");
+        loopLog.push(`${tag}:${value}`);
+        return new BlockOutput().set("then", UNIT);
+    }
+}
+
 class LoopPoseBlock extends UnitBlock {
     static blockType = "LoopPoseBlock";
 
@@ -2605,7 +2645,7 @@ class LoopPoseBlock extends UnitBlock {
 function createLoopManager() {
     clearBlockTypeRegistryForTests();
     registerBuiltInBlocks();
-    for (const BlockClass of [LoopIntBlock, LoopTagBlock, LoopTickBlock, LoopRecordBlock, LoopPairBlock, LoopPoseBlock]) {
+    for (const BlockClass of [LoopIntBlock, LoopTagBlock, LoopTickBlock, LoopRecordBlock, LoopPairBlock, LoopScaleBlock, LoopSampleBlock, LoopPoseBlock]) {
         registerBlockType(BlockClass.blockType, BlockClass);
     }
     const manager = new ScriptManager();
@@ -2660,6 +2700,36 @@ function buildRecordLoop(count) {
     connect(manager, "repeat", "then", "head", "output");
     return manager;
 }
+
+test("Repeat draws a new random value per pass through a pure block", () => {
+    const manager = createLoopManager();
+    addRepeat(manager, "repeat", 3);
+    manager.addUnit(new RandomNumberBlock("random"));
+    manager.addUnit(new LoopScaleBlock("scale"));
+    manager.addUnit(new LoopTagBlock("tag"));
+    manager.addUnit(new LoopSampleBlock("sample"));
+    connect(manager, "random", "out", "scale", "value");
+    connect(manager, "scale", "out", "sample", "value");
+    connect(manager, "tag", "tag", "sample", "tag");
+    connect(manager, "sample", "then", "repeat", "body");
+    connect(manager, "repeat", "then", "head", "output");
+
+    const logs = [];
+    for (const run of [
+        (context) => manager.executeProgram({}, { context }),
+        (context) => ScriptManager.runCompiled(manager.compile("loop"), {}, { runtimeContext: context }),
+    ]) {
+        loopLog.length = 0;
+        let draw = 0;
+        const result = run({ random: () => draw++ / 10 });
+        assert.equal(result.status, "success", result.e?.message);
+        logs.push([...loopLog]);
+    }
+
+    assert.deepEqual(logs[0], ["scale", "tag", "g:0", "scale", "g:0.1", "scale", "g:0.2"]);
+    assert.deepEqual(logs[1], logs[0]);
+    assert.equal(logs[0].filter((entry) => entry === "tag").length, 1);
+});
 
 test("Repeat re-runs its body per pass and keeps data-only setup to one run", () => {
     const log = runLoopBothWays(buildRecordLoop(3));

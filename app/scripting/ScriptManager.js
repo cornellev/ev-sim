@@ -500,11 +500,19 @@ export class ScriptManager {
     }
 
     getLoopPassUnits(uuid) {
-        return loopPassUnits(graphEdges(this.units), uuid);
+        const resampleUuids = new Set();
+        for (const unit of this.units) {
+            if (unit.constructor.resampleEachPass) resampleUuids.add(unit.uuid);
+        }
+        return loopPassUnits(graphEdges(this.units), uuid, resampleUuids);
     }
 
     invalidateOutputs(uuids) {
-        for (const uuid of uuids) this.outputMemo.delete(uuid);
+        const byId = new Map(this.units.map((unit) => [unit.uuid, unit]));
+        for (const uuid of uuids) {
+            this.outputMemo.delete(uuid);
+            byId.get(uuid)?.clearResample?.();
+        }
     }
 
     setLoopFrame(uuid, frame) {

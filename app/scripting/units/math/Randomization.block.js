@@ -8,6 +8,8 @@ function seededRandom(seed) {
 }
 
 export class RandomRangeBlock extends UnitBlock {
+    static resampleEachPass = true;
+
     register() {
         this.registerInput("min", "float64");
         this.registerInput("max", "float64");
@@ -49,6 +51,8 @@ export class SeededRandomBlock extends UnitBlock {
 }
 
 export class GaussianNoiseBlock extends UnitBlock {
+    static resampleEachPass = true;
+
     register() {
         this.registerInput("mean", "float64");
         this.registerInput("stddev", "float64");
@@ -71,6 +75,8 @@ export class GaussianNoiseBlock extends UnitBlock {
 }
 
 export class JitterBlock extends UnitBlock {
+    static resampleEachPass = true;
+
     register() {
         this.registerInput("value", "float64");
         this.registerInput("amount", "float64");
@@ -90,6 +96,8 @@ export class JitterBlock extends UnitBlock {
 }
 
 export class WeightedSelectBlock extends UnitBlock {
+    static resampleEachPass = true;
+
     static typeScheme = {
         variables: {
             T: {

@@ -235,6 +235,38 @@ export function polygonCentroidXZ(footprint) {
     return { x: cx / (3 * twice), z: cz / (3 * twice) };
 }
 
+function polygonArea(footprint) {
+    const signed = footprint.reduce((sum, point, index) => {
+        const next = footprint[(index + 1) % footprint.length];
+        return sum + point.x * next.z - next.x * point.z;
+    }, 0) * 0.5;
+    return Math.abs(signed);
+}
+
+/** Centroid, axis-aligned size, and polygon area. Invalid records fail closed. */
+export function measureDriveArea(area) {
+    try {
+        const record = normalizeDriveAreaRecord(area);
+        const centroid = polygonCentroidXZ(record.footprint);
+        const bounds = footprintBounds(record.footprint, record.y);
+        return {
+            ok: true,
+            position: { x: centroid.x, y: record.y, z: centroid.z },
+            width: bounds.max.x - bounds.min.x,
+            depth: bounds.max.z - bounds.min.z,
+            area: polygonArea(record.footprint),
+        };
+    } catch {
+        return {
+            ok: false,
+            position: { x: 0, y: 0, z: 0 },
+            width: 0,
+            depth: 0,
+            area: 0,
+        };
+    }
+}
+
 export function pointInDriveAreaSurface(point, surface) {
     const x = Number(point?.x);
     const z = Number(point?.z);
