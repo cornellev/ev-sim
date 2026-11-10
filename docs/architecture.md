@@ -925,3 +925,21 @@ Validated visual assets are stored under `CEV_SIM_DATA_DIR` (default
 - generated bake output source IDs from `CEV_SIM_BAKE_OUTPUT_SOURCE_IDS`
 
 There is no public digest-only content URL and no published-asset deletion API.
+
+## Contact control and sensor diagnostics
+
+Optional run `controls.zeroSpeedResponse: "brake-v1"` is a semantic, explicitly
+authored control profile. ControlRuntime passes its effective actuator limits
+through the shared runtime context to the contact plant. Browser/headless
+execution shares the jerk-limited zero-speed response; absent profiles retain
+legacy state and dynamics. Physical mass/inertia/tire parameters still come
+from the existing immutable resolved vehicle physics configuration.
+
+Sensor creation can explicitly wire measured products through registered topic
+contracts. Existing drafts require reviewed repair; resolution and launch do
+not rewire authoring data. Captured/processed/published counters are distinct.
+Unmapped IMU/odometry retain measured observations without undefined-topic
+messages; LiDAR builds requested messages and observations in one noise pass.
+Candidate visualization starts waiting/inactive and becomes ok only after an
+accepted output. Controls show the accepted command source and recent obstacle
+contact events, rather than presenting keyboard driving as model execution.

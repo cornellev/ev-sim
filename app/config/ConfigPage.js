@@ -61,7 +61,8 @@ import { getBuiltInVehicleManifest } from "../vehicles/BuiltInVehicleManifests.j
 import { getVehicleManifest, listVehicleManifests } from "../vehicles/VehicleManifestClient.js";
 import { subscribeStorageEvents } from "../client/storageEvents.js";
 import { PLUGIN_CAPABILITIES } from "../plugin-api/capabilities.js";
-import { fetchSensorCatalog, getPluginManifest, listPluginLibrary } from "../plugin/PluginClient.js";
+import { fetchPlantCatalog, fetchSensorCatalog, getPluginManifest, listPluginLibrary } from "../plugin/PluginClient.js";
+import { newContactRunDefaults } from "./simpleRunModel.js";
 import { BrowserSensorAuthoringSession } from "../plugin/browser/BrowserSensorAuthoringSession.js";
 import PluginSensorAuthoringPanel from "../plugin/browser/PluginSensorAuthoringPanel.js";
 import {
@@ -81,6 +82,7 @@ import {
     resolveInheritedVehicleSelection,
 } from "../simulation/sensors/SensorInheritance.js";
 import SensorTypeAdder from "../ui/SensorTypeAdder.js";
+import { assertSensorWiringReviewCurrent, proposeSensorWiring } from "../simulation/sensors/SensorWiring.js";
 import { PLUGIN_SENSOR_RANGE_IMAGE_CAPABILITY } from "../plugin/PluginSensorContract.js";
 import {
     SENSOR_TRANSPORTS_KIND,
@@ -275,6 +277,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
     const [editorSession, setEditorSession] = useState(0);
     const [saved, setSaved] = useState(null);
     const [draft, setDraft] = useState(null);
+    const newRunSetupRef = useRef(null);
     const [raw, setRaw] = useState("");
     const [buffers, setBuffers] = useState({});
     const [jsonResets, setJsonResets] = useState({});
@@ -417,6 +420,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
     };
 
     const applyManifestDocument = (id, document) => {
+        newRunSetupRef.current = null;
         const normalized = normalizeRunManifest(document, authoringOptions());
         clearJsonBuffers();
         draftRef.current = normalized;
@@ -694,6 +698,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
 
     const update = (path, value) => {
         if (jsonBufferGate(buffersRef.current).blocked) return false;
+        if (path[0] === "controls" && (path[1] === "zeroSpeedResponse" || (path.length === 1 && value?.zeroSpeedResponse !== draftRef.current?.controls?.zeroSpeedResponse)) && newRunSetupRef.current) newRunSetupRef.current.brakingChosen = true;
         setDraft((current) => {
             const next = path.length === 0 ? structuredClone(value) : structuredClone(current);
             if (path.length > 0) {
@@ -717,6 +722,33 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
         return true;
     };
 
+    const configureNewRun = async (next, vehicle) => {
+        const setup = newRunSetupRef.current;
+        if (!setup || setup.id !== next.id || setup.brakingChosen) return next;
+        const plantCatalog = vehicle?.dynamics?.plant ? await fetchPlantCatalog() : null;
+        if (newRunSetupRef.current !== setup || setup.brakingChosen) return next;
+        const plant = plantCatalog?.plants?.find((entry) => entry.id === vehicle.dynamics.plant
+            && vehicle.pluginLocks?.some((lock) => lock.packageHash === entry.ownership?.packageHash));
+        return newContactRunDefaults(next, vehicle, plant);
+    };
+    const changeInitialVehicle = async (index, vehicleId) => {
+        const source = draftRef.current;
+        const target = source.initialState.vehicles[index];
+        if (!newRunSetupRef.current || target.id !== source.controls.targetVehicleId) {
+            update(["initialState", "vehicles", index, "type"], vehicleId);
+            return;
+        }
+        try {
+            rejectPendingJson();
+            const vehicle = getBuiltInVehicleManifest(vehicleId) || await getVehicleManifest(vehicleId);
+            const next = structuredClone(source);
+            next.initialState.vehicles[index].type = vehicleId;
+            const configured = await configureNewRun(next, vehicle);
+            if (draftRef.current !== source) throw new Error("The draft changed. Select the vehicle again.");
+            update([], configured);
+        } catch (caught) { setError(caught.message); }
+    };
+
     const createNew = async () => {
         const baseName = "Untitled Run";
         let id = runIdFromName(baseName);
@@ -728,6 +760,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                 ? simpleCreatedManifest(id, baseName)
                 : createDefaultRunManifest({ id, name: baseName }));
             await refreshCatalog(created.id);
+            newRunSetupRef.current = { id: created.id, brakingChosen: false };
         });
     };
 
@@ -742,6 +775,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
         const stored = local.manifest.id === previousId
             ? await saveRunManifest(previousId, local.manifest, saved.revision)
             : await changeRunManifestId(previousId, local.manifest, saved.revision);
+        newRunSetupRef.current = null;
         const normalized = normalizeRunManifest(stored, authoringOptions());
         draftRef.current = normalized;
         setSaved(stored);
@@ -778,6 +812,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                 if (!result.ok) throw new Error(formatValidationIssues(result.issues, { prefix: "Cannot launch until validation passes" }));
                 const resolved = await resolveRunManifest(manifestId);
                 await controller.prepare(resolved, { autoplay: true });
+                newRunSetupRef.current = null;
                 onLaunch?.(resolved);
             });
         } finally {
@@ -966,6 +1001,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                                 comparisonLatch={comparisonLatch}
                                 onComparisonLatch={onComparisonLatch}
                                 onUpdate={update}
+                                configureNewRun={configureNewRun}
                                 onOpenAdvanced={(nextTab) => {
                                     setTab(nextTab);
                                     chooseRunConfigMode("advanced");
@@ -1022,7 +1058,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                                         <div id={`run-focus-tab-${item}`} tabIndex={-1}>
                                         {item === "Overview" && <Overview draft={draft} environments={environments} update={update} />}
                                         {item === "Scenario" && <ScenarioSelection draft={draft} scenarios={scenarioCatalog} scenarioCatalogState={scenarioCatalogState} scenarioCatalogError={scenarioCatalogError} retryScenarios={loadScenarioCatalog} vehicleCatalog={vehicleCatalog} update={update} />}
-                                        {item === "Initial State" && <InitialState draft={draft} update={update} vehicleCatalog={vehicleCatalog} />}
+                                        {item === "Initial State" && <InitialState draft={draft} update={update} vehicleCatalog={vehicleCatalog} onVehicleChange={changeInitialVehicle} />}
                                         {item === "Clock" && <Clock draft={draft} update={update} />}
                                         {item === "Controls" && <Controls draft={draft} update={update} />}
                                         {item === "Sensors" && (
@@ -1036,6 +1072,11 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                                                 vehicleCatalog={vehicleCatalog}
                                                 onJsonBuffer={stageBuffer}
                                                 jsonResets={jsonResets}
+                                                prepareReview={() => {
+                                                    commitReadyBuffers(buffersRef.current);
+                                                    rejectPendingJson();
+                                                    return draftRef.current;
+                                                }}
                                             />
                                         )}
                                         {item === "Observation" && <Observation draft={draft} update={update} />}
@@ -1444,7 +1485,7 @@ function PlantGrantAction({ draft, update, vehicle, vehicleCatalog }) {
     );
 }
 
-function InitialState({ draft, update, vehicleCatalog = [] }) {
+function InitialState({ draft, update, vehicleCatalog = [], onVehicleChange }) {
     if (draft.scenario) {
         return <StatusMessage tone="info" title="Initial state comes from the scenario">Actors, poses, routes, and initial speeds are resolved from the selected scenario. Clear the scenario selection to edit manifest-owned vehicles.</StatusMessage>;
     }
@@ -1469,7 +1510,7 @@ function InitialState({ draft, update, vehicleCatalog = [] }) {
                             <input value={vehicle.id} onChange={(event) => update(["initialState", "vehicles", index, "id"], event.target.value)} />
                         </Field>
                         <Field label="Vehicle type">
-                            <select value={vehicle.type} onChange={(event) => update(["initialState", "vehicles", index, "type"], event.target.value)}>
+                            <select value={vehicle.type} onChange={(event) => { if (onVehicleChange) onVehicleChange(index, event.target.value); else update(["initialState", "vehicles", index, "type"], event.target.value); }}>
                                 {
                                     BUILT_IN_VEHICLE_OPTIONS.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)
                                 }
@@ -1580,6 +1621,17 @@ function Controls({ draft, update }) {
                 Empty max-speed / steer-rate fields keep the vehicle defaults; fill them to override this run only. Stale policy defaults to safe stop. Reference authority with a scenario route-follower or script closes the loop in-sim and does not need that topic advertised on the orchestrator.
             </p>
             <div className="grid gap-4 md:grid-cols-3">
+                <Field label="Zero-speed response">
+                    <select value={controls.zeroSpeedResponse || ""} onChange={(event) => {
+                        const next = { ...controls };
+                        if (event.target.value) next.zeroSpeedResponse = event.target.value;
+                        else delete next.zeroSpeedResponse;
+                        update(["controls"], next);
+                    }}>
+                        <option value="">Legacy</option>
+                        <option value="brake-v1">Brake-v1 (contact vehicles)</option>
+                    </select>
+                </Field>
                 <Field label="Target vehicle">
                     <select
                         value={controls.targetVehicleId || "ego"}
@@ -1730,6 +1782,7 @@ function Sensors({
     vehicleCatalog = [],
     onJsonBuffer = null,
     jsonResets = {},
+    prepareReview = () => draft,
 }) {
     const registry = session?.registry ?? sensorTypeRegistry;
     const catalogEntries = sensorCatalogEntries(catalog, registry);
@@ -1737,6 +1790,7 @@ function Sensors({
     const inheriting = draft.sensorRig?.inheritance?.mode === "vehicle";
     const [resetOpen, setResetOpen] = useState(false);
     const [resetting, setResetting] = useState(false);
+    const [wiringReview, setWiringReview] = useState(null);
     const builtInManifest = useMemo(
         () => (selection.vehicleId ? getBuiltInVehicleManifest(selection.vehicleId) : null),
         [selection.vehicleId],
@@ -1786,6 +1840,25 @@ function Sensors({
         return applySensorInheritance(draft, { vehicleManifest, registry });
     }, [draft, inheriting, registry, selection.vehicleId, storedVehicle.error, vehicleManifest]);
     const displaySensors = inheriting ? applied.manifest.sensorRig.sensors : draft.sensorRig.sensors;
+    const unwired = proposeSensorWiring(applied.manifest, { registry });
+    const openWiringReview = () => {
+        try {
+            const source = prepareReview();
+            const inherited = inheriting && vehicleManifest ? applySensorInheritance(source, { vehicleManifest, registry }) : { manifest: source, issues: [] };
+            if (inherited.issues.length) throw new Error(inherited.issues.map((issue) => issue.message).join(" "));
+            setWiringReview({ source: JSON.stringify(source), vehicle: vehicleManifest, catalogRevision: catalog.revision, draft: inherited.manifest, selections: {}, result: proposeSensorWiring(inherited.manifest, { registry }) });
+        } catch (caught) { onError(caught.message); }
+    };
+    const applyWiringReview = () => {
+        try {
+            assertSensorWiringReviewCurrent(wiringReview, draft, { vehicle: vehicleManifest, catalogRevision: catalog.revision });
+        } catch (caught) {
+            onError(caught.message);
+            setWiringReview(null);
+            return;
+        }
+        if (!wiringReview.result.issues.length && update([], wiringReview.result.manifest) !== false) setWiringReview(null);
+    };
     const inheritedCount = displaySensors.filter((sensor) => sensor.inheritedFrom).length;
 
     const writeDisplayedSensor = (displayed, mutate) => {
@@ -1828,7 +1901,8 @@ function Sensors({
                 });
             }
             bumpRegistry();
-            update([], stamped.manifest);
+            const newIds = stamped.manifest.sensorRig.sensors.filter((sensor) => !draft.sensorRig.sensors.some((existing) => existing.id === sensor.id)).map((sensor) => sensor.id);
+            update([], proposeSensorWiring(stamped.manifest, { registry, sensorIds: newIds }).manifest);
         } catch (caught) {
             onError(caught.message);
         }
@@ -1867,7 +1941,7 @@ function Sensors({
                 });
             }
             bumpRegistry();
-            update([], stamped.manifest);
+            update([], proposeSensorWiring(stamped.manifest, { registry }).manifest);
             setResetOpen(false);
         } catch (caught) {
             onError(caught.message);
@@ -1897,7 +1971,7 @@ function Sensors({
                 frameId: `sensor_${index + 1}_frame`,
             }, index, session?.registry ?? registry);
             next.sensorRig.sensors = [...next.sensorRig.sensors, sensor];
-            update([], next);
+            update([], proposeSensorWiring(next, { registry: session?.registry ?? registry, sensorIds: [sensor.id] }).manifest);
         } catch (caught) {
             onError(caught.message);
         }
@@ -1932,6 +2006,42 @@ function Sensors({
                     </div>
                 )}
             </div>
+            <div className="rounded-[var(--radius)] border border-[var(--slate-border)] p-3">
+                <p className="mb-2 text-[12px] text-[var(--slate-muted)]">
+                    {unwired.changes.length || unwired.issues.length ? "Some enabled measured sensor products have no output topic. Processing does not mean publication." : "Existing sensor output bindings are preserved. Observation-only sensors do not publish topics."}
+                </p>
+                <Button size="compact" onClick={openWiringReview}>Review sensor wiring</Button>
+            </div>
+            <AlertDialog.Root open={Boolean(wiringReview)} onOpenChange={(open) => { if (!open) setWiringReview(null); }}>
+                <AlertDialog.Portal>
+                    <AlertDialog.Overlay className="sf-dialog-overlay" />
+                    <AlertDialog.Content className="sf-dialog sf-guard-dialog">
+                        <header className="sf-dialog__header">
+                            <AlertDialog.Title className="sf-dialog__title">Review measured sensor output wiring</AlertDialog.Title>
+                            <AlertDialog.Description className="sf-dialog__description">Apply these topic bindings to this draft only. Existing mappings are not changed. Cancel preserves observation-only sensors.</AlertDialog.Description>
+                        </header>
+                        <div className="space-y-3 p-4">
+                            {wiringReview?.result.changes.map((change) => <p key={`${change.sensorId}:${change.output}`} className="text-[12px]">{change.sensorId} · {change.output} → {change.name}{change.created ? " (new topic)" : " (existing topic)"}</p>)}
+                            {wiringReview?.result.issues.map((issue) => (
+                                <Field key={issue.key} label={issue.message}>
+                                    <select value={wiringReview.selections[issue.key] || ""} onChange={(event) => {
+                                        const selections = { ...wiringReview.selections, [issue.key]: event.target.value };
+                                        setWiringReview({ ...wiringReview, selections, result: proposeSensorWiring(wiringReview.draft, { registry, selections }) });
+                                    }}>
+                                        <option value="">Choose topic</option>
+                                        {issue.candidates.map((topic) => <option key={topic.id} value={topic.id}>{topic.name}</option>)}
+                                    </select>
+                                </Field>
+                            ))}
+                            {!wiringReview?.result.changes.length && !wiringReview?.result.issues.length && <p>No missing measured output bindings.</p>}
+                        </div>
+                        <div className="sf-dialog__footer">
+                            <AlertDialog.Cancel asChild><Button>Cancel</Button></AlertDialog.Cancel>
+                            <Button disabled={!wiringReview?.result.changes.length || Boolean(wiringReview?.result.issues.length)} onClick={applyWiringReview}>Apply wiring to draft</Button>
+                        </div>
+                    </AlertDialog.Content>
+                </AlertDialog.Portal>
+            </AlertDialog.Root>
             <AlertDialog.Root open={resetOpen} onOpenChange={(open) => { if (!open && !resetting) setResetOpen(false); }}>
                 <AlertDialog.Portal>
                     <AlertDialog.Overlay className="sf-dialog-overlay" onClick={() => { if (!resetting) setResetOpen(false); }} />

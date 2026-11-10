@@ -1083,15 +1083,28 @@ export class SimulationEngine {
     _submitKeyboardDrive() {
         const manifest = this.resolvedRun?.manifest;
         const controls = manifest?.controls;
+        const targetId = controls?.targetVehicleId || "ego";
+        const target = this.runtimeContext.vehicles.list().find((vehicle) => (vehicle.telemetryId || vehicle.id) === targetId);
+        const physicalLimits = target?.plant?.kinematics ?? target?.kinematics
+            ?? this.resolvedRun?.vehicles?.find((vehicle) => vehicle.actorId === targetId)?.manifest?.kinematics;
+        const effectiveLimits = this.controlRuntime?.getLimits(targetId);
+        const limits = effectiveLimits && { ...effectiveLimits };
+        for (const key of ["maxSpeed", "maxSteeringAngle", "maxSteeringRate"]) {
+            if (limits && Number.isFinite(physicalLimits?.[key])) limits[key] = Math.min(limits[key], physicalLimits[key]);
+        }
         const enabled = Boolean(this.controlRuntime)
             && controls?.keyboardDrive === true
             && controls?.authority === "candidate"
             && this.scenarioRuntime?.active !== true
-            && this.modules?.controls !== false;
+            && this.modules?.controls !== false
+            && Boolean(target)
+            && manifest.initialState.vehicles.some((vehicle) => vehicle.id === targetId);
         const stepped = stepKeyboardDrive(this._keyboardDrive, {
             down: this.data.keys?.()?.down,
             dt: this.fixedDt,
             enabled,
+            limits,
+            currentSteeringRad: target?.plant?.steeringAngle ?? target?.steeringAngle,
         });
         this._keyboardDrive = stepped.state;
         if (!stepped.command || !this.controlRuntime) return;

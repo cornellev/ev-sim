@@ -278,6 +278,7 @@ export class KinematicVehiclePlant {
         this.verticalVelocity = 0;
         this.contactNormal = null;
         this.contactControlActive = false;
+        delete this.brakeState;
         this.onRoad = false;
         this.axCommand = 0;
         this.longitudinal = { mode: "hold" };
@@ -473,6 +474,7 @@ export class KinematicVehiclePlant {
                 verticalVelocity: finite(this.verticalVelocity),
                 axCommand: finite(this.axCommand),
                 contactControlActive: this.contactControlActive === true,
+                ...(this.brakeState ? { brakeState: { ...this.brakeState } } : {}),
             } : {}),
         };
     }

@@ -10,6 +10,7 @@ import {
     stateSensorSampleDropped,
 } from "../../autonomy/LocalizationMeasurements.js";
 import { rep103PoseToThree } from "../../autonomy/CoordinateFrames.js";
+import { getStateSensorModel } from "../../simulation/sensors/StateSensorBackend.js";
 
 export class ManifestWheelOdometry extends Device {
     constructor(config, options = {}) {
@@ -64,6 +65,10 @@ export class ManifestWheelOdometry extends Device {
         }
 
         const frameId = this.config.calibration.odomFrameId || "odom";
+        if (!this.config.outputs.odometryTopicId) {
+            const model = getStateSensorModel("wheel-odometry");
+            return { messages: [], observation: { dtype: model.dtype, shape: model.shape, value: Float32Array.from(model.values(measurement)) } };
+        }
         return [{
             topicId: this.config.outputs.odometryTopicId,
             signal: "odometry",

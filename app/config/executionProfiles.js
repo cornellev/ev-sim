@@ -1,3 +1,4 @@
+import { proposeSensorWiring } from "../simulation/sensors/SensorWiring.js";
 import {
     isControlsCommandTopic,
     scenarioUsesExternalRosForTopic,
@@ -336,6 +337,9 @@ export function buildComparisonBaseline(manifest, profileId, context = {}) {
     if (context.vehicleManifest) {
         const inherited = enableSensorInheritance(baseline, context.vehicleManifest);
         baseline = inherited.manifest;
+        const wiring = proposeSensorWiring(baseline, { registry: context.sensorRegistry });
+        baseline = wiring.manifest;
+        for (const entry of wiring.issues) issues.push(issue("sensor-wiring", "sensorRig", "sensors", entry.message));
         for (const entry of inherited.issues) {
             issues.push(issue("inheritance", entry.path, "sensors", entry.message));
         }

@@ -51,7 +51,7 @@ export async function replayContactRamp({ browser = false, manifest = null, step
                 if (event.down) down.add(event.key);
                 else down.delete(event.key);
             }
-            const drive = stepKeyboardDrive(keyboard, { down, dt, enabled: true });
+            const drive = stepKeyboardDrive(keyboard, { down, dt, enabled: true, limits: control.getLimits("ego") });
             keyboard = drive.state;
             if (drive.command) control.submitSiSpeedSteer("ego", {
                 ...drive.command, captureTimeNs: (step - 1) * fixture.stepNs, producer: "candidate", source: "keyboard",

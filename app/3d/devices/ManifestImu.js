@@ -10,6 +10,7 @@ import {
     stateSensorSampleDropped,
 } from "../../autonomy/LocalizationMeasurements.js";
 import { rep103PoseToThree } from "../../autonomy/CoordinateFrames.js";
+import { getStateSensorModel } from "../../simulation/sensors/StateSensorBackend.js";
 
 export class ManifestImu extends Device {
     constructor(config, options = {}) {
@@ -68,6 +69,10 @@ export class ManifestImu extends Device {
         }
 
         const frameId = this.config.measurementFrameId || this.config.frameId;
+        if (!this.config.outputs.imuTopicId) {
+            const model = getStateSensorModel("imu");
+            return { messages: [], observation: { dtype: model.dtype, shape: model.shape, value: Float32Array.from(model.values(measurement)) } };
+        }
         return [{
             topicId: this.config.outputs.imuTopicId,
             signal: "imu",

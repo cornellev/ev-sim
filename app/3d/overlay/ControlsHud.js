@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { IconChevronUp, IconCircleFilled } from "@tabler/icons-react";
 import { Panel } from "../../ui";
+import { recentObstacleContacts } from "../../autonomy/AutonomyVisualizationModel.js";
 
 const CONTROLS_HUD_LOCK = "simulation-controls-hud";
 const PANEL_COLLAPSED_KEY = "sf.controls-hud.collapsed";
@@ -74,6 +75,7 @@ function MeterRow({ label, unit, requested, applied, achieved, digits, warnAppli
  */
 export function ControlsHud({ data }) {
     const [snapshot, setSnapshot] = useState(null);
+    const [contacts, setContacts] = useState([]);
     const [collapsed, setCollapsed] = useState(() => readCollapsedPreference());
 
     const controls = useMemo(() => {
@@ -95,7 +97,12 @@ export function ControlsHud({ data }) {
         read();
         const store = data.bindings?.()?.signalStore;
         const unsubscribe = store?.subscribe?.(() => read());
-        const timer = setInterval(read, 200);
+        const timer = setInterval(() => {
+            read();
+            const current = store?.read?.("visualization.controls.snapshot")?.value;
+            const toUs = Number(current?.applyTimeNs || 0) / 1000;
+            setContacts(recentObstacleContacts(store?.events?.({ fromUs: Math.max(0, toUs - 500_000), toUs }) || [], current?.vehicleId || "ego"));
+        }, 200);
         return () => {
             unsubscribe?.();
             clearInterval(timer);
@@ -107,6 +114,7 @@ export function ControlsHud({ data }) {
     const tone = statusTone(snapshot, flags);
     const status = snapshot?.status || (snapshot ? "live" : "idle");
     const authority = snapshot?.authority || "";
+    const commandSource = snapshot?.commandSource === "keyboard" ? "manual keyboard" : snapshot?.commandSource || "source unknown";
     const achievedSpeed = snapshot?.achieved?.speedMps;
 
     const toggleCollapsed = () => {
@@ -140,7 +148,7 @@ export function ControlsHud({ data }) {
                 <IconCircleFilled className="controls-hud__dot" size={8} aria-hidden="true" />
                 <span className="controls-hud__identity">
                     <span className="controls-hud__title">Controls</span>
-                    {authority ? <span className="controls-hud__authority">{authority}</span> : null}
+                    {authority ? <span className="controls-hud__authority">{authority} · {commandSource}</span> : null}
                 </span>
                 <span className="controls-hud__speed">
                     {snapshot ? (
@@ -208,6 +216,7 @@ export function ControlsHud({ data }) {
                             </div>
 
                             <div className="controls-hud-footer">
+                                {contacts.length > 0 && <span title={contacts.join(", ")}>recent obstacle contact: {contacts.join(", ")}</span>}
                                 <span>age {formatAge(snapshot.heartbeatAgeNs ?? snapshot.ageNs)}</span>
                                 <span>delay {formatAge(snapshot.delayNs)}</span>
                                 {flagLabels.map((entry) => (

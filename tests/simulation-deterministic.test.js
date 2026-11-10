@@ -946,3 +946,28 @@ test("keyboard drive commands a prepared run and yields otherwise", async () => 
     steering.engine.step(1);
     assert.equal(steering.vehicle.steeringAngle, 0);
 });
+
+test("keyboard cannot wind up beyond physical limits even with larger run overrides", async () => {
+    const driven = harness();
+    driven.vehicle.kinematics = { maxSpeed: 1, maxSteeringAngle: 0.1, maxSteeringRate: 0.1 };
+    await driven.engine.prepare(resolved(quietManifest({ keyboardDrive: true, actuatorOverrides: { maxSpeed: 5, maxSteeringAngle: 0.4, maxSteeringRate: 10 } })));
+    driven.vehicle.steeringAngle = 0.1;
+    driven.keysDown.add("w");
+    driven.keysDown.add("a");
+    driven.engine.step(1);
+    assert.equal(driven.engine.controlRuntime.getSnapshot("ego").requested.speedMps, 1);
+    assert.equal(driven.engine.controlRuntime.getSnapshot("ego").requested.steeringRad, 0.1);
+    driven.keysDown.delete("a");
+    driven.keysDown.add("d");
+    driven.engine.step(1);
+    assert.ok(driven.vehicle.steeringAngle < 0.1);
+});
+
+test("keyboard does not submit commands when the configured target is absent", async () => {
+    const missing = harness();
+    await missing.engine.prepare(resolved(quietManifest({ keyboardDrive: true })));
+    missing.data.vehicles().vehicles = [];
+    missing.keysDown.add("w");
+    missing.engine.step(1);
+    assert.equal(missing.engine.controlRuntime.getSnapshot("ego").requested, null);
+});

@@ -47,8 +47,8 @@ export class CandidateOutputRuntime {
         this.telemetry = options.telemetry ?? null;
         this.transformRuntime = options.transformRuntime ?? null;
         this.manifest = options.manifest ?? null;
-        this.lastPerception = emptyPerceptionSnapshot();
-        this.lastLocalization = emptyLocalizationSnapshot();
+        this.lastPerception = emptyPerceptionSnapshot({ status: this._initialStatus(PERCEPTION_CONTRACTS) });
+        this.lastLocalization = emptyLocalizationSnapshot({ status: this._initialStatus(LOCALIZATION_CONTRACTS) });
         this.lastGoodPerception = null;
         this.lastGoodLocalization = null;
         this.truthHistory = [];
@@ -56,8 +56,8 @@ export class CandidateOutputRuntime {
     }
 
     reset() {
-        this.lastPerception = emptyPerceptionSnapshot();
-        this.lastLocalization = emptyLocalizationSnapshot();
+        this.lastPerception = emptyPerceptionSnapshot({ status: this._initialStatus(PERCEPTION_CONTRACTS) });
+        this.lastLocalization = emptyLocalizationSnapshot({ status: this._initialStatus(LOCALIZATION_CONTRACTS) });
         this.lastGoodPerception = null;
         this.lastGoodLocalization = null;
         this.truthHistory = [];
@@ -67,6 +67,11 @@ export class CandidateOutputRuntime {
 
     setTransformRuntime(transformRuntime) {
         this.transformRuntime = transformRuntime ?? null;
+    }
+
+    _initialStatus(contracts) {
+        return this.manifest?.topics?.some((topic) => topic.enabled !== false && topic.direction === "input" && contracts.has(topic.contractId || topic.id))
+            ? VISUALIZATION_STATUS.WAITING : VISUALIZATION_STATUS.INACTIVE;
     }
 
     ingestRouted(result, { applyStep = 0, applyTimeNs = 0 } = {}) {

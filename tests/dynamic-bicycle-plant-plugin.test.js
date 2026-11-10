@@ -280,6 +280,23 @@ test("the compiled contact bicycle package matches the built-in plant", {
         }
         assert.ok(Math.abs(rcBuiltin.velocity.x) < 0.01, `RC stopped speed ${rcBuiltin.velocity.x}, yaw rate ${rcBuiltin.yawRate}`);
         assert.ok(Math.abs(rcBuiltin.yawRate) < 0.01, `RC stopped yaw rate ${rcBuiltin.yawRate}`);
+        for (const direction of [-1, 1]) {
+            for (const [index, body] of bodies.entries()) {
+                body.resetRunState({ ...rcEntry, linearVelocity: { x: direction, y: 0, z: 0 } });
+                placeChassis(worlds[index].physics, body);
+                runChassis(worlds[index].physics, [body], 100, {
+                    mode: "velocity", speedMps: 0, zeroSpeedResponse: "brake-v1",
+                    actuatorLimits: { ...rcManifest.kinematics, maxDeceleration: 5, maxJerk: 10 },
+                });
+                assert.ok(Math.abs(body.velocity.x) < 0.001, `compiled brake-v1 ${direction}`);
+                assert.ok(Math.abs(body.position.x) < 0.4, `compiled brake distance ${body.position.x}`);
+            }
+            for (const body of bodies.slice(0, 2)) {
+                close(body.position.x, rcBuiltin.position.x, "brake-v1 parity position");
+                close(body.velocity.x, rcBuiltin.velocity.x, "brake-v1 parity speed");
+                assert.deepEqual(body.brakeState, rcBuiltin.brakeState);
+            }
+        }
         rcHeadless.resetRun({ vehicles: [rcEntry] });
         assert.equal(rcHeadless.vehicles[0].physicsConfig.mass, 3);
         assert.equal(rcHeadless.vehicles[0].yawRate, 0);

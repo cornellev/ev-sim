@@ -385,6 +385,35 @@ The existing FOV camera path remains byte-compatible for
 cameras use the calibrated projection path and await aligned
 appearance/analytic readback.
 
+### Explicit zero-speed braking and sensor wiring
+
+Optional `controls.zeroSpeedResponse: "brake-v1"` selects jerk-limited
+contact braking for the target vehicle's zero-speed velocity and stop commands.
+Omission preserves legacy behavior and normalization/hash identity. The value
+is semantic; unknown values fail validation. Execution requires a built-in
+`contact-bicycle-v2` target or an exactly resolved contact plugin with
+`contactHost: 3`, and positive effective deceleration/jerk limits. Run actuator
+overrides feed the shared controller. Reverse zero-speed requests use the
+deceleration limit rather than the acceleration limit in this profile.
+Nonzero tracking, hold, acceleration, delay, and watchdog steering remain unchanged.
+
+Run Configuration exposes Legacy / Brake-v1 in both modes. New-run setup
+defaults to Brake-v1 during an explicit compatible vehicle selection, until
+the first Save/Launch or document switch; an explicit user choice wins. Loading,
+importing, duplicating, saving, or launching existing manifests never enables it.
+Plugin defaults require the selected vehicle's exact locked plant declaration.
+
+New measured sensor products are wired during explicit setup. Existing drafts
+use **Sensors → Review sensor wiring**: review created/reused contract topics,
+select ambiguous bindings, and apply one draft update. Existing bindings stay
+unchanged; cancellation and stale draft/vehicle/catalog detection prevent
+application. Save/Launch do not repair wiring. Sensor bindings must name output
+topics with the product's ROS type. Observation-only sensors remain valid.
+IMU/odometry processing without a topic does not publish; LiDAR only captures
+requested products/observations, with one shared noise pass. Diagnostic
+`outputStatus` distinguishes `capture-only` and `no-requested-product` when no
+output topic is configured. These labels do not enter simulator identity.
+
 ### Localization sensor parameters (defaults)
 
 | Sensor | Rate | Key calibration | Units |

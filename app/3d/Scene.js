@@ -16,7 +16,7 @@ import { TriangleOptimizer } from "../optimization/TriangleOptimizer";
 import { createBrowserVehicle } from "./vehicles/createBrowserVehicle.js";
 import { attachEgoPresentation } from "./vehicles/EgoPresentation.js";
 import { applyManualDrive, syncPlantFromVehicle } from "./vehicles/VehiclePlantAdapter.js";
-import { KEYBOARD_DRIVE_SPEED_MPS, KEYBOARD_STEER_RATE_RAD } from "../simulation/keyboardDrive.js";
+import { keyboardDriveSpeed, KEYBOARD_STEER_RATE_RAD } from "../simulation/keyboardDrive.js";
 import {
     clampPlaygroundSteerTarget,
     movePlaygroundSteerTarget,
@@ -388,11 +388,11 @@ async function setupVehicles(scene, data, camera) {
     const currentSteer = () => car.plant?.steeringAngle ?? car.steeringAngle ?? 0;
     disposers.push(data.keys().registerKeyDown("w", () => {
         if (!car.controlsEnabled || playgroundDriveBlocked()) return;
-        applyManualDrive(car, { speedMps: KEYBOARD_DRIVE_SPEED_MPS });
+        applyManualDrive(car, { speedMps: keyboardDriveSpeed(steerKinematics()) });
     }));
     disposers.push(data.keys().registerKeyDown("s", () => {
         if (!car.controlsEnabled || playgroundDriveBlocked()) return;
-        applyManualDrive(car, { speedMps: -KEYBOARD_DRIVE_SPEED_MPS });
+        applyManualDrive(car, { speedMps: -keyboardDriveSpeed(steerKinematics()) });
     }));
     disposers.push(data.keys().registerKeyUp("w", () => {
         if (!car.controlsEnabled || playgroundDriveBlocked()) return;

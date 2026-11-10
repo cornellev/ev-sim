@@ -383,6 +383,8 @@ export function createSimulationRuntimeContext(options = {}) {
                     const dynamic = dynamicBicycleBody(vehicle);
                     applyManualDrive(vehicle, dynamic ? {
                         mode: setpoint.command?.mode || "velocity",
+                        zeroSpeedResponse: setpoint.zeroSpeedResponse,
+                        actuatorLimits: setpoint.actuatorLimits,
                         speedMps: setpoint.speedMps,
                         accelerationX: setpoint.accelerationMps2,
                         steeringRad: setpoint.steeringRadThree,

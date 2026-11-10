@@ -12,6 +12,7 @@ export function contactHostForVehicle(manifest, plants) {
 
 /** Check received execution identity without applying authoring migration. */
 export function assertResolvedContactHosts(resolved, plants = new Map()) {
+    assertZeroSpeedResponse(resolved, plants);
     for (const [path, vehicles] of [
         ["vehicles", resolved.vehicles ?? []],
         ["scenario.vehicles", resolved.scenario?.vehicles ?? []],
@@ -43,5 +44,20 @@ export function assertResolvedContactHosts(resolved, plants = new Map()) {
                 reject("contactHost is only valid for a contact-plugin vehicle");
             }
         }
+    }
+}
+
+export function assertZeroSpeedResponse(resolved, plants = new Map()) {
+    const controls = resolved.manifest?.controls;
+    if (controls?.zeroSpeedResponse === undefined) return;
+    const targetId = controls.targetVehicleId || "ego";
+    const record = resolved.vehicles?.find((entry) => entry.actorId === targetId);
+    const vehicle = record?.manifest;
+    const limits = { ...vehicle?.kinematics, ...controls.actuatorOverrides };
+    if (controls.zeroSpeedResponse !== "brake-v1"
+        || !(vehicle?.dynamics?.model === "contact-bicycle-v2" || (contactHostForVehicle(vehicle, plants) === CONTACT_HOST_VERSION && record.contactHost === CONTACT_HOST_VERSION))
+        || !Number.isFinite(limits.maxDeceleration) || limits.maxDeceleration <= 0
+        || !Number.isFinite(limits.maxJerk) || limits.maxJerk <= 0) {
+        throw new HeadlessEpisodeError("UNSUPPORTED_CAPABILITY", `controls.zeroSpeedResponse: brake-v1 requires a contact-v2 target and positive deceleration/jerk limits (${targetId}).`);
     }
 }

@@ -16,18 +16,31 @@ import {
 
 export const VISUALIZATION_STATUS = Object.freeze({
     OK: "ok",
+    WAITING: "waiting",
+    INACTIVE: "inactive",
     STALE: "stale",
     INVALID: "invalid",
     REJECTED: "rejected",
     MISSING_FRAME: "missing-frame",
 });
 
+export function recentObstacleContacts(events, vehicleId) {
+    const ids = new Set();
+    for (const event of events) {
+        if (event.category !== "contacts" || event.name !== "contact-start") continue;
+        const { firstId, secondId } = event.payload || {};
+        const other = firstId === vehicleId ? secondId : secondId === vehicleId ? firstId : null;
+        if (other && !other.startsWith("ground:")) ids.add(other);
+    }
+    return [...ids].sort();
+}
+
 export function emptyPerceptionSnapshot(meta = {}) {
     return {
         captureTimeNs: meta.captureTimeNs ?? null,
         arrivalTimeNs: meta.arrivalTimeNs ?? null,
         applyTimeNs: meta.applyTimeNs ?? null,
-        status: meta.status || VISUALIZATION_STATUS.OK,
+        status: meta.status || VISUALIZATION_STATUS.WAITING,
         statusCode: meta.statusCode || null,
         ageNs: meta.ageNs ?? null,
         detections2d: [],
@@ -42,7 +55,7 @@ export function emptyLocalizationSnapshot(meta = {}) {
         captureTimeNs: meta.captureTimeNs ?? null,
         arrivalTimeNs: meta.arrivalTimeNs ?? null,
         applyTimeNs: meta.applyTimeNs ?? null,
-        status: meta.status || VISUALIZATION_STATUS.OK,
+        status: meta.status || VISUALIZATION_STATUS.WAITING,
         statusCode: meta.statusCode || null,
         ageNs: meta.ageNs ?? null,
         estimate: null,
@@ -63,6 +76,7 @@ export function emptyControlsSnapshot(meta = {}) {
         sequence: meta.sequence ?? 0,
         mode: meta.mode || "stop",
         authority: meta.authority || "candidate",
+        ...(meta.commandSource ? { commandSource: String(meta.commandSource) } : {}),
         heartbeatAgeNs: meta.heartbeatAgeNs ?? null,
         delayNs: meta.delayNs ?? 0,
         flags: {

@@ -9,6 +9,7 @@ import {
     resolveInheritedVehicleSelection,
 } from "../simulation/sensors/SensorInheritance.js";
 import { getBuiltInVehicleManifest } from "../vehicles/BuiltInVehicleManifests.js";
+import { proposeSensorWiring } from "../simulation/sensors/SensorWiring.js";
 
 export const SIMPLE_VEHICLE_OPTIONS = Object.freeze([
     { id: "big-car", name: "Big Car (built-in)" },
@@ -143,7 +144,18 @@ export function simpleCreatedManifest(id, name) {
     if (!vehicle) return manifest;
     const inherited = enableSensorInheritance(manifest, vehicle);
     if (inherited.issues.length > 0) return manifest;
-    return normalizeRunManifest(inherited.manifest);
+    return normalizeRunManifest(proposeSensorWiring(inherited.manifest).manifest);
+}
+
+export function newContactRunDefaults(source, vehicle, plant = null) {
+    const pluginContact = plant?.id === vehicle?.dynamics?.plant && plant?.model === "contact-bicycle-v1"
+        && vehicle.pluginLocks?.some((lock) => lock.plants?.includes(plant.id)
+            && lock.pluginId === plant.ownership?.pluginId && lock.version === plant.ownership?.version && lock.packageHash === plant.ownership?.packageHash
+            && lock.runtimeHash === plant.ownership?.runtimeHash);
+    const manifest = structuredClone(source);
+    if (vehicle?.dynamics?.model === "contact-bicycle-v2" || pluginContact) manifest.controls.zeroSpeedResponse = "brake-v1";
+    else delete manifest.controls.zeroSpeedResponse;
+    return manifest;
 }
 
 export function simpleVehicleTarget(draft) {
@@ -193,7 +205,9 @@ export function applySimpleVehicleSelection(draft, vehicleId, vehicleManifest = 
     }
     if (next.sensorRig?.inheritance?.mode === "vehicle" && vehicleManifest) {
         const inherited = applySensorInheritance(next, { vehicleManifest });
-        return { manifest: inherited.manifest, issues: inherited.issues };
+        const newIds = inherited.manifest.sensorRig.sensors.filter((sensor) => !draft.sensorRig.sensors.some((existing) => existing.id === sensor.id)).map((sensor) => sensor.id);
+        const wired = proposeSensorWiring(inherited.manifest, { sensorIds: newIds });
+        return { manifest: wired.manifest, issues: [...inherited.issues, ...wired.issues] };
     }
     return { manifest: next, issues: [] };
 }

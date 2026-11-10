@@ -72,6 +72,7 @@ export default function SimpleRunWorkspace({
     onComparisonLatch = null,
     children = null,
     onUpdate,
+    configureNewRun = async (manifest) => manifest,
     onOpenAdvanced,
 }) {
     const draftVersion = useRef(0);
@@ -289,6 +290,13 @@ export default function SimpleRunWorkspace({
         }
         if (request !== vehicleChangeRequest.current || draftVersion.current !== version) return;
         const selected = applySimpleVehicleSelection(source, vehicleId, manifest);
+        try {
+            selected.manifest = await configureNewRun(selected.manifest, manifest);
+        } catch (caught) {
+            setStampIssues([{ message: caught.message }]);
+            return;
+        }
+        if (request !== vehicleChangeRequest.current || draftVersion.current !== version) return;
         const grant = pluginGrantPreview(selected.manifest, sensorCatalog, sensorRegistry);
         const issues = [...selected.issues, ...grant.issues];
         if (grant.required) {
@@ -426,6 +434,17 @@ export default function SimpleRunWorkspace({
                         <option value="">Select a vehicle</option>
                         {vehicleState.missing && <option value={vehicleState.selectedId}>{vehicleState.selectedId} (missing)</option>}
                         {options.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
+                    </select>
+                </Field>
+                <Field label="Zero-speed response">
+                    <select value={draft.controls?.zeroSpeedResponse || ""} disabled={blocked} onChange={(event) => {
+                        const controls = { ...draft.controls };
+                        if (event.target.value) controls.zeroSpeedResponse = event.target.value;
+                        else delete controls.zeroSpeedResponse;
+                        onUpdate(["controls"], controls);
+                    }}>
+                        <option value="">Legacy</option>
+                        <option value="brake-v1">Brake-v1 (contact vehicles)</option>
                     </select>
                 </Field>
                 {(draft.initialState?.vehicles?.length ?? 0) > 1 && (

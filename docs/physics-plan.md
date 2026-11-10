@@ -679,3 +679,40 @@ finite-difference `velocity.x` and use `v/L tan(δ)`. Browser and headless
 plants match within `1e-9` on the dynamic tape.
 `characterization.dynamic-bicycle.v1.json` records that tape.
 `characterization.v1.json` is unchanged. `VEHICLE_PLANT_VERSION` stays 1.
+
+### 2026-11-10 — Explicit contact braking maintenance
+
+The onboarding audit found keyboard steering wind-up and a long zero-speed
+tail, not evidence that the calibrated tire plant needs replacement. Keyboard
+targets now respect effective speed/angle limits and keep the released angle.
+Active steering follows measured wheel angle and the slower physical/run rate
+so response delay or tighter actuators cannot accumulate a hidden request.
+The playground retains its existing steering actuator and 5 m/s speed ceiling.
+
+Run authoring v11 adds optional semantic `controls.zeroSpeedResponse: "brake-v1"`.
+Absence preserves the critically damped legacy loop and all historical identity
+projections. The profile uses a feedback-corrected triangular/trapezoidal jerk
+profile for zero-speed velocity and stop commands, averages force over fixed
+steps, compensates grade/rolling resistance, and respects effective actuator
+limits. Reverse zero targets use deceleration rather than acceleration limits.
+Friction limits and the existing Rapier rest rule remain authoritative; no
+velocity snap, collider softening, suspension, or wheel spin is added.
+
+Browser and headless controls forward one profile/limit set to the shared
+contact host. Enabled braking state is canonical and clears on reset, loss of
+contact, or a different command mode/target. Unsupported plants and unusable
+limits fail before activation. Plugin ABI 1, package bytes, `contactHost: 3`,
+vehicle plant version, PHY/RZ milestone status, and pinned characterization
+tapes remain unchanged. New contact setup explicitly seeds the profile;
+existing manifests only change by user action.
+
+Acceptance: the 2 kg RC case with 0.016 kg·m² inertia, 40 N/rad axle stiffness,
+5 m/s² deceleration and 10 m/s³ jerk stops from both ±1 m/s within 0.8 s and
+0.4 m (coarse fixed steps receive one-step tolerance). Focused tests cover
+10/16.67/50/100 ms steps, stable rest, steering, low friction, grade holding,
+reset/contact loss, semantic identity, and compiled contact-plugin parity.
+Verification: 60 focused checks, 2,663 full-suite passes (8 optional skips),
+three compiled-plugin checks, and all four parity cases across browser kernel,
+direct headless, CLI, gRPC, and Python pass. Lint has zero errors and three
+pre-existing warnings. Committed characterization fixtures are unchanged.
+Playwright and a real browser GPU smoke check are explicitly not run.

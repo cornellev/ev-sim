@@ -4,7 +4,7 @@ import { LiDAR3d } from "./LiDAR3d.js";
 import { SensorPublisher } from "./SensorPublisher.js";
 import { rep103PoseToThree } from "../../autonomy/CoordinateFrames.js";
 import { getSharedPerceptionTruthIndex } from "../../autonomy/PerceptionTruthIndex.js";
-import { buildLidarMessages } from "../../simulation/sensors/LidarProducts.js";
+import { buildLidarCapture } from "../../simulation/sensors/LidarProducts.js";
 
 export class ManifestLidar3d extends LiDAR3d {
     constructor(config, options = {}) {
@@ -29,6 +29,8 @@ export class ManifestLidar3d extends LiDAR3d {
         this.manifestManaged = true;
         this.captureContext = null;
         this.captureMessages = [];
+        this.captureObservation = null;
+        this.includeObservation = options.includeObservation === true;
         this.truthIndex = options.perceptionTruthIndex ?? null;
         this.gpuCapture = true;
         this._issuedCapture = null;
@@ -43,6 +45,7 @@ export class ManifestLidar3d extends LiDAR3d {
         if (asyncRead) {
             this.captureContext = this._issuedCapture;
             this.captureMessages = [];
+            this.captureObservation = null;
             const ready = this.shader.completePending();
             if (!ready) {
                 this.contractPublisher?.recordShaderBusy?.(context.sampleIndex);
@@ -50,15 +53,18 @@ export class ManifestLidar3d extends LiDAR3d {
                 return { messages: [], captureTimeNs: context.captureTimeNs, sampleIndex: context.sampleIndex };
             }
             const delivered = this.captureMessages.slice();
+            const deliveredObservation = this.captureObservation;
             const issued = this._issuedCapture;
             this.captureContext = null;
             this._issuedCapture = null;
             this.captureMessages = [];
+            this.captureObservation = null;
 
             if (frameResolution && frameResolution.ok === false) {
                 this.contractPublisher?._event?.("frame-invalid", "error", { reason: frameResolution.message });
                 return {
                     messages: delivered,
+                    observation: deliveredObservation,
                     captureTimeNs: issued?.captureTimeNs ?? context.captureTimeNs,
                     sampleIndex: issued?.sampleIndex ?? context.sampleIndex,
                     rng: issued?.rng,
@@ -68,6 +74,7 @@ export class ManifestLidar3d extends LiDAR3d {
                 this.contractPublisher?.recordFrameDrop?.("lidar-frame-dropout", context.sampleIndex);
                 return {
                     messages: delivered,
+                    observation: deliveredObservation,
                     captureTimeNs: issued?.captureTimeNs ?? context.captureTimeNs,
                     sampleIndex: issued?.sampleIndex ?? context.sampleIndex,
                     rng: issued?.rng,
@@ -81,11 +88,12 @@ export class ManifestLidar3d extends LiDAR3d {
             });
             this.captureContext = context;
             const rendered = super.execute(context.captureTimeNs / 1e9);
-            if (this.captureMessages.length) {
+            if (this.captureMessages.length || this.captureObservation) {
                 const syncMessages = this.captureMessages;
                 this.captureContext = null;
                 return {
                     messages: syncMessages,
+                    observation: this.captureObservation,
                     captureTimeNs: context.captureTimeNs,
                     sampleIndex: context.sampleIndex,
                     rng: context.rng,
@@ -99,6 +107,7 @@ export class ManifestLidar3d extends LiDAR3d {
             }
             return {
                 messages: delivered,
+                observation: deliveredObservation,
                 captureTimeNs: issued?.captureTimeNs ?? context.captureTimeNs,
                 sampleIndex: issued?.sampleIndex ?? context.sampleIndex,
                 rng: issued?.rng,
@@ -121,28 +130,33 @@ export class ManifestLidar3d extends LiDAR3d {
         });
         this.captureContext = context;
         this.captureMessages = [];
+        this.captureObservation = null;
         const rendered = super.execute(context.captureTimeNs / 1e9);
         if (!rendered) {
             this.contractPublisher?.recordShaderBusy?.(context.sampleIndex);
         }
         this.captureContext = null;
-        return this.captureMessages;
+        return this.captureObservation ? { messages: this.captureMessages, observation: this.captureObservation } : this.captureMessages;
     }
 
     onShaderUpdate(buffer) {
         super.onShaderUpdate(buffer);
         if (!this.captureContext) return;
         const { captureTimeNs, rng } = this.captureContext;
-        this.captureMessages.push(...buildLidarMessages({
+        const capture = buildLidarCapture({
             buffer,
             config: this.config,
             captureTimeNs,
             rng,
             publisher: this.contractPublisher,
-        }));
+            includeObservation: this.includeObservation,
+        });
+        this.captureMessages.push(...capture.messages);
+        this.captureObservation = capture.observation;
     }
 
     resetRunState() {
+        this.captureObservation = null;
         this._issuedCapture = null;
         this.captureContext = null;
         this.captureMessages = [];
@@ -150,6 +164,7 @@ export class ManifestLidar3d extends LiDAR3d {
     }
 
     dispose() {
+        this.captureObservation = null;
         this._issuedCapture = null;
         this.captureContext = null;
         this.captureMessages = [];

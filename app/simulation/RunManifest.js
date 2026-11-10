@@ -136,6 +136,9 @@ function normalizeActuatorOverrides(value = {}) {
 
 export function normalizeControlsConfig(value = {}, { targetVehicleId = "ego" } = {}) {
     const source = object(value);
+    if (source.zeroSpeedResponse !== undefined && source.zeroSpeedResponse !== "brake-v1") {
+        throw new TypeError('controls.zeroSpeedResponse must be "brake-v1" when provided.');
+    }
     const stalePolicy = CONTROL_STALE_POLICIES.includes(source.stalePolicy) ? source.stalePolicy : DEFAULT_CONTROLS.stalePolicy;
     return {
         targetVehicleId: text(source.targetVehicleId, targetVehicleId || DEFAULT_CONTROLS.targetVehicleId),
@@ -147,6 +150,7 @@ export function normalizeControlsConfig(value = {}, { targetVehicleId = "ego" } 
         referenceSource: text(source.referenceSource, DEFAULT_CONTROLS.referenceSource) || null,
         actuatorOverrides: normalizeActuatorOverrides(source.actuatorOverrides),
         ...(source.keyboardDrive === true ? { keyboardDrive: true } : {}),
+        ...(source.zeroSpeedResponse !== undefined ? { zeroSpeedResponse: source.zeroSpeedResponse } : {}),
     };
 }
 
@@ -814,6 +818,13 @@ export function validateRunManifest(value, {
             }
             const linked = topics.get(topicId);
             const linkedType = linked?.schema?.type || linked?.type;
+            const expectedType = definition?.run?.outputs?.find((output) => output.key === key)?.rosType;
+            if (topicId && linked && expectedType && linkedType !== expectedType) {
+                issues.push({ path: `sensorRig.sensors.${index}.outputs.${key}`, message: `Sensor product requires ${expectedType}, not ${linkedType}.` });
+            }
+            if (topicId && linked && linked.direction !== "output") {
+                issues.push({ path: `sensorRig.sensors.${index}.outputs.${key}`, message: "Sensor products require an output topic." });
+            }
             if (topicId && linked && sensorEntry.schema[key] !== linkedType) {
                 issues.push({ path: `sensorRig.sensors.${index}.schema.${key}`, message: `Schema must match topic type "${linkedType}".` });
             }

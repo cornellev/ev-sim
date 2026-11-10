@@ -345,6 +345,7 @@ export class ControlRuntime {
             limits,
             dt,
             baselineRad,
+            vehicleId === (this.controls?.targetVehicleId || "ego") ? this.controls?.zeroSpeedResponse : null,
         );
         state.applied = limited.command;
         state.saturated = limited.saturated;
@@ -370,11 +371,15 @@ export class ControlRuntime {
             steeringRadThree: state.applied.steeringRadThree,
             accelerationMps2: state.applied.accelerationMps2,
             command: cloneCommand(state.applied),
+            ...(this.controls?.zeroSpeedResponse && vehicleId === (this.controls.targetVehicleId || "ego") ? {
+                zeroSpeedResponse: this.controls.zeroSpeedResponse,
+                actuatorLimits: this.getLimits(vehicleId),
+            } : {}),
             activeEnvelope: toStampedAckermannEnvelope(state.applied, { applyTimeNs: timeNs }),
         };
     }
 
-    _applyLimits(previous, desired, limits, dt, baselineRad) {
+    _applyLimits(previous, desired, limits, dt, baselineRad, zeroSpeedResponse = null) {
         const prev = previous || emptyInternalCommand();
         const next = cloneCommand(desired);
         let saturated = false;
@@ -406,7 +411,8 @@ export class ControlRuntime {
             // velocity mode
             let speed = clamp(next.speedMps, -limits.maxSpeed, limits.maxSpeed);
             if (speed !== next.speedMps) saturated = true;
-            const maxDeltaV = limits.maxAcceleration * dtSafe;
+            const reverseStop = zeroSpeedResponse === "brake-v1" && speed === 0 && prev.speedMps < 0;
+            const maxDeltaV = (reverseStop ? limits.maxDeceleration : limits.maxAcceleration) * dtSafe;
             const maxBrake = limits.maxDeceleration * dtSafe;
             const upper = prev.speedMps + maxDeltaV;
             const lower = prev.speedMps - maxBrake;
@@ -465,6 +471,7 @@ export class ControlRuntime {
             sequence: applied?.sequence ?? requested?.sequence ?? 0,
             mode: applied?.mode || "stop",
             authority: this.controls?.authority || "candidate",
+            commandSource: applied?.source,
             heartbeatAgeNs: Number.isFinite(heartbeatNs) ? applyTimeNs - heartbeatNs : null,
             delayNs: this.getLimits(id).responseDelayNs,
             flags: { ...state.flags },

@@ -9,7 +9,7 @@ current detailed editor as Advanced Mode. Both views edit one run manifest.
 - Status: CFG-06 is implemented. Playwright was not run, so the browser gate is open. CFG-05, CFG-04, CFG-03, and CFG-01 browser gates remain open.
 - Next package: none. The code packages are complete. Browser acceptance is still open.
 - Delivery: six dependency-ordered PRs, each implemented in a separate session.
-- Last updated: **2026-11-07**.
+- Last updated: **2026-11-10**.
 
 | Package | Depends on | Status |
 | --- | --- | --- |
@@ -468,3 +468,24 @@ The view control moved from the Run Configuration header to the workspace
 menu Settings pane. `chooseRunConfigMode` is the only writer of
 `cev-sim.ui.runConfig.mode`. Validation targets and Customize still call it.
 The global Advanced switch stays a separate preference.
+
+### 2026-11-10 — Onboarding setup and reviewed wiring maintenance
+
+Both modes expose Legacy / Brake-v1 zero-speed response. A local new-run setup
+marker survives the initial New persistence and ends at the first explicit
+Save/Launch or document switch. Explicit compatible vehicle selection seeds
+Brake-v1, using an exactly locked plant declaration for plugins. An explicit
+braking choice wins; loading, import, duplication, normalization, and Save/Launch
+never apply defaults to existing manifests.
+
+New measured sensors receive typed output mappings during explicit creation,
+inheritance setup/reset, and comparison-baseline construction. Existing mappings
+are preserved. Sensors offers a review of proposed topic creation/reuse; an
+ambiguous mapping requires selection. Review commits ready JSON buffers first,
+blocks invalid pending JSON, and validates the draft/vehicle/catalog stamp before
+one shared draft update. Cancel does not persist anything. Save/Launch never
+silently repair sensor wiring. Intentional observation-only sensors remain valid.
+
+CFG-06 and its open browser gates are unchanged. Node regression, lint, full
+suite, compiled-plugin, and existing parity gates apply; Playwright is waived
+for this maintenance at the user's request.

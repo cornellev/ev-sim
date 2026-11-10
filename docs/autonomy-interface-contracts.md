@@ -60,7 +60,20 @@ Live platform outputs now include `/clock`, `/tf`, `/tf_static`, default percept
 
 Run manifests carry a `controls` block (target vehicle, authority `candidate|reference`, reference shadow, watchdog, stale policy, optional SI fallback, actuator overrides). Vehicle manifests v2 own speed/accel/decel/jerk/steer-rate/delay defaults; v1 migrates with permissive zero-delay values.
 
+Optional semantic `controls.zeroSpeedResponse: "brake-v1"` selects bounded
+contact braking for zero-speed velocity/stop commands across command sources.
+Omission is legacy. The shared plant receives effective run actuator limits;
+unsupported targets fail before activation. `visualization.controls.snapshot`
+includes the actual accepted `commandSource` when known, separate from authority.
+Keyboard input is labelled manual, not model execution. Older recorded snapshots
+without a source remain unknown; logs are not rewritten.
+
 ### Candidate return contracts (Step 5)
+
+Configured candidate products start `waiting` until an output is accepted;
+unconfigured products are `inactive`. `ok` requires a valid accepted result,
+including valid empty detections. Existing stale/rejected/missing-frame handling
+is retained, and reset returns to waiting/inactive without synthesizing estimates.
 
 | Contract | Wire name | Type | Producer | Notes |
 | --- | --- | --- | --- | --- |

@@ -873,6 +873,7 @@ export class SensorPublisher {
     getHealthSnapshot() {
         return {
             ...this.health,
+            ...(Object.values(this.config.outputs || {}).some(Boolean) ? {} : { outputStatus: this.health.capturedFrames ? "capture-only" : "no-requested-product" }),
             queueDepth: this.queue.length,
             queueBytes: this.queuedBytes,
             queueHighWaterMark: this.health.queueHighWaterMark,

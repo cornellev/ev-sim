@@ -41,6 +41,36 @@ export function contactLongitudinalCommand({
     return clampAx(num(previousAx) + jerk * step);
 }
 
+export function brakeLongitudinalCommand({ vx, previousAx, dt, maxAcceleration, maxDeceleration, maxJerk, gradeX = 0, rollingAcceleration = 0, state }) {
+    const step = Math.max(0, num(dt));
+    if (!step) return previousAx;
+    const direction = Math.sign(vx) || state.direction || 1;
+    const speed = Math.abs(vx);
+    const jerk = maxJerk;
+    const feedforward = direction * rollingAcceleration - gradeX;
+    let acceleration = direction * ((state.direction === direction ? state.endAx : undefined) ?? previousAx) - direction * feedforward;
+    acceleration = Math.max(-maxDeceleration, Math.min(maxAcceleration, acceleration));
+    let remaining = step;
+    let integral = 0;
+    const peak = Math.min(maxDeceleration, Math.sqrt(jerk * speed + acceleration * acceleration / 2));
+    const downTime = Math.max(0, (acceleration + peak) / jerk);
+    const plateauTime = peak > 0 ? Math.max(0, (speed + (acceleration * acceleration - 2 * peak * peak) / (2 * jerk)) / peak) : 0;
+    for (const [duration, slope] of [[downTime, -jerk], [plateauTime, 0], [Math.max(0, -Math.min(acceleration, -peak) / jerk), jerk]]) {
+        const elapsed = Math.min(remaining, duration);
+        integral += acceleration * elapsed + slope * elapsed * elapsed / 2;
+        acceleration += slope * elapsed;
+        remaining -= elapsed;
+        if (remaining <= 0) break;
+    }
+    if (remaining > 0) acceleration = 0;
+    const desired = speed <= VX_REST ? -gradeX : direction * integral / step + feedforward;
+    const bounded = direction * Math.max(-maxDeceleration, Math.min(maxAcceleration, direction * desired));
+    const command = Math.max(previousAx - jerk * step, Math.min(previousAx + jerk * step, bounded));
+    state.direction = direction;
+    state.endAx = speed <= VX_REST ? command : direction * acceleration + feedforward;
+    return command;
+}
+
 function scaleLongitudinal(fx, fy, fz, mu) {
     const limit = Math.abs(mu * fz);
     const lateral = Math.min(Math.abs(fy), limit);
@@ -255,16 +285,26 @@ export function contactTireStep(plant, inContact, normal, dt) {
     const params = contactParameters(plant);
     const normalLoad = inContact ? params.mass * GRAVITY * grade.normalY : 0;
     const delta = Math.max(-steerLimit(plant), Math.min(steerLimit(plant), finite(plant.steeringAngle)));
-    plant.axCommand = inContact ? contactLongitudinalCommand({
+    const braking = plant.longitudinal?.zeroSpeedResponse === "brake-v1"
+        && (plant.longitudinal.mode === "stop" || (plant.longitudinal.mode === "velocity" && plant.longitudinal.speedMps === 0));
+    if (!inContact || !braking) delete plant.brakeState;
+    if (inContact && braking) plant.brakeState ??= {};
+    const effectiveLimits = braking ? plant.longitudinal.actuatorLimits ?? plant.kinematics : plant.kinematics;
+    const commandOptions = {
         ...plant.longitudinal,
         vx: plant.velocity.x,
         previousAx: plant.axCommand,
         realizedAx: plant.contactControlActive ? plant.acceleration.x : 0,
         dt,
-        maxAcceleration: finite(plant.kinematics?.maxAcceleration, 3),
-        maxDeceleration: finite(plant.kinematics?.maxDeceleration, 5),
-        maxJerk: finite(plant.kinematics?.maxJerk, 10),
-    }) : 0;
+        maxAcceleration: finite(effectiveLimits?.maxAcceleration, 3),
+        maxDeceleration: finite(effectiveLimits?.maxDeceleration, 5),
+        maxJerk: finite(effectiveLimits?.maxJerk, 10),
+    };
+    plant.axCommand = !inContact ? 0 : braking ? brakeLongitudinalCommand({
+        ...commandOptions, gradeX: grade.x,
+        rollingAcceleration: params.rollingResistance * GRAVITY * grade.normalY,
+        state: plant.brakeState,
+    }) : contactLongitudinalCommand(commandOptions);
     plant.contactControlActive = inContact;
     const forces = readForces(plant, dt, inContact, grade, normalLoad, delta);
     return { params, grade, normalLoad, forces };
