@@ -14,6 +14,7 @@ import {
     createBlankVehicleManifest,
     deriveWheelbase,
     CONTACT_BICYCLE_MODEL,
+    DYNAMIC_BICYCLE_FIELDS,
     isValidVehicleId,
     resolveVehicleModelUrl,
 } from "../VehicleManifest.js";
@@ -70,6 +71,8 @@ import { stageVehicleClosure, stageVehiclePlan } from "./stageVehicleClosure.js"
 import { exportVehicleUrdf } from "../urdf/exportVehicleUrdf.js";
 import { AxleFields, axleSummary, standardAxleCards } from "./AxleInspector.js";
 import { DragNumber } from "./DragNumber.js";
+import { resolveVehiclePhysicsConfig } from "../../simulation/vehicles/VehiclePhysicsConfig.js";
+import { PLANT_CONTACT_BICYCLE_MODEL, PLANT_DYNAMIC_BICYCLE_MODEL } from "../../plugin/PlantModule.js";
 import { VehiclePlanView } from "./VehiclePlanView.js";
 import { PlacementAcceptanceDialog, WheelAssignmentDialog } from "./WheelAssignmentDialog.js";
 import { canonicalVehicleGlb, rolesFromManifest } from "./wheelAssignmentState.js";
@@ -97,12 +100,20 @@ import { VehicleUrdfReviewDialog } from "./workspace/VehicleUrdfReviewDialog.js"
 import { normalizeVehiclePaneLayout } from "./workspace/vehiclePaneLayout.js";
 import { readVehicleEditorPreference, VEHICLE_EDITOR_PREFERENCE_KEYS, writeVehicleEditorPreference } from "../../ui/vehicleEditorPreferences.js";
 import {
+    appliedSensorMarkerScale,
+    clampSensorMarkerScale,
+    normalizeSensorMarkerScaleMap,
+    SENSOR_MARKER_SCALE_MAX,
+    SENSOR_MARKER_SCALE_MIN,
+} from "./sensorMarkerScale.js";
+import {
     AccordionItem,
     AccordionRoot,
     AdvancedFields,
     AuthoringModeProvider,
     AsyncState,
     Button,
+    DialogSurface,
     Disclosure,
     Field as SharedField,
     SegmentedControl,
@@ -208,6 +219,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     const [tab, setTab] = useState("Model");
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState(null);
+    const [odometryReview, setOdometryReview] = useState(null);
     const [gizmoMode, setGizmoMode] = useState("translate");
     const [assetVersion, setAssetVersion] = useState(0);
     const [hiddenIds, setHiddenIds] = useState(() => new Set());
@@ -228,6 +240,12 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     });
     const [shellVisible, setShellVisible] = useState(() => readVehicleEditorPreference(VEHICLE_EDITOR_PREFERENCE_KEYS.COVERAGE, null)?.shellVisible !== false);
     const [floorVisible, setFloorVisible] = useState(() => readVehicleEditorPreference(VEHICLE_EDITOR_PREFERENCE_KEYS.COVERAGE, null)?.floorVisible !== false);
+    const [markerScaleMap, setMarkerScaleMap] = useState(() => normalizeSensorMarkerScaleMap(
+        readVehicleEditorPreference(VEHICLE_EDITOR_PREFERENCE_KEYS.SENSOR_MARKER_SCALE, {}),
+    ));
+    const [orthogonal, setOrthogonal] = useState(() => readVehicleEditorPreference(VEHICLE_EDITOR_PREFERENCE_KEYS.DISPLAY, null)?.orthogonal === true);
+    const orthogonalRef = useRef(orthogonal);
+    orthogonalRef.current = orthogonal;
     const [coverageReport, setCoverageReport] = useState(null);
     const [sensorCatalog, setSensorCatalog] = useState({ revision: 0, sensors: [] });
     const [plantCatalog, setPlantCatalog] = useState([]);
@@ -247,6 +265,28 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     }, [sensorRegistryTick]);
 
     const draft = snapshot.manifest;
+    const markerScaleEntry = selectedId ? markerScaleMap[selectedId] : null;
+    const appliedMarkerScale = appliedSensorMarkerScale(markerScaleEntry, draft?.boundingBox?.size?.x);
+    const setManualMarkerScale = (scale) => {
+        if (!selectedId) return;
+        const nextScale = clampSensorMarkerScale(scale);
+        if (nextScale == null) return;
+        setMarkerScaleMap((current) => {
+            const next = { ...current, [selectedId]: { mode: "manual", scale: nextScale } };
+            writeVehicleEditorPreference(VEHICLE_EDITOR_PREFERENCE_KEYS.SENSOR_MARKER_SCALE, next);
+            return next;
+        });
+    };
+    const clearMarkerScale = () => {
+        if (!selectedId) return;
+        setMarkerScaleMap((current) => {
+            if (!Object.hasOwn(current, selectedId)) return current;
+            const next = { ...current };
+            delete next[selectedId];
+            writeVehicleEditorPreference(VEHICLE_EDITOR_PREFERENCE_KEYS.SENSOR_MARKER_SCALE, next);
+            return next;
+        });
+    };
     const modelAsset = draft?.model?.asset ?? null;
     const [visibilityScope, setVisibilityScope] = useState({ vehicleId: selectedId, asset: modelAsset });
     if (visibilityScope.vehicleId !== selectedId || visibilityScope.asset !== modelAsset) {
@@ -358,6 +398,7 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
             sensorRuntime: authoringRuntime,
         });
         studio.onCoverageReport = (report) => setCoverageReport(report);
+        studio.setOrthogonal(orthogonalRef.current);
         studioRef.current = studio;
         const detachCamera = studio.onCameraFrame((quaternion) => {
             axisGizmoRef.current?.sync(quaternion);
@@ -374,10 +415,23 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
     }, [hasDraft]);
 
     useEffect(() => {
+        studioRef.current?.setOrthogonal(orthogonal);
+    }, [orthogonal, hasDraft]);
+
+    useEffect(() => {
+        writeVehicleEditorPreference(VEHICLE_EDITOR_PREFERENCE_KEYS.DISPLAY, { orthogonal });
+    }, [orthogonal]);
+
+    useEffect(() => {
         if (!studioRef.current || !draft) return;
         const url = resolveVehicleModelUrl(selectedId, draft.model.asset, { cacheBust: assetVersion });
         studioRef.current.setManifest(draft, url, controllerRef.current.snapshot.stagedResources);
     }, [draft, selectedId, assetVersion, snapshot.stagedResources]);
+
+    useEffect(() => {
+        if (!studioRef.current || !draft) return;
+        studioRef.current.setSensorMarkerScale(appliedMarkerScale);
+    }, [draft, appliedMarkerScale]);
 
     useEffect(() => {
         studioRef.current?.setSteeringPreview(steeringPreview);
@@ -768,8 +822,18 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
         setAssetVersion((version) => version + 1);
     };
 
-    const save = async () => perform(async () => {
-        const result = await controllerRef.current.save();
+    const save = async (options = {}) => perform(async () => {
+        const activeField = document.activeElement;
+        if (activeField?.matches("input, textarea")) {
+            activeField.blur();
+            activeField.focus();
+        }
+        const result = await controllerRef.current.save(options);
+        if (result.odometryReview) {
+            setOdometryReview(result.odometryReview);
+            return null;
+        }
+        setOdometryReview(null);
         rememberStored(result.stored);
         return result.stored;
     });
@@ -1169,7 +1233,12 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                                         <button type="button" onClick={() => setSelection(null)} className="text-[12px] text-[var(--slate-muted)] hover:text-[var(--slate-fg)]">Deselect</button>
                                     </div>
                                 )}
-                                <AxisAlignGizmo ref={axisGizmoRef} studioRef={studioRef} />
+                                <AxisAlignGizmo
+                                    ref={axisGizmoRef}
+                                    studioRef={studioRef}
+                                    orthogonal={orthogonal}
+                                    onOrthogonalChange={setOrthogonal}
+                                />
                             </div>
                             {/* <p className="pointer-events-none absolute bottom-3 left-3 rounded-[var(--radius)] border border-[var(--slate-border)] bg-[var(--slate-floating)] px-2 py-1 text-[11px] text-[var(--slate-muted)]">
                                 {readOnly ? "Orbit to inspect. Duplicate this vehicle to edit it." : "Click a marker to select it. Drag the gizmo to place it."}
@@ -1206,6 +1275,16 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
                             />
 
                             <div className="mod-scrollbar min-h-0 flex-1 overflow-y-auto" tabIndex={0} aria-label="Vehicle editor fields">
+                                {tab === "Sensors" && (
+                                    <div className="px-3 pt-3">
+                                        <SensorMarkerScaleControl
+                                            scale={appliedMarkerScale}
+                                            manual={markerScaleEntry?.mode === "manual"}
+                                            onScale={setManualMarkerScale}
+                                            onFit={clearMarkerScale}
+                                        />
+                                    </div>
+                                )}
                                 <fieldset disabled={readOnly}>
                                     {TABS.map((item) => (
                                         <TabsContent key={item} value={item} forceMount className="p-3">
@@ -1342,6 +1421,31 @@ export default function VehicleEditorPage({ onOpenWorkspace }) {
             onExportBundle={exportBundle}
             onExportUrdf={() => exportUrdf()}
         />
+        <DialogSurface
+            open={odometryReview != null}
+            onOpenChange={(open) => { if (!open) setOdometryReview(null); }}
+            title="Wheel odometry geometry mismatch"
+            description={odometryReview?.geometry
+                ? "Wheel odometry does not match the rear axle. Sync the sensor constants before saving?"
+                : "Cannot verify wheel odometry: the vehicle needs a valid standard rear axle pair. You can still save without syncing."}
+            footer={(
+                <div className="flex justify-end gap-2">
+                    <Button disabled={busy} onClick={() => setOdometryReview(null)}>Cancel</Button>
+                    <Button disabled={busy} onClick={() => save({ odometryReview })}>Save without syncing</Button>
+                    <Button variant="primary" disabled={busy || !odometryReview?.geometry} onClick={() => save({ odometryReview, syncOdometry: true })}>Sync and save</Button>
+                </div>
+            )}
+        >
+            <div className="space-y-3 text-sm">
+                {odometryReview?.sensors.map((sensor) => (
+                    <div key={sensor.id}>
+                        <p className="font-medium">{sensor.id}</p>
+                        <p>Track width: {sensor.config.trackWidth ?? "unset"} m → {odometryReview.geometry?.trackWidth ?? "cannot verify"}</p>
+                        <p>Wheel radius: {sensor.config.wheelRadius ?? "unset"} m → {odometryReview.geometry?.wheelRadius ?? "cannot verify"}</p>
+                    </div>
+                ))}
+            </div>
+        </DialogSurface>
         <VehicleUrdfReviewDialog
             open={urdfMode != null}
             mode={urdfMode === "apply" ? "apply" : "create"}
@@ -1457,6 +1561,31 @@ function isPluginCatalogEntry(entry) {
 
 function pluginLockForType(locks, type) {
     return (locks ?? []).find((entry) => (entry.sensorTypes ?? []).includes(type)) ?? null;
+}
+
+function SensorMarkerScaleControl({ scale, manual, onScale, onFit }) {
+    return (
+        <div className="mb-3">
+            <div className="mb-1.5 flex items-center justify-between gap-2">
+                <span className="text-[11px] font-medium text-[var(--slate-fg-2)]">Marker scale</span>
+                <span className="font-mono text-[11px] text-[var(--slate-fg-2)]">{Number(scale).toFixed(2)}</span>
+            </div>
+            <input
+                aria-label="Marker scale"
+                type="range"
+                min={SENSOR_MARKER_SCALE_MIN}
+                max={SENSOR_MARKER_SCALE_MAX}
+                step="0.01"
+                value={scale}
+                onChange={(event) => onScale(Number(event.target.value))}
+                className="timeline-range w-full"
+            />
+            <div className="mt-1.5 flex items-start justify-between gap-3">
+                <p className="text-[11px] leading-relaxed text-[var(--slate-muted)]">Display only. Does not change range or the saved vehicle.</p>
+                <button type="button" onClick={onFit} disabled={!manual} className="shrink-0 text-[11px] text-[var(--slate-fg-2)] disabled:opacity-40">Fit</button>
+            </div>
+        </div>
+    );
 }
 
 function SensorsTab({
@@ -1685,6 +1814,7 @@ function WheelsTab({
     onCancelWheel,
 }) {
     const [wheelsOpen, setWheelsOpen] = useState(() => readVehicleEditorPreference(VEHICLE_EDITOR_PREFERENCE_KEYS.WHEELS_PANEL, null)?.open === true);
+    const [pendingDynamics, setPendingDynamics] = useState(null);
     const [openRows, setOpenRows] = useState(() => {
         const stored = readVehicleEditorPreference(VEHICLE_EDITOR_PREFERENCE_KEYS.WHEELS_PANEL, null);
         return Array.isArray(stored?.rows) ? stored.rows : [];
@@ -1719,28 +1849,39 @@ function WheelsTab({
             cancelAnimationFrame(handle);
         };
     }, [selectedRowId]);
-    const selectDynamics = (value) => {
+    const selectDynamics = (value, acceptClearing = false) => {
         const next = structuredClone(draft);
         try {
-        if (!value) {
-            const currentPlant = draft.dynamics?.plant;
-            next.dynamics = { model: CONTACT_BICYCLE_MODEL };
-            next.pluginLocks = (next.pluginLocks ?? []).flatMap((lock) => {
-                const plants = (lock.plants ?? []).filter((plantId) => plantId !== currentPlant);
-                const record = { ...lock };
-                if (plants.length > 0) record.plants = plants;
-                else delete record.plants;
-                if ((record.sensorTypes?.length ?? 0) === 0 && plants.length === 0) return [];
-                return [record];
-            });
-            if (next.pluginLocks.length === 0) delete next.pluginLocks;
-        } else {
-            const entry = plantCatalog.find((plant) => `${plant.packageHash}:${plant.id}` === value);
-            if (!entry) return;
-            next.dynamics = { plant: entry.id };
-            next.pluginLocks = stampVehiclePluginPlantLock(next.pluginLocks, entry);
-        }
+            const entry = value ? plantCatalog.find((plant) => `${plant.packageHash}:${plant.id}` === value) : null;
+            if (value && !entry) return;
+            const physical = !entry || [PLANT_CONTACT_BICYCLE_MODEL, PLANT_DYNAMIC_BICYCLE_MODEL].includes(entry.model);
+            const retained = Object.fromEntries(DYNAMIC_BICYCLE_FIELDS.filter(([key]) => draft.dynamics?.[key] !== undefined)
+                .map(([key]) => [key, draft.dynamics[key]]));
+            const cleared = Object.keys(retained).filter((key) => entry && (!physical || !entry.parameters.some((parameter) => parameter.key === key)));
+            const clearingStamp = JSON.stringify([draft.id, retained, cleared]);
+            if (cleared.length && (!acceptClearing || pendingDynamics?.stamp !== clearingStamp)) {
+                setPendingDynamics({ value, cleared, stamp: clearingStamp });
+                return;
+            }
+            for (const key of cleared) delete retained[key];
+            if (!value) {
+                const currentPlant = draft.dynamics?.plant;
+                next.dynamics = { model: CONTACT_BICYCLE_MODEL, ...retained };
+                next.pluginLocks = (next.pluginLocks ?? []).flatMap((lock) => {
+                    const plants = (lock.plants ?? []).filter((plantId) => plantId !== currentPlant);
+                    const record = { ...lock };
+                    if (plants.length > 0) record.plants = plants;
+                    else delete record.plants;
+                    if ((record.sensorTypes?.length ?? 0) === 0 && plants.length === 0) return [];
+                    return [record];
+                });
+                if (next.pluginLocks.length === 0) delete next.pluginLocks;
+            } else {
+                next.dynamics = { plant: entry.id, ...retained };
+                next.pluginLocks = stampVehiclePluginPlantLock(next.pluginLocks, entry);
+            }
             update([], next);
+            setPendingDynamics(null);
         } catch (caught) {
             onError(caught.message);
         }
@@ -1750,6 +1891,11 @@ function WheelsTab({
             ? `${plantCatalog.find((plant) => plant.id === draft.dynamics.plant).packageHash}:${draft.dynamics.plant}`
             : "")
         : "";
+    const selectedPlant = plantCatalog.find((plant) => `${plant.packageHash}:${plant.id}` === dynamicsValue);
+    let physicsConfig = null;
+    try {
+        physicsConfig = resolveVehiclePhysicsConfig({ ...draft, dynamics: draft.dynamics ?? { model: CONTACT_BICYCLE_MODEL } }, selectedPlant);
+    } catch {}
     const add = (mirrored) => {
         const count = draft.wheels.length;
         const base = {
@@ -1875,6 +2021,34 @@ function WheelsTab({
                     </select>
                 </Field>
                 {draft.dynamics?.plant ? <p className="mt-2 text-[11px] text-[var(--slate-muted)]">Plugin dynamics run only in a resolved run.</p> : null}
+                {physicsConfig && (
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                        {[
+                            ["mass", "Mass (kg)", 0.1, 6],
+                            ["yawInertia", "Turning inertia (kg·m²)", 0.001, 6],
+                            ["corneringStiffnessFront", "Front tire stiffness (N/rad)", 1, 6],
+                            ["corneringStiffnessRear", "Rear tire stiffness (N/rad)", 1, 6],
+                        ].filter(([key]) => !selectedPlant || selectedPlant.parameters.some((parameter) => parameter.key === key))
+                            .map(([key, label, step, precision]) => (
+                                <LimitNumber key={key} label={label} min={0.000001} step={step} precision={precision} value={physicsConfig[key]}
+                                    onChange={(value) => update(["dynamics"], { ...(draft.dynamics ?? { model: CONTACT_BICYCLE_MODEL }), [key]: value })} />
+                            ))}
+                    </div>
+                )}
+                <DialogSurface
+                    open={pendingDynamics != null}
+                    onOpenChange={(open) => { if (!open) setPendingDynamics(null); }}
+                    title="Clear unsupported physics overrides?"
+                    description="The selected plant does not support these vehicle physics values. Cancel to keep the current plant."
+                    footer={(
+                        <div className="flex justify-end gap-2">
+                            <Button onClick={() => setPendingDynamics(null)}>Cancel</Button>
+                            <Button variant="primary" onClick={() => selectDynamics(pendingDynamics.value, true)}>Clear and switch</Button>
+                        </div>
+                    )}
+                >
+                    <p className="text-sm">{pendingDynamics?.cleared.join(", ")}</p>
+                </DialogSurface>
             </Section>
             <Section title="Drive and steering">
                 <div className="grid grid-cols-2 gap-2">

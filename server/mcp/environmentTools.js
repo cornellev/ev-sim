@@ -503,6 +503,34 @@ export function registerEnvironmentTools(server, storage) {
     );
 
     server.registerTool(
+        "environment_set_drive_area_size",
+        {
+            title: "Set drive area size",
+            description: "Set a drive area's axis-aligned width and depth in meters. The bounds center stays fixed.",
+            inputSchema: {
+                environmentId: z.string().min(1),
+                driveAreaId: z.string().min(1),
+                width: z.number(),
+                depth: z.number(),
+            },
+        },
+        async ({ environmentId, driveAreaId, width, depth }) => {
+            try {
+                const { manifest, document, service } = await loadDocument(storage, environmentId);
+                const result = service.run("setObjectOptions", {
+                    objectId: driveAreaId,
+                    patch: { width, depth },
+                });
+                if (!result.ok) return fail(result.error, { issues: result.issues });
+                await saveDocument(storage, environmentId, manifest, document);
+                return ok({ ok: true, driveArea: document.getDriveArea(driveAreaId) });
+            } catch (error) {
+                return fail(error);
+            }
+        },
+    );
+
+    server.registerTool(
         "environment_remove_drive_area",
         {
             title: "Remove drive area",

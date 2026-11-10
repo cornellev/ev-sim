@@ -32,6 +32,24 @@ The same-origin tab bridge uses `BroadcastChannel("cev-sim-telemetry-v2")`. The 
 
 ## Recording profiles
 
+### Sensor frame diagnostics
+
+`devices.<id>.processedFrames` and `devices.<id>.publishedFrames` are additive
+uint64 diagnostics (`replayRole: derived`, `logClass: standard`). Processed
+counts due frames handled by the publisher, including encoding/publication
+failures. Published counts only frames with at least one declared topic/native
+product and successful local publication of every product. Observation-only
+frames are processed, not published. Partial success retains successful data
+and failure events, but does not count as a published frame. Missing mappings,
+schemas, encodings, routes, or local sinks cannot count as publication.
+
+External transport failures do not reverse successful simulator publication.
+These counters reset with the publisher and are excluded from deterministic
+state/trajectory identity. The legacy `deliveredFrames` signal retains its
+previous handled-frame behavior and must not be read as successful publication.
+Browser reports expose processed and published separately; absent diagnostics
+from historical data are unknown (`null` in reports), never inferred as zero.
+
 Profiles are versioned, human-readable JSON persisted under the `logging-profiles-v1` setting. Glob rules run in order and the last matching rule wins. `LogProfiles` compiles glob patterns to cached `RegExp` instances when a profile is normalized or recording starts; rule resolution is unchanged.
 
 ```json

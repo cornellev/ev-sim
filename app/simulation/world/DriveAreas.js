@@ -11,6 +11,7 @@ import { vehicleGroundFootprint } from "../../scenarios/route/geometry.js";
 export const DRIVE_AREA_VERSION = 1;
 export const MIN_DRIVE_AREA_SIDE_M = 2;
 const EPS = 1e-12;
+const SIZE_EPS = 1e-6;
 
 function finite(value, label) {
     const result = Number(value);
@@ -157,6 +158,65 @@ export function normalizeDriveAreaList(areas) {
         seen.add(record.id);
     }
     return records.sort((left, right) => compareUtf8(left.id, right.id));
+}
+
+function footprintExtents(footprint) {
+    const bounds = footprintBounds(footprint, 0);
+    return { width: bounds.max.x - bounds.min.x, depth: bounds.max.z - bounds.min.z };
+}
+
+function axisAlignedRectangle(footprint) {
+    if (footprint.length !== 4) return false;
+    for (let index = 0; index < footprint.length; index += 1) {
+        const current = footprint[index];
+        const next = footprint[(index + 1) % footprint.length];
+        const dx = Math.abs(current.x - next.x);
+        const dz = Math.abs(current.z - next.z);
+        if ((dx <= EPS && dz <= EPS) || (dx > EPS && dz > EPS)) return false;
+    }
+    return true;
+}
+
+/**
+ * Reject a rectangle that this edit shrinks below the draw-tool minimum.
+ * Translating an already-small explicit polygon stays allowed.
+ */
+export function driveAreaResizeError(before, after) {
+    const prior = footprintExtents(before);
+    const next = footprintExtents(after);
+    const changed = Math.abs(prior.width - next.width) > SIZE_EPS || Math.abs(prior.depth - next.depth) > SIZE_EPS;
+    if (!changed || !axisAlignedRectangle(after)) return null;
+    if (next.width < MIN_DRIVE_AREA_SIDE_M || next.depth < MIN_DRIVE_AREA_SIDE_M) {
+        return `Drive area rectangles must be at least ${MIN_DRIVE_AREA_SIDE_M} m per side.`;
+    }
+    return null;
+}
+
+/**
+ * Scale a ring about its bounds center to the requested axis-aligned size.
+ * shortcut: bounds-center scale can move a concave centroid, upgrade when a vertex editor pins the start pose.
+ */
+export function resizeDriveAreaFootprint(footprint, size = {}) {
+    const normalized = normalizeDriveAreaFootprint(footprint);
+    const current = footprintExtents(normalized);
+    if (!(current.width > EPS) || !(current.depth > EPS)) {
+        throw new TypeError("Drive area has no extent to resize.");
+    }
+    const width = finite(size.width, "Drive area width");
+    const depth = finite(size.depth, "Drive area depth");
+    if (!(width > 0) || !(depth > 0)) throw new TypeError("Drive area size must be positive.");
+    if (Math.abs(width - current.width) <= SIZE_EPS && Math.abs(depth - current.depth) <= SIZE_EPS) return normalized;
+    const bounds = footprintBounds(normalized, 0);
+    const cx = (bounds.min.x + bounds.max.x) / 2;
+    const cz = (bounds.min.z + bounds.max.z) / 2;
+    const scaled = normalized.map((point) => ({
+        x: cx + (point.x - cx) * (width / current.width),
+        z: cz + (point.z - cz) * (depth / current.depth),
+    }));
+    const next = normalizeDriveAreaFootprint(scaled);
+    const error = driveAreaResizeError(normalized, next);
+    if (error) throw new TypeError(error);
+    return next;
 }
 
 export function rectangleDriveAreaFootprint(cornerA, cornerB) {

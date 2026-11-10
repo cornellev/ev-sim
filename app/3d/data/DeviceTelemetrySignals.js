@@ -6,7 +6,9 @@ const COMMON_SIGNALS = Object.freeze([
     { suffix: "output", type: "json", replayRole: "derived", logClass: "standard" },
     { suffix: "captureAttempts", type: "uint64", replayRole: "state", logClass: "standard" },
     { suffix: "capturedFrames", type: "uint64", replayRole: "state", logClass: "standard" },
-    { suffix: "deliveredFrames", type: "uint64", replayRole: "state", logClass: "standard" },
+    { suffix: "processedFrames", type: "uint64", replayRole: "derived", logClass: "standard" },
+    { suffix: "publishedFrames", type: "uint64", replayRole: "derived", logClass: "standard" },
+    { suffix: "deliveredFrames", type: "uint64", replayRole: "state", logClass: "standard", metadata: { description: "Legacy handled-frame count; not successful publication." } },
     { suffix: "droppedFrames", type: "uint64", replayRole: "state", logClass: "standard" },
     { suffix: "pointDrops", type: "uint64", replayRole: "state", logClass: "standard" },
     { suffix: "missedDeadlines", type: "uint64", replayRole: "state", logClass: "standard" },
@@ -28,7 +30,7 @@ export function getDeviceTelemetrySignals(device, registry = sensorTypeRegistry)
     return [
         ...COMMON_SIGNALS.map((signal) => ({
             ...signal,
-            metadata: signal.suffix === "output" ? { deviceType } : undefined,
+            metadata: signal.suffix === "output" ? { deviceType } : signal.metadata,
         })),
         ...outputs.map((output) => ({
             suffix: output.signal,

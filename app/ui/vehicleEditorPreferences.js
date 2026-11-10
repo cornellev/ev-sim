@@ -5,10 +5,12 @@
 
 export const VEHICLE_EDITOR_PREFERENCE_KEYS = Object.freeze({
     PANE_LAYOUT: "cev-sim.ui.vehicleEditor.paneLayout",
+    /** `{ orthogonal: boolean }`. Perspective is the default. */
     DISPLAY: "cev-sim.ui.vehicleEditor.display",
     HIERARCHY_EXPANDED: "cev-sim.ui.vehicleEditor.hierarchyExpanded",
     WHEELS_PANEL: "cev-sim.ui.vehicleEditor.wheelsPanel",
     COVERAGE: "cev-sim.ui.vehicleEditor.coverage",
+    SENSOR_MARKER_SCALE: "cev-sim.ui.vehicleEditor.sensorMarkerScale",
 });
 
 export function readVehicleEditorPreference(key, fallback = null, storage = null) {

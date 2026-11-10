@@ -131,7 +131,7 @@ export class VehicleFloorUnitGrid {
         }
     }
 
-    sync({ camera, target, viewportWidth, viewportHeight } = {}) {
+    sync({ camera, target, viewportWidth, viewportHeight, visibleHeightMeters } = {}) {
         if (!this.group.visible) return this.last;
         const plan = planVehicleFloorUnitGrid({
             target: { x: target?.x ?? 0, y: target?.y ?? 0, z: target?.z ?? 0 },
@@ -139,6 +139,7 @@ export class VehicleFloorUnitGrid {
             fovDegrees: camera.fov,
             viewportWidthPx: viewportWidth,
             viewportHeightPx: viewportHeight,
+            visibleHeightMeters,
         });
         const signature = floorGridPlanSignature(plan);
         if (signature !== this.signature) {

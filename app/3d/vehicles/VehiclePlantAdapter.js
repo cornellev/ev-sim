@@ -15,7 +15,7 @@ function copyRotation(target, source) {
 
 export function attachVehiclePlant(vehicle, entry, dependency = null, options = {}) {
     const plant = new KinematicVehiclePlant(
-        createVehiclePlantDefinition(entry, dependency, options),
+        createVehiclePlantDefinition(entry, dependency, { ...options, physicsConfig: options.physicsConfig ?? options.stepper?.physicsConfig }),
         { stepper: options.stepper ?? null, unresolved: options.unresolved === true },
     );
     vehicle.plant = plant;

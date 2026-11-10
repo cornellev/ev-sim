@@ -1,21 +1,26 @@
 /**
- * Drive-area objects overlay flat paved polygons. Elevation is an option;
- * rotation and scale are rejected.
+ * Drive-area objects overlay flat paved polygons. Elevation, width, and depth
+ * are options. Width and depth rewrite the footprint. Rotation is rejected.
  */
 
 import { ObjectOptions, field, finite, isPlainObject, issue, validateFieldConstraints } from "../ObjectOptions.js";
 import { defineObjectType } from "../ObjectTypeRegistry.js";
 import { TRANSFORM_ISSUE_CODES, applyDeltaToPoint, decomposeDelta } from "../transformDelta.js";
+import { driveAreaResizeError, measureDriveArea, resizeDriveAreaFootprint } from "../../../../simulation/world/DriveAreas.js";
 
 export const DRIVE_AREA_TYPE_ID = "drive-area";
 
+const SIZE_EPS = 1e-6;
+
 const DRIVE_AREA_FIELDS = Object.freeze([
     field({ path: ["y"], label: "Elevation", control: "number", units: "m", step: 0.1, group: "Surface" }),
+    field({ path: ["width"], label: "Width", control: "number", units: "m", step: 0.1, group: "Surface" }),
+    field({ path: ["depth"], label: "Depth", control: "number", units: "m", step: 0.1, group: "Surface" }),
 ]);
 
 export class DriveAreaOptions extends ObjectOptions {
     getDefaults() {
-        return { y: 0 };
+        return { y: 0, width: 2, depth: 2 };
     }
 
     getFields() {
@@ -24,11 +29,24 @@ export class DriveAreaOptions extends ObjectOptions {
 
     normalize(value = {}) {
         const source = isPlainObject(value) ? value : {};
-        return { y: finite(source.y, 0) };
+        return {
+            y: finite(source.y, 0),
+            width: finite(source.width, 0),
+            depth: finite(source.depth, 0),
+        };
     }
 
     validate(value = {}) {
         return validateFieldConstraints(DRIVE_AREA_FIELDS, value);
+    }
+
+    fromLegacy(area) {
+        const measured = measureDriveArea(area);
+        return {
+            y: finite(area?.y, 0),
+            width: measured.width,
+            depth: measured.depth,
+        };
     }
 }
 
@@ -64,16 +82,17 @@ export function driveAreaTransformBinding(record) {
                     issues: [issue(["transform"], TRANSFORM_ISSUE_CODES.ROTATION_UNSUPPORTED, "Drive areas cannot rotate.", { objectId: record.id })],
                 };
             }
-            if (parts.hasScale) {
-                return {
-                    steps: [],
-                    issues: [issue(["transform"], TRANSFORM_ISSUE_CODES.SCALE_UNSUPPORTED, "Drive areas cannot scale.", { objectId: record.id })],
-                };
-            }
             const nextFootprint = footprint.map((point) => {
                 const moved = applyDeltaToPoint(delta, { x: finite(point.x, 0), y: 0, z: finite(point.z, 0) });
                 return { x: moved.x, z: moved.z };
             });
+            const sizeError = driveAreaResizeError(footprint, nextFootprint);
+            if (sizeError) {
+                return {
+                    steps: [],
+                    issues: [issue(["transform"], "option.range", sizeError, { objectId: record.id })],
+                };
+            }
             return {
                 steps: [{ op: "set-drive-area-footprint", driveAreaId: String(record.id), footprint: nextFootprint }],
                 issues: [],
@@ -95,7 +114,28 @@ export function createDriveAreaType() {
         getTransformBinding(record) {
             return driveAreaTransformBinding(record);
         },
-        planOptions(record, value) {
+        planOptions(record, value, context = {}) {
+            const area = context.legacy ?? null;
+            const measured = measureDriveArea(area);
+            const width = finite(value?.width, measured.width);
+            const depth = finite(value?.depth, measured.depth);
+            if (Math.abs(width - measured.width) > SIZE_EPS || Math.abs(depth - measured.depth) > SIZE_EPS) {
+                try {
+                    const footprint = resizeDriveAreaFootprint(area?.footprint, { width, depth });
+                    return {
+                        steps: [
+                            { op: "set-drive-area-footprint", driveAreaId: String(record.id), footprint },
+                            { op: "set-drive-area-elevation", driveAreaId: String(record.id), y: value.y },
+                        ],
+                        issues: [],
+                    };
+                } catch (error) {
+                    return {
+                        steps: [],
+                        issues: [issue(["width"], "option.range", error.message, { objectId: record.id })],
+                    };
+                }
+            }
             return {
                 steps: [{ op: "set-drive-area-elevation", driveAreaId: String(record.id), y: value.y }],
                 issues: [],

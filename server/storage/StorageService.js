@@ -117,6 +117,7 @@ import { Semaphore, createMutex } from "./visual-assets/semaphore.js";
 import { fsyncDir, maybeFault, writeExclusiveFile } from "./visual-assets/atomicFs.js";
 import { computeSimulationSemanticHash } from "../../app/simulation/kernel/SimulationHashes.js";
 import { contactHostForVehicle } from "../../app/simulation/vehicles/ContactHostContract.js";
+import { resolveVehiclePhysicsConfig } from "../../app/simulation/vehicles/VehiclePhysicsConfig.js";
 import {
     computeVehicleBundleHash,
     verifyVehicleBundle,
@@ -3727,6 +3728,7 @@ export class StorageService {
             const resource = await this.plugins.getPackage(lock.packageHash);
             const verified = verifyPluginPackage(resource);
             verifyVehiclePluginLockAgainstPackage(lock, verified, `vehicles.${vehicleId}.pluginLocks`);
+            resolveVehiclePhysicsConfig(manifest, verified.document.plants.find((plant) => plant.id === plantId));
             contactHost = contactHostForVehicle(manifest, new Map(
                 verified.document.plants.map((plant) => [plant.id, plant]),
             ));

@@ -763,6 +763,17 @@ change the outstanding PR-12 hosted, soak, NVIDIA x64, or Jetson ARM64 gates.
 
 ## Decision log
 
+- **2026-11-10 — Shared physical parameters and contact host 3.** Standard
+  `dynamic-bicycle-v1` / `contact-bicycle-v1` plants accept optional vehicle
+  physics overrides only for the six physical keys they declare. Explicit
+  overrides win over declared values and fallback defaults. Generic plants
+  receive no automatic physical model. The same resolved values feed WASM and
+  the Rapier chassis. Correcting the formerly hardcoded host mass/inertia
+  advances newly resolved contact-plugin records to `contactHost: 3`; old
+  host-2 bundles require re-resolution, not package Reimport. Catalog entries
+  now include the declared plant model for editor compatibility checks.
+  No package, ABI, plugin version, or lock format changes.
+
 - **2026-11-07 — RZ-01 versions the contact host independently of packages.**
   Plugin `model: "contact-bicycle-v1"`, ABI 1, package/runtime hashes, and
   saved `pluginLocks` stay unchanged. Exact package plant declarations cause

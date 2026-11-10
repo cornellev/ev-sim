@@ -68,9 +68,18 @@ export function planVehicleFloorUnitGrid({
     fovDegrees,
     viewportWidthPx,
     viewportHeightPx,
+    visibleHeightMeters,
     maxLinesPerAxis = 160,
 } = {}) {
-    const visible = visibleMetersAtTarget({ distance, fovDegrees, viewportHeightPx, viewportWidthPx });
+    const widthPx = Number.isFinite(viewportWidthPx) && viewportWidthPx > 0 ? viewportWidthPx : 1;
+    const heightPx = Number.isFinite(viewportHeightPx) && viewportHeightPx > 0 ? viewportHeightPx : 1;
+    const visible = Number.isFinite(visibleHeightMeters) && visibleHeightMeters > 0
+        ? {
+            height: visibleHeightMeters,
+            width: visibleHeightMeters * (widthPx / heightPx),
+            metersPerPixel: visibleHeightMeters / heightPx,
+        }
+        : visibleMetersAtTarget({ distance, fovDegrees, viewportHeightPx, viewportWidthPx });
     const rawHalf = Math.max(visible.width, visible.height) * 0.75;
     const limit = Number.isFinite(maxLinesPerAxis) && maxLinesPerAxis >= 1 ? maxLinesPerAxis : 160;
     const step = raiseStepToBudget(selectUnitStep(visible.metersPerPixel), rawHalf, limit);

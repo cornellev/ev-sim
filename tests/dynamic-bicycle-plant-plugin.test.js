@@ -18,7 +18,10 @@ import {
 import { buildLocalPlantPackage } from "../server/plugins/plantBuild.js";
 import { getBuiltInVehicleManifest } from "../app/vehicles/BuiltInVehicleManifests.js";
 import { CONTACT_BICYCLE_MODEL, DYNAMIC_BICYCLE_MODEL } from "../app/vehicles/VehicleManifest.js";
-import { runChassis, startChassis } from "./helpers/contactChassisRun.js";
+import { placeChassis, runChassis, startChassis } from "./helpers/contactChassisRun.js";
+import { rcVehicleManifest } from "./helpers/rcVehicle.js";
+import { attachVehiclePlant } from "../app/3d/vehicles/VehiclePlantAdapter.js";
+import { resolveVehiclePlantMount, compilePlantModules } from "../app/simulation/vehicles/WasmPlantStepper.js";
 
 const wasm32 = spawnSync("rustup", ["target", "list", "--installed"], { encoding: "utf8" });
 const cargoReady = wasm32.status === 0 && wasm32.stdout.includes("wasm32-unknown-unknown");
@@ -232,4 +235,55 @@ test("the compiled contact bicycle package matches the built-in plant", {
         manifest: manifest({ model: CONTACT_BICYCLE_MODEL }),
     }));
     await runContactChassis(headless.vehicles[0], javascript);
+    const rcManifest = rcVehicleManifest({ plant: plant.id });
+    const rcEntry = { id: "rc-ego", type: rcManifest.id, pose: { position: { x: 0, y: 0, z: 0 } } };
+    const compiled = await compilePlantModules(plants);
+    const mount = resolveVehiclePlantMount(rcManifest, plants, compiled);
+    const browser = {
+        position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0, order: "XYZ" },
+        velocity: { x: 0, y: 0, z: 0 }, acceleration: { x: 0, y: 0, z: 0 }, steeringAngle: 0,
+    };
+    attachVehiclePlant(browser, rcEntry, { manifest: rcManifest }, { stepper: mount.plantStepper, plantModel: mount.plantModel });
+    assert.equal(browser.plant.physicsConfig, mount.physicsConfig);
+    const rcHeadless = new HeadlessVehicleManager();
+    await rcHeadless.configureFromManifest([rcEntry], null, { plants,
+        resolvedVehicles: [{ actorId: rcEntry.id, vehicleId: rcManifest.id, manifest: rcManifest }] });
+    const rcBuiltin = new KinematicVehiclePlant(createVehiclePlantDefinition(rcEntry, { manifest: rcVehicleManifest() }));
+    const bodies = [browser.plant, rcHeadless.vehicles[0], rcBuiltin];
+    const worlds = await Promise.all(bodies.map((body) => startChassis({ obstacles: [], groundPlane: { y: 0 } }, [body])));
+    try {
+        for (const [index, body] of bodies.entries()) {
+            assert.deepEqual(body.physicsConfig, mount.physicsConfig);
+            runChassis(worlds[index].physics, [body], 1);
+            const chassis = worlds[index].physics.vehicleStates[0].body;
+            assert.ok(Math.abs(chassis.mass() - 3) < 1e-6, `RC chassis mass ${chassis.mass()}`);
+            assert.ok(Math.abs(chassis.principalInertia().y - mount.physicsConfig.yawInertia) < 1e-6);
+            body.yawRate = 0.5;
+            placeChassis(worlds[index].physics, body);
+            runChassis(worlds[index].physics, [body], 200);
+            assert.ok(Math.abs(body.yawRate) < 0.01, `RC stationary yaw rate ${body.yawRate}`);
+        }
+        for (const drive of [
+            { mode: "velocity", speedMps: 0.4, steeringRad: 0 },
+            { mode: "velocity", speedMps: 0.4, steeringRad: 0.15 },
+            { mode: "stop", steeringRad: 0.15 },
+            { mode: "velocity", speedMps: -0.3, steeringRad: -0.1 },
+            { mode: "stop", steeringRad: 0 },
+        ]) {
+            for (const [index, body] of bodies.entries()) runChassis(worlds[index].physics, [body], drive.mode === "stop" ? 300 : 100, drive);
+            for (const body of bodies.slice(0, 2)) {
+                for (const key of ["x", "y", "z"]) close(body.position[key], rcBuiltin.position[key], `rc ${key}`);
+                close(body.rotation.y, rcBuiltin.rotation.y, "rc yaw");
+                close(body.velocity.x, rcBuiltin.velocity.x, "rc speed");
+                close(body.yawRate, rcBuiltin.yawRate, "rc yaw rate");
+            }
+        }
+        assert.ok(Math.abs(rcBuiltin.velocity.x) < 0.01, `RC stopped speed ${rcBuiltin.velocity.x}, yaw rate ${rcBuiltin.yawRate}`);
+        assert.ok(Math.abs(rcBuiltin.yawRate) < 0.01, `RC stopped yaw rate ${rcBuiltin.yawRate}`);
+        rcHeadless.resetRun({ vehicles: [rcEntry] });
+        assert.equal(rcHeadless.vehicles[0].physicsConfig.mass, 3);
+        assert.equal(rcHeadless.vehicles[0].yawRate, 0);
+    } finally {
+        for (const world of worlds) world.physics.disposeRun();
+    }
 });

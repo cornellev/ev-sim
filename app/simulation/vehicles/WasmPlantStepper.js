@@ -1,4 +1,5 @@
 import { sha256ExactBytes } from "../visual/VisualLayer.js";
+import { resolveVehiclePhysicsConfig } from "./VehiclePhysicsConfig.js";
 import { PLUGIN_ERROR_CODES, pluginError } from "../../plugin/PluginErrors.js";
 import {
     PLANT_BUFFER_LENGTH,
@@ -59,8 +60,10 @@ export function resolveVehiclePlantMount(manifest, plants, compiled = null) {
             { pluginId: record?.ownership?.pluginId ?? null, contributionId: plantId },
         );
     }
+    const plantStepper = createPlantStepper(wasmModule, record, manifest);
     return {
-        plantStepper: createPlantStepper(wasmModule, record, manifest),
+        plantStepper,
+        physicsConfig: plantStepper.physicsConfig,
         plantPluginId: record.ownership?.pluginId || "",
         plantRuntimeHash: record.ownership?.runtimeHash || "",
         plantModel: record.model || "",
@@ -74,7 +77,8 @@ export function createPlantStepper(wasmModule, definition, manifest = {}) {
             contributionId: definition?.id ?? null,
         });
     }
-    const parameters = resolvePlantParameters(definition.parameters ?? [], manifest);
+    const physicsConfig = resolveVehiclePhysicsConfig(manifest, definition);
+    const parameters = resolvePlantParameters(definition.parameters ?? [], manifest, physicsConfig);
     let instance = null;
     let view = null;
 
@@ -93,6 +97,7 @@ export function createPlantStepper(wasmModule, definition, manifest = {}) {
 
     instantiate();
     return {
+        physicsConfig,
         step(state, dt) {
             if (!(state instanceof Float64Array) || state.length < PLANT_STATE_LENGTH) {
                 throw plantFailure(`Plant "${definition.id}" requires a ${PLANT_STATE_LENGTH}-value state.`, definition);

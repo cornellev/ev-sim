@@ -223,7 +223,7 @@ records cannot execute. `characterization.contact-bicycle.v2.json` is the
 chassis motion tape. The v1 contact tape is gone with the JavaScript integrator.
 
 Contact-plugin manifests and saved locks stay unchanged. Their resolved
-vehicle records add numeric `contactHost: 2`, derived from the exactly locked
+vehicle records add numeric `contactHost: 3`, derived from the exactly locked
 package's selected plant declaration. The semantic lock projection includes
 that marker when recomputing vehicle hashes and both root/nested dependency
 maps. Ordinary vehicle content hashes still identify manifest plus assets.
@@ -271,6 +271,32 @@ PHY-03 runs browser/headless plant parity at the existing `1e-9` tolerance and
 writes a second characterization tape.
 
 ## Progress and decision log
+
+### 2026-11-10 — Resolved physics configuration and RC-scale overrides
+
+The vehicle physics configuration work packages are recorded in
+[`vehicle-physics-configuration-plan.md`](vehicle-physics-configuration-plan.md).
+The six existing physical fields can accompany a plugin `dynamics.plant`.
+For a declared standard bicycle model, explicit vehicle overrides win over
+declared parameter values, then existing defaults. Unsupported overrides fail
+resolution and pre-activation admission. Omitted overrides stay omitted.
+
+`resolveVehiclePhysicsConfig` produces one immutable runtime configuration.
+Built-in integration, WASM parameter packing, contact tire forces, and Rapier
+chassis mass/inertia consume it. Built-ins retain wheel-derived axle distances;
+plugins retain their half-wheelbase ABI. Reset keeps the same configuration.
+Explicit physical values must remain positive after six-decimal canonical
+rounding; rolling resistance may be zero. Unoverridden plugin parameter
+precision is preserved.
+
+The corrected contact host reads plugin mass/inertia rather than substituting
+1500 kg / 2250 kg·m². Newly resolved contact-plugin records use numeric
+`contactHost: 3`. Historical unmarked/host-2 records remain inspectable and
+importable, but execution requires re-resolution before active-run teardown.
+Package bytes, force ABI 1, plugin `contact-bicycle-v1`, built-in
+`contact-bicycle-v2`, vehicle versions, world hashes, and pinned tapes stay
+unchanged. Synthetic 30 cm RC tests prove parameter plumbing and parity, not
+real vehicle calibration. No suspension or wheel-spin model is added.
 
 ### 2026-11-07 — Separate steering acceptance blocker resolved with v2
 

@@ -20,10 +20,10 @@ const FLUSH_WHEELS = [
 ];
 const HANGING_WHEELS = FLUSH_WHEELS.map((wheel) => ({ ...wheel, position: { ...wheel.position, y: 0.2 } }));
 
-function car({ id = "ego", position = {}, yaw = 0, wheels = FLUSH_WHEELS } = {}) {
+function car({ id = "ego", position = {}, yaw = 0, wheels = FLUSH_WHEELS, dynamics = {} } = {}) {
     const manifest = normalizeVehicleManifest({
         id: "contact-car",
-        dynamics: { model: CONTACT_BICYCLE_MODEL },
+        dynamics: { model: CONTACT_BICYCLE_MODEL, ...dynamics },
         boundingBox: { size: { x: 4, y: 1.4, z: 1.8 }, center: { x: 0, y: 0.7, z: 0 } },
         kinematics: { wheelbase: 2.4 },
         wheels,
@@ -331,8 +331,7 @@ test("free fall specific force cancels and a held grade does not", async () => {
     airborne.physics.disposeRun();
 
     const pitch = 0.4;
-    const held = car({ position: { x: 5, y: Math.tan(pitch) * 5 + 0.05 } });
-    held.definition.dynamics.rollingResistance = 1;
+    const held = car({ position: { x: 5, y: Math.tan(pitch) * 5 + 0.05 }, dynamics: { rollingResistance: 1 } });
     const grounded = await start({ obstacles: [], groundPlane: { y: -5 }, drivableSurfaces: [rampSurface(pitch)] }, [held]);
     run(grounded.physics, [held], 80);
     const grade = measure(held);

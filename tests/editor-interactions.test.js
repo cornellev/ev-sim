@@ -68,6 +68,16 @@ test("ED-02 transform targets and gizmo policy follow the selection kinds", asyn
     assert.deepEqual(resolveGizmoPolicy(single, "rotate"), { supported: true, showX: false, showY: true, showZ: false, uniformOnly: false });
     const buildingOnly = resolveTransformTargets({ selectionSnapshot: { ids: ["building-0"], sub: null }, document, registry });
     assert.deepEqual(resolveGizmoPolicy(buildingOnly, "scale"), { supported: true, showX: true, showY: true, showZ: true, uniformOnly: false });
+    assert.deepEqual(resolveGizmoPolicy({
+        typeIds: new Set(["drive-area"]),
+        objectIds: ["lot"],
+        hasGroup: false,
+    }, "scale"), { supported: true, showX: true, showY: false, showZ: true, uniformOnly: false });
+    assert.equal(resolveGizmoPolicy({
+        typeIds: new Set(["drive-area"]),
+        objectIds: ["a", "b"],
+        hasGroup: false,
+    }, "scale").uniformOnly, true);
     const roads = resolveTransformTargets({ selectionSnapshot: { ids: ["e0", "n2"], sub: null }, document, registry });
     assert.equal(roads.object3Ds.length, 2);
     assert.deepEqual(resolveGizmoPolicy(roads, "translate"), { supported: true, showX: true, showY: true, showZ: true, uniformOnly: false });

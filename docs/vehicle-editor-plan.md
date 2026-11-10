@@ -1,7 +1,7 @@
 # Vehicle editor plan
 
 This document records the vehicle-editor program decisions that are in force.
-VEH-01 through VEH-12 are implemented.
+VEH-01 through VEH-16 are implemented.
 
 ## Status
 
@@ -34,12 +34,44 @@ VEH-01 through VEH-12 are implemented.
   a transform target.
 - Implemented: **VEH-12** — a click on an imported mesh selects that node.
   A bound wheel still selects the wheel.
+- Implemented: **VEH-13** — the studio axis card toggles an orthographic
+  camera. The choice is display chrome and stays out of vehicle hashes.
+- Implemented: **VEH-14** — sensor markers fit the body length. A body of
+  2.7 m or longer keeps the stock glyph size.
+- Implemented: **VEH-15** — a per-vehicle marker-scale slider. The choice
+  is an editor preference and does not dirty the draft.
+- Implemented: **VEH-16** — marker scale stays out of the vehicle document
+  and the VEH-09 identity hashes.
 - Built-in projections stay version 2. `createDefaultVehicleManifest()` stays
   version 2. New blanks created through publication are version 3. The editor
   publishes model replacement through a stage. The legacy asset upload route
   remains for older clients.
 
 ## Decision log
+
+### 2026-11-10 — Vehicle physics controls and odometry save review
+
+The Dynamics inspector exposes mass (kg), turning inertia (kg·m²), and front/
+rear tire stiffness (N/rad), with six-decimal display and RC-scale positive
+minimums. Effective defaults do not mutate the draft. Edits use document
+commands; compatible plant switches keep physical values. A switch that would
+drop unsupported values requires a cancelable confirmation first. Changes
+affect only subsequent resolved runs, not an already frozen run.
+
+Both Save and Mod-S commit pending numeric fields before local validation.
+Wheel odometry is compared with a valid standard rear axle: absolute lateral
+wheel-center separation and mean wheel radius. Pair checks use the existing
+`max(0.001 m, 0.001 * max(abs(a), abs(b)))` tolerance. All odometry sensors
+are reviewed, regardless of enabled state. No valid rear pair means
+"cannot verify", not guessed geometry. One accessible dialog offers Sync and
+save, Save without syncing, and Cancel. Sync changes only the two config
+constants in one undoable command. Consent is bound to the vehicle, editor
+session, and draft generation; edits or reopening require a fresh review.
+Review/cancel send no publication requests. Conflicts retain edited/synced
+drafts and staged resources.
+
+Implementation and acceptance are tracked in
+[`vehicle-physics-configuration-plan.md`](vehicle-physics-configuration-plan.md).
 
 ### VEH-01a — version pin
 
@@ -384,4 +416,22 @@ A hierarchy click on a glTF node selects `{ kind: "model-node", id: "node-N" }`.
 ### VEH-12 — mesh pick
 
 The studio raycast includes the model. The closest visible hit wins, and a miss leaves the current selection. `pickFromHitObject` returns an existing `userData.pick` first, so a bound wheel stays a wheel and the placeholder stays the model. Otherwise the nearest `nodeMappings` entry is `node-N`. That selection opens the Model tab, highlights that hierarchy row, and draws the VEH-11 box. The 4 px click threshold is unchanged. Built-in vehicles still clear selection.
+
+### VEH-13 — orthogonal view
+
+The axis card has an orthogonal-view button immediately left of the axis handles. It is editor chrome and is not part of a manifest or hash. Off, the studio keeps the 50° perspective camera. On, orbit, pan, dolly, and axis alignment render through an orthographic camera framed to the same height at the current target. Dolly changes orthographic zoom inside the existing 0.5–60 m range. Turning it off restores the perspective camera at `distance / zoom`. The choice is `cev-sim.ui.vehicleEditor.display` as `{ orthogonal: boolean }` and defaults to perspective. Top and bottom alignment stay one degree off the pole.
+
+### VEH-14 — fitted sensor markers
+
+Sensor previews stay the meshes from `createPreview`. The studio puts each one on an unscaled root and scales that child. Body length is `boundingBox.size.x`. The fitted diameter is 12% of that length, never under 0.04 m and never over the stock 0.32 m 2D LiDAR disc. Scale is that diameter divided by 0.32, so it never exceeds 1. A 4.5 m, 2.7 m, or 106 in body stays at 1. `igvc-car` (38.933 in) fits below 1. That changes the editor picture only.
+
+A scale below 1 adds a child sphere of radius 0.04 m with opacity 0. The sphere still raycasts. Scale 1 does not add it. The scale is not part of the marker signature, so changing it does not rebuild the marker or take over a gizmo drag. `sensorsGroup`, the wheels, and the coverage group are not scaled.
+
+### VEH-15 — per-vehicle marker scale
+
+`cev-sim.ui.vehicleEditor.sensorMarkerScale` maps a vehicle id to `{ mode: "fit" }` or `{ mode: "manual", scale }`. A missing id means fit. Unknown modes and non-finite scales are dropped. A manual scale is an absolute value from 0.05 to 2, clamped into that range. Fit follows the body length. Manual stays until Fit. The slider writes the preference only. It does not call the document update path and does not mark the draft dirty. It stays usable on a read-only built-in. A renamed or duplicated id starts on fit.
+
+### VEH-16 — display-only identity
+
+Marker scale is not a manifest field. The VEH-09 identity hashes stay pinned. Sensor range, coverage, and wheel size are unchanged.
 

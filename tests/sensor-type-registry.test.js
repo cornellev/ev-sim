@@ -158,6 +158,8 @@ test("an isolated third sensor type drives normalization and runtime factories w
         "output",
         "captureAttempts",
         "capturedFrames",
+        "processedFrames",
+        "publishedFrames",
         "deliveredFrames",
         "droppedFrames",
         "pointDrops",

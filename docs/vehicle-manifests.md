@@ -10,7 +10,7 @@ Editing areas:
 
 - **Model**: upload a `.glb`/`.gltf`, then place it in the vehicle frame with scale, rotation, and offset. "Fit to size" rescales the model so its footprint matches a target length and width in meters.
 - **LiDAR zone**: generates the reduced-polygon collision mesh that LiDAR and other GPU sensors raycast against. Generation runs the voxel-clustering simplifier (`TriangleOptimizer`) over the placed model and bakes the resulting vertex and triangle arrays into the manifest. Larger voxel sizes produce fewer triangles.
-- **Sensors**: 3D LiDAR, 2D LiDAR, camera, and catalog plugin range-image templates with vehicle-local poses and per-type configuration. Plugin sensors are authoring templates and previews; they do not execute from the vehicle document. A run configuration can opt in, from its Sensors tab, to inherit these mounts. Inherited pose and vehicle calibration stay locked to this document. Rate, noise, topics, and other run settings stay editable on the run.
+- **Sensors**: 3D LiDAR, 2D LiDAR, camera, and catalog plugin range-image templates with vehicle-local poses and per-type configuration. Plugin sensors are authoring templates and previews; they do not execute from the vehicle document. A run configuration can opt in, from its Sensors tab, to inherit these mounts. Inherited pose and vehicle calibration stay locked to this document. Rate, noise, topics, and other run settings stay editable on the run. The studio marker scale is an editor preference keyed by vehicle id (`cev-sim.ui.vehicleEditor.sensorMarkerScale`). It is not stored on the vehicle and does not change range, coverage, or `definitionHash`.
 - **Wheels**: wheel positions, radius, width, and steerable flags. The bicycle-model wheelbase is derived from steerable vs. fixed wheel placement unless overridden.
 - **Body**: the bounding box (drives the physics AABB via `collisionDimensions`) and the ego center marker.
 
@@ -91,6 +91,32 @@ Version 3 geometric scalars — model placement, body bounds, wheel position, ra
 
 ## HTTP API
 
+### Physical overrides and odometry geometry
+
+Alongside a plugin `dynamics.plant`, optional `mass`, `yawInertia`,
+`corneringStiffnessFront`, `corneringStiffnessRear`, `frictionMu`, and
+`rollingResistance` override a standard bicycle plugin's declared parameters.
+The selected plant must declare its standard model and each overridden key;
+unsupported overrides fail run resolution/admission. Omitted overrides remain
+omitted. Explicit overrides win over declared values, then existing defaults.
+Values must be finite and positive after six-decimal canonical rounding, except
+rolling resistance, which may be zero. Units are kg, kg·m², and N/rad; friction
+and rolling resistance are dimensionless. Generic plants receive no implicit
+physical behavior. Built-in model normalization and vehicle versions do not change.
+
+One immutable runtime configuration feeds built-in dynamics, WASM parameters,
+contact tires, and Rapier mass/inertia. The editor exposes the requested four
+mass/inertia/stiffness fields without saving effective defaults as overrides.
+Changes apply only to newly resolved runs. Compatible plant switches preserve
+physical values; removing unsupported values requires confirmation.
+
+On Save, wheel odometry is compared with the valid standard rear axle's
+absolute lateral wheel-center separation and mean radius. The existing axle
+tolerance applies. A review dialog offers sync/save, save unchanged, or cancel;
+no valid pair produces a cannot-verify warning and disables sync. Sync modifies
+only `config.trackWidth` and `config.wheelRadius` in one undoable command.
+There are no duplicate vehicle-wide odometry constants.
+
 Under `/api/storage`:
 
 - `GET|POST /vehicles`
@@ -108,4 +134,4 @@ Under `/api/storage`:
 
 `POST /vehicles` and `PUT /vehicles/:id` accept an optional `stageId` and a 64-hex `operationId`. Import, duplicate, and migrate accept `operationId` the same way. Those ids, stage leases, publication journals, and receipts are not part of the vehicle or run hash. A repeated `operationId` returns the first committed manifest. A failed publication removes only asset files that publication introduced.
 
-`PUT /vehicles/:id` accepts `{ manifest, expectedRevision }` with the same optimistic-revision conflict behavior as run manifests. `POST /vehicles/:id/rename` changes only the name and bumps the revision. `POST /vehicles/:id/change-id` copies assets to a new id at revision 1, writes that manifest, then removes the source. The same operation id returns the destination. Recovery finishes or rolls the move back. Run and scenario references are not rewritten. Optional `pluginLocks` pin `{ pluginId, version, packageHash, runtimeHash, sensorTypes[], plants[]? }` and are omitted when empty. Empty `plants` is omitted. Optional `dynamics.plant` selects a plugin plant. Optional `dynamics.model` is `kinematic-bicycle-v1`, `dynamic-bicycle-v1`, or `contact-bicycle-v2`. A kinematic model is stored the same as omitted dynamics, and both keep the built-in JavaScript bicycle. `dynamic-bicycle-v1` and `contact-bicycle-v2` add `mass`, `yawInertia`, `corneringStiffnessFront`, `corneringStiffnessRear`, `frictionMu`, and `rollingResistance`, filled from defaults when omitted. A plugin plant cannot be combined with either physical model. New editor vehicles and URDF imports default to `contact-bicycle-v2`; omitted dynamics and `createBlankVehicleManifest()` stay kinematic. Legacy authoring `contact-bicycle-v1` dynamics normalize to v2, including during new run resolution; saved files are not bulk rewritten. Received resolved v1 contact records require re-resolution before execution. Plugin plant model `contact-bicycle-v1` and force ABI 1 stay unchanged: only newly resolved contact-plugin vehicle records add numeric `contactHost: 2`, outside the saved manifest and locks. No plugin Reimport is needed. RZ-01 reserves the new contact identity; release waits for the RZ-02–04 Rapier implementation. Export produces a `cev-sim.vehicle-bundle` version 1 document embedding the manifest, model assets as base64, and—when locks exist—sorted exact `pluginPackages`. Legacy bundles without `pluginPackages` keep their existing hash projection. Import verifies embedded packages into CAS without adding library membership, suffixing the id when it collides with an existing vehicle.
+`PUT /vehicles/:id` accepts `{ manifest, expectedRevision }` with the same optimistic-revision conflict behavior as run manifests. `POST /vehicles/:id/rename` changes only the name and bumps the revision. `POST /vehicles/:id/change-id` copies assets to a new id at revision 1, writes that manifest, then removes the source. The same operation id returns the destination. Recovery finishes or rolls the move back. Run and scenario references are not rewritten. Optional `pluginLocks` pin `{ pluginId, version, packageHash, runtimeHash, sensorTypes[], plants[]? }` and are omitted when empty. Empty `plants` is omitted. Optional `dynamics.plant` selects a plugin plant. Optional `dynamics.model` is `kinematic-bicycle-v1`, `dynamic-bicycle-v1`, or `contact-bicycle-v2`. A kinematic model is stored the same as omitted dynamics, and both keep the built-in JavaScript bicycle. `dynamic-bicycle-v1` and `contact-bicycle-v2` add `mass`, `yawInertia`, `corneringStiffnessFront`, `corneringStiffnessRear`, `frictionMu`, and `rollingResistance`, filled from defaults when omitted. A plugin plant cannot be combined with either physical model. New editor vehicles and URDF imports default to `contact-bicycle-v2`; omitted dynamics and `createBlankVehicleManifest()` stay kinematic. Legacy authoring `contact-bicycle-v1` dynamics normalize to v2, including during new run resolution; saved files are not bulk rewritten. Received resolved v1 contact records require re-resolution before execution. Plugin plant model `contact-bicycle-v1` and force ABI 1 stay unchanged: only newly resolved contact-plugin vehicle records add numeric `contactHost: 3`, outside the saved manifest and locks. No plugin Reimport is needed. The Rapier contact implementation is complete; historical host-2 runs require re-resolution for the corrected shared physics configuration. Export produces a `cev-sim.vehicle-bundle` version 1 document embedding the manifest, model assets as base64, and—when locks exist—sorted exact `pluginPackages`. Legacy bundles without `pluginPackages` keep their existing hash projection. Import verifies embedded packages into CAS without adding library membership, suffixing the id when it collides with an existing vehicle.

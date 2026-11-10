@@ -94,12 +94,18 @@ leaves unlocked vehicles unchanged.
 
 RZ-01 separates vehicle model `contact-bicycle-v2` from plugin force model
 `contact-bicycle-v1` on ABI 1. Contact-plugin resolved vehicle records carry
-numeric `contactHost: 2`, including nested scenario dependencies; their
+numeric `contactHost: 3`, including nested scenario dependencies; their
 semantic lock projection binds the marker. The shared contact-host guard runs
 at bundle execution and kernel pre-activation, before vehicle normalization.
+Standard bicycle plants resolve one immutable `VehiclePhysicsConfig` at setup.
+Explicit vehicle overrides win over declared plugin values and existing
+defaults; overridden keys must be declared by the selected standard plant.
+WASM parameters, built-in dynamics, tire forces, and Rapier mass/inertia use the
+same object. Reset does not re-resolve it. Built-in axle geometry and the
+plugin half-wheelbase ABI remain unchanged.
 Old contact bundles remain available for integrity inspection and authoring
-import, but must be re-resolved to execute. This prepares the later Rapier
-chassis; RZ-01 retains the current JS contact integration. RZ-02 adds the
+import, but must be re-resolved to execute. Host 3 corrects the former plugin
+mass/inertia substitution. RZ-01 established the contact identity. RZ-02 adds the
 floor slab, obstacle hulls, and chassis-only road trimeshes. RZ-03 makes a
 contact vehicle a dynamic Rapier body: a downward ray feeds the tire law,
 Rapier integrates, and pose/velocity copy back onto the plant. The kinematic

@@ -27,6 +27,7 @@ export class HeadlessVehicleManager {
                         plantPluginId: mount.plantPluginId,
                         plantRuntimeHash: mount.plantRuntimeHash,
                         plantModel: mount.plantModel,
+                        physicsConfig: mount.physicsConfig,
                     }),
                     { stepper: mount.plantStepper ?? null, unresolved: mount.unresolvedPluginPlant === true },
                 );

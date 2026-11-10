@@ -61,8 +61,8 @@ export function resolveTransformTargets({ selectionSnapshot, document, registry 
 /**
  * Axis gating per selection kind. Props: planar translate, yaw, no scale.
  * Buildings: planar translate, yaw, scale (per-axis alone, uniform in groups).
- * Roads and nodes: translate XYZ, yaw, uniform scale. Mixed and groups: the
- * most restrictive combination.
+ * Drive areas: XZ scale, no Y scale. Roads and nodes: translate XYZ, yaw,
+ * uniform scale. Mixed and groups: the most restrictive combination.
  */
 export function resolveGizmoPolicy(targets, mode) {
     const types = targets.typeIds;
@@ -77,7 +77,14 @@ export function resolveGizmoPolicy(targets, mode) {
         if (hasRoadSub) return { supported: false, reason: "Road knots and handles translate only." };
         if (hasProps) return { supported: false, reason: "Props cannot be scaled." };
         const uniformOnly = multi || hasRoads;
-        return { supported: true, showX: !uniformOnly, showY: !uniformOnly, showZ: !uniformOnly, uniformOnly };
+        const driveAreaOnly = types.size === 1 && types.has("drive-area");
+        return {
+            supported: true,
+            showX: !uniformOnly,
+            showY: !uniformOnly && !driveAreaOnly,
+            showZ: !uniformOnly,
+            uniformOnly,
+        };
     }
     if (mode === "rotate") {
         if (hasRoadSub) return { supported: false, reason: "Road knots and handles translate only." };

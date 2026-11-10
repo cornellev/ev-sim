@@ -1,6 +1,6 @@
 import { PLANT_CONTACT_BICYCLE_MODEL } from "../../plugin/PlantModule.js";
 import { DEFAULT_DYNAMIC_BICYCLE } from "../../vehicles/VehicleManifest.js";
-import { deriveAxleDistances, GRAVITY } from "./dynamicBicycle.js";
+import { GRAVITY } from "./dynamicBicycle.js";
 
 export const VX_REST = 1e-3;
 
@@ -193,24 +193,8 @@ export function axleContactForces(input = {}) {
 }
 
 export function contactParameters(plant) {
-    const plugin = plant.motionModel === "plugin";
-    const dynamics = plant.definition?.dynamics ?? {};
-    const wheelbase = Math.max(1e-9, finite(plant.kinematics?.wheelbase, 1.5));
-    const axle = plugin
-        ? { lf: wheelbase / 2, lr: wheelbase / 2 }
-        : (plant.definition?.axle ?? deriveAxleDistances([], wheelbase));
-    // shortcut: a plugin's mass and yaw inertia stay the crate defaults, upgrade when the host can read those parameters back.
-    return {
-        mass: Math.max(1e-9, plugin ? DEFAULT_DYNAMIC_BICYCLE.mass : finite(dynamics.mass, DEFAULT_DYNAMIC_BICYCLE.mass)),
-        yawInertia: Math.max(1e-9, plugin ? DEFAULT_DYNAMIC_BICYCLE.yawInertia : finite(dynamics.yawInertia, DEFAULT_DYNAMIC_BICYCLE.yawInertia)),
-        lf: Math.max(0, finite(axle.lf, wheelbase / 2)),
-        lr: Math.max(0, finite(axle.lr, wheelbase / 2)),
-        corneringStiffnessFront: finite(dynamics.corneringStiffnessFront, DEFAULT_DYNAMIC_BICYCLE.corneringStiffnessFront),
-        corneringStiffnessRear: finite(dynamics.corneringStiffnessRear, DEFAULT_DYNAMIC_BICYCLE.corneringStiffnessRear),
-        frictionMu: finite(dynamics.frictionMu, DEFAULT_DYNAMIC_BICYCLE.frictionMu),
-        rollingResistance: finite(dynamics.rollingResistance, DEFAULT_DYNAMIC_BICYCLE.rollingResistance),
-        wheelbase,
-    };
+    if (!plant.physicsConfig) throw new Error("Contact vehicle has no resolved physics configuration.");
+    return plant.physicsConfig;
 }
 
 function steerLimit(plant) {

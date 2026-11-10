@@ -234,7 +234,7 @@ export class TopicContractRouter {
 
     routeOutbound(topicIdOrName, info, metadata = {}) {
         const topic = this.getTopic(topicIdOrName);
-        if (!topic || topic.direction !== "output") return { ok: false };
+        if (!topic || topic.direction !== "output" || typeof this.telemetry?.publishSignal !== "function") return { ok: false };
         const producer = metadata.producer || topic.producer || "simulator";
         const producerPath = this.producerPath(topic, producer);
         const logClass = resolvePayloadLogClass(info.value, metadata.logClass);
@@ -525,7 +525,8 @@ export class TopicContractRouter {
     }
 
     _publish(path, value, options) {
-        this.telemetry?.publishSignal?.(path, value, options);
+        const published = this.telemetry?.publishSignal?.(path, value, options);
+        if (published === false) throw new Error(`Local topic publication rejected: ${path}.`);
     }
 
     _emitEvent(name, severity, payload) {

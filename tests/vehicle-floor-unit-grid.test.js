@@ -41,6 +41,31 @@ function lineConstants(plan, axis) {
         .sort((left, right) => left - right);
 }
 
+test("an explicit visible height replaces the perspective field of view", () => {
+    const target = { x: 0, y: 0.6, z: 0 };
+    const distance = 12;
+    const perspective = planVehicleFloorUnitGrid({ target, distance, ...VIEW });
+    const height = 2 * distance * Math.tan((VIEW.fovDegrees * Math.PI) / 360);
+    const fromHeight = planVehicleFloorUnitGrid({
+        target,
+        distance,
+        fovDegrees: 1,
+        viewportWidthPx: VIEW.viewportWidthPx,
+        viewportHeightPx: VIEW.viewportHeightPx,
+        visibleHeightMeters: height,
+    });
+    const narrow = planVehicleFloorUnitGrid({
+        target,
+        distance,
+        fovDegrees: 1,
+        viewportWidthPx: VIEW.viewportWidthPx,
+        viewportHeightPx: VIEW.viewportHeightPx,
+    });
+    assert.equal(fromHeight.metersPerPixel, perspective.metersPerPixel);
+    assert.equal(fromHeight.halfExtent, perspective.halfExtent);
+    assert.notEqual(narrow.halfExtent, perspective.halfExtent);
+});
+
 test("the floor grid is an XZ plane at y = 0 with no vertical labels", () => {
     const plan = planVehicleFloorUnitGrid({ target: { x: 0, y: 0.6, z: 0 }, distance: 12, ...VIEW });
     assert.deepEqual(plan.origin, { x: 0, y: 0, z: 0 });

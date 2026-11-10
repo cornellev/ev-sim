@@ -10,6 +10,7 @@ import {
     replaceManifest,
 } from "../document/vehicleCommands.js";
 import { resolveMotionLink } from "../document/wheelLink.js";
+import { reviewOdometryGeometry } from "../axle/odometryGeometry.js";
 
 const STAGE_CODES = new Set(["VEHICLE_STAGE_CONFLICT", "VEHICLE_STAGE_EXPIRED", "VEHICLE_STAGE_NOT_FOUND"]);
 
@@ -58,6 +59,7 @@ export class VehicleEditorController {
         this.now = now;
         this.createOperationId = createOperationId;
         this.session = null;
+        this.sessionGeneration = 0;
         this.readOnly = false;
         this.fieldBuffers = new Map();
         this.rawOverride = null;
@@ -114,6 +116,7 @@ export class VehicleEditorController {
 
     open(stored, { readOnly = false } = {}) {
         this.#abandonIntroduced();
+        this.sessionGeneration += 1;
         this.readOnly = readOnly === true;
         this.session = new VehicleDocumentSession({
             manifest: stored,
@@ -173,7 +176,7 @@ export class VehicleEditorController {
         if (!this.fieldBuffers.has(key)) return { ok: true };
         const value = this.fieldBuffers.get(key);
         const result = this.editField(path, value, { coalesceKey: key });
-        this.fieldBuffers.delete(key);
+        if (result.ok) this.fieldBuffers.delete(key);
         this.#emit();
         return result;
     }
@@ -363,11 +366,19 @@ export class VehicleEditorController {
         return { ok: true, dirty: this.session.dirty };
     }
 
-    async save() {
+    async save({ odometryReview = null, syncOdometry = false } = {}) {
         if (!this.session) throw new Error("No vehicle is open.");
         if (this.readOnly) throw new Error("Built-in vehicles are read only.");
         if (this.session.gesture) this.commitAxle();
-        for (const path of [...this.fieldBuffers.keys()]) this.commitField(path.split("."));
+        for (const path of [...this.fieldBuffers.keys()]) {
+            const committed = this.commitField(path.split("."));
+            if (!committed.ok) {
+                this.saveState = "error";
+                this.saveMessage = "Fix validation errors before saving.";
+                this.#emit();
+                throw new Error(this.saveMessage);
+            }
+        }
         const local = validateVehicleManifest(this.session.draft.snapshot(), this.session.normalizeOptions);
         if (!local.ok) {
             this.validation = local;
@@ -375,6 +386,23 @@ export class VehicleEditorController {
             this.saveMessage = "Fix validation errors before saving.";
             this.#emit();
             throw new Error(this.saveMessage);
+        }
+        const review = reviewOdometryGeometry(local.manifest);
+        if (review) {
+            const generation = this.session.draft.generation;
+            if (odometryReview?.generation !== generation || odometryReview?.vehicleId !== local.manifest.id
+                || odometryReview?.sessionGeneration !== this.sessionGeneration) {
+                return { ok: false, odometryReview: { ...review, generation, vehicleId: local.manifest.id, sessionGeneration: this.sessionGeneration } };
+            }
+            if (syncOdometry) {
+                if (!review.geometry) throw new Error("Cannot verify odometry without a valid standard rear axle pair.");
+                const next = this.session.draft.snapshot();
+                for (const sensor of next.sensors) {
+                    if (sensor.type === "wheel-odometry") Object.assign(sensor.config, review.geometry);
+                }
+                const synced = this.execute(editManifestFields(next, "Sync wheel odometry geometry"));
+                if (!synced.ok) throw new Error("Could not sync wheel odometry geometry.");
+            }
         }
         if (!this.session.dirty && !this.session.stagedResources) {
             this.saveState = "idle";

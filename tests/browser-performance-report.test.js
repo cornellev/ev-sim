@@ -45,6 +45,8 @@ test("browser performance report records cadence, sensor loss, queues, bytes, an
         assert.equal(report.sensors.due, 30);
         assert.equal(report.sensors.captured, 30);
         assert.equal(report.sensors.delivered, 29);
+        assert.equal(report.sensors.processed, null);
+        assert.equal(report.sensors.published, null);
         assert.equal(report.sensors.skipped, 0);
         assert.equal(report.sensors.undelivered, 1);
         assert.equal(report.queues.maxDepth, 1);

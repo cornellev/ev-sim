@@ -1,7 +1,8 @@
 import { PLANT_CONTACT_BICYCLE_MODEL } from "../../plugin/PlantModule.js";
 import { HeadlessEpisodeError } from "../headless/HeadlessErrors.js";
+import { resolveVehiclePhysicsConfig } from "./VehiclePhysicsConfig.js";
 
-export const CONTACT_HOST_VERSION = 2;
+export const CONTACT_HOST_VERSION = 3;
 
 /** Plants must come from verified, exactly locked package declarations. */
 export function contactHostForVehicle(manifest, plants) {
@@ -30,6 +31,11 @@ export function assertResolvedContactHosts(resolved, plants = new Map()) {
             }
             const plantId = record.manifest?.dynamics?.plant;
             if (plantId && !plants.has(plantId)) reject(`plant "${plantId}" is not in the selected package declarations`);
+            try {
+                resolveVehiclePhysicsConfig(record.manifest, plants.get(plantId));
+            } catch (error) {
+                reject(error.message);
+            }
             const expected = contactHostForVehicle(record.manifest, plants);
             if (expected !== undefined) {
                 if (record.contactHost !== expected) reject(`contact plugins require numeric contactHost: ${expected}`);

@@ -36,8 +36,21 @@ import {
     orbitPoseForAxis,
     slerpDirection,
 } from "./alignOrbitAxis.js";
+import {
+    ORTHOGONAL_FAR,
+    ORTHOGONAL_NEAR,
+    orthographicFrustum,
+    orthogonalZoomLimits,
+    perspectiveDistanceForZoom,
+} from "./orthogonalView.js";
 import { VehicleFloorUnitGrid } from "./VehicleFloorUnitGrid.js";
 import { applySensorMarkerPose } from "./sensorMarkerPose.js";
+import {
+    clampSensorMarkerScale,
+    fitSensorMarkerScale,
+    mountSensorMarker,
+    syncSensorMarkerScale,
+} from "./sensorMarkerScale.js";
 
 const COLORS = {
     background: 0x09090b,
@@ -83,8 +96,12 @@ export class VehicleStudio {
         this.scene.background = new THREE.Color(COLORS.background);
         this.scene.fog = new THREE.Fog(COLORS.background, 30, 80);
 
-        this.camera = new THREE.PerspectiveCamera(50, 1, 0.05, 200);
-        this.camera.position.set(4.5, 3, 4.5);
+        this.perspectiveCamera = new THREE.PerspectiveCamera(50, 1, ORTHOGONAL_NEAR, ORTHOGONAL_FAR);
+        this.perspectiveCamera.position.set(4.5, 3, 4.5);
+        this.orthographicCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, ORTHOGONAL_NEAR, ORTHOGONAL_FAR);
+        this.camera = this.perspectiveCamera;
+        this._orthogonal = false;
+        this._orthoHalfHeight = 1;
 
         this.renderer = new THREE.WebGLRenderer({ antialias: true });
         this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -198,6 +215,8 @@ export class VehicleStudio {
         this._syncingManifest = false;
         this._linkedWheelId = null;
         this._editorHiddenIds = new Set();
+        this._sensorMarkerScale = null;
+        this._sensorMarkerScaleExplicit = false;
         this._loadToken = 0;
         this._disposed = false;
         this._coverageEnabled = false;
@@ -312,6 +331,65 @@ export class VehicleStudio {
         };
     }
 
+    /**
+     * Switch the rendered camera between perspective and orthographic.
+     * Orthographic dolly changes zoom and leaves the orbit radius alone,
+     * so radius / zoom is the matching perspective distance.
+     * @param {boolean} enabled
+     */
+    setOrthogonal(enabled) {
+        const next = enabled === true;
+        if (next === this._orthogonal) return;
+        const source = this.camera;
+        const destination = next ? this.orthographicCamera : this.perspectiveCamera;
+        const target = this.orbit.target;
+        const offset = new THREE.Vector3().subVectors(source.position, target);
+        if (offset.lengthSq() < 1e-12) offset.set(1, 1, 1);
+        const distance = offset.length();
+        offset.normalize();
+        const aspect = this._viewportAspect();
+
+        if (next) {
+            const frustum = orthographicFrustum({
+                distance,
+                fovDegrees: this.perspectiveCamera.fov,
+                aspect,
+            });
+            this._orthoHalfHeight = frustum.top;
+            this._applyOrthographicFrustum(aspect);
+            destination.zoom = frustum.zoom;
+            const limits = orthogonalZoomLimits({
+                distance,
+                minDistance: this.orbit.minDistance,
+                maxDistance: this.orbit.maxDistance,
+            });
+            this.orbit.minZoom = limits.minZoom;
+            this.orbit.maxZoom = limits.maxZoom;
+            destination.position.copy(source.position);
+        } else {
+            const restored = perspectiveDistanceForZoom({
+                distance,
+                zoom: source.zoom,
+                minDistance: this.orbit.minDistance,
+                maxDistance: this.orbit.maxDistance,
+            });
+            if (this._align) this._align.distance = restored;
+            destination.zoom = 1;
+            destination.aspect = aspect;
+            destination.position.copy(target).addScaledVector(offset, restored);
+        }
+
+        destination.up.copy(source.up);
+        destination.lookAt(target);
+        destination.updateProjectionMatrix();
+        this.camera = destination;
+        this._orthogonal = next;
+        this.orbit.object = destination;
+        this.gizmo.camera = destination;
+        destination.updateMatrixWorld();
+        this.orbit.update();
+    }
+
     /** @param {(quaternion: {x:number,y:number,z:number,w:number}) => void} listener */
     onCameraFrame(listener) {
         this._cameraListeners.add(listener);
@@ -347,20 +425,47 @@ export class VehicleStudio {
         return { x, y, z, w };
     }
 
+    _viewportAspect() {
+        const width = this.container.clientWidth || 1;
+        const height = this.container.clientHeight || 1;
+        return width / height;
+    }
+
+    _applyOrthographicFrustum(aspect) {
+        const halfHeight = this._orthoHalfHeight > 0 ? this._orthoHalfHeight : 1;
+        const safeAspect = aspect > 0 ? aspect : 1;
+        const camera = this.orthographicCamera;
+        camera.top = halfHeight;
+        camera.bottom = -halfHeight;
+        camera.left = -halfHeight * safeAspect;
+        camera.right = halfHeight * safeAspect;
+        camera.near = ORTHOGONAL_NEAR;
+        camera.far = ORTHOGONAL_FAR;
+        camera.updateProjectionMatrix();
+    }
+
     _resize() {
         const width = this.container.clientWidth || 1;
         const height = this.container.clientHeight || 1;
-        this.camera.aspect = width / height;
-        this.camera.updateProjectionMatrix();
+        const aspect = width / height;
+        if (this.camera.isOrthographicCamera) {
+            this._applyOrthographicFrustum(aspect);
+        } else {
+            this.camera.aspect = aspect;
+            this.camera.updateProjectionMatrix();
+        }
         this.renderer.setSize(width, height);
     }
 
     _syncFloorGrid() {
+        const camera = this.camera;
+        const zoom = camera.zoom > 0 ? camera.zoom : 1;
         this.floorGrid?.sync({
-            camera: this.camera,
+            camera,
             target: this.orbit.target,
             viewportWidth: this.container.clientWidth || 1,
             viewportHeight: this.container.clientHeight || 1,
+            visibleHeightMeters: camera.isOrthographicCamera ? (camera.top - camera.bottom) / zoom : undefined,
         });
     }
 
@@ -376,6 +481,9 @@ export class VehicleStudio {
         try {
             this._manifest = manifest;
             this._modelUrl = modelUrl;
+            if (!this._sensorMarkerScaleExplicit) {
+                this._sensorMarkerScale = fitSensorMarkerScale(manifest?.boundingBox?.size?.x);
+            }
             if (stagedResources !== undefined) this._stagedResources = stagedResources;
             if (this._presentationSuspended && !this._placementDrag) this._presentationSuspended = false;
             this._syncModel(manifest, modelUrl, this._stagedResources ?? null);
@@ -728,11 +836,26 @@ export class VehicleStudio {
         });
     }
 
+    /**
+     * Display scale for sensor glyphs. A call from the page wins over the
+     * body-length fit that `setManifest` applies on its own.
+     */
+    setSensorMarkerScale(scale) {
+        const next = clampSensorMarkerScale(scale);
+        if (next == null) return;
+        this._sensorMarkerScaleExplicit = true;
+        if (this._sensorMarkerScale === next) return;
+        this._sensorMarkerScale = next;
+        if (this._manifest) this._syncSensors(this._manifest.sensors ?? []);
+    }
+
     _syncSensors(sensors) {
+        const scale = this._sensorMarkerScale ?? 1;
         this._syncMarkerGroup(this.sensorsGroup, sensors, "sensor", (sensor) => (
-            this.sensorRuntime.createPreview(sensor)
+            mountSensorMarker(this.sensorRuntime.createPreview(sensor), scale)
         ), (object, sensor) => {
             applySensorMarkerPose(object, sensor, this._isDragging(object));
+            syncSensorMarkerScale(object, scale);
             return this.sensorRuntime.previewSignature(sensor);
         });
     }

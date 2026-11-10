@@ -4,6 +4,7 @@ import { getBuiltInVehicleManifest } from "../../vehicles/BuiltInVehicleManifest
 import { CONTACT_BICYCLE_MODEL, DYNAMIC_BICYCLE_MODEL, normalizeVehicleManifest } from "../../vehicles/VehicleManifest.js";
 import { euler, finiteOr as finite, pose, vec3 } from "../../util/plainGeometry.js";
 import { groundClearance } from "./contactBicycle.js";
+import { resolveVehiclePhysicsConfig } from "./VehiclePhysicsConfig.js";
 import { deriveAxleDistances, longitudinalCommand, stepDynamicBicycle } from "./dynamicBicycle.js";
 
 export const VEHICLE_PLANT_KIND = "cev-sim.vehicle-plant";
@@ -61,6 +62,8 @@ export function createVehiclePlantDefinition(entry = {}, dependency = null, opti
         id: String(entry.id || options.id || manifest.id),
         vehicleManifestId: manifest.id,
         motionModel,
+        physicsConfig: options.physicsConfig ?? (pluginPlantId && !options.plantModel ? null
+            : resolveVehiclePhysicsConfig(manifest, pluginPlantId ? { model: options.plantModel } : null)),
         initialPose: pose(entry.pose ?? options.pose),
         initialLinearVelocity: vec3(entry.linearVelocity ?? options.linearVelocity),
         initialLinearAcceleration: vec3(entry.linearAcceleration ?? options.linearAcceleration),
@@ -199,6 +202,8 @@ export class KinematicVehiclePlant {
             );
         }
         this.definition = structuredClone(definition);
+        this.physicsConfig = stepper?.physicsConfig ?? definition.physicsConfig;
+        this.definition.physicsConfig = this.physicsConfig;
         this.stepper = stepper;
         this.unresolvedPluginPlant = unresolved === true;
         this.dynamicsStatus = this.unresolvedPluginPlant ? "Plugin dynamics run only in a resolved run." : "";
@@ -349,8 +354,8 @@ export class KinematicVehiclePlant {
         }
         if (this.motionModel === "contact-bicycle" || contactPlugin) return;
         if (this.motionModel === "dynamic-bicycle") {
-            const axle = this.definition.axle ?? deriveAxleDistances([], this.kinematics.wheelbase);
-            const dynamics = this.definition.dynamics ?? {};
+            const axle = this.physicsConfig;
+            const dynamics = this.physicsConfig;
             const maximum = Math.min(finite(this.kinematics.maxSteeringAngle, 0.6), Math.PI * 0.49);
             const steering = Math.max(-maximum, Math.min(maximum, this.steeringAngle));
             // Explicit Euler: forces at the old state, translation at the old yaw.

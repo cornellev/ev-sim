@@ -114,6 +114,8 @@ export class SensorPublisher {
         this.health = {
             captureAttempts: 0,
             capturedFrames: 0,
+            processedFrames: 0,
+            publishedFrames: 0,
             deliveredFrames: 0,
             droppedFrames: 0,
             pointDrops: 0,
@@ -515,6 +517,7 @@ export class SensorPublisher {
         this.health.queueDepth = this.queue.length;
         this.health.queueBytes = this.queuedBytes;
         for (const frame of ready) {
+            this.health.processedFrames += 1;
             frame.encodeCancelled = true;
             if (frame.encodeFailed) {
                 this.device.releaseObservation?.(frame.observation);
@@ -535,8 +538,20 @@ export class SensorPublisher {
                 });
             }
             const transportStartNs = this._time();
-            for (const message of frame.messages || []) this._deliverMessage(message, frame, clock);
-            this._deliverNativePackets(frame, clock);
+            let published = (frame.messages?.length ?? 0) + (frame.nativePackets?.length ?? 0) > 0;
+            for (const message of frame.messages || []) {
+                try {
+                    const delivered = this._deliverMessage(message, frame, clock);
+                    published = delivered && published;
+                } catch (error) {
+                    if (this.pluginStrict) throw error;
+                    published = false;
+                    this._event("publish-failed", "error", { sampleIndex: frame.sampleIndex, topic: message.topicId, reason: error.message });
+                }
+            }
+            const native = this._deliverNativePackets(frame, clock);
+            if (published && native.published) this.health.publishedFrames += 1;
+            if (native.batch) this.nativePacketSink?.enqueueBatch?.(native.batch);
             const transportDurationNs = Math.max(0, this._time() - transportStartNs);
             this.health.transportTimeNs = transportDurationNs;
             this.health.transportTimeTotalNs += transportDurationNs;
@@ -580,7 +595,17 @@ export class SensorPublisher {
         if (!topic) {
             this._event("publish-failed", "error", { sampleIndex: frame.sampleIndex, reason: `unknown-topic:${message.topicId}` });
             if (this.pluginStrict) throw this._strictPublishError(`Unknown topic "${message.topicId}".`, frame, "publish");
-            return;
+            return false;
+        }
+        if (typeof (topic.schema?.type || topic.type) !== "string" || !(topic.schema?.type || topic.type).trim()) {
+            this._event("publish-failed", "error", { sampleIndex: frame.sampleIndex, topic: topic.name, reason: "missing-topic-schema" });
+            if (this.pluginStrict) throw this._strictPublishError("Missing topic schema.", frame, "publish");
+            return false;
+        }
+        if (typeof message.signal !== "string" || !message.signal.trim()) {
+            this._event("publish-failed", "error", { sampleIndex: frame.sampleIndex, topic: topic.name, reason: "missing-local-signal-path" });
+            if (this.pluginStrict) throw this._strictPublishError("Missing local signal path.", frame, "publish");
+            return false;
         }
         let encoded;
         try {
@@ -588,13 +613,14 @@ export class SensorPublisher {
             const prepared = frame.encodedByTopic?.get(message.topicId);
             encoded = prepared?.encoded || prepared
                 || this.encodeTopicValue(topic.schema?.type || topic.type, message.value);
+            if (!encoded || !Number.isFinite(encoded.byteLength)) throw new Error("Topic encoder did not return bytes.");
             const encodeDurationNs = Math.max(0, this._time() - encodeStartNs);
             this.health.encodeTimeNs = encodeDurationNs;
             this.health.encodeTimeTotalNs += encodeDurationNs;
         } catch (error) {
             this._event("publish-failed", "error", { sampleIndex: frame.sampleIndex, topic: topic.name, reason: error.message });
             if (this.pluginStrict) throw this._strictPublishError(error.message, frame, "encode", error);
-            return;
+            return false;
         }
         const data = this._data();
         const telemetry = data?.bindings?.()?.signalStore;
@@ -617,7 +643,12 @@ export class SensorPublisher {
             calibration: this.config.calibration,
             canonicalSignalPath: path,
         };
-        telemetry?.publishSignal?.(path, encoded, {
+        const hasSignalSink = typeof telemetry?.publishSignal === "function";
+        if (!hasSignalSink) {
+            this._event("publish-failed", "error", { sampleIndex: frame.sampleIndex, topic: topic.name, reason: "missing-local-signal-sink" });
+            if (this.pluginStrict) throw this._strictPublishError("Missing local signal sink.", frame, "publish");
+        }
+        const signalPublished = hasSignalSink ? telemetry.publishSignal(path, encoded, {
             timeUs: Math.round(frame.deliveryTimeNs / 1000),
             cycle: clock.step,
             source: "sensors",
@@ -627,9 +658,9 @@ export class SensorPublisher {
             logClass: "heavy",
             retention: "latest",
             descriptorMetadata: metadata,
-        });
+        }) : false;
         // Lightweight summary only — do not duplicate the full PointCloud2/Image bytes.
-        telemetry?.publishSignal?.(`devices.${this.device.telemetryId}.output`, {
+        const summaryPublished = hasSignalSink ? telemetry.publishSignal(`devices.${this.device.telemetryId}.output`, {
             signal: message.signal,
             topic: topic.name,
             rosType: topic.type,
@@ -647,7 +678,7 @@ export class SensorPublisher {
             logClass: "standard",
             history: false,
             retention: "none",
-        });
+        }) : false;
         const client = data?.client?.()?.get?.();
         if (!client?.isOpen?.()) {
             if (topic.required) {
@@ -659,10 +690,7 @@ export class SensorPublisher {
             }
         } else {
             const prepared = frame.encodedByTopic?.get(message.topicId);
-            const publishing = prepared?.packet && typeof client.publishPrepared === "function"
-                ? client.publishPrepared(prepared.packet, { required: topic.required === true })
-                : client.publishEncoded(topic.name, encoded, { required: topic.required === true });
-            publishing.catch((error) => {
+            const onTransportError = (error) => {
                 const reason = error?.message || String(error);
                 if (reason.includes("websocket-backpressure")) {
                     this._incrementFrameDrop();
@@ -678,9 +706,17 @@ export class SensorPublisher {
                     sampleIndex: frame.sampleIndex,
                     reason,
                 });
-            });
+            };
+            try {
+                const publishing = prepared?.packet && typeof client.publishPrepared === "function"
+                    ? client.publishPrepared(prepared.packet, { required: topic.required === true })
+                    : client.publishEncoded(topic.name, encoded, { required: topic.required === true });
+                Promise.resolve(publishing).catch(onTransportError);
+            } catch (error) {
+                onTransportError(error);
+            }
         }
-        this.topicRouter?.routeOutbound(topic.id, {
+        const routed = this.topicRouter?.routeOutbound(topic.id, {
             value: message.value,
             retainedValue: encoded,
             typeStr: topic.schema?.type || topic.type,
@@ -701,12 +737,22 @@ export class SensorPublisher {
             calibrationHash: this.calibrationHash,
             canonicalSignalPath: path,
         });
+        const published = signalPublished !== false && summaryPublished !== false
+            && (!this.topicRouter || routed?.ok === true);
+        if (!published && hasSignalSink) {
+            this._event("publish-failed", "error", { sampleIndex: frame.sampleIndex, topic: topic.name, reason: "local-publication-rejected" });
+            if (this.pluginStrict) throw this._strictPublishError("Local publication rejected.", frame, "publish");
+        }
+        return published;
     }
 
     _deliverNativePackets(frame, clock) {
         const packets = [];
+        let published = true;
         for (const packet of frame.nativePackets || []) {
             try {
+                if (typeof packet.productId !== "string" || !packet.productId.trim()
+                    || typeof packet.streamId !== "string" || !packet.streamId.trim()) throw new Error("Missing native product or stream mapping.");
                 const payload = new Uint8Array(packet.payload);
                 const encoded = encodeNativeSensorPacket({ ...packet, payload }, {
                     sensorId: this.config.id,
@@ -716,10 +762,22 @@ export class SensorPublisher {
                     deliveryTimeNs: frame.deliveryTimeNs,
                     actualDeliveryStep: clock.step,
                 });
+                packets.push(Object.freeze({
+                    productId: packet.productId,
+                    streamId: packet.streamId,
+                    packetIndex: packet.packetIndex,
+                    offsetNs: packet.offsetNs,
+                    payload,
+                    envelope: new Uint8Array(encoded.bytes),
+                    payloadDigest: encoded.description.payloadDigest ?? packetPayloadDigest(payload),
+                }));
                 const data = this._data();
                 const telemetry = data?.bindings?.()?.signalStore;
                 const path = `devices.${this.device.telemetryId}.packets.${packet.productId}.${packet.streamId}`;
-                telemetry?.publishSignal?.(path, encoded.bytes, {
+                if (typeof telemetry?.publishSignal !== "function") {
+                    throw new Error("Missing local native-packet sink.");
+                }
+                const signalPublished = telemetry?.publishSignal?.(path, encoded.bytes, {
                     timeUs: Math.round(frame.deliveryTimeNs / 1000),
                     cycle: clock.step,
                     source: "sensors",
@@ -736,16 +794,9 @@ export class SensorPublisher {
                         streamId: packet.streamId,
                     },
                 });
-                packets.push(Object.freeze({
-                    productId: packet.productId,
-                    streamId: packet.streamId,
-                    packetIndex: packet.packetIndex,
-                    offsetNs: packet.offsetNs,
-                    payload,
-                    envelope: new Uint8Array(encoded.bytes),
-                    payloadDigest: encoded.description.payloadDigest ?? packetPayloadDigest(payload),
-                }));
+                if (signalPublished === false) throw new Error("Local native-packet publication rejected.");
             } catch (error) {
+                published = false;
                 this._event("publish-failed", "error", {
                     sampleIndex: frame.sampleIndex,
                     productId: packet.productId,
@@ -755,17 +806,15 @@ export class SensorPublisher {
                 if (this.pluginStrict) throw this._strictPublishError(error.message, frame, "native-packet", error);
             }
         }
-        if (packets.length > 0) {
-            this.nativePacketSink?.enqueueBatch?.({
-                sensorId: this.config.id,
-                sampleIndex: frame.sampleIndex,
-                captureTimeNs: frame.captureTimeNs,
-                scheduledDeliveryTimeNs: frame.scheduledDeliveryTimeNs,
-                deliveryTimeNs: frame.deliveryTimeNs,
-                actualDeliveryStep: clock.step,
-                packets: Object.freeze(packets),
-            });
-        }
+        return { published, batch: packets.length ? {
+            sensorId: this.config.id,
+            sampleIndex: frame.sampleIndex,
+            captureTimeNs: frame.captureTimeNs,
+            scheduledDeliveryTimeNs: frame.scheduledDeliveryTimeNs,
+            deliveryTimeNs: frame.deliveryTimeNs,
+            actualDeliveryStep: clock.step,
+            packets: Object.freeze(packets),
+        } : null };
     }
 
     _strictPublishError(message, frame, hook, cause = null) {
@@ -855,7 +904,9 @@ export class SensorPublisher {
             telemetry.publishSignal?.(
                 `devices.${this.device.telemetryId}.${suffix}`,
                 value,
-                { ...options, type: "uint64" },
+                { ...options, type: "uint64",
+                    replayRole: ["processedFrames", "publishedFrames"].includes(suffix) ? "derived" : options.replayRole,
+                    descriptorMetadata: suffix === "deliveredFrames" ? { description: "Legacy handled-frame count; not successful publication." } : undefined },
             );
         }
         this._lastPublishedHealth = { ...snapshot };

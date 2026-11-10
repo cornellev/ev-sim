@@ -33,6 +33,7 @@ export function createBrowserVehicle(db, {
     plantPluginId = "",
     plantRuntimeHash = "",
     plantModel = "",
+    physicsConfig = null,
     plants = undefined,
 } = {}) {
     const resolvedType = type || "big-car";
@@ -58,6 +59,7 @@ export function createBrowserVehicle(db, {
         plantPluginId,
         plantRuntimeHash,
         plantModel,
+        physicsConfig,
         plants,
     });
 }

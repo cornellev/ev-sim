@@ -85,7 +85,7 @@ and GitHub source stay outside it. The semantic projection of a plugin lock
 drops `packageHash` and keeps `pluginId`, `version`, `runtimeHash`,
 `sensorTypes`, and `plants`.
 
-RZ-01 adds numeric `contactHost: 2` beside `manifest`, `assetHashes`, and `hash`
+The current contact contract adds numeric `contactHost: 3` beside `manifest`, `assetHashes`, and `hash`
 in resolved vehicle records whose exact selected plugin plant declares
 `model: "contact-bicycle-v1"`. Root and nested scenario records carry it.
 The semantic lock projection binds it when recomputing vehicle dependency
@@ -94,7 +94,11 @@ Saved manifests, locks, packages, and plugin force ABI 1 do not change.
 Built-in contact authoring v1 normalizes to `contact-bicycle-v2`, including
 when resolving an old saved vehicle without rewriting its file. Execution
 rejects resolved built-in v1 contact records and contact plugins without
-exact numeric marker 2, with an `UNSUPPORTED_CAPABILITY` re-resolution error.
+exact numeric marker 3, with an `UNSUPPORTED_CAPABILITY` re-resolution error.
+Marker 2 identifies the historical host that substituted full-size mass and
+inertia for plugin contact vehicles. It remains valid for integrity inspection
+and import, but cannot execute under the corrected host. Re-resolution applies
+explicit vehicle overrides over declared plant parameters and existing defaults.
 Inspection and authoring import still verify original hashes before any
 migration; hash projection never backfills a missing marker. Run-bundle v1,
 identity profiles, backend hashes, and `worldHash` are unchanged. RZ-01 and

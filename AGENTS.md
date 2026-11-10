@@ -156,7 +156,9 @@ the kinematic `bicycle` and `dynamic-bicycle` plants. Those plants and their
 tapes stay pinned. The separately reviewed steering-sign correction uses
 `characterization.v2.json` for current-runtime acceptance; it does not rewrite
 the historical v1 tape or change either plant. The separate `RZ-*` program permits a Rapier chassis only
-for `contact-bicycle-v2` and contact plugins with resolved `contactHost: 2`.
+for `contact-bicycle-v2` and contact plugins with resolved `contactHost: 3`.
+Historical host-2 bundles remain inspectable/importable but require re-resolution
+before execution under the shared-physics-config host.
 RZ-01 establishes identity and admission. RZ-02 builds the floor, obstacle hulls, and road trimeshes. RZ-03 puts the contact vehicle on a dynamic Rapier chassis. RZ-04 deletes the JavaScript contact integrator. The contact tape is `characterization.contact-bicycle.v2.json`.
 A plugin `dynamics.plant` remains an override of the built-in plant.
 

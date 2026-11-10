@@ -12,6 +12,7 @@ export function buildPlantCatalog({ documents = [] } = {}) {
                 packageHash: metadata.packageHash,
                 runtimeHash: metadata.runtimeHash,
                 parameters: plant.parameters ?? [],
+                ...(plant.model ? { model: plant.model } : {}),
             });
         }
     }

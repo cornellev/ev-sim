@@ -122,8 +122,8 @@ test("RZ-01 versions contact identities and both semantic dependency maps withou
                 const projection = simulationSemanticProjection(next.resolved).resolved;
                 const envelope = nested ? projection.scenario : projection;
                 const projected = envelope.vehicles[0];
-                assert.equal(projected.contactHost, 2);
-                assert.equal(projected.hash, simulationSha256({ manifest: projected.manifest, assetHashes: {}, contactHost: 2 }));
+                assert.equal(projected.contactHost, CONTACT_HOST_VERSION);
+                assert.equal(projected.hash, simulationSha256({ manifest: projected.manifest, assetHashes: {}, contactHost: CONTACT_HOST_VERSION }));
                 assert.equal(envelope.dependencyHashes.vehicles[projected.vehicleId], projected.hash);
             }
         }
@@ -133,7 +133,7 @@ test("RZ-01 versions contact identities and both semantic dependency maps withou
 test("RZ-01 rejects unsupported or misplaced host markers in root and nested records", async () => {
     for (const nested of [false, true]) {
         const old = await contactHostBundle({ plugin: true, model: PLANT_CONTACT_BICYCLE_MODEL, nested });
-        for (const value of [undefined, 1, "2", 3, null]) {
+        for (const value of [undefined, 1, 2, "3", 4, null]) {
             const changed = structuredClone(old);
             if (value !== undefined) recordFor(changed, nested).contactHost = value;
             const bundle = rehashRunBundle(changed);
@@ -193,7 +193,7 @@ test("RZ-01 authoring import and re-resolution upgrade unsaved historical vehicl
         const resolved = await service.resolveRunManifest(imported.id);
         const record = resolved.vehicles[0];
         if (plugin) {
-            assert.equal(record.contactHost, 2);
+            assert.equal(record.contactHost, CONTACT_HOST_VERSION);
             assert.deepEqual(record.manifest.pluginLocks, recordFor(bundle).manifest.pluginLocks);
         } else {
             assert.equal(record.manifest.dynamics.model, CONTACT_BICYCLE_MODEL);
@@ -245,8 +245,8 @@ test("RZ-01 scenario resolution stamps nested contact plugins and keeps kinemati
     } });
     const exported = await service.exportRunManifest(imported.id);
     verifyRunBundle(exported);
-    assert.equal(exported.resolved.scenario.vehicles[0].contactHost, 2);
-    assert.equal(exported.resolved.vehicles.find((record) => record.actorId === "other").contactHost, 2);
+    assert.equal(exported.resolved.scenario.vehicles[0].contactHost, CONTACT_HOST_VERSION);
+    assert.equal(exported.resolved.vehicles.find((record) => record.actorId === "other").contactHost, CONTACT_HOST_VERSION);
     assert.equal(Object.hasOwn(exported.resolved.vehicles.find((record) => record.actorId === "ego"), "contactHost"), false);
 });
 

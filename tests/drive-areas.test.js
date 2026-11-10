@@ -28,6 +28,7 @@ import {
     measureDriveArea,
     polygonCentroidXZ,
     rectangleDriveAreaFootprint,
+    resizeDriveAreaFootprint,
     triangulateFootprint,
 } from "../app/simulation/world/DriveAreas.js";
 import {
@@ -202,6 +203,72 @@ test("drive area measurement uses the polygon centroid and axis-aligned size", (
     assert.equal(measureDriveArea(null).ok, false);
 });
 
+test("drive area size edits keep the bounds center and undo", () => {
+    const rectangle = rectangleDriveAreaFootprint({ x: 0, z: 0 }, { x: 12, z: 8 });
+    assert.deepEqual(resizeDriveAreaFootprint(rectangle, { width: 12, depth: 8 }), rectangle);
+    const grown = resizeDriveAreaFootprint(rectangle, { width: 20, depth: 6 });
+    const measuredGrown = measureDriveArea({ id: "lot", y: 1, footprint: grown });
+    assert.equal(measuredGrown.width, 20);
+    assert.equal(measuredGrown.depth, 6);
+    assert.equal(measuredGrown.position.x, 6);
+    assert.equal(measuredGrown.position.z, 4);
+    assert.throws(() => resizeDriveAreaFootprint(rectangle, { width: 1, depth: 6 }), /2/);
+    assert.throws(() => resizeDriveAreaFootprint(rectangle, { width: 0, depth: 6 }), /positive/);
+    const concave = resizeDriveAreaFootprint(C_FOOTPRINT, { width: 12, depth: 4 });
+    const measuredConcave = measureDriveArea({ id: "c", y: 0, footprint: concave });
+    assert.equal(measuredConcave.ok, true);
+    assert.equal(measuredConcave.width, 12);
+    assert.equal(measuredConcave.depth, 4);
+    const xs = concave.map((point) => point.x);
+    const zs = concave.map((point) => point.z);
+    assert.equal((Math.min(...xs) + Math.max(...xs)) / 2, 3);
+    assert.equal((Math.min(...zs) + Math.max(...zs)) / 2, 4);
+
+    const { document, service } = serviceFor();
+    assert.equal(service.run("addDriveArea", {
+        driveAreaId: "lot",
+        y: 1,
+        cornerA: { x: 0, z: 0 },
+        cornerB: { x: 12, z: 8 },
+    }).ok, true);
+    const before = JSON.stringify(document.getDriveArea("lot").footprint);
+    assert.equal(service.run("setObjectOptions", { objectId: "lot", patch: { y: 2 } }).ok, true);
+    assert.equal(JSON.stringify(document.getDriveArea("lot").footprint), before);
+    assert.equal(document.getDriveArea("lot").y, 2);
+    const resized = service.run("setObjectOptions", { objectId: "lot", patch: { width: 20, depth: 6 } });
+    assert.equal(resized.ok, true, failureText(resized));
+    const area = document.getDriveArea("lot");
+    const measured = measureDriveArea(area);
+    assert.equal(measured.width, 20);
+    assert.equal(measured.depth, 6);
+    assert.equal(measured.position.x, 6);
+    assert.equal(measured.position.z, 4);
+    assert.equal(area.y, 2);
+    assert.equal(service.bus.undo().ok, true);
+    assert.equal(JSON.stringify(document.getDriveArea("lot").footprint), before);
+    assert.equal(document.getDriveArea("lot").y, 2);
+    const tiny = service.run("setObjectOptions", { objectId: "lot", patch: { width: 1, depth: 6 } });
+    assert.equal(tiny.ok, false);
+    assert.match(failureText(tiny), /2/);
+    assert.equal(JSON.stringify(document.getDriveArea("lot").footprint), before);
+
+    assert.equal(service.run("addDriveArea", { driveAreaId: "c", footprint: C_FOOTPRINT }).ok, true);
+    assert.equal(service.run("transformObjects", {
+        objectIds: ["c"],
+        delta: deltaFromScale(0.1, { x: 3, y: 0, z: 4 }),
+    }).ok, true);
+    const shrunk = measureDriveArea(document.getDriveArea("c"));
+    assert.equal(shrunk.ok, true);
+    assert.ok(shrunk.width < 2);
+    assert.equal(service.run("transformObjects", {
+        objectIds: ["lot"],
+        delta: deltaFromScale({ x: 1, y: 4, z: 1 }),
+    }).ok, true);
+    assert.equal(document.getDriveArea("lot").y, 2);
+    assert.equal(measureDriveArea(document.getDriveArea("lot")).width, 12);
+    assert.equal(measureDriveArea(document.getDriveArea("lot")).depth, 8);
+});
+
 test("commands draw, move, elevate, duplicate, delete, and undo an area", () => {
     const { document, service } = serviceFor();
     const empty = document.snapshot();
@@ -232,9 +299,16 @@ test("commands draw, move, elevate, duplicate, delete, and undo an area", () => 
     }).ok, true);
     assert.equal(document.getDriveArea("lot").y, 1);
     const rotated = service.run("transformObjects", { objectIds: ["lot"], delta: deltaFromYaw(0.4) });
-    const scaled = service.run("transformObjects", { objectIds: ["lot"], delta: deltaFromScale(2) });
     assert.equal(rotated.issues[0].code, "transform.rotation.unsupported");
-    assert.equal(scaled.issues[0].code, "transform.scale.unsupported");
+    const scaled = service.run("transformObjects", { objectIds: ["lot"], delta: deltaFromScale(2) });
+    assert.equal(scaled.ok, true, failureText(scaled));
+    assert.equal(measureDriveArea(document.getDriveArea("lot")).width, 24);
+    assert.equal(measureDriveArea(document.getDriveArea("lot")).depth, 16);
+    assert.equal(document.getDriveArea("lot").y, 1);
+    const tooSmall = service.run("transformObjects", { objectIds: ["lot"], delta: deltaFromScale(0.05) });
+    assert.equal(tooSmall.ok, false);
+    assert.match(failureText(tooSmall), /2/);
+    assert.equal(measureDriveArea(document.getDriveArea("lot")).width, 24);
     assert.equal(service.run("setObjectOptions", { objectId: "lot", patch: { y: 2 } }).ok, true);
     assert.equal(document.getDriveArea("lot").y, 2);
 
@@ -354,6 +428,26 @@ test("aware writers keep areas and unaware replacements are rejected", async () 
         });
         assert.equal(added.isError, false, JSON.stringify(added));
         assert.equal((await service.getEnvironment("plain")).document.driveAreas[0].id, "pad");
+        const sized = await call("environment_set_drive_area_size", {
+            environmentId: "plain",
+            driveAreaId: "pad",
+            width: 20,
+            depth: 6,
+        });
+        assert.equal(sized.isError, false, JSON.stringify(sized));
+        const measuredPad = measureDriveArea((await service.getEnvironment("plain")).document.driveAreas[0]);
+        assert.equal(measuredPad.width, 20);
+        assert.equal(measuredPad.depth, 6);
+        assert.equal(measuredPad.position.x, 4);
+        assert.equal(measuredPad.position.z, 4);
+        const tinySize = await call("environment_set_drive_area_size", {
+            environmentId: "plain",
+            driveAreaId: "pad",
+            width: 1,
+            depth: 6,
+        });
+        assert.equal(tinySize.isError, true);
+        assert.equal(measureDriveArea((await service.getEnvironment("plain")).document.driveAreas[0]).width, 20);
         const gone = await call("environment_remove_drive_area", { environmentId: "plain", driveAreaId: "pad" });
         assert.equal(gone.isError, false, JSON.stringify(gone));
         assert.equal((await service.getEnvironment("plain")).document.driveAreas, undefined);

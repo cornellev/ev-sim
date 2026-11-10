@@ -177,13 +177,15 @@ class BrowserSimulationPerformanceMonitor {
             due: Number(health.captureAttempts) || 0,
             captured: Number(health.capturedFrames) || 0,
             delivered: Number(health.deliveredFrames) || 0,
+            processed: Number.isFinite(health.processedFrames) ? health.processedFrames : null,
+            published: Number.isFinite(health.publishedFrames) ? health.publishedFrames : null,
             intentionalDrops,
             completed,
         };
         const previous = this.sensorTotals.get(sensorId) ?? { due: 0, captured: 0, delivered: 0, intentionalDrops: 0, completed: 0 };
         const delta = {};
-        for (const key of ["due", "captured", "delivered", "intentionalDrops", "completed"]) {
-            delta[key] = next[key] >= previous[key] ? next[key] - previous[key] : next[key];
+        for (const key of ["due", "captured", "delivered", "processed", "published", "intentionalDrops", "completed"]) {
+            delta[key] = next[key] === null ? null : (next[key] >= (previous[key] ?? 0) ? next[key] - (previous[key] ?? 0) : next[key]);
         }
         this.sensorTotals.set(sensorId, next);
         this.sensorSamples.push({ time, ...delta });
@@ -228,9 +230,11 @@ class BrowserSimulationPerformanceMonitor {
             due: result.due + entry.due,
             captured: result.captured + entry.captured,
             delivered: result.delivered + entry.delivered,
+            processed: result.processed === null || entry.processed === null ? null : result.processed + entry.processed,
+            published: result.published === null || entry.published === null ? null : result.published + entry.published,
             intentionalDrops: result.intentionalDrops + entry.intentionalDrops,
             completed: result.completed + entry.completed,
-        }), { due: 0, captured: 0, delivered: 0, intentionalDrops: 0, completed: 0 });
+        }), { due: 0, captured: 0, delivered: 0, processed: 0, published: 0, intentionalDrops: 0, completed: 0 });
         const simulation = this._measured(this.simulation);
         const advancedNs = simulation.reduce((sum, entry) => sum + entry.advancedNs, 0);
         const advancedSteps = simulation.reduce((sum, entry) => sum + entry.advancedSteps, 0);
@@ -262,7 +266,7 @@ class BrowserSimulationPerformanceMonitor {
             // A capture can straddle the warmup boundary; use the final
             // cumulative counters after drain to judge schedule/delivery parity.
             scheduledSensors: [...this.sensorTotals.values()].every((sensor) => (
-                sensor.due === sensor.completed && sensor.captured === sensor.delivered
+                sensor.due === sensor.completed && sensor.captured === (sensor.processed ?? sensor.delivered)
             )),
             memory: heapGrowthBytes === null || heapGrowthBytes <= this.limits.maximumHeapGrowthBytes,
         };
@@ -301,8 +305,11 @@ class BrowserSimulationPerformanceMonitor {
             },
             sensors: {
                 ...counts,
+                legacyDelivered: counts.delivered,
                 skipped: Math.max(0, counts.due - counts.completed),
                 undelivered: Math.max(0, counts.captured - counts.delivered),
+                unprocessed: counts.processed === null ? null : Math.max(0, counts.captured - counts.processed),
+                unpublished: counts.published === null ? null : Math.max(0, counts.captured - counts.published),
             },
             timings,
             cpuLidar: { ...this.cpuLidarRuntime },

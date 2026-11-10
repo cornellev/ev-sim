@@ -89,6 +89,16 @@ authored geometry. Photoreal and analytic cameras keep the authored pose.
 
 ## Progress and decision log
 
+### 2026-11-10 — Contact host uses the resolved vehicle physics configuration
+
+The contact chassis now shares the immutable configuration used for its WASM
+parameters and tire forces. Plugin mass/inertia are no longer substituted with
+full-size defaults. New contact-plugin execution records use `contactHost: 3`;
+historical host-2 records remain inspectable/importable but require re-resolution.
+Rigid-body components, collider geometry, gravity, world hashes, and pinned
+motion tapes do not change. The working packages and verification are recorded
+in [`vehicle-physics-configuration-plan.md`](vehicle-physics-configuration-plan.md).
+
 ### 2026-11-09 — LiDAR follows a rigid body that leaves its spawn pose
 
 The kernel already published rigid-body poses at the sensor step. The

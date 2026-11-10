@@ -68,7 +68,7 @@ export const DEFAULT_DYNAMIC_BICYCLE = Object.freeze({
 
 const VEHICLE_MOTION_MODELS = new Set([KINEMATIC_BICYCLE_MODEL, DYNAMIC_BICYCLE_MODEL, CONTACT_BICYCLE_MODEL]);
 const PHYSICAL_BICYCLE_MODELS = new Set([DYNAMIC_BICYCLE_MODEL, CONTACT_BICYCLE_MODEL]);
-const DYNAMIC_BICYCLE_FIELDS = Object.freeze([
+export const DYNAMIC_BICYCLE_FIELDS = Object.freeze([
     ["mass", false],
     ["yawInertia", false],
     ["corneringStiffnessFront", false],
@@ -80,7 +80,8 @@ const DYNAMICS_KEYS = new Set(["plant", "model", ...DYNAMIC_BICYCLE_FIELDS.map((
 
 function dynamicsNumber(source, key, fallback, nonNegative) {
     if (source[key] === undefined) return fallback;
-    const number = Number(source[key]);
+    const authored = Number(source[key]);
+    const number = Number.isFinite(authored) ? canonicalFiniteNumber(authored) : authored;
     const valid = Number.isFinite(number) && (nonNegative ? number >= 0 : number > 0);
     if (!valid) {
         const bound = nonNegative ? "greater than or equal to 0" : "greater than 0";
@@ -101,13 +102,18 @@ export function normalizeVehicleDynamics(value) {
         throw new Error(`vehicle manifest.dynamics.model "${model}" is not a known motion model.`);
     }
     const dynamic = PHYSICAL_BICYCLE_MODELS.has(model);
-    if (DYNAMIC_BICYCLE_FIELDS.some(([key]) => source[key] !== undefined) && !dynamic) {
+    if (DYNAMIC_BICYCLE_FIELDS.some(([key]) => source[key] !== undefined) && !dynamic && !plant) {
         throw new Error(`vehicle manifest.dynamics physical fields require model "${DYNAMIC_BICYCLE_MODEL}" or "${CONTACT_BICYCLE_MODEL}".`);
     }
     if (plant && dynamic) {
         throw new Error(`vehicle manifest.dynamics.plant cannot be combined with model "${model}".`);
     }
-    if (plant) return { plant };
+    if (plant) return {
+        plant,
+        ...Object.fromEntries(DYNAMIC_BICYCLE_FIELDS
+            .filter(([key]) => source[key] !== undefined)
+            .map(([key, nonNegative]) => [key, dynamicsNumber(source, key, undefined, nonNegative)])),
+    };
     if (!dynamic) return undefined;
     return {
         model,

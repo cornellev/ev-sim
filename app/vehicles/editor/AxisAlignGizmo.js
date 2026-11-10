@@ -1,7 +1,9 @@
 'use client';
 
+import { IconPerspective } from "@tabler/icons-react";
 import { forwardRef, useImperativeHandle, useLayoutEffect, useRef } from "react";
 
+import { IconButton } from "../../ui";
 import {
     AXIS_GIZMO_SIZE,
     ORBIT_ALIGN_AXES,
@@ -82,7 +84,7 @@ function paintGizmo(quaternion, refs) {
  * Top-right orientation gizmo. The studio pushes a camera quaternion each frame;
  * this component writes SVG attributes directly and does not rerender on that tick.
  */
-export const AxisAlignGizmo = forwardRef(function AxisAlignGizmo({ studioRef }, ref) {
+export const AxisAlignGizmo = forwardRef(function AxisAlignGizmo({ studioRef, orthogonal = false, onOrthogonalChange }, ref) {
     const svgRef = useRef(null);
     const lineRefs = useRef({});
     const groupRefs = useRef({});
@@ -129,7 +131,16 @@ export const AxisAlignGizmo = forwardRef(function AxisAlignGizmo({ studioRef }, 
     };
 
     return (
-        <div className="pointer-events-auto shrink-0 rounded-[var(--radius)] border border-[var(--slate-border)] bg-[var(--slate-floating)] p-1">
+        <div className="pointer-events-auto flex shrink-0 items-center gap-1 rounded-[var(--radius)] border border-[var(--slate-border)] bg-[var(--slate-floating)] p-1">
+            <IconButton
+                label={orthogonal ? "Perspective view" : "Orthogonal view"}
+                variant={orthogonal ? "default" : "ghost"}
+                active={orthogonal || undefined}
+                aria-pressed={orthogonal}
+                onClick={() => onOrthogonalChange?.(!orthogonal)}
+            >
+                <IconPerspective size={16} stroke={1.75} />
+            </IconButton>
             <svg
                 ref={svgRef}
                 width={AXIS_GIZMO_SIZE}

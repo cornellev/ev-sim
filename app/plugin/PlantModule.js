@@ -108,8 +108,10 @@ export function readPlantParameterSource(manifest, source) {
     return number;
 }
 
-export function resolvePlantParameters(parameters = [], manifest = {}) {
+export function resolvePlantParameters(parameters = [], manifest = {}, physicsConfig = null) {
     return Float64Array.from(parameters.map((parameter) => (
-        parameter.source === "default" ? parameter.default : readPlantParameterSource(manifest, parameter.source)
+        physicsConfig && Object.hasOwn(physicsConfig, parameter.key) && !["wheelbase", "lf", "lr"].includes(parameter.key)
+            ? physicsConfig[parameter.key]
+            : (parameter.source === "default" ? parameter.default : readPlantParameterSource(manifest, parameter.source))
     )));
 }

@@ -6,6 +6,7 @@ import { EnvironmentDocument } from "../app/3d/editor/document/EnvironmentDocume
 import { createPhysicsBackendSelection } from "../app/physics/PhysicsBackend.js";
 import { CHASSIS_GROUP, DYNAMIC_GROUP, PhysicsEngine } from "../app/physics/PhysicsEngine.js";
 import { createWorldDescription, hashWorldDescription } from "../app/simulation/world/WorldDescription.js";
+import { resolveVehiclePhysicsConfig } from "../app/simulation/vehicles/VehiclePhysicsConfig.js";
 
 function groups(membership, filter = 0xffff) {
     return ((membership & 0xffff) << 16) | (filter & 0xffff);
@@ -14,6 +15,7 @@ function groups(membership, filter = 0xffff) {
 function parkedContactVehicle() {
     return {
         motionModel: "contact-bicycle",
+        physicsConfig: resolveVehiclePhysicsConfig({ dynamics: { model: "contact-bicycle-v2" } }),
         telemetryId: "parked",
         position: { x: 1000, y: 50, z: 1000 },
         rotation: { x: 0, y: 0, z: 0 },
