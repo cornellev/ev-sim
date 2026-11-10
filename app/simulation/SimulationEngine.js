@@ -14,7 +14,7 @@ import { BrowserPluginModuleSource } from "../plugin/browser/BrowserPluginModule
 import { PluginRunSession, pluginRuntimeCapabilitiesForRun } from "../plugin/PluginRunSession.js";
 import { browserSimulationPerformance } from "./performance/BrowserSimulationPerformance.js";
 import { createPhysicsBackendSelection } from "../physics/PhysicsBackend.js";
-import { applyRigidBodyViewportPoses } from "../3d/editor/projection/applyRigidBodyPoses.js";
+import { applyRigidBodyViewportPoses, restoreAuthoredRigidBodyPoses } from "../3d/editor/projection/applyRigidBodyPoses.js";
 import { createKeyboardDriveState, stepKeyboardDrive } from "./keyboardDrive.js";
 import { BrowserPacketRelaySink } from "./sensors/BrowserPacketRelaySink.js";
 
@@ -623,7 +623,15 @@ export class SimulationEngine {
         const physics = this.data?.physics?.();
         if (!editorRigidBodiesReady(physics)) return;
         physics.resetRun();
-        this._applyRigidBodyPoses();
+        restoreAuthoredRigidBodyPoses(this.data);
+    }
+
+    // Stop, reset, and the environment editor show the authored pose. Pause
+    // inside Simulation still resumes from the live pose.
+    parkRigidBodiesAtAuthoredPose() {
+        const physics = this.data?.physics?.();
+        if (physics?.world && editorRigidBodiesReady(physics)) physics.resetRun();
+        restoreAuthoredRigidBodyPoses(this.data);
     }
 
     // A resolved run keeps the world it was prepared with. Editor play uses the
@@ -684,7 +692,7 @@ export class SimulationEngine {
         this.autonomyOverlay?.disposeEstimateClone?.();
         if (reset) this.autonomyOverlay?.clear?.();
         this._syncEpisodeOverlayMeshes();
-        this._applyRigidBodyPoses();
+        this.parkRigidBodiesAtAuthoredPose();
         this.render();
         this._emit();
     }
@@ -701,7 +709,7 @@ export class SimulationEngine {
         this._keyboardDrive = createKeyboardDriveState();
         this.kernel.reset(episodeSpec);
         this.autonomyOverlay?.clear?.();
-        this._applyRigidBodyPoses();
+        this.parkRigidBodiesAtAuthoredPose();
         this._emit();
         return this.getSnapshot();
     }

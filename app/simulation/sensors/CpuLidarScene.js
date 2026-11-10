@@ -11,7 +11,7 @@ import { MeshBVH } from "three-mesh-bvh";
 
 import { rep103PoseToThree } from "../../autonomy/CoordinateFrames.js";
 import { compareUtf8 } from "../world/WorldDescription.js";
-import { transformRigidBodyPoint } from "../world/RigidBodyRecords.js";
+import { rigidBodyPoseMoved, transformRigidBodyPoint } from "../world/RigidBodyRecords.js";
 import { assertLidarGeometryResource } from "../lidar/LidarGeometry.js";
 import { BOX_FACES } from "./BoxFaces.js";
 
@@ -187,21 +187,6 @@ function nearestIndexHit(index, ray, near, far) {
     return hit;
 }
 
-function poseMoved(pose) {
-    const position = pose?.position;
-    const spawn = pose?.spawnPosition;
-    const rotation = pose?.rotation;
-    const spawnRotation = pose?.spawnRotation;
-    if (!position || !spawn || !rotation || !spawnRotation) return false;
-    return Math.abs(position.x - spawn.x) > 1e-6
-        || Math.abs(position.y - spawn.y) > 1e-6
-        || Math.abs(position.z - spawn.z) > 1e-6
-        || Math.abs(rotation.x - spawnRotation.x) > 1e-6
-        || Math.abs(rotation.y - spawnRotation.y) > 1e-6
-        || Math.abs(rotation.z - spawnRotation.z) > 1e-6
-        || Math.abs(rotation.w - spawnRotation.w) > 1e-6;
-}
-
 function movePrimitive(primitive, pose) {
     if (primitive.shape === "box" && primitive.center) {
         return { ...primitive, center: transformRigidBodyPoint(primitive.center, pose) };
@@ -299,7 +284,7 @@ export class CpuLidarScene {
 
     _syncRigidBodyQuery() {
         const poses = this._rigidBodyPoses;
-        if (!poses.some(poseMoved)) {
+        if (!poses.some(rigidBodyPoseMoved)) {
             this._activeStaticIndex = this.fullStaticIndex;
             this._queryBodyIndex = null;
             return;
@@ -310,7 +295,7 @@ export class CpuLidarScene {
             const baked = [];
             for (const pose of poses) {
                 for (const primitive of this._bodyGroups.get(String(pose.id)) ?? []) {
-                    baked.push(poseMoved(pose) ? movePrimitive(primitive, pose) : primitive);
+                    baked.push(rigidBodyPoseMoved(pose) ? movePrimitive(primitive, pose) : primitive);
                 }
             }
             this._bodyIndex = createIndex(baked);

@@ -3,7 +3,7 @@ import { jsonHandler } from "./jsonHandler.js";
 
 export function createBrowserSimRouter(service) {
     const router = express.Router();
-    const handle = (fn) => jsonHandler(fn, { logPrefix: "browser-sim" });
+    const handle = (fn) => jsonHandler(fn, { logPrefix: "browser-sim", quietCodes: ["BROWSER_NOT_REGISTERED"] });
     const token = (req) => req.get("X-CEV-Browser-Token");
     router.use((_req, res, next) => {
         res.setHeader("Cache-Control", "no-store");

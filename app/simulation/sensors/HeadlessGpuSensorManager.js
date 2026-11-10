@@ -148,6 +148,7 @@ class HeadlessGpuSensorDevice {
                 position: vehicle.position,
                 rotation: vehicle.rotation,
             })),
+            ...(isScanningLidarType(this.type) ? { rigidBodyPoses: this.manager.rigidBodyPoses ?? [] } : {}),
         };
     }
 
@@ -551,6 +552,7 @@ export class HeadlessGpuSensorManager {
         this.pbrSceneHandle = null;
         this.cameraCalibrations = new Map();
         this.transformRuntime = null;
+        this.rigidBodyPoses = [];
         this.seed = "0";
         this.clock = { step: 0, timeNs: 0 };
         this.runtimeData = {
@@ -563,6 +565,10 @@ export class HeadlessGpuSensorManager {
     vehicles() {
         const source = typeof this.vehicleSource === "function" ? this.vehicleSource() : this.vehicleSource;
         return source?.vehicles ?? [];
+    }
+
+    applyRigidBodyPoses(poses) {
+        this.rigidBodyPoses = Array.isArray(poses) ? poses : [];
     }
 
     async configureFromManifest(sensorRig = {}, options = {}) {
@@ -788,5 +794,6 @@ export class HeadlessGpuSensorManager {
         this.pbrSceneHandle = null;
         this.cameraCalibrations.clear();
         this.transformRuntime = null;
+        this.rigidBodyPoses = [];
     }
 }

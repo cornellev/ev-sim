@@ -5,6 +5,7 @@
 
 import { eulerToQuaternion, quaternionMultiply } from "../../autonomy/CoordinateFrames.js";
 import { cross3a, sub3a } from "../../math/linalg.js";
+import { rigidBodyPoseMoved, transformRigidBodyPoint } from "../world/RigidBodyRecords.js";
 import { BOX_FACES } from "./BoxFaces.js";
 import { isScanningLidarType } from "./SensorTypeRegistry.js";
 
@@ -68,9 +69,32 @@ function appendTriangles(triangles, primitive, transform = null) {
     }
 }
 
+function posedStaticPrimitive(primitive, pose) {
+    if (!pose || !rigidBodyPoseMoved(pose)) return primitive;
+    if (primitive.shape === "box" && primitive.center) {
+        return { ...primitive, center: transformRigidBodyPoint(primitive.center, pose) };
+    }
+    if (!Array.isArray(primitive.vertices)) return primitive;
+    return {
+        ...primitive,
+        vertices: primitive.vertices.map((vertex) => transformRigidBodyPoint(vertex, pose)),
+    };
+}
+
+function rigidBodyPosesForJob(job) {
+    if (!isScanningLidarType(job?.type) || !Array.isArray(job.rigidBodyPoses) || job.rigidBodyPoses.length === 0) {
+        return null;
+    }
+    return new Map(job.rigidBodyPoses.map((pose) => [String(pose.id), pose]));
+}
+
 function worldTriangles(scene, job) {
+    const poses = rigidBodyPosesForJob(job);
     const triangles = [];
-    for (const primitive of scene?.staticPrimitives || []) appendTriangles(triangles, primitive);
+    for (const primitive of scene?.staticPrimitives || []) {
+        const pose = poses?.get(String(primitive.sourceId));
+        appendTriangles(triangles, posedStaticPrimitive(primitive, pose));
+    }
     const vehicles = new Map((job.vehicles || []).map((vehicle) => [vehicle.id, vehicle]));
     for (const actor of scene?.actors || []) {
         if (job.sensor?.poseReference !== "map" && actor.actorId === job.sensor?.parentId) continue;

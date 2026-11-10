@@ -73,7 +73,7 @@ export class BrowserSimBridge {
         return this.syncing;
     }
 
-    async _sync() {
+    async _sync(retried = false) {
         if (!this.registration) {
             const registration = await this._request("/bridge/register", { snapshot: this.snapshot(), activity: this.activity, sequence: ++this.reportSequence });
             if (!this.active) {
@@ -97,10 +97,12 @@ export class BrowserSimBridge {
             }
             if (heartbeat.command && !completed.has(heartbeat.command.commandId)) this._handle(heartbeat.command, registration);
         } catch (error) {
-            if (error.code === "BROWSER_NOT_REGISTERED" && this.registration === registration) {
+            if (!retried && error.code === "BROWSER_NOT_REGISTERED" && this.registration === registration) {
                 this.registration = null;
                 // The new server must not inherit executions or receipts from its predecessor.
                 this.operations.clear();
+                if (this.active) return this._sync(true);
+                return;
             }
             throw error;
         }

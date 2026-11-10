@@ -613,6 +613,8 @@ async function enterRuntimeMode(runtime, mode) {
     }
 
     simulation.pause();
+    await simulation.whenIdle();
+    simulation.parkRigidBodiesAtAuthoredPose();
     runtime.disposeSimulationControls?.releaseCameraFollow?.();
     clearLaneHighlights(data);
     simulation.setModule("vehicles", false);

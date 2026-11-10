@@ -223,6 +223,22 @@ function conjugate(rotation) {
     return { x: -rotation.x, y: -rotation.y, z: -rotation.z, w: rotation.w };
 }
 
+/** True when a published pose has left the spawn frame by more than a micron. */
+export function rigidBodyPoseMoved(pose) {
+    const position = pose?.position;
+    const spawn = pose?.spawnPosition;
+    const rotation = pose?.rotation;
+    const spawnRotation = pose?.spawnRotation;
+    if (!position || !spawn || !rotation || !spawnRotation) return false;
+    return Math.abs(position.x - spawn.x) > 1e-6
+        || Math.abs(position.y - spawn.y) > 1e-6
+        || Math.abs(position.z - spawn.z) > 1e-6
+        || Math.abs(rotation.x - spawnRotation.x) > 1e-6
+        || Math.abs(rotation.y - spawnRotation.y) > 1e-6
+        || Math.abs(rotation.z - spawnRotation.z) > 1e-6
+        || Math.abs(rotation.w - spawnRotation.w) > 1e-6;
+}
+
 /** Move an authored world point from the spawn frame into the live frame. */
 export function transformRigidBodyPoint(point, pose) {
     const origin = pose.spawnPosition ?? { x: 0, y: 0, z: 0 };

@@ -299,14 +299,22 @@ test("bridge recovers missed SSE and lost claim/completion replies without execu
     windowImpl.fire("focus", true, documentImpl);
     await bridge.sync();
     assert.equal(bridge.activity, 3);
+    await waitFor(() => !bridge.syncing);
     const oldBrowserId = bridge.registration.browserId;
     f.service.commands.clear();
     f.service.browsers.clear();
-    await bridge.sync();
-    await waitFor(() => bridge.registration === null);
-    await bridge.sync();
-    await waitFor(() => bridge.registration && !bridge.syncing);
+    const errors = [];
+    const originalError = console.error;
+    console.error = (...args) => { errors.push(args); };
+    try {
+        await bridge.sync();
+    } finally {
+        console.error = originalError;
+    }
+    assert.equal(errors.length, 0);
     assert.notEqual(bridge.registration.browserId, oldBrowserId);
+    assert.equal(bridge.lastSyncError, null);
+    assert.equal(bridge.syncing, null);
     assert.equal(controller.calls.length, 1, "server restart does not replay a previous launch");
     assert.equal(f.service.status().runId, controller.state.activeRunId);
 });

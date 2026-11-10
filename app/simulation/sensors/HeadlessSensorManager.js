@@ -120,6 +120,12 @@ export class HeadlessSensorManager {
         return this.devices;
     }
 
+    applyRigidBodyPoses(poses) {
+        this.lidar.applyRigidBodyPoses(poses);
+        this.plugin.applyRigidBodyPoses(poses);
+        this.gpu?.applyRigidBodyPoses?.(poses);
+    }
+
     update(dt, clock) {
         if (this.gpu?.devices.length) throw new Error("GPU sensors require updateAsync().");
         this.state.update(dt, clock);

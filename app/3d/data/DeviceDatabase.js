@@ -8,6 +8,7 @@ import { BrowserCpuLidarRuntime } from "../devices/BrowserCpuLidarRuntime.js";
 import { SensorPublisher as BrowserSensorPublisher } from "../devices/SensorPublisher.js";
 import { encodeTopicValue, registerMsgDefinition } from "../../client/TopicCodec.js";
 import { browserSimulationPerformance } from "../../simulation/performance/BrowserSimulationPerformance.js";
+import { syncRigidBodyLidarSolids } from "../editor/projection/rigidBodyLidarSolids.js";
 
 function summarizeMeasurementState(state) {
     if (state == null) return null;
@@ -245,6 +246,12 @@ export class DeviceDatabase extends Database {
 
     resetRun(runtimeOptions = {}) {
         this.resetSchedule(runtimeOptions);
+    }
+
+    applyRigidBodyPoses(poses) {
+        const next = poses ?? [];
+        this.pluginSensorScene?.setRigidBodyPoses?.(next);
+        syncRigidBodyLidarSolids(this.parent, next);
     }
 
     get requiresAsyncCapture() {

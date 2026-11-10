@@ -16,6 +16,7 @@ import {
 import { CHASSIS_GROUP, PhysicsEngine } from "../app/physics/PhysicsEngine.js";
 import { SimulationKernel } from "../app/simulation/kernel/SimulationKernel.js";
 import { SimulationEngine } from "../app/simulation/SimulationEngine.js";
+import { restoreAuthoredRigidBodyPoses } from "../app/3d/editor/projection/applyRigidBodyPoses.js";
 import {
     createBoxLidarTwin,
     createLidarGeometryResource,
@@ -741,39 +742,155 @@ test("editor reset restores rigid bodies when the pose list is empty", () => {
     assert.deepEqual(calls, ["reset", "poses"]);
 });
 
-test("editor play from stopped restores rigid bodies and pause does not", () => {
-    const calls = [];
+function fallenPrimitiveRig() {
+    const primitive = {
+        id: "box",
+        shape: "box",
+        position: { x: 4, y: 0.5, z: -2 },
+        rotationY: 0.3,
+        size: { x: 1, y: 1, z: 1 },
+    };
+    const document = {
+        objects: [{ id: "box", typeId: "primitive", components: { rigidBody: { mass: 1 } } }],
+        primitives: [primitive],
+    };
     const mesh = {
         position: { set(x, y, z) { this.xyz = [x, y, z]; } },
-        quaternion: { set() {} },
+        rotation: { set(x, y, z) { this.xyz = [x, y, z]; } },
+        quaternion: { set() { this.written = true; } },
         updateMatrixWorld() {},
     };
+    mesh.position.set(9, 8, 7);
+    mesh.quaternion.set(0, 1, 0, 0);
+    const calls = [];
     const physics = {
         world: {},
         preparedWorldDescription: { rigidBodies: [{ id: "box" }] },
         rigidBodyPoses: () => [{
             id: "box",
             host: "primitive",
-            position: { x: 1, y: 2, z: 3 },
-            rotation: { x: 0, y: 0, z: 0, w: 1 },
+            position: { x: 9, y: 8, z: 7 },
+            rotation: { x: 0, y: 1, z: 0, w: 0 },
         }],
         resetRun() { calls.push("reset"); },
     };
-    const engine = new SimulationEngine({
-        environment: () => ({ worldHash: "h", getWorldDescription: () => ({ rigidBodies: [{ id: "box" }] }) }),
+    const data = {
+        environment: () => ({
+            worldHash: "h",
+            getWorldDescription: () => ({ rigidBodies: [{ id: "box" }] }),
+            getDocument: () => document,
+        }),
         physics: () => physics,
         bindings: () => null,
         scene: { getObjectByName(name) { return name === "primitive:box" ? mesh : null; } },
+    };
+    return { primitive, mesh, calls, data };
+}
+
+test("restoreAuthoredRigidBodyPoses puts a moved mesh back on the document pose", () => {
+    const { primitive, mesh, data } = fallenPrimitiveRig();
+    restoreAuthoredRigidBodyPoses(data);
+    assert.deepEqual(mesh.position.xyz, [4, 0.5, -2]);
+    assert.deepEqual(mesh.rotation.xyz, [0, 0.3, 0]);
+    assert.deepEqual(primitive.position, { x: 4, y: 0.5, z: -2 });
+    assert.equal(primitive.rotationY, 0.3);
+});
+
+test("restoreAuthoredRigidBodyPoses puts a moved prop and asset back on the authored pose", () => {
+    const feature = { id: "barrel", type: "barrel", x: 3, z: 4, rotationY: 0.5, dir: 1 };
+    const propMesh = {
+        position: { set(x, y, z) { this.xyz = [x, y, z]; } },
+        rotation: { y: 9 },
+        updateMatrixWorld() {},
+    };
+    propMesh.position.set(8, 1, 8);
+    const fusion = { dir: 0, setPosition(x, y, z) { this.xyz = [x, y, z]; }, _mesh: propMesh };
+    const entity = { id: "fusion:barrel", sourceId: "barrel", layer: "props", object3D: propMesh, fusionObject: fusion };
+    const assetMesh = {
+        position: { set(x, y, z) { this.xyz = [x, y, z]; } },
+        rotation: { set(x, y, z) { this.yaw = y; } },
+        scale: { set(x, y, z) { this.xyz = [x, y, z]; } },
+        updateMatrixWorld() {},
+    };
+    assetMesh.position.set(1, 1, 1);
+    const asset = {
+        id: "crate",
+        typeId: "asset-instance",
+        components: {
+            rigidBody: { mass: 1 },
+            asset: {
+                assetId: "crate",
+                revision: 1,
+                position: { x: 2, y: 0, z: 3 },
+                rotationY: 1,
+                scale: { x: 2, y: 3, z: 4 },
+            },
+        },
+    };
+    restoreAuthoredRigidBodyPoses({
+        environment: () => ({
+            registry: {
+                listEntities: () => [entity],
+                getEntity: (id) => (id === entity.id ? entity : null),
+                updateEntityTransform() {},
+            },
+            getDocument: () => ({
+                objects: [
+                    { id: "barrel", typeId: "builtin-prop", components: { rigidBody: { mass: 1 } } },
+                    asset,
+                ],
+                features: [feature],
+            }),
+        }),
+        scene: { getObjectByName: (name) => (name === "asset:crate" ? assetMesh : null) },
     });
+    assert.deepEqual(propMesh.position.xyz, [3, 0, 4]);
+    assert.equal(propMesh.rotation.y, 0.5);
+    assert.deepEqual(fusion.xyz, [3, 0, 4]);
+    assert.equal(fusion.dir, 1);
+    assert.equal(feature.x, 3);
+    assert.deepEqual(assetMesh.position.xyz, [2, 0, 3]);
+    assert.equal(assetMesh.rotation.yaw, 1);
+    assert.deepEqual(assetMesh.scale.xyz, [2, 3, 4]);
+    assert.equal(asset.components.asset.scale.x, 2);
+});
+
+test("editor play from stopped restores rigid bodies and pause does not", () => {
+    const { mesh, calls, data } = fallenPrimitiveRig();
+    const engine = new SimulationEngine(data);
     engine.restoreStoppedEditorBodies();
     assert.deepEqual(calls, ["reset"]);
-    assert.deepEqual(mesh.position.xyz, [1, 2, 3]);
+    assert.deepEqual(mesh.position.xyz, [4, 0.5, -2]);
+    assert.deepEqual(mesh.rotation.xyz, [0, 0.3, 0]);
     calls.length = 0;
+    mesh.position.set(9, 8, 7);
     engine.status = "paused";
     engine.restoreStoppedEditorBodies();
     assert.deepEqual(calls, []);
+    assert.deepEqual(mesh.position.xyz, [9, 8, 7]);
     engine.status = "stopped";
     engine.resolvedRun = { manifest: { id: "run" } };
     engine.restoreStoppedEditorBodies();
     assert.deepEqual(calls, []);
+});
+
+test("stop without a kernel reset parks rigid bodies on the authored pose", () => {
+    const { primitive, mesh, calls, data } = fallenPrimitiveRig();
+    const engine = new SimulationEngine(data);
+    engine.stop({ reset: false });
+    assert.deepEqual(calls, ["reset"]);
+    assert.deepEqual(mesh.position.xyz, [4, 0.5, -2]);
+    assert.deepEqual(mesh.rotation.xyz, [0, 0.3, 0]);
+    assert.equal(primitive.position.x, 4);
+    assert.equal(engine.status, "stopped");
+});
+
+test("parking while paused restores the authored pose and leaves playback paused", () => {
+    const { mesh, calls, data } = fallenPrimitiveRig();
+    const engine = new SimulationEngine(data);
+    engine.status = "paused";
+    engine.parkRigidBodiesAtAuthoredPose();
+    assert.deepEqual(calls, ["reset"]);
+    assert.deepEqual(mesh.position.xyz, [4, 0.5, -2]);
+    assert.equal(engine.status, "paused");
 });

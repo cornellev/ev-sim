@@ -71,16 +71,42 @@ admission.
 
 Editor Play, when no run is resolved, steps that live world description.
 Entered from stopped, it rebuilds rigid bodies at the authored pose before
-stepping. Pause then Play leaves them where they are. A resolved run keeps
-the world it was prepared with.
+stepping. Pause then Play leaves them where they are. Stop, reset, and
+entering the environment editor put each rigid-body mesh and its Rapier
+body back on that authored transform. A resolved run keeps the world it
+was prepared with.
 
 CPU LiDAR keeps body triangles in the authored static index until a body
 leaves its spawn pose. A capture then bakes every rigid body into one
-world-space index and queries that index once. The resolved lidar resource
-and `lidarGeometryHash` stay the authored geometry. GPU LiDAR and photoreal
-cameras keep the authored pose.
+world-space index and queries that index once. The headless sensor manager
+and the browser device database pass those live poses into the CPU scan,
+including a Helios plugin. Headless GPU LiDAR bakes the same moved triangles
+into a scanning-LiDAR frame. The browser device database rewrites the hidden
+primitive and asset-lidar slots from the authored solid plus that pose before
+the GPU scan. Stop, reset, and the environment editor put those slots back
+on the authored vertices. The resolved lidar resource and `lidarGeometryHash` stay the
+authored geometry. Photoreal and analytic cameras keep the authored pose.
 
 ## Progress and decision log
+
+### 2026-11-09 — LiDAR follows a rigid body that leaves its spawn pose
+
+The kernel already published rigid-body poses at the sensor step. The
+headless manager now forwards them to CPU LiDAR, Helios, and GPU LiDAR.
+The browser device database forwards them to the Helios runtime and writes
+the same pose into primitive and asset-lidar slots before the GPU scan.
+Headless GPU LiDAR copies moved static triangles into the capture frame and
+leaves camera jobs on the authored geometry. Restore puts those slots
+back. `lidarGeometryHash`, `worldHash`, and the characterization tapes stay
+unchanged.
+
+### 2026-11-09 — authored pose returns on stop, reset, and the editor
+
+The viewport mesh follows the live Rapier pose only while Simulation is
+playing or paused. Stop, reset, and entering the environment editor put
+the mesh and the Rapier body back on the authored transform. The document
+is not written. Pause inside Simulation still resumes in place. `worldHash`,
+the rigid-body component, and the characterization tapes are unchanged.
 
 ### 2026-11-07 — RZ-04 review: disabled chassis do not integrate
 
