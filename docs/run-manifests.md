@@ -17,6 +17,51 @@ LiDAR geometry. Raw JSON may author the strict `calibration.scanLayout`,
 `calibration.parameters`, and explicit `calibration.products` fields. Native
 Config/Vehicle controls remain a later plugin milestone.
 
+Runs may author optional `cameraObjectMotion: "authored@1" | "live-rigid-bodies@1"`.
+Absence retains the exact legacy contract. New `createDefaultRunManifest`
+runs explicitly select live motion; normalization, import, duplication, saved
+built-ins, and execution presets preserve absence. A write that omits the
+policy preserves an explicitly stored policy. Advanced Sensors exposes the
+selector; the effective summary reports it without rewriting it. Historical
+characterization builders override the factory with `cameraObjectMotion: undefined`;
+committed characterization fixtures are unchanged.
+
+An explicit policy enters the selected render-scene identity as `objectMotion`.
+Live scenes additionally bind sorted `objectMotionBindings`: trusted environment
+object IDs, spawn positions/quaternions, and published appearance instance IDs.
+This changes the selected render resource's meaning without changing `worldHash`,
+backend identity, or provider version. `canonical-analytic@2` remains reserved
+and unavailable. The unused authored policy is projected out of simulation
+semantics; state-only runs acquire no render resource or semantic change from
+this field. Exact existing bundles remain on their original path.
+
+Live camera samples use `cev-sim.visual-capture-input@2`, with
+`objectMotion: "live-rigid-bodies@1"` and sorted immutable
+`objectPoses: [{ id, position: { x, y, z }, rotation: { x, y, z, w } }]`.
+Capture input v1 is unchanged. Poses must be finite, have unit quaternions, and
+use unique known IDs. Spawn frames come from the trusted scene, never from a
+capture request. Missing poses restore the object's spawn frame. Scene generation,
+description hash, and capture time are checked before rendering; cameras in one
+capture group use the same frozen object snapshot. Reset/disposal fence late
+replies. Analytic and PBR appearance/truth roots use that sample; requested oracle
+detections use its trusted IDs and transformed geometry.
+
+Browser pose receipt compares scalar fields and retains the same frozen snapshot
+when nothing changes. Capture flushes only changed objects. Published appearance
+roots and authored transforms are cached until residency or topology changes;
+reset immediately restores previously applied objects to spawn. Live captures
+skip viewport truth refresh. Detection bounds are derived only when an enabled
+detection product has an output topic, with cached source bounds and scalar loops
+for large geometry. Live worker/headless admission rejects v1 samples before
+creating capture products.
+
+Live PBR requires separable published truth scopes for every appearance instance
+in a world with rigid bodies. A moving scope cannot also bind another truth
+object. Missing, shared, or unscoped baked/static appearances fail resolution
+and admission. Runtime pins the moving scopes' chunks and composes the live
+delta with each published instance matrix, preserving its scale and materials.
+Preview objects and GLTF names never supply a measured-camera binding.
+
 ## Operator workflow
 
 Open **Run configuration** from the workspace switcher. **Settings** in that menu has the **Simple / Advanced** control, and it changes presentation only. Both views edit one draft and share catalog create, duplicate, delete, bundle import and export, **Validate**, optimistic revision saves, and **Launch**. With no `cev-sim.ui.runConfig.mode` value, a stored `cev-sim.ui.advancedAuthoring` of `true` opens Advanced. Otherwise the page opens Simple. Choosing a view writes only `cev-sim.ui.runConfig.mode`. That write does not change the global authoring preference, which still belongs to the other editors. Inside this workspace the Advanced view shows every technical field.

@@ -4,7 +4,9 @@ import { parseLidarHits } from "./LidarHitDecoder.js";
 import { frag3d } from "../shaders/Lidar3dShader.js";
 import * as THREE from "three";
 import { disposeObject3D, setDeviceVisualsEnabled, syncDeviceVisuals } from "./DeviceVisuals.js";
+import { sensorMarkerShown } from "../runtimeVisibility.js";
 import { stableInstanceIdFromSource } from "../../simulation/lidar/LidarInstanceIds.js";
+import { flushRigidBodyLidarSolids } from "../editor/projection/rigidBodyLidarSolids.js";
 
 export class LiDAR3d extends Device {
     constructor(position, rotation, range=10, thetaStep=1, thetaRange=[0,360], phiStep=1, phiRange=[-20,20]) {
@@ -79,7 +81,8 @@ export class LiDAR3d extends Device {
     }
 
     onEnabledChanged(enabled) {
-        setDeviceVisualsEnabled(enabled, [this.pointsGroup, this.lines]);
+        const shown = enabled && sensorMarkerShown(this.getParent()?.getParent(), this);
+        setDeviceVisualsEnabled(shown, [this.pointsGroup, this.lines]);
     }
 
     setup(scene) {
@@ -89,7 +92,7 @@ export class LiDAR3d extends Device {
         this.pointsGroup.position.copy(this.getPosition());
         this.pointsGroup.rotation.copy(this.getRotation());
         this.pointsGroup.add(new THREE.Mesh(geometry, material));
-        this.pointsGroup.visible = this.enabled;
+        this.pointsGroup.visible = sensorMarkerShown(this.getParent()?.getParent(), this);
         
         scene.add(this.pointsGroup);
 
@@ -137,13 +140,14 @@ export class LiDAR3d extends Device {
 
         lineGroup.position.copy(this.getPosition());
         lineGroup.rotation.copy(this.getRotation());
-        lineGroup.visible = this.enabled;
+        lineGroup.visible = sensorMarkerShown(this.getParent()?.getParent(), this);
 
         scene.add(lineGroup);
         this.lines = lineGroup;
     }
 
     execute(simulationTimeSeconds = null) {
+        flushRigidBodyLidarSolids(this.getParent().getParent());
         const objects = this.getParent().getParent().objects();
         const { posTexture, scaleTexture, tagTexture: boxTagTexture, count } = objects.t_boxes();
         const { posTexture: triPosTexture, tagTexture: triTagTexture, count: triCount } = objects.t_triangles();

@@ -3,7 +3,8 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { prepareAnalyticGpuFrame } from "../../app/simulation/sensors/AnalyticGpuScene.js";
+import { AnalyticGpuScene, prepareAnalyticGpuFrame } from "../../app/simulation/sensors/AnalyticGpuScene.js";
+import { LIVE_CAMERA_OBJECT_MOTION, snapshotCameraObjectPoses } from "../../app/simulation/render/CameraObjectMotion.js";
 import { isScanningLidarType } from "../../app/simulation/sensors/SensorTypeRegistry.js";
 import { supervisorError } from "./HeadlessProtocol.js";
 import {
@@ -187,6 +188,30 @@ function outputBytes(request) {
     return request.width * request.height * 4 * 4 * 3;
 }
 
+function analyticTriangleCount(scene) {
+    const count = (primitives) => (primitives || []).reduce((total, primitive) => total + (primitive.shape === "triangle" ? 1 : 12), 0);
+    return count(scene.staticPrimitives) + (scene.actors || []).reduce((total, actor) => total + count(actor.primitives), 0);
+}
+
+function analyticResources(previous, scene, requests, sceneHash) {
+    const resources = new Map(previous);
+    const count = analyticTriangleCount(scene);
+    for (const request of requests) {
+        const key = JSON.stringify([sceneHash, request.type, request.id]);
+        const targets = new Map(resources.get(key)?.targets);
+        const pixels = request.width * request.height;
+        if (request.type === "camera") {
+            targets.set("rgb", pixels * 8); // RGBA8 attachment and PBO, including depth-only requests.
+            if (request.products?.depth) targets.set("float", pixels * 32);
+        } else targets.set("float", pixels * 32);
+        const geometryBytes = count * (112 + (request.type === "camera" ? 84 : 64))
+            + (request.type !== "camera" && count === 0 && scene.planes?.length ? 64 : 0);
+        resources.delete(key);
+        resources.set(key, { sceneHash, targets, bytes: geometryBytes + [...targets.values()].reduce((total, bytes) => total + bytes, 0) });
+    }
+    return resources;
+}
+
 function pbrRetainedCameraBytes(request) {
     const pixels = request.width * request.height;
     const products = request.products || {};
@@ -212,6 +237,14 @@ function pbrTransientCaptureBytes(request) {
 function pbrResidentBytes(prepared, cameraAllocations = prepared.cameraAllocations) {
     return prepared.bytes + [...(cameraAllocations?.values() || [])]
         .reduce((total, bytes) => total + bytes, 0);
+}
+
+function currentPbrBytes(prepared) {
+    return prepared ? Math.max(pbrResidentBytes(prepared), ...(prepared.captureAllocations?.values() || [])) : 0;
+}
+
+function currentAnalyticBytes(owner) {
+    return owner ? Math.max(owner.bytes || 0, owner.captureBytes || 0) : 0;
 }
 
 function publicPbrHandle(record) {
@@ -345,6 +378,8 @@ export class ChromiumWebGlRendererAdapter {
         this.page = null;
         this.provenance = null;
         this.pbrReady = false;
+        this.analyticScenes = new Map();
+        this.nextAnalyticSceneGeneration = 1;
     }
 
     async start(contextCount) {
@@ -510,49 +545,181 @@ export class ChromiumWebGlRendererAdapter {
         return this.provenance;
     }
 
-    async captureGroup(scene, requests, contextIndex) {
+    async captureGroup(scene, requests, contextIndex, options = {}) {
         if (!this.page || !this.browser) throw infrastructureError("Chromium renderer is not running.");
         try {
-            const jobs = prepareAnalyticGpuFrame({ scene, jobs: requests });
-            const values = await this.page.evaluate(async ({ jobs, resolvedScene, slot }) => {
+            const environmentKey = options.environmentKey ?? "direct-adapter";
+            const sceneHash = options.sceneHash ?? null;
+            const cacheIdentity = JSON.stringify([environmentKey, options.sceneHash ?? null, options.generation ?? 0, contextIndex]);
+            const environmentIdentity = JSON.stringify([environmentKey, options.generation ?? 0, contextIndex]);
+            for (const key of options.evictedKeys || []) {
+                const [hash, type, id] = JSON.parse(key);
+                const evictedOwnerKey = JSON.stringify([environmentKey, hash, contextIndex]);
+                const evicted = this.analyticScenes.get(evictedOwnerKey);
+                evicted?.geometry.frames.delete(JSON.stringify([type, id]));
+                if (evicted && evicted.geometry.frames.size === 0) {
+                    evicted.geometry.dispose();
+                    this.analyticScenes.delete(evictedOwnerKey);
+                }
+            }
+            const ownerKey = JSON.stringify([environmentKey, sceneHash, contextIndex]);
+            let owner = this.analyticScenes.get(ownerKey);
+            if (owner?.cacheIdentity !== cacheIdentity || owner?.scene !== scene) {
+                owner?.geometry.dispose();
+                owner = { cacheIdentity, identity: JSON.stringify([cacheIdentity, this.nextAnalyticSceneGeneration++]), scene, geometry: new AnalyticGpuScene(scene) };
+                this.analyticScenes.set(ownerKey, owner);
+            }
+            const identity = owner.identity;
+            const jobs = prepareAnalyticGpuFrame({ scene, jobs: requests, geometry: owner.geometry })
+                .map(({ triangles: _triangles, ...job }) => ({ ...job, geometryKey: JSON.stringify([sceneHash, job.type, job.id]), analyticLidar: isScanningLidarType(job.type) }));
+            const values = await this.page.evaluate(async ({ jobs, resolvedScene, slot, identity, environmentIdentity, environmentKey, evictedKeys }) => {
                 const context = globalThis.__cevGpuContexts?.[slot];
                 if (!context?.gl || context.gl.isContextLost()) throw new Error("WebGL2 context is lost.");
                 const gl = context.gl;
+                const disposeResource = (resource) => {
+                    if (resource.buffer) gl.deleteBuffer(resource.buffer);
+                    if (resource.vao) gl.deleteVertexArray(resource.vao);
+                    if (resource.triangleTexture) gl.deleteTexture(resource.triangleTexture);
+                    for (const target of resource.targets.values()) {
+                        gl.deleteTexture(target.texture);
+                        gl.deleteFramebuffer(target.framebuffer);
+                        gl.deleteBuffer(target.pbo);
+                    }
+                };
+                const cache = context.analyticCache ??= {
+                    programs: new Map(), environments: new Map(), lidarVao: gl.createVertexArray(),
+                    release(key) {
+                        const owner = this.environments.get(key);
+                        if (!owner) return;
+                        for (const resource of owner.resources.values()) disposeResource(resource);
+                        this.environments.delete(key);
+                        if (this.environments.size === 0) {
+                            for (const entry of this.programs.values()) gl.deleteProgram(entry.program);
+                            this.programs.clear();
+                            gl.deleteVertexArray(this.lidarVao);
+                            this.lidarVao = null;
+                        }
+                    },
+                    dispose() {
+                        for (const key of [...this.environments.keys()]) this.release(key);
+                        if (this.lidarVao) gl.deleteVertexArray(this.lidarVao);
+                        context.analyticCache = null;
+                    },
+                };
+                let owner = cache.environments.get(environmentKey);
+                if (owner?.identity !== environmentIdentity) {
+                    cache.release(environmentKey);
+                    owner = { identity: environmentIdentity, resources: new Map() };
+                    cache.environments.set(environmentKey, owner);
+                }
+                cache.lidarVao ??= gl.createVertexArray();
+                for (const key of evictedKeys || []) {
+                    const resource = owner.resources.get(key);
+                    if (resource) disposeResource(resource);
+                    owner.resources.delete(key);
+                }
+                const resourceFor = (job) => {
+                    let resource = owner.resources.get(job.geometryKey);
+                    if (resource && (resource.identity !== identity || resource.count !== job.triangleCount
+                        || (job.geometryFull && resource.fullRevision !== job.geometryRevision))) {
+                        disposeResource(resource);
+                        owner.resources.delete(job.geometryKey);
+                        resource = null;
+                    }
+                    if (!resource) {
+                        resource = { identity, count: job.triangleCount, fullRevision: job.geometryRevision, revision: 0, targets: new Map() };
+                        owner.resources.set(job.geometryKey, resource);
+                    }
+                    return resource;
+                };
                 const compile = (type, source) => {
                     const shader = gl.createShader(type);
                     gl.shaderSource(shader, source);
                     gl.compileShader(shader);
                     if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-                        throw new Error(gl.getShaderInfoLog(shader) || "GPU sensor shader compilation failed.");
+                        const message = gl.getShaderInfoLog(shader) || "GPU sensor shader compilation failed.";
+                        gl.deleteShader(shader);
+                        throw new Error(message);
                     }
                     return shader;
                 };
+                const linkProgram = (vertexSource, fragmentSource) => {
+                    const key = JSON.stringify([vertexSource, fragmentSource]);
+                    const existing = cache.programs.get(key);
+                    if (existing) {
+                        cache.programs.delete(key);
+                        cache.programs.set(key, existing);
+                        return existing.program;
+                    }
+                    let vertex, fragment, program;
+                    try {
+                        vertex = compile(gl.VERTEX_SHADER, vertexSource);
+                        fragment = compile(gl.FRAGMENT_SHADER, fragmentSource);
+                        program = gl.createProgram();
+                        gl.attachShader(program, vertex);
+                        gl.attachShader(program, fragment);
+                        gl.linkProgram(program);
+                        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+                            throw new Error(gl.getProgramInfoLog(program) || "GPU sensor shader linking failed.");
+                        }
+                        cache.programs.set(key, { program, uniforms: new Map() });
+                        while (cache.programs.size > 32) {
+                            const [oldest, entry] = cache.programs.entries().next().value;
+                            gl.deleteProgram(entry.program);
+                            cache.programs.delete(oldest);
+                        }
+                        return program;
+                    } catch (error) {
+                        if (program) gl.deleteProgram(program);
+                        throw error;
+                    } finally {
+                        if (vertex) gl.deleteShader(vertex);
+                        if (fragment) gl.deleteShader(fragment);
+                    }
+                };
+                const uniform = (program, name) => {
+                    const entry = [...cache.programs.values()].find((entry) => entry.program === program);
+                    if (!entry.uniforms.has(name)) entry.uniforms.set(name, gl.getUniformLocation(program, name));
+                    return entry.uniforms.get(name);
+                };
                 const renderLidar = (job) => {
                     const planes = job.planes || [];
-                    const triangles = (job.triangles || []).length > 0 ? job.triangles : (planes.length === 0 ? [] : [{
+                    const dummy = [{
                         vertices: [[0, 0, 0], [0, 0, 0], [0, 0, 0]],
                         normal: [0, 1, 0],
                         semanticId: 0,
                         instanceId: 0,
-                    }]);
-                    if (triangles.length === 0) return [];
-                    const packed = new Float32Array(triangles.length * 16);
-                    triangles.forEach((triangle, index) => {
-                        const offset = index * 16;
-                        packed.set([...triangle.vertices[0], triangle.semanticId], offset);
-                        packed.set([...triangle.vertices[1], triangle.instanceId], offset + 4);
-                        packed.set([...triangle.vertices[2], 0], offset + 8);
-                        packed.set([...triangle.normal, 0], offset + 12);
-                    });
-                    const triangleTexture = gl.createTexture();
-                    gl.bindTexture(gl.TEXTURE_2D, triangleTexture);
-                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-                    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 4, triangles.length, 0, gl.RGBA, gl.FLOAT, packed);
-                    const vertex = compile(gl.VERTEX_SHADER, `#version 300 es
+                    }];
+                    const count = job.triangleCount || (planes.length > 0 ? 1 : 0);
+                    if (count === 0) return;
+                    const resource = resourceFor(job);
+                    const fresh = !resource.triangleTexture;
+                    if (fresh) resource.triangleTexture = gl.createTexture();
+                    gl.activeTexture(gl.TEXTURE0);
+                    gl.bindTexture(gl.TEXTURE_2D, resource.triangleTexture);
+                    if (fresh) {
+                        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+                        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+                        gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA32F, 4, count);
+                    }
+                    if (resource.revision !== job.geometryRevision) {
+                        const updates = job.triangleCount > 0 ? job.triangleUpdates : [{ start: 0, triangles: dummy }];
+                        for (const { start, triangles } of updates) {
+                            const packed = new Float32Array(triangles.length * 16);
+                            triangles.forEach((triangle, index) => {
+                                const offset = index * 16;
+                                packed.set([...triangle.vertices[0], triangle.semanticId], offset);
+                                packed.set([...triangle.vertices[1], triangle.instanceId], offset + 4);
+                                packed.set([...triangle.vertices[2], 0], offset + 8);
+                                packed.set([...triangle.normal, 0], offset + 12);
+                            });
+                            if (triangles.length > 0) gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, start, 4, triangles.length, gl.RGBA, gl.FLOAT, packed);
+                        }
+                        resource.revision = job.geometryRevision;
+                    }
+                    const program = linkProgram(`#version 300 es
                         const vec2 p[3] = vec2[3](vec2(-1.,-1.),vec2(3.,-1.),vec2(-1.,3.));
-                        void main(){gl_Position=vec4(p[gl_VertexID],0.,1.);}`);
-                    const fragment = compile(gl.FRAGMENT_SHADER, `#version 300 es
+                        void main(){gl_Position=vec4(p[gl_VertexID],0.,1.);}`, `#version 300 es
                         precision highp float; precision highp int;
                         // NVIDIA ANGLE otherwise permits half-float texture sampling here.
                         uniform highp sampler2D uTriangles; uniform int uCount;
@@ -571,7 +738,7 @@ export class ChromiumWebGlRendererAdapter {
                             float phi=radians(uElevation.x+floor(gl_FragCoord.y)*uElevation.y);
                             vec3 rd=normalize(rotateQ(vec3(cos(phi)*cos(theta),sin(phi),cos(phi)*sin(theta)),uQuaternion));
                             float best=uRange+1.; float incidence=0.; float semantic=0.; float instance=0.;
-                            for(int i=0;i<${triangles.length};i++){
+                            for(int i=0;i<${count};i++){
                                 vec4 av=texelFetch(uTriangles,ivec2(0,i),0); vec4 bv=texelFetch(uTriangles,ivec2(1,i),0);
                                 vec3 cv=texelFetch(uTriangles,ivec2(2,i),0).xyz; vec3 n=texelFetch(uTriangles,ivec2(3,i),0).xyz;
                                 float distance=hit(uOrigin,rd,av.xyz,bv.xyz,cv);
@@ -580,33 +747,20 @@ export class ChromiumWebGlRendererAdapter {
                             ${planes.length > 0 ? `if(abs(rd.y)>1e-7){float distance=(${Number(planes[0].y).toExponential(16)}-uOrigin.y)/rd.y;if(distance>=0.0001&&distance<=uRange&&distance<best){best=distance;incidence=abs(rd.y);semantic=${Number(planes[0].semanticId)}.0;instance=${Number(planes[0].instanceId)}.0;}}` : ""}
                             color=best<=uRange?vec4(best,incidence,semantic,instance):vec4(0.);
                         }`);
-                    const program = gl.createProgram();
-                    gl.attachShader(program, vertex);
-                    gl.attachShader(program, fragment);
-                    gl.linkProgram(program);
-                    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-                        throw new Error(gl.getProgramInfoLog(program) || "GPU LiDAR shader linking failed.");
-                    }
                     const origin = job.lidarPose.origin;
                     const sensorQ = job.lidarPose.quaternion;
                     gl.useProgram(program);
-                    gl.uniform1i(gl.getUniformLocation(program, "uTriangles"), 0);
-                    gl.uniform1i(gl.getUniformLocation(program, "uCount"), triangles.length);
-                    gl.uniform3fv(gl.getUniformLocation(program, "uOrigin"), origin);
-                    gl.uniform4fv(gl.getUniformLocation(program, "uQuaternion"), sensorQ);
+                    gl.uniform1i(uniform(program, "uTriangles"), 0);
+                    gl.uniform1i(uniform(program, "uCount"), count);
+                    gl.uniform3fv(uniform(program, "uOrigin"), origin);
+                    gl.uniform4fv(uniform(program, "uQuaternion"), sensorQ);
                     const calibration = job.sensor.calibration;
-                    gl.uniform3f(gl.getUniformLocation(program, "uScan"), calibration.azimuth.startDeg, calibration.azimuth.endDeg, calibration.azimuth.stepDeg);
-                    gl.uniform2f(gl.getUniformLocation(program, "uElevation"), calibration.elevation.startDeg, calibration.elevation.stepDeg);
-                    gl.uniform1f(gl.getUniformLocation(program, "uRange"), calibration.range);
-                    const vao = gl.createVertexArray();
-                    gl.bindVertexArray(vao);
+                    gl.uniform3f(uniform(program, "uScan"), calibration.azimuth.startDeg, calibration.azimuth.endDeg, calibration.azimuth.stepDeg);
+                    gl.uniform2f(uniform(program, "uElevation"), calibration.elevation.startDeg, calibration.elevation.stepDeg);
+                    gl.uniform1f(uniform(program, "uRange"), calibration.range);
+                    gl.bindVertexArray(cache.lidarVao);
                     gl.drawArrays(gl.TRIANGLES, 0, 3);
                     gl.bindVertexArray(null);
-                    gl.deleteVertexArray(vao);
-                    gl.deleteProgram(program);
-                    gl.deleteShader(vertex);
-                    gl.deleteShader(fragment);
-                    return [triangleTexture];
                 };
                 const bytesToBase64 = (bytes) => {
                     const chunk = 4096;
@@ -630,68 +784,65 @@ export class ChromiumWebGlRendererAdapter {
                     return topLeft;
                 };
                 const prepareCamera = (job) => {
-                    const triangles = job.triangles || [];
+                    const triangleCount = job.triangleCount;
+                    const resource = resourceFor(job);
                     const materials = new Map((resolvedScene.materials || []).map((entry) => [
                         Number(entry.semanticId),
                         (entry.colorRgba || [128, 128, 128, 255]).map((value) => Number(value) / 255),
                     ]));
-                    const vertices = new Float32Array(triangles.length * 3 * 7);
-                    let cursor = 0;
-                    for (const triangle of triangles) {
-                        const color = materials.get(triangle.semanticId) || [0.5, 0.5, 0.5, 1];
-                        for (const vertexPosition of triangle.vertices) {
-                            vertices.set([...vertexPosition, ...color], cursor);
-                            cursor += 7;
-                        }
+                    const fresh = !resource.buffer;
+                    if (fresh) {
+                        resource.buffer = gl.createBuffer();
+                        resource.vao = gl.createVertexArray();
                     }
-                    const buffer = gl.createBuffer();
-                    const vao = gl.createVertexArray();
+                    const { buffer, vao } = resource;
                     gl.bindVertexArray(vao);
                     gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-                    gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STREAM_DRAW);
-                    gl.enableVertexAttribArray(0);
-                    gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 28, 0);
-                    gl.enableVertexAttribArray(1);
-                    gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 28, 12);
+                    if (fresh) {
+                        gl.bufferData(gl.ARRAY_BUFFER, triangleCount * 84, gl.STREAM_DRAW);
+                        gl.enableVertexAttribArray(0);
+                        gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 28, 0);
+                        gl.enableVertexAttribArray(1);
+                        gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 28, 12);
+                    }
+                    if (resource.revision !== job.geometryRevision) {
+                        for (const { start, triangles } of job.triangleUpdates) {
+                            const vertices = new Float32Array(triangles.length * 21);
+                            let cursor = 0;
+                            for (const triangle of triangles) {
+                                const color = materials.get(triangle.semanticId) || [0.5, 0.5, 0.5, 1];
+                                for (const vertexPosition of triangle.vertices) {
+                                    vertices.set([...vertexPosition, ...color], cursor);
+                                    cursor += 7;
+                                }
+                            }
+                            if (vertices.length > 0) gl.bufferSubData(gl.ARRAY_BUFFER, start * 84, vertices);
+                        }
+                        resource.revision = job.geometryRevision;
+                    }
                     gl.bindVertexArray(null);
                     const calibrated = job.captureMode === "calibrated-projection@1";
                     const pose = (() => {
-                        if (triangles.length === 0) return null;
+                        if (triangleCount === 0) return null;
                         if (calibrated && job.products?.depth !== true) return null;
                         if (!job.sensor) throw new Error(`GPU camera ${job.id} is missing its sensor.`);
                         if (!job.analyticPose) throw new Error(`GPU camera ${job.id} is missing its analytic pose.`);
                         return job.analyticPose;
                     })();
-                    const linkProgram = (vertexSource, fragmentSource) => {
-                        const vertex = compile(gl.VERTEX_SHADER, vertexSource);
-                        const fragment = compile(gl.FRAGMENT_SHADER, fragmentSource);
-                        const program = gl.createProgram();
-                        gl.attachShader(program, vertex);
-                        gl.attachShader(program, fragment);
-                        gl.linkProgram(program);
-                        gl.deleteShader(vertex);
-                        gl.deleteShader(fragment);
-                        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-                            const message = gl.getProgramInfoLog(program) || "GPU camera shader linking failed.";
-                            gl.deleteProgram(program);
-                            throw new Error(message);
-                        }
-                        return program;
-                    };
                     const bindPose = (program) => {
-                        gl.uniform1i(gl.getUniformLocation(program, "uCalibrated"), calibrated ? 1 : 0);
+                        gl.uniform1i(uniform(program, "uCalibrated"), calibrated ? 1 : 0);
                         if (calibrated) {
                             gl.uniformMatrix4fv(
-                                gl.getUniformLocation(program, "uViewProjection"),
+                                uniform(program, "uViewProjection"),
                                 false,
                                 new Float32Array(job.captureInput.viewProjectionMatrix),
                             );
                             return;
                         }
-                        gl.uniform3fv(gl.getUniformLocation(program, "uOrigin"), pose.origin);
-                        gl.uniform4fv(gl.getUniformLocation(program, "uInverseQuaternion"), pose.inverseQ);
+                        gl.uniform3fv(uniform(program, "uOrigin"), pose.origin);
+                        gl.uniform4fv(uniform(program, "uInverseQuaternion"), pose.inverseQ);
                         gl.uniform4f(
-                            gl.getUniformLocation(program, "uProjection"),
+                            uniform(program, "uProjection"),
                             pose.projection[0],
                             pose.projection[1],
                             pose.projection[2],
@@ -699,25 +850,21 @@ export class ChromiumWebGlRendererAdapter {
                         );
                     };
                     const draw = (program, bind) => {
-                        if (triangles.length === 0) {
-                            gl.deleteProgram(program);
-                            return;
-                        }
+                        if (triangleCount === 0) return;
                         gl.bindVertexArray(vao);
                         gl.enable(gl.DEPTH_TEST);
                         gl.depthFunc(gl.LEQUAL);
                         gl.useProgram(program);
                         bind(program);
-                        gl.drawArrays(gl.TRIANGLES, 0, triangles.length * 3);
+                        gl.drawArrays(gl.TRIANGLES, 0, triangleCount * 3);
                         gl.disable(gl.DEPTH_TEST);
                         gl.bindVertexArray(null);
-                        gl.deleteProgram(program);
                     };
                     const bindDepth = (program) => {
                         bindPose(program);
                         if (!calibrated || !pose) return;
-                        gl.uniform3fv(gl.getUniformLocation(program, "uOrigin"), pose.origin);
-                        gl.uniform4fv(gl.getUniformLocation(program, "uInverseQuaternion"), pose.inverseQ);
+                        gl.uniform3fv(uniform(program, "uOrigin"), pose.origin);
+                        gl.uniform4fv(uniform(program, "uInverseQuaternion"), pose.inverseQ);
                     };
                     return {
                         drawRgb() {
@@ -764,10 +911,6 @@ export class ChromiumWebGlRendererAdapter {
                         precision highp float; in float vViewZ; out vec4 color;
                         void main(){color=vec4(-vViewZ,0.,0.,1.);}`), bindDepth);
                         },
-                        dispose() {
-                            gl.deleteVertexArray(vao);
-                            gl.deleteBuffer(buffer);
-                        },
                     };
                 };
                 const readback = async (job, float, clearColor, draw, { resize = true } = {}) => {
@@ -776,13 +919,28 @@ export class ChromiumWebGlRendererAdapter {
                         context.canvas.width = width;
                         context.canvas.height = height;
                     }
-                    const texture = gl.createTexture();
-                    const framebuffer = gl.createFramebuffer();
-                    const pbo = gl.createBuffer();
-                    gl.bindTexture(gl.TEXTURE_2D, texture);
-                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-                    gl.texStorage2D(gl.TEXTURE_2D, 1, float ? gl.RGBA32F : gl.RGBA8, width, height);
+                    const resource = resourceFor(job);
+                    let target = resource.targets.get(float);
+                    if (target && (target.width !== width || target.height !== height)) {
+                        gl.deleteTexture(target.texture);
+                        gl.deleteFramebuffer(target.framebuffer);
+                        gl.deleteBuffer(target.pbo);
+                        resource.targets.delete(float);
+                        target = null;
+                    }
+                    const byteLength = width * height * 4 * (float ? 4 : 1);
+                    if (!target) {
+                        target = { width, height, texture: gl.createTexture(), framebuffer: gl.createFramebuffer(), pbo: gl.createBuffer() };
+                        resource.targets.set(float, target);
+                        gl.bindTexture(gl.TEXTURE_2D, target.texture);
+                        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+                        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+                        gl.texStorage2D(gl.TEXTURE_2D, 1, float ? gl.RGBA32F : gl.RGBA8, width, height);
+                        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, target.pbo);
+                        gl.bufferData(gl.PIXEL_PACK_BUFFER, byteLength, gl.STREAM_READ);
+                        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+                    }
+                    const { texture, framebuffer, pbo } = target;
                     gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
                     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
                     if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
@@ -791,32 +949,30 @@ export class ChromiumWebGlRendererAdapter {
                     gl.viewport(0, 0, width, height);
                     gl.clearColor(...clearColor);
                     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-                    const renderResources = isScanningLidarType(job.type) ? renderLidar(job) : [];
+                    if (job.analyticLidar) renderLidar(job);
                     if (draw) draw();
-                    const byteLength = width * height * 4 * (float ? 4 : 1);
                     gl.bindBuffer(gl.PIXEL_PACK_BUFFER, pbo);
-                    gl.bufferData(gl.PIXEL_PACK_BUFFER, byteLength, gl.STREAM_READ);
                     gl.readPixels(0, 0, width, height, gl.RGBA, float ? gl.FLOAT : gl.UNSIGNED_BYTE, 0);
                     const fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
                     gl.flush();
-                    await new Promise((resolve, reject) => {
-                        const poll = () => {
-                            const result = gl.clientWaitSync(fence, 0, 0);
-                            if (result === gl.TIMEOUT_EXPIRED) setTimeout(poll, 0);
-                            else if (result === gl.WAIT_FAILED) reject(new Error("GPU readback fence failed."));
-                            else resolve();
-                        };
-                        setTimeout(poll, 0);
-                    });
-                    const output = float ? new Float32Array(width * height * 4) : new Uint8Array(byteLength);
-                    gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, output);
-                    gl.deleteSync(fence);
-                    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
-                    gl.deleteBuffer(pbo);
-                    gl.deleteFramebuffer(framebuffer);
-                    gl.deleteTexture(texture);
-                    for (const resource of renderResources) gl.deleteTexture(resource);
-                    return orientReadback(job, output);
+                    try {
+                        await new Promise((resolve, reject) => {
+                            const poll = () => {
+                                if (gl.isContextLost()) return reject(new Error("WebGL2 context is lost."));
+                                const result = gl.clientWaitSync(fence, 0, 0);
+                                if (result === gl.TIMEOUT_EXPIRED) setTimeout(poll, 0);
+                                else if (result === gl.WAIT_FAILED) reject(new Error("GPU readback fence failed."));
+                                else resolve();
+                            };
+                            setTimeout(poll, 0);
+                        });
+                        const output = float ? new Float32Array(width * height * 4) : new Uint8Array(byteLength);
+                        gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, output);
+                        return orientReadback(job, output);
+                    } finally {
+                        gl.deleteSync(fence);
+                        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+                    }
                 };
                 const output = [];
                 for (const job of jobs) {
@@ -831,7 +987,7 @@ export class ChromiumWebGlRendererAdapter {
                     context.canvas.width = job.width;
                     context.canvas.height = job.height;
                     const prepared = prepareCamera(job);
-                    try {
+                    {
                         const rgb = await readback(
                             job,
                             false,
@@ -864,12 +1020,10 @@ export class ChromiumWebGlRendererAdapter {
                             captureTimeNs: job.captureTimeNs ?? null,
                             sampleIndex: job.sampleIndex ?? null,
                         });
-                    } finally {
-                        prepared.dispose();
                     }
                 }
                 return output;
-            }, { jobs, resolvedScene: scene, slot: contextIndex });
+            }, { jobs, resolvedScene: scene, slot: contextIndex, identity, environmentIdentity, environmentKey, evictedKeys: options.evictedKeys || [] });
             const decodeBase64 = (value) => Buffer.from(String(value || ""), "base64");
             return values.map((entry) => {
                 if (entry.type !== "camera") {
@@ -910,6 +1064,18 @@ export class ChromiumWebGlRendererAdapter {
         } catch (error) {
             throw infrastructureError(`PBR preparation failed: ${error.message}`);
         }
+    }
+
+    async releaseAnalytic(environmentKey) {
+        for (const [key, owner] of this.analyticScenes) {
+            if (JSON.parse(key)[0] !== environmentKey) continue;
+            owner.geometry.dispose();
+            this.analyticScenes.delete(key);
+        }
+        if (!this.page) return;
+        await this.page.evaluate((key) => {
+            for (const context of globalThis.__cevGpuContexts || []) context.analyticCache?.release(key);
+        }, environmentKey);
     }
 
     async capturePbr(environmentKey, requests) {
@@ -958,6 +1124,13 @@ export class ChromiumWebGlRendererAdapter {
     }
 
     async close() {
+        for (const owner of this.analyticScenes.values()) owner.geometry.dispose();
+        this.analyticScenes.clear();
+        if (this.page) {
+            await this.page.evaluate(() => {
+                for (const context of globalThis.__cevGpuContexts || []) context.analyticCache?.dispose();
+            }).catch(() => {});
+        }
         if (this.page && this.pbrReady) {
             await this.page.evaluate(() => globalThis.__cevHeadlessPbrRuntime.close()).catch(() => {});
         }
@@ -996,6 +1169,10 @@ export class PooledGpuRenderer {
         this.busyContexts = 0;
         this.adapterGeneration = 0;
         this.nextPbrGeneration = 1;
+        this.nextAnalyticGeneration = 1;
+        this.analyticEnvironments = new Map();
+        this.analyticOperations = new Map();
+        this.analyticLifetimes = new Map();
         this.resetPromise = null;
         this.closed = false;
     }
@@ -1129,8 +1306,14 @@ export class PooledGpuRenderer {
             }
             const staticBytes = utf8Bytes(resolved.renderScene.description)
                 + [...bytesByDigest.values()].reduce((total, bytes) => total + bytes.byteLength, 0);
-            if (staticBytes > maxGpuBytes) {
+            const analyticBytes = currentAnalyticBytes(this.analyticEnvironments.get(environmentKey));
+            if (staticBytes + analyticBytes > maxGpuBytes) {
                 throw supervisorError("RESOURCE_LIMIT", `PBR preparation requires ${staticBytes} bytes; environment limit is ${maxGpuBytes}.`);
+            }
+            const others = [...this.environmentBytes.entries()].filter(([key]) => key !== environmentKey)
+                .reduce((total, [, bytes]) => total + bytes, 0);
+            if (others + staticBytes + analyticBytes > this.config.globalGpuBytes) {
+                throw supervisorError("RESOURCE_LIMIT", "GPU renderer global allocation budget is exhausted.");
             }
             const slot = this.pbrSlotLoads.reduce(
                 (best, load, index, values) => load < values[best] ? index : best,
@@ -1177,7 +1360,7 @@ export class PooledGpuRenderer {
             this.preparedPbr.set(environmentKey, record);
             if (assetReader) this.pbrAssetReaders.set(environmentKey, assetReader);
             this.pbrSlotLoads[slot] += 1;
-            this.environmentBytes.set(environmentKey, staticBytes);
+            this.environmentBytes.set(environmentKey, staticBytes + analyticBytes);
             return publicPbrHandle(record);
         };
         const pending = this.pbrPreparationPromise.then(operation, operation);
@@ -1210,8 +1393,9 @@ export class PooledGpuRenderer {
             (total, request) => total + pbrTransientCaptureBytes(request),
             0,
         );
+        const analyticBytes = currentAnalyticBytes(this.analyticEnvironments.get(environmentKey));
         const allocation = pbrResidentBytes(prepared, cameraAllocations) + transientBytes;
-        if (allocation > maxGpuBytes) {
+        if (allocation + analyticBytes > maxGpuBytes) {
             throw supervisorError("RESOURCE_LIMIT", `PBR capture requires ${allocation} bytes; environment limit is ${maxGpuBytes}.`);
         }
         const others = [...this.environmentBytes.entries()]
@@ -1221,13 +1405,13 @@ export class PooledGpuRenderer {
             allocation,
             ...(prepared.captureAllocations?.values() || []),
         );
-        if (others + environmentAllocation > this.config.globalGpuBytes) {
+        if (others + environmentAllocation + analyticBytes > this.config.globalGpuBytes) {
             throw supervisorError("RESOURCE_LIMIT", "GPU renderer global allocation budget is exhausted.");
         }
         const allocationToken = Symbol(environmentKey);
         prepared.captureAllocations ??= new Map();
         prepared.captureAllocations.set(allocationToken, allocation);
-        this.environmentBytes.set(environmentKey, Math.max(
+        this.environmentBytes.set(environmentKey, analyticBytes + Math.max(
             prepared.bytes,
             ...prepared.captureAllocations.values(),
         ));
@@ -1250,14 +1434,29 @@ export class PooledGpuRenderer {
         }).finally(() => {
             prepared.captureAllocations?.delete(allocationToken);
             if (this.preparedPbr.get(environmentKey) !== prepared) return;
-            this.environmentBytes.set(environmentKey, Math.max(
+            this.environmentBytes.set(environmentKey, currentAnalyticBytes(this.analyticEnvironments.get(environmentKey)) + Math.max(
                 pbrResidentBytes(prepared),
                 ...prepared.captureAllocations.values(),
             ));
         });
     }
 
-    async captureGroup({ environmentKey, scene, requests, maxGpuBytes, timeoutMs = 30_000, assetReader = null }) {
+    captureGroup(payload) {
+        if (this.closed) return Promise.reject(infrastructureError("GPU renderer pool is closed."));
+        const { environmentKey } = payload;
+        if (!this.analyticLifetimes.has(environmentKey)) this.analyticLifetimes.set(environmentKey, Symbol(environmentKey));
+        const lifetime = this.analyticLifetimes.get(environmentKey);
+        const pending = (this.analyticOperations.get(environmentKey) || Promise.resolve())
+            .catch(() => {}).then(() => this._captureAnalyticGroup(payload, lifetime));
+        this.analyticOperations.set(environmentKey, pending);
+        const clear = () => {
+            if (this.analyticOperations.get(environmentKey) === pending) this.analyticOperations.delete(environmentKey);
+        };
+        pending.then(clear, clear);
+        return pending;
+    }
+
+    async _captureAnalyticGroup({ environmentKey, scene, requests, maxGpuBytes, timeoutMs = 30_000, assetReader = null }, lifetime) {
         if (this.closed) throw infrastructureError("GPU renderer pool is closed.");
         if (this.adapter?.isRunning?.() === false) {
             this._invalidateAdapter(
@@ -1268,33 +1467,96 @@ export class PooledGpuRenderer {
             await this.resetPromise;
         }
         for (const request of requests) {
-            if (request.captureMode !== CORRECTED_VISUAL_CAPTURE_MODE) continue;
+            const liveCamera = request.type === "camera" && scene?.description?.objectMotion === LIVE_CAMERA_OBJECT_MOTION;
+            if (request.type === "camera" && !liveCamera
+                && (request.cameraObjectMotion === LIVE_CAMERA_OBJECT_MOTION || request.captureInput?.version === 2)) {
+                throw new Error("Live camera motion requires a policy-bound render scene.");
+            }
+            if (liveCamera && request.captureInput?.version !== 2) {
+                throw new Error("Live camera motion requires capture input v2.");
+            }
+            if (request.captureMode !== CORRECTED_VISUAL_CAPTURE_MODE && !liveCamera) continue;
             const captureInput = assertVisualCaptureInput(request.captureInput);
+            if (liveCamera) snapshotCameraObjectPoses(captureInput.objectPoses, scene.description.objectMotionBindings);
+            if (liveCamera && request.captureTimeNs !== captureInput.captureTimeNs) {
+                throw new Error("Live camera request time must match its frozen capture input.");
+            }
             if (request.width !== captureInput.calibration.image.width
                 || request.height !== captureInput.calibration.image.height) {
                 throw new Error("Corrected camera request dimensions must match its calibration.");
             }
-            if (captureInput.scene.descriptionHash && captureInput.scene.descriptionHash !== scene?.hash) {
+            if ((liveCamera || captureInput.scene.descriptionHash) && captureInput.scene.descriptionHash !== scene?.hash) {
                 throw new Error("Corrected camera request scene hash does not match the resolved scene.");
             }
         }
+        requests = requests.map((request) => request.type === "camera" && request.captureInput?.version === 2
+            ? { ...request, cameraObjectMotion: LIVE_CAMERA_OBJECT_MOTION, rigidBodyPoses: undefined }
+            : request);
         const probe = await this.probe();
         if (!probe.available) throw infrastructureError(`GPU backend unavailable: ${probe.reason}`);
         const cached = this._cacheScene(scene);
-        const allocation = cached.bytes + requests.reduce((total, request) => total + outputBytes(request), 0);
+        let owner = this.analyticEnvironments.get(environmentKey);
+        if (owner?.releasePromise) {
+            await owner.releasePromise;
+            owner = this.analyticEnvironments.get(environmentKey);
+        }
+        const resources = analyticResources(owner?.resources, cached.description, requests, cached.hash);
+        const scenes = new Map(owner?.scenes);
+        scenes.set(cached.hash, cached.bytes + analyticTriangleCount(cached.description) * 112);
+        const transientBytes = requests.reduce((total, request) => total + (request.type === "camera"
+            ? Math.max(outputBytes(request), request.width * request.height * 12)
+            : outputBytes(request)), 0);
+        const retained = () => [...scenes.values()].reduce((total, bytes) => total + bytes, 0)
+            + [...resources.values()].reduce((total, resource) => total + resource.bytes, 0);
+        const requestedKeys = new Set(requests.map((request) => JSON.stringify([cached.hash, request.type, request.id])));
+        const evictedKeys = [];
+        const pbrBytes = currentPbrBytes(this.preparedPbr.get(environmentKey));
+        for (const key of resources.keys()) {
+            if (retained() + transientBytes + pbrBytes <= Math.min(maxGpuBytes, this.config.globalGpuBytes)) break;
+            if (requestedKeys.has(key)) continue;
+            const hash = resources.get(key).sceneHash;
+            resources.delete(key);
+            if (![...resources.values()].some((resource) => resource.sceneHash === hash)) scenes.delete(hash);
+            evictedKeys.push(key);
+        }
+        const allocation = retained() + transientBytes + pbrBytes;
         if (allocation > maxGpuBytes) {
             throw supervisorError("RESOURCE_LIMIT", `GPU job requires ${allocation} bytes; environment limit is ${maxGpuBytes}.`);
         }
-        const others = [...this.environmentBytes.entries()]
+        const others = () => [...this.environmentBytes.entries()]
             .filter(([key]) => key !== environmentKey)
             .reduce((total, [, value]) => total + value, 0);
-        if (others + allocation > this.config.globalGpuBytes) {
+        for (const [key, entry] of this.analyticEnvironments) {
+            if (others() + allocation <= this.config.globalGpuBytes) break;
+            if (key !== environmentKey && !entry.active && !entry.releasePromise) await this._releaseAnalytic(key);
+        }
+        if (others() + allocation > this.config.globalGpuBytes) {
             throw supervisorError("RESOURCE_LIMIT", "GPU renderer global allocation budget is exhausted.");
         }
+        if (this.closed || this.analyticLifetimes.get(environmentKey) !== lifetime) {
+            throw infrastructureError("GPU capture was cancelled while releasing its environment.");
+        }
+        if (!owner) {
+            const loads = Array.from({ length: this.config.contextPoolSize }, () => 0);
+            for (const entry of this.analyticEnvironments.values()) loads[entry.slot] += 1;
+            owner = { generation: this.nextAnalyticGeneration++, slot: loads.indexOf(Math.min(...loads)) };
+        }
+        owner.resources = resources;
+        owner.scenes = scenes;
+        owner.bytes = retained();
+        owner.captureBytes = allocation - pbrBytes;
+        owner.active = true;
+        this.analyticEnvironments.delete(environmentKey);
+        this.analyticEnvironments.set(environmentKey, owner);
         this.environmentBytes.set(environmentKey, allocation);
         return new Promise((resolve, reject) => {
             this.queue.push({
                 kind: "analytic",
+                environmentKey,
+                analyticOwner: owner,
+                lifetime,
+                requiredContext: owner.slot,
+                evictedKeys,
                 cached,
                 requests,
                 resolve,
@@ -1303,7 +1565,37 @@ export class PooledGpuRenderer {
                 timeoutMs: Math.max(1, Number(timeoutMs) || 30_000),
             });
             this._drain();
+        }).finally(() => {
+            owner.active = false;
+            owner.captureBytes = 0;
+            if (this.analyticEnvironments.get(environmentKey) !== owner) return;
+            this.environmentBytes.set(environmentKey, owner.bytes + currentPbrBytes(this.preparedPbr.get(environmentKey)));
         });
+    }
+
+    async _releaseAnalytic(environmentKey) {
+        const owner = this.analyticEnvironments.get(environmentKey);
+        if (!owner) return;
+        if (owner.releasePromise) return owner.releasePromise;
+        if (!this.adapter?.releaseAnalytic) {
+            this.analyticEnvironments.delete(environmentKey);
+            const pbr = this.preparedPbr.get(environmentKey);
+            if (pbr) this.environmentBytes.set(environmentKey, currentPbrBytes(pbr));
+            else this.environmentBytes.delete(environmentKey);
+            return;
+        }
+        owner.active = true;
+        owner.releasePromise = new Promise((resolve, reject) => {
+            this.queue.push({ kind: "release-analytic", environmentKey, requiredContext: owner.slot, resolve, reject, timeoutMs: 30_000 });
+            this._drain();
+        }).finally(() => {
+            if (this.analyticEnvironments.get(environmentKey) !== owner) return;
+            this.analyticEnvironments.delete(environmentKey);
+            const pbr = this.preparedPbr.get(environmentKey);
+            if (pbr) this.environmentBytes.set(environmentKey, currentPbrBytes(pbr));
+            else this.environmentBytes.delete(environmentKey);
+        });
+        return owner.releasePromise;
     }
 
     _invalidateAdapter(adapter, generation, error) {
@@ -1315,12 +1607,14 @@ export class PooledGpuRenderer {
         this.preparedPbr.clear();
         this.pbrAssetReaders.clear();
         this.pbrSlotLoads = [];
-        this.environmentBytes.clear();
+        this.analyticEnvironments.clear();
+        this.analyticLifetimes.clear();
         const failure = infrastructureError(`GPU renderer must restart: ${error.message}`);
         for (const queued of this.queue.splice(0)) queued.reject(failure);
         const closing = Promise.resolve().then(() => adapter.close()).catch(() => {});
         let cleanup;
         cleanup = closing.finally(() => {
+            this.environmentBytes.clear();
             if (this.resetPromise === cleanup) this.resetPromise = null;
         });
         this.resetPromise = cleanup;
@@ -1349,14 +1643,26 @@ export class PooledGpuRenderer {
             let capture;
             if (job.kind === "prepare-pbr") capture = adapter.preparePbr(job.payload, context);
             else if (job.kind === "release-pbr") capture = adapter.releasePbr(job.environmentKey);
+            else if (job.kind === "release-analytic") capture = adapter.releaseAnalytic(job.environmentKey);
             else if (job.kind === "pbr") capture = adapter.capturePbr(job.environmentKey, job.requests);
             else {
                 capture = adapter.captureGroup(job.cached.description, job.requests, context, {
                     assetReader: job.assetReader,
+                    environmentKey: job.environmentKey,
+                    sceneHash: job.cached.hash,
+                    generation: job.analyticOwner.generation,
+                    evictedKeys: job.evictedKeys,
                 });
             }
             Promise.race([capture, timeout])
-                .then(job.resolve)
+                .then((result) => {
+                    if (job.kind === "analytic" && (this.analyticEnvironments.get(job.environmentKey) !== job.analyticOwner
+                        || this.analyticLifetimes.get(job.environmentKey) !== job.lifetime)) {
+                        job.reject(infrastructureError("GPU capture belongs to a released environment."));
+                        return;
+                    }
+                    job.resolve(result);
+                })
                 .catch((error) => {
                     job.reject(error);
                     this._invalidateAdapter(adapter, generation, error);
@@ -1398,12 +1704,28 @@ export class PooledGpuRenderer {
                 this._drain();
             });
         }
+        const analyticBytes = currentAnalyticBytes(this.analyticEnvironments.get(environmentKey));
+        if (analyticBytes) this.environmentBytes.set(environmentKey, analyticBytes);
+        else this.environmentBytes.delete(environmentKey);
         return true;
     }
 
     releaseEnvironment(environmentKey) {
-        this.environmentBytes.delete(environmentKey);
-        this.releasePbr(environmentKey).catch(() => {});
+        this.analyticLifetimes.delete(environmentKey);
+        const cancellation = infrastructureError("GPU capture was cancelled while releasing its environment.");
+        this.queue = this.queue.filter((job) => {
+            if (job.kind !== "analytic" || job.environmentKey !== environmentKey) return true;
+            job.reject(cancellation);
+            return false;
+        });
+        const analytic = this._releaseAnalytic(environmentKey);
+        const pbr = this.releasePbr(environmentKey);
+        if (!this.analyticEnvironments.has(environmentKey)) this.environmentBytes.delete(environmentKey);
+        const pending = Promise.all([analytic, pbr]).then(() => {
+            if (!this.analyticEnvironments.has(environmentKey) && !this.preparedPbr.has(environmentKey)) this.environmentBytes.delete(environmentKey);
+        });
+        pending.catch(() => {});
+        return pending;
     }
 
     diagnostics() {
@@ -1436,5 +1758,7 @@ export class PooledGpuRenderer {
         this.pbrSlotLoads = [];
         this.scenes.clear();
         this.sceneBytes = 0;
+        this.analyticEnvironments.clear();
+        this.analyticLifetimes.clear();
     }
 }

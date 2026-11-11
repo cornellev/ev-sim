@@ -23,7 +23,7 @@ export class TimelineStore {
             pendingTimer: null,
         };
         this.listeners.add(entry);
-        listener(this.getSnapshot());
+        this._emitEntry(entry, this.getSnapshot());
         return () => {
             if (entry.pendingTimer) clearTimeout(entry.pendingTimer);
             this.listeners.delete(entry);

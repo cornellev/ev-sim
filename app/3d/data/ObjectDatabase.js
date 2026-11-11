@@ -8,6 +8,8 @@ import Values from "@/app/util/Values";
 import { lidarTwinFromGlslObject } from "../../simulation/lidar/LidarGeometry.js";
 import { allocateLidarInstanceIds, stableInstanceIdFromSource } from "../../simulation/lidar/LidarInstanceIds.js";
 import { compareUtf8 } from "../../simulation/world/WorldDescription.js";
+import { canonicalFiniteNumber } from "../../simulation/kernel/SimulationHashes.js";
+import { rigidBodyPoseMoved, transformRigidBodyPoint } from "../../simulation/world/RigidBodyRecords.js";
 
 const MAX_BOXES = 2000;
 const MAX_TRIANGLES = 5000;
@@ -159,10 +161,9 @@ function writeBoxTextureSlot(database, box, index) {
  * @param {Triangle} triangle
  * @param {number} index
  */
-function writeTriangleTextureSlot(database, triangle, index) {
+function writeTriangleTextureSlot(database, triangle, index, twin = database.updateLidarTwin(triangle), tags = true) {
     const dataIndex = index * 12;
     const tagIndex = index * 4;
-    const twin = database.updateLidarTwin(triangle);
 
     database.textures.data._trianglePosData[dataIndex + 0] = twin.vertices[0].x;
     database.textures.data._trianglePosData[dataIndex + 1] = twin.vertices[0].y;
@@ -179,13 +180,14 @@ function writeTriangleTextureSlot(database, triangle, index) {
     database.textures.data._trianglePosData[dataIndex + 10] = twin.vertices[2].z;
     database.textures.data._trianglePosData[dataIndex + 11] = 1.0;
 
-    database.textures.data._triangleTagData[tagIndex + 0] = twin.semanticId;
-    database.textures.data._triangleTagData[tagIndex + 1] = twin.instanceId;
-    database.textures.data._triangleTagData[tagIndex + 2] = 0.0;
-    database.textures.data._triangleTagData[tagIndex + 3] = 1.0;
-
+    if (tags) {
+        database.textures.data._triangleTagData[tagIndex + 0] = twin.semanticId;
+        database.textures.data._triangleTagData[tagIndex + 1] = twin.instanceId;
+        database.textures.data._triangleTagData[tagIndex + 2] = 0.0;
+        database.textures.data._triangleTagData[tagIndex + 3] = 1.0;
+        database.textures.textures._triangleTagTexture.needsUpdate = true;
+    }
     database.textures.textures._trianglePosTexture.needsUpdate = true;
-    database.textures.textures._triangleTagTexture.needsUpdate = true;
 }
 
 /**
@@ -194,19 +196,20 @@ function writeTriangleTextureSlot(database, triangle, index) {
  * @param {Sphere} sphere
  * @param {number} index
  */
-function writeSphereTextureSlot(database, sphere, index) {
+function writeSphereTextureSlot(database, sphere, index, twin = database.updateLidarTwin(sphere), tags = true) {
     const dataIndex = index * 4;
-    const twin = database.updateLidarTwin(sphere);
     database.textures.data._spherePosData[dataIndex + 0] = twin.center.x;
     database.textures.data._spherePosData[dataIndex + 1] = twin.center.y;
     database.textures.data._spherePosData[dataIndex + 2] = twin.center.z;
     database.textures.data._spherePosData[dataIndex + 3] = twin.radius;
-    database.textures.data._sphereTagData[dataIndex + 0] = twin.semanticId;
-    database.textures.data._sphereTagData[dataIndex + 1] = twin.instanceId;
-    database.textures.data._sphereTagData[dataIndex + 2] = 0;
-    database.textures.data._sphereTagData[dataIndex + 3] = 1;
+    if (tags) {
+        database.textures.data._sphereTagData[dataIndex + 0] = twin.semanticId;
+        database.textures.data._sphereTagData[dataIndex + 1] = twin.instanceId;
+        database.textures.data._sphereTagData[dataIndex + 2] = 0;
+        database.textures.data._sphereTagData[dataIndex + 3] = 1;
+        database.textures.textures._sphereTagTexture.needsUpdate = true;
+    }
     database.textures.textures._spherePosTexture.needsUpdate = true;
-    database.textures.textures._sphereTagTexture.needsUpdate = true;
 }
 
 export class ObjectDatabase extends Database {
@@ -217,6 +220,11 @@ export class ObjectDatabase extends Database {
         this.lidarTwinRegistry = new Map();
         this.lidarInstanceBySource = new Map();
         this.lidarSourceByInstance = new Map();
+        this.textureSlots = new Map();
+        this.shapeLengths = { box: 0, triangle: 0, sphere: 0 };
+        this.sourceGeometry = new Map();
+        this.authoredGeometry = new WeakMap();
+        this.geometryRevision = 0;
 
         this._maxX = 50;
         this._maxY = 50;
@@ -225,21 +233,20 @@ export class ObjectDatabase extends Database {
 
         this.notifiers = {
             box: (box) => {
-                const uuid = box._uuid;
-                const index = this.boxes().findIndex((obj) => obj._uuid === uuid);
-                if (index === -1) return;
+                const index = this.textureSlots.get(box)?.index;
+                if (index === undefined || index >= MAX_BOXES) return;
                 writeBoxTextureSlot(this, box, index);
             },
             triangle: (triangle) => {
-                const uuid = triangle._uuid;
-                const index = this.triangles().findIndex((obj) => obj._uuid === uuid);
-                if (index === -1 || index >= MAX_TRIANGLES) return;
+                const index = this.textureSlots.get(triangle)?.index;
+                if (index === undefined || index >= MAX_TRIANGLES) return;
+                this.captureAuthoredGeometry(triangle);
                 writeTriangleTextureSlot(this, triangle, index);
             },
             sphere: (sphere) => {
-                const uuid = sphere._uuid;
-                const index = this.spheres().findIndex((obj) => obj._uuid === uuid);
-                if (index === -1 || index >= MAX_SPHERES) return;
+                const index = this.textureSlots.get(sphere)?.index;
+                if (index === undefined || index >= MAX_SPHERES) return;
+                this.captureAuthoredGeometry(sphere);
                 writeSphereTextureSlot(this, sphere, index);
             },
         }
@@ -257,9 +264,63 @@ export class ObjectDatabase extends Database {
     }
 
     lidarTwins() {
-        return this.objects.map((object) => (
+        return structuredClone(this.objects.map((object) => (
             this.lidarTwinRegistry.get(object._uuid) ?? this.updateLidarTwin(object)
-        ));
+        )));
+    }
+
+    captureAuthoredGeometry(object) {
+        if (object.environmentGeometryType !== "primitive" && object.environmentGeometryType !== "asset-lidar") return;
+        const points = object instanceof Triangle ? [object.a, object.b, object.c] : object instanceof Sphere ? [object.position] : null;
+        if (!points) return;
+        this.authoredGeometry.set(object, points.map((point) => ({ x: point.x, y: point.y, z: point.z })));
+        this.geometryRevision += 1;
+    }
+
+    indexGeometryObject(object) {
+        const shape = object instanceof Triangle ? "triangle" : object instanceof Sphere ? "sphere" : object instanceof Box ? "box" : null;
+        this.textureSlots.set(object, { shape, index: shape ? this.shapeLengths[shape]++ : undefined });
+        const sourceId = lidarSourceId(object);
+        const entries = this.sourceGeometry.get(sourceId) ?? [];
+        entries.push(object);
+        this.sourceGeometry.set(sourceId, entries);
+        if (!this.authoredGeometry.has(object)) this.captureAuthoredGeometry(object);
+    }
+
+    rebuildGeometryIndex() {
+        this.textureSlots.clear();
+        this.sourceGeometry.clear();
+        this.shapeLengths = { box: 0, triangle: 0, sphere: 0 };
+        for (const object of this.objects) this.indexGeometryObject(object);
+        this.geometryRevision += 1;
+    }
+
+    applyRigidBodyGeometry(sourceId, pose) {
+        const moved = pose && rigidBodyPoseMoved(pose);
+        let writes = 0;
+        for (const object of this.sourceGeometry.get(String(sourceId)) ?? []) {
+            const authored = this.authoredGeometry.get(object);
+            if (!authored) continue;
+            const slot = this.textureSlots.get(object);
+            const twin = this.lidarTwinRegistry.get(object._uuid) ?? this.updateLidarTwin(object);
+            const points = object instanceof Triangle ? [object.a, object.b, object.c] : [object.position];
+            for (let index = 0; index < points.length; index += 1) {
+                const point = moved ? transformRigidBodyPoint(authored[index], pose) : authored[index];
+                points[index].set(point.x, point.y, point.z);
+                const target = object instanceof Triangle ? twin.vertices[index] : twin.center;
+                target.x = object instanceof Triangle ? canonicalFiniteNumber(point.x) : point.x;
+                target.y = object instanceof Triangle ? canonicalFiniteNumber(point.y) : point.y;
+                target.z = object instanceof Triangle ? canonicalFiniteNumber(point.z) : point.z;
+            }
+            if (slot.shape === "triangle" && slot.index < MAX_TRIANGLES) {
+                writeTriangleTextureSlot(this, object, slot.index, twin, false);
+                writes += 1;
+            } else if (slot.shape === "sphere" && slot.index < MAX_SPHERES) {
+                writeSphereTextureSlot(this, object, slot.index, twin, false);
+                writes += 1;
+            }
+        }
+        return writes;
     }
 
     lidarInstanceIdForSource(sourceId) {
@@ -290,12 +351,12 @@ export class ObjectDatabase extends Database {
      */
     addObject(object) {
         if (!object) return;
-        if (this.objects.includes(object)) return;
+        if (this.textureSlots.has(object)) return;
         if (!(object instanceof Object)) return;
         if (!object.lidarTwinId) {
             const sourceId = lidarSourceId(object);
             const shape = object instanceof Triangle ? "triangle" : object instanceof Sphere ? "sphere" : "box";
-            const index = this.objects.filter((entry) => {
+            const index = (this.sourceGeometry.get(sourceId) ?? []).filter((entry) => {
                 const entrySource = entry.perceptionSourceId ?? entry.environmentSourceId
                     ?? entry._vehicleId ?? entry._buildingId ?? entry._roadId ?? entry._uuid;
                 const entryShape = entry instanceof Triangle ? "triangle" : entry instanceof Sphere ? "sphere" : "box";
@@ -306,14 +367,15 @@ export class ObjectDatabase extends Database {
         }
         object.lidarInstanceId = this.lidarInstanceIdForSource(lidarSourceId(object));
         this.objects.push(object);
+        this.indexGeometryObject(object);
 
         if (object instanceof Box) {
             object.setNotifyTexture(this.notifiers.box);
-            const index = this.boxes().length - 1;
+            const index = this.textureSlots.get(object).index;
             writeBoxTextureSlot(this, object, index);
             this.textures.counts.boxCount += 1;
         } else if (object instanceof Triangle) {
-            const index = this.triangles().length - 1;
+            const index = this.textureSlots.get(object).index;
             if (index >= MAX_TRIANGLES) {
                 warnTriangleCapacity();
             } else {
@@ -322,7 +384,7 @@ export class ObjectDatabase extends Database {
                 this.textures.counts.triCount += 1;
             }
         } else if (object instanceof Sphere) {
-            const index = this.spheres().length - 1;
+            const index = this.textureSlots.get(object).index;
             if (index >= MAX_SPHERES) {
                 warnSphereCapacity();
             } else {
@@ -350,6 +412,7 @@ export class ObjectDatabase extends Database {
         this.objects = this.objects.filter(
             (object) => !(object instanceof Triangle && predicate(object)),
         );
+        this.rebuildGeometryIndex();
         const present = new Set(this.objects);
         const counts = new Map();
         let textureIndex = 0;
@@ -376,6 +439,7 @@ export class ObjectDatabase extends Database {
             }
             triangle.lidarInstanceId = this.lidarInstanceIdForSource(source);
             this.objects.push(triangle);
+            this.indexGeometryObject(triangle);
             present.add(triangle);
             if (!rebuild) {
                 if (textureIndex >= MAX_TRIANGLES) warnTriangleCapacity();
@@ -400,11 +464,13 @@ export class ObjectDatabase extends Database {
         this.objects = this.objects.filter(
             (object) => !(object instanceof Sphere && predicate(object)),
         );
+        this.rebuildGeometryIndex();
         for (const sphere of spheres) this.addObject(sphere);
         if (rebuild) this.rebuildTextureData();
     }
 
     rebuildTextureData() {
+        this.rebuildGeometryIndex();
         const textureData = this.textures.data;
         Values(textureData).forEach((array) => array.fill(0));
         this.lidarTwinRegistry.clear();

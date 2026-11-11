@@ -64,6 +64,8 @@ import { getEnvironmentManifest } from "./environment/EnvironmentCatalogClient";
 import { subscribeStorageEvents } from "../client/storageEvents";
 import McpLoggingBridge from "../logging/McpLoggingBridge";
 import {
+    applyOriginMarkersVisible,
+    applySensorMarkersVisible,
     clearLaneHighlights,
     setDeviceVisualsVisible,
     setRoadAuthoringHandlesVisible,
@@ -609,6 +611,8 @@ async function enterRuntimeMode(runtime, mode) {
             simulation.startLoop();
             simulation.render();
         }
+        applySensorMarkersVisible(data, simulation.debugVisuals?.sensorMarkers);
+        applyOriginMarkersVisible(data, simulation.debugVisuals?.originMarker);
         return;
     }
 

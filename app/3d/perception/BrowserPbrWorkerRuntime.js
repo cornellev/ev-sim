@@ -1,7 +1,9 @@
 import * as THREE from "three";
 
-import { createOwnedCaptureScene } from "../environment/visual/VisualCapturePipeline.js";
+import { createOwnedCaptureScene, assertVisualCaptureInput } from "../environment/visual/VisualCapturePipeline.js";
 import { browserSimulationPerformance } from "../../simulation/performance/BrowserSimulationPerformance.js";
+import { LIVE_CAMERA_OBJECT_MOTION, CameraObjectPoseTracker } from "../../simulation/render/CameraObjectMotion.js";
+import { cameraSceneDetections } from "../../simulation/render/CameraObjectTruth.js";
 
 const PROVIDER = Object.freeze({ id: "pbr-mesh", version: 1 });
 
@@ -87,6 +89,7 @@ export class BrowserPbrWorkerRuntime {
         this.worker = null;
         this.requestId = 0;
         this.generation = 0;
+        this.captureEpoch = 0;
         this.pending = new Map();
         this.listeners = new Set();
         this.status = this._snapshot("idle");
@@ -97,6 +100,11 @@ export class BrowserPbrWorkerRuntime {
         this._failure = null;
         this._prepared = false;
         this._disposeTimer = null;
+        this.objectPoses = Object.freeze([]);
+        this.captureActors = [];
+        this.objectMotionBindings = [];
+        this.objectMotion = undefined;
+        this.objectPoseTracker = new CameraObjectPoseTracker();
     }
 
     static supported() {
@@ -244,6 +252,16 @@ export class BrowserPbrWorkerRuntime {
                 scene: new THREE.Scene(),
             });
             this.renderPolicy = result.renderPolicy;
+            this.objectMotion = resolved.renderScene.description.objectMotion;
+            this.captureActors = serializePbrActors(vehicles ?? this._vehicles());
+            this.renderSceneDescription = resolved.renderScene.description;
+            this.objectMotionBindings = structuredClone(resolved.renderScene.description.objectMotionBindings ?? []);
+            this.objectPoseTracker = new CameraObjectPoseTracker(this.objectMotionBindings);
+            if (this.objectMotion !== undefined) {
+                for (const key of ["captureSceneHandle", "analyticSceneHandle"]) {
+                    this[key] = createOwnedCaptureScene({ ...this[key], objectMotion: this.objectMotion, objectMotionBindings: this.objectMotionBindings });
+                }
+            }
             this._prepared = true;
             this._setStatus(result.status?.state || "ready", result.status);
             return this.status;
@@ -279,12 +297,14 @@ export class BrowserPbrWorkerRuntime {
     async prepareCapture({ devices = [], vehicles = this._vehicles() } = {}) {
         if (!this.ready) throw this._failure || infrastructureError(new Error("PBR capture worker is not ready."));
         const generation = this.generation;
+        this.captureActors = serializePbrActors(vehicles);
         this._enqueue("prepareCapture", {
             generation,
             positions: devices
                 .filter((device) => device?.renderRuntime === this)
                 .map(capturePosition),
-            vehicles: serializePbrActors(vehicles),
+            vehicles: this.captureActors,
+            ...(this.objectMotion === LIVE_CAMERA_OBJECT_MOTION ? { objectPoses: this.objectPoses } : {}),
         }).then((result) => {
             if (generation === this.generation && this._prepared && result?.status) {
                 this._setStatus(result.status.state || "streaming", result.status);
@@ -294,6 +314,11 @@ export class BrowserPbrWorkerRuntime {
 
     async captureCamera({ captureInput, enabled, cameraId = "camera" } = {}) {
         if (!this.ready) throw this._failure || infrastructureError(new Error("PBR capture worker is not ready."));
+        if (this.objectMotion === LIVE_CAMERA_OBJECT_MOTION || captureInput?.version === 2) {
+            assertVisualCaptureInput(captureInput, { sceneHandle: this.captureSceneHandle });
+        }
+        const generation = this.generation;
+        const captureEpoch = this.captureEpoch;
         const result = await this._enqueue("capture", {
             generation: this.generation,
             request: {
@@ -302,6 +327,9 @@ export class BrowserPbrWorkerRuntime {
                 products: { ...enabled },
             },
         });
+        if (generation !== this.generation || captureEpoch !== this.captureEpoch) {
+            throw infrastructureError(new Error("PBR worker capture was superseded."), "PBR_CAPTURE_SUPERSEDED");
+        }
         for (const [name, durationMs] of Object.entries(result.timings ?? {})) {
             browserSimulationPerformance.recordTiming(`capture.${name}`, durationMs);
         }
@@ -315,7 +343,21 @@ export class BrowserPbrWorkerRuntime {
         };
     }
 
+    applyRigidBodyPoses(poses = []) {
+        if (this.objectMotion === LIVE_CAMERA_OBJECT_MOTION) {
+            if (this.objectPoseTracker.sync(poses).size) this.objectPoses = this.objectPoseTracker.poses;
+        }
+    }
+
+    captureDetections(captureInput) {
+        const actors = this.captureActors ?? [];
+        return cameraSceneDetections(this.renderSceneDescription, captureInput,
+            new Map(actors.map((actor) => [actor.telemetryId, actor.matrixWorld])));
+    }
+
     reset() {
+        this.captureEpoch += 1;
+        this.applyRigidBodyPoses([]);
         if (!this.ready) return;
         this._enqueue("reset", { generation: this.generation }).catch(() => {});
     }
@@ -340,6 +382,12 @@ export class BrowserPbrWorkerRuntime {
         this.captureSceneHandle = null;
         this.analyticSceneHandle = null;
         this.renderPolicy = null;
+        this.objectMotion = undefined;
+        this.renderSceneDescription = null;
+        this.captureActors = [];
+        this.objectMotionBindings = [];
+        this.objectPoseTracker = new CameraObjectPoseTracker();
+        this.objectPoses = Object.freeze([]);
         this._failure = null;
         if (worker && immediate) {
             this._terminateWorker();

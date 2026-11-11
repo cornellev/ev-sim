@@ -6,6 +6,7 @@
 import { eulerToQuaternion, quaternionMultiply } from "../../autonomy/CoordinateFrames.js";
 import { cross3a, sub3a } from "../../math/linalg.js";
 import { rigidBodyPoseMoved, transformRigidBodyPoint } from "../world/RigidBodyRecords.js";
+import { RigidBodyPoseTracker } from "../world/RigidBodyPoseTracker.js";
 import { BOX_FACES } from "./BoxFaces.js";
 import { isScanningLidarType } from "./SensorTypeRegistry.js";
 
@@ -49,8 +50,8 @@ function primitiveTriangles(primitive) {
     return BOX_FACES.map((face) => face.map((index) => corners[index]));
 }
 
-function appendTriangles(triangles, primitive, transform = null) {
-    for (let vertices of primitiveTriangles(primitive)) {
+function appendTriangles(triangles, primitive, transform = null, source = primitiveTriangles(primitive)) {
+    for (let vertices of source) {
         if (transform) {
             vertices = vertices.map((vertex) => {
                 const rotated = rotate(vertex, transform.quaternion);
@@ -81,32 +82,106 @@ function posedStaticPrimitive(primitive, pose) {
     };
 }
 
-function rigidBodyPosesForJob(job) {
-    if (!isScanningLidarType(job?.type) || !Array.isArray(job.rigidBodyPoses) || job.rigidBodyPoses.length === 0) {
-        return null;
-    }
-    return new Map(job.rigidBodyPoses.map((pose) => [String(pose.id), pose]));
+function rigidBodyPosesForJob(job, scene) {
+    const liveCamera = job?.type === "camera"
+        && (job.cameraObjectMotion ?? job.captureInput?.objectMotion) === "live-rigid-bodies@1";
+    if (!isScanningLidarType(job?.type) && !liveCamera) return [];
+    const poses = job.rigidBodyPoses ?? job.captureInput?.objectPoses ?? [];
+    if (!liveCamera) return poses;
+    const bindings = new Map((scene?.objectMotionBindings || []).map((binding) => [String(binding.id), binding]));
+    return poses.map((pose) => {
+        const binding = bindings.get(String(pose.id));
+        return binding ? {
+            ...pose,
+            spawnPosition: pose.spawnPosition ?? binding.spawnPosition,
+            spawnRotation: pose.spawnRotation ?? binding.spawnRotation,
+        } : pose;
+    });
 }
 
-function worldTriangles(scene, job) {
-    const poses = rigidBodyPosesForJob(job);
+function authoredEntry(primitive) {
+    const source = primitiveTriangles(primitive);
     const triangles = [];
-    for (const primitive of scene?.staticPrimitives || []) {
-        const pose = poses?.get(String(primitive.sourceId));
-        appendTriangles(triangles, posedStaticPrimitive(primitive, pose));
+    appendTriangles(triangles, primitive, null, source);
+    return { primitive, source, triangles };
+}
+
+/** One owner per environment, scene generation and GL context; never shared by hash. */
+export class AnalyticGpuScene {
+    constructor(scene) {
+        this.scene = scene;
+        this.statics = (scene?.staticPrimitives || []).map(authoredEntry);
+        this.actors = (scene?.actors || []).map((actor) => ({
+            actorId: actor.actorId,
+            entries: (actor.primitives || []).map(authoredEntry),
+        }));
+        this.frames = new Map();
     }
-    const vehicles = new Map((job.vehicles || []).map((vehicle) => [vehicle.id, vehicle]));
-    for (const actor of scene?.actors || []) {
-        if (job.sensor?.poseReference !== "map" && actor.actorId === job.sensor?.parentId) continue;
-        const vehicle = vehicles.get(actor.actorId);
-        if (!vehicle) continue;
-        const transform = {
-            position: [vehicle.position.x, vehicle.position.y, vehicle.position.z],
-            quaternion: quaternionOf(vehicle.rotation),
+
+    prepare(job) {
+        const geometryKey = JSON.stringify([job.type, job.id]);
+        const vehicles = new Map((job.vehicles || []).map((vehicle) => [vehicle.id, vehicle]));
+        const actors = this.actors.filter((actor) => vehicles.has(actor.actorId)
+            && (job.sensor?.poseReference === "map" || actor.actorId !== job.sensor?.parentId));
+        const topology = JSON.stringify(actors.map((actor) => actor.actorId));
+        let frame = this.frames.get(geometryKey);
+        const full = !frame || frame.topology !== topology;
+        if (full) {
+            frame = { topology, triangles: [], bodies: new RigidBodyPoseTracker(), actorPoses: new Map(), revision: (frame?.revision || 0) + 1, ranges: new Map() };
+            for (const entry of this.statics) {
+                const start = frame.triangles.length;
+                frame.triangles.push(...entry.triangles);
+                const id = String(entry.primitive.sourceId);
+                if (!frame.ranges.has(id)) frame.ranges.set(id, []);
+                frame.ranges.get(id).push({ start, entry });
+            }
+            this.frames.set(geometryKey, frame);
+        }
+        const updates = [];
+        for (const id of frame.bodies.sync(rigidBodyPosesForJob(job, this.scene))) {
+            for (const { start, entry } of frame.ranges.get(id) || []) {
+                const pose = frame.bodies.get(id);
+                const triangles = [];
+                if (pose && rigidBodyPoseMoved(pose)) appendTriangles(triangles, posedStaticPrimitive(entry.primitive, pose));
+                else triangles.push(...entry.triangles);
+                if (triangles.every((triangle, index) => triangle === frame.triangles[start + index])) continue;
+                for (let index = 0; index < triangles.length; index += 1) frame.triangles[start + index] = triangles[index];
+                updates.push({ start, triangles });
+            }
+        }
+        let start = this.statics.reduce((total, entry) => total + entry.triangles.length, 0);
+        for (const actor of actors) {
+            const vehicle = vehicles.get(actor.actorId);
+            const position = [vehicle.position.x, vehicle.position.y, vehicle.position.z];
+            const rotation = vehicle.rotation || {};
+            const poseKey = JSON.stringify([...position, rotation.x || 0, rotation.y || 0, rotation.z || 0]);
+            const count = actor.entries.reduce((total, entry) => total + entry.triangles.length, 0);
+            if (frame.actorPoses.get(actor.actorId) !== poseKey) {
+                const triangles = [];
+                const transform = { position, quaternion: quaternionOf(vehicle.rotation) };
+                for (const entry of actor.entries) appendTriangles(triangles, entry.primitive, transform, entry.source);
+                for (let index = 0; index < triangles.length; index += 1) frame.triangles[start + index] = triangles[index];
+                frame.actorPoses.set(actor.actorId, poseKey);
+                updates.push({ start, triangles });
+            }
+            start += count;
+        }
+        if (!full && updates.length > 0) frame.revision += 1;
+        return {
+            geometryKey,
+            geometryRevision: frame.revision,
+            triangleCount: frame.triangles.length,
+            triangles: frame.triangles,
+            triangleUpdates: full ? [{ start: 0, triangles: frame.triangles }] : updates,
+            geometryFull: full,
         };
-        for (const primitive of actor.primitives || []) appendTriangles(triangles, primitive, transform);
     }
-    return triangles;
+
+    dispose() {
+        this.frames.clear();
+        this.statics = [];
+        this.actors = [];
+    }
 }
 
 function parentVehicle(job, { mapIdentity = false } = {}) {
@@ -160,11 +235,12 @@ function fallbackCameraPose(job) {
     };
 }
 
-export function prepareAnalyticGpuFrame({ scene, jobs }) {
+export function prepareAnalyticGpuFrame({ scene, jobs, geometry = new AnalyticGpuScene(scene) }) {
     return jobs.map((job) => {
-        const triangles = worldTriangles(scene, job);
+        const prepared = geometry.prepare(job);
+        const { triangles } = prepared;
         const planes = Array.isArray(scene?.planes) ? scene.planes : [];
-        const next = { ...job, triangles, planes };
+        const next = { ...job, ...prepared, planes };
         if (triangles.length === 0 && planes.length === 0) return next;
         if (job.type === "camera") {
             if (job.captureMode === "calibrated-projection@1" && job.products?.depth !== true) return next;

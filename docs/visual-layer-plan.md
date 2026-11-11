@@ -42,7 +42,7 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
 - Core assumption: **Google approval, Google-derived assets, Gaussian
   splatting, and a model service are unavailable.**
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-09-28 — MKT-09 portable asset closure, derivative rights, and durable roots; visual identity unchanged**.
+- Last updated: **2026-11-10 — WP07–WP09 explicit live rigid-body camera identity/runtime/default rollout; external visual gates remain open**.
 - Implemented evidence: VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a,
   VIS-06b, VIS-07, VIS-08, VIS-09, VIS-10a, VIS-10b, VIS-11, VIS-12b,
   VIS-13a, VIS-13b, VIS-14, and VIS-16a acceptance evidence is recorded in the
@@ -1602,6 +1602,36 @@ requirements with silent fallback or unsupported claims.
 
 ## Progress and acceptance ledger
 
+WP07–WP09 live rigid-body camera maintenance is separate from the VIS release
+milestones. The optional manifest/scene/capture contract, default preservation,
+trusted admission, inline/worker/headless snapshots, PBR root motion, detached
+live analytic browser runtime, requested detection snapshots, and reset/generation
+fences are implemented in the working tree. Final focused verification: **97
+passed, 3 skipped, 0 failed (100 cases)**, covering the new 16-case motion suite plus capture-pipeline, browser
+PBR camera/worker, shared PBR environment, batching, render-provider, headless
+characterization, GPU sensors, and Run Configuration mode/session suites. Work-count
+checks prove receipt/preparation do no object transforms, no-op captures do no
+scene scans, replaced published roots refresh once, and reset restores spawn.
+Large-geometry detection checks prove unchanged sources reuse warm bounds; live
+manifest captures do not refresh viewport truth or derive unrequested detections.
+The three skips are hardware WebGL2 LiDAR, packaged hardware PBR, and protocol
+1.2 UDS/shared-memory GPU observations. Scoped ESLint and diff checks pass.
+The parent reports GPU residency/admission verification at **30 passed, 4 hardware
+skips (34 cases)**, characterization **7 passed**, isolated PBR cloud pixel/depth/ID
+parity passed, and browser presentation **2 passed**. These are integration and
+regression results, not live-motion hardware acceptance. Final full verification
+passed: `npm test -- --test-concurrency=2 --test-timeout=120000` reported **2,711
+passed, 9 skipped, 0 failed (2,720 cases)**. `npm run lint` reported zero errors
+and three existing warnings. The final production build passed using isolated
+`.next-verify` output. The quick headless soak passed worker-exit, queue-drain,
+artifact-readability, residual-path, and bounded-memory checks.
+Browser/direct-headless/CLI/gRPC/Python parity passed. An earlier concurrent
+full-suite HTTP wait passed in isolation and in this final full run.
+Software raycast alignment and injected worker tests are proxies, not
+GPU pixel acceptance. Actual live-camera inline/worker/headless GPU captures on
+supported targets remain pending. No AGX, managed PBR, production correspondence,
+installed, or full-release gate is closed by this maintenance work.
+
 VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a, VIS-06b,
 VIS-07, VIS-08, VIS-09, VIS-10a, VIS-10b, VIS-11, VIS-12b, VIS-13a,
 VIS-13b, VIS-14, and VIS-16a are complete in the working tree;
@@ -2019,6 +2049,33 @@ by this plan revision.
   context to build the entire program.
 
 ## Decision log
+
+### 2026-11-10 — WP07–WP09 bind live object motion explicitly
+
+Approved maintenance introduces `cameraObjectMotion` without changing world,
+backend, or provider identity globally. Explicit live scenes bind authored spawn
+frames and published appearance scopes; capture v2 contains only sorted immutable
+live poses and the timestamp/generation/hash fence. PBR motion composes
+`live * inverse(spawn) * publishedInstanceMatrix`; analytic geometry uses the same
+delta over authored points. This preserves scale and IDs. Requested detections
+use frozen capture geometry. Runtime generations and reset epochs reject late
+replies; worker/headless environments reject split snapshots in a capture group.
+Pose receipt uses scalar tracking with stable immutable no-op snapshots. Geometry
+flushes on capture, with cached published roots and per-object authored/delta
+matrices. Reset immediately restores changed roots to spawn. Detection bounds
+cache source geometry and use scalar loops; live captures skip preview truth and
+derive bounds only for requested detection output topics. Live-scene admission
+rejects v1 requests before worker enqueue or camera-product creation.
+
+The factory default is live for newly created runs. Stored built-ins and the
+historical characterization builder explicitly stay legacy; no characterization
+fixture was rewritten. Normalization/import/duplication/execution presets preserve
+absence, and omitted updates retain an explicit stored policy. State-only semantics
+omit unused camera authoring policy. Unseparable baked/static PBR appearance fails
+instead of using guessed names or viewport fallback. Final focused verification
+has 97 passed, 3 explicit hardware/shared-memory skips, and no failures;
+parent full npm/lint and browser checks are separate integration evidence. Actual
+live-camera hardware gates remain pending. The visual-runtime NO-GO verdict stays.
 
 ### 2026-09-28 — Portable environment import reuses visual truth and access contracts
 

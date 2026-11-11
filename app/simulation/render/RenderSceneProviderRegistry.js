@@ -264,8 +264,8 @@ export class RenderSceneProviderRegistry {
     bindAnalyticImplementation(implementation) {
         this.analyticImplementation = implementation;
         const entry = this.lookup(VISUAL_RENDER_PROVIDERS.legacyAnalytic, { requireAvailable: false });
-        entry.resolve = (worldResource, vehicleDependencies = []) => (
-            implementation.createResource(worldResource, vehicleDependencies)
+        entry.resolve = (worldResource, vehicleDependencies = [], selection, context = {}) => (
+            implementation.createResource(worldResource, vehicleDependencies, context)
         );
         entry.assert = (description) => implementation.assertDescription(description);
         return entry;

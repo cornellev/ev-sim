@@ -1,6 +1,7 @@
 import { CpuLidarScene } from "../../simulation/sensors/CpuLidarScene.js";
 import { lidarCaptureDigest, lidarTransferables } from "../../simulation/sensors/CpuLidarWorkerService.js";
 import { browserSimulationPerformance } from "../../simulation/performance/BrowserSimulationPerformance.js";
+import { RigidBodyPoseTracker } from "../../simulation/world/RigidBodyPoseTracker.js";
 
 function failure(message, code = "CPU_LIDAR_WORKER_FAILED") {
     return Object.assign(new Error(message), { code, infrastructureFailure: true });
@@ -33,6 +34,7 @@ export class BrowserCpuLidarRuntime {
         this.generation = 0;
         this.requestId = 0;
         this.workerGeneration = 0;
+        this._poseTracker = new RigidBodyPoseTracker();
         this.rigidBodyPoses = [];
         this.episodePrimitives = [];
         this.status = { implementation: null, fallbackReason: null };
@@ -159,8 +161,9 @@ export class BrowserCpuLidarRuntime {
     }
 
     setRigidBodyPoses(poses = []) {
-        this.rigidBodyPoses = poses;
-        this.inline?.setRigidBodyPoses(poses);
+        if (this._poseTracker.sync(poses).size === 0) return;
+        this.rigidBodyPoses = Object.freeze([...this._poseTracker.records.values()].map(({ pose }) => pose));
+        this.inline?.setRigidBodyPoses(this.rigidBodyPoses);
     }
 
     reset() {
@@ -171,7 +174,9 @@ export class BrowserCpuLidarRuntime {
     setEpisodePrimitives(primitives = []) {
         this.reset();
         this.episodePrimitives = primitives;
+        this._poseTracker.clear();
         this.rigidBodyPoses = [];
+        this.inline?.setRigidBodyPoses([]);
         this.inline?.setEpisodePrimitives(primitives);
     }
 
@@ -184,5 +189,7 @@ export class BrowserCpuLidarRuntime {
         this.worker = null;
         this.inline?.dispose();
         this.inline = null;
+        this._poseTracker.clear();
+        this.rigidBodyPoses = [];
     }
 }

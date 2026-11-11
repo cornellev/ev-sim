@@ -15,6 +15,7 @@ import {
 import { attachVehiclePlant, resetVehiclePlant, stepVehiclePlant } from "./VehiclePlantAdapter.js";
 import { visualWheelYaws } from "../../vehicles/plan/turnGeometry.js";
 import { resetEgoPresentation, updateEgoPresentation } from "./EgoPresentation.js";
+import { originMarkerShown } from "../runtimeVisibility.js";
 
 export { applyModelPlacement } from "./ModelPlacement.js";
 
@@ -183,6 +184,7 @@ export class ManifestVehicle extends PhysicalVehicle {
         originMarker.position.set(0, 0.02, 0);
         originMarker.renderOrder = 10;
         originMarker.name = "vehicle-origin-debug";
+        originMarker.visible = originMarkerShown(this.db?.getParent?.());
         this.sceneObject.add(originMarker);
 
         this._registerLidarZone();

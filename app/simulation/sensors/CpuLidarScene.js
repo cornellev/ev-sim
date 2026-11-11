@@ -12,12 +12,17 @@ import { MeshBVH } from "three-mesh-bvh";
 import { rep103PoseToThree } from "../../autonomy/CoordinateFrames.js";
 import { compareUtf8 } from "../world/WorldDescription.js";
 import { rigidBodyPoseMoved, transformRigidBodyPoint } from "../world/RigidBodyRecords.js";
+import { RigidBodyPoseTracker } from "../world/RigidBodyPoseTracker.js";
 import { assertLidarGeometryResource } from "../lidar/LidarGeometry.js";
 import { BOX_FACES } from "./BoxFaces.js";
 
 export const CPU_LIDAR_NEAR_METERS = 1e-4;
 
 const UNIT_SCALE = new Vector3(1, 1, 1);
+const BOX_CORNERS = [
+    [-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
+    [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1],
+];
 
 function boxVertices(primitive) {
     const { center, size } = primitive;
@@ -50,11 +55,12 @@ function primitiveFaces(primitive) {
     }));
 }
 
-function createIndex(primitives) {
+function createIndex(primitives, bodies = null) {
     if (primitives.length === 0) return null;
     const positions = [];
     const faces = [];
     for (const primitive of [...primitives].sort((left, right) => compareUtf8(left.id, right.id))) {
+        const offset = positions.length;
         for (const face of primitiveFaces(primitive)) {
             const [a, b, c] = face.vertices;
             positions.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
@@ -70,13 +76,82 @@ function createIndex(primitives) {
                 normal,
             });
         }
+        bodies?.get(String(primitive.sourceId)).ranges.push({ primitive, offset, end: positions.length });
     }
     const geometry = new BufferGeometry();
     geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
     const bvh = new MeshBVH(geometry, { indirect: true });
     const index = { geometry, bvh, faces };
     index.query = createNearestQuery(index);
+    if (bodies) {
+        index.bodies = bodies;
+        // Keep authored doubles: transforming the Float32 buffer changes scan bytes.
+        index.originalPositions = new Float64Array(positions);
+        index.originalNormals = new Float64Array(faces.flatMap(({ normal }) => [normal.x, normal.y, normal.z]));
+        index.motion = { vertices: [new Vector3(), new Vector3(), new Vector3()], ab: new Vector3(), ac: new Vector3() };
+        cacheBodyRefitNodes(index);
+    }
     return index;
+}
+
+function cacheBodyRefitNodes(index) {
+    const bodyForFace = new Array(index.faces.length);
+    for (const body of index.bodies.values()) {
+        for (const range of body.ranges) bodyForFace.fill(body, range.offset / 9, range.end / 9);
+    }
+    // These geometries have one root; shapecast reports it only for a root leaf.
+    const ancestors = [0];
+    index.bvh.shapecast({
+        intersectsBounds(_box, _leaf, _score, depth, nodeIndex) {
+            ancestors[depth] = nodeIndex;
+            return true;
+        },
+        intersectsRange(offset, count, _contained, depth, nodeIndex) {
+            for (let i = offset; i < offset + count; i += 1) {
+                const body = bodyForFace[index.bvh.resolveTriangleIndex(i)];
+                body.nodeIndices.add(nodeIndex);
+                for (let level = 0; level < depth; level += 1) body.nodeIndices.add(ancestors[level]);
+            }
+            return false;
+        },
+    });
+}
+
+function updateBodyCoordinates(index, body, pose) {
+    const positions = index.geometry.attributes.position;
+    const original = index.originalPositions;
+    const moved = rigidBodyPoseMoved(pose);
+    const { vertices, ab, ac } = index.motion;
+    const [a, b, c] = vertices;
+    for (const { primitive, offset, end } of body.ranges) {
+        if (!moved) {
+            positions.array.set(original.subarray(offset, end), offset);
+            for (let face = offset / 9; face < end / 9; face += 1) {
+                index.faces[face].normal.fromArray(index.originalNormals, face * 3);
+            }
+            continue;
+        }
+        const center = primitive.shape === "box" ? transformRigidBodyPoint(primitive.center, pose) : null;
+        for (let start = offset; start < end; start += 9) {
+            for (let vertex = 0; vertex < 3; vertex += 1) {
+                const point = vertices[vertex];
+                if (center) {
+                    // Legacy boxes move their center only and stay axis-aligned.
+                    const corner = BOX_CORNERS[BOX_FACES[(start - offset) / 9][vertex]];
+                    point.set(
+                        corner[0] < 0 ? center.x - primitive.size.x * 0.5 : center.x + primitive.size.x * 0.5,
+                        corner[1] < 0 ? center.y - primitive.size.y * 0.5 : center.y + primitive.size.y * 0.5,
+                        corner[2] < 0 ? center.z - primitive.size.z * 0.5 : center.z + primitive.size.z * 0.5,
+                    );
+                } else {
+                    const transformed = transformRigidBodyPoint(point.fromArray(original, start + vertex * 3), pose);
+                    point.set(transformed.x, transformed.y, transformed.z);
+                }
+                positions.setXYZ(start / 3 + vertex, point.x, point.y, point.z);
+            }
+            index.faces[start / 9].normal.crossVectors(ab.subVectors(b, a), ac.subVectors(c, a)).normalize();
+        }
+    }
 }
 
 function vehicleMatrix(vehicle) {
@@ -187,27 +262,6 @@ function nearestIndexHit(index, ray, near, far) {
     return hit;
 }
 
-function movePrimitive(primitive, pose) {
-    if (primitive.shape === "box" && primitive.center) {
-        return { ...primitive, center: transformRigidBodyPoint(primitive.center, pose) };
-    }
-    if (!Array.isArray(primitive.vertices)) return primitive;
-    return {
-        ...primitive,
-        vertices: primitive.vertices.map((vertex) => transformRigidBodyPoint(vertex, pose)),
-    };
-}
-
-function poseKey(pose) {
-    const position = pose.position;
-    const rotation = pose.rotation;
-    return [
-        pose.id,
-        position.x, position.y, position.z,
-        rotation.x, rotation.y, rotation.z, rotation.w,
-    ].join(",");
-}
-
 function disposeIndex(index) {
     index?.geometry.dispose();
 }
@@ -231,9 +285,11 @@ export class CpuLidarScene {
         this.episodeIndex = null;
         this._bodyGroups = new Map();
         this._bodyIndex = null;
-        this._bodyBakeKey = "";
-        this._rigidBodyPoses = [];
-        this._rigidBodySplitKey = "";
+        this._poseTracker = new RigidBodyPoseTracker();
+        this._changedBodyIds = new Set();
+        this._movedBodyIds = new Set();
+        this._bodyRefitNodes = new Set();
+        this._bodyPrimitiveCount = 0;
         this._activeStaticIndex = this.fullStaticIndex;
         this._queryBodyIndex = null;
         this._localRay = new Ray();
@@ -242,24 +298,25 @@ export class CpuLidarScene {
 
     setRigidBodyPoses(poses = []) {
         if (this.disposed) throw new Error("CPU LiDAR scene is disposed.");
-        const byId = new Map();
-        for (const pose of Array.isArray(poses) ? poses : []) {
-            if (pose?.id == null || pose.id === "") continue;
-            byId.set(String(pose.id), pose);
+        const changed = this._poseTracker.sync(poses);
+        const membershipChanged = [...changed].some((id) => this._poseTracker.records.has(id) !== this._bodyGroups.has(id));
+        if (membershipChanged) {
+            this._splitRigidBodies([...this._poseTracker.records.keys()].sort(compareUtf8));
         }
-        const ids = [...byId.keys()].sort(compareUtf8);
-        const key = ids.join("\0");
-        if (key !== this._rigidBodySplitKey) {
-            this._splitRigidBodies(ids);
-            this._rigidBodySplitKey = key;
+        for (const id of changed) {
+            const pose = this._poseTracker.get(id);
+            if (rigidBodyPoseMoved(pose)) this._movedBodyIds.add(id);
+            else this._movedBodyIds.delete(id);
+            if (pose) this._changedBodyIds.add(id);
+            else this._changedBodyIds.delete(id);
         }
-        this._rigidBodyPoses = ids.map((id) => byId.get(id));
     }
 
     _dropBodyIndex() {
         disposeIndex(this._bodyIndex);
         this._bodyIndex = null;
-        this._bodyBakeKey = "";
+        this._changedBodyIds.clear();
+        this._bodyRefitNodes.clear();
         this._queryBodyIndex = null;
     }
 
@@ -269,6 +326,7 @@ export class CpuLidarScene {
         if (ids.length === 0) {
             this.staticIndex = this.fullStaticIndex;
             this._bodyGroups = new Map();
+            this._bodyPrimitiveCount = 0;
             return;
         }
         const grouped = new Map(ids.map((id) => [id, []]));
@@ -279,27 +337,34 @@ export class CpuLidarScene {
             else staticPrimitives.push(primitive);
         }
         this._bodyGroups = grouped;
+        this._bodyPrimitiveCount = this.authoredPrimitives.length - staticPrimitives.length;
         this.staticIndex = createIndex(staticPrimitives);
     }
 
     _syncRigidBodyQuery() {
-        const poses = this._rigidBodyPoses;
-        if (!poses.some(rigidBodyPoseMoved)) {
+        if (!this._bodyIndex && this._movedBodyIds.size > 0 && this._bodyPrimitiveCount > 0) {
+            const bodies = new Map([...this._bodyGroups.keys()].map((id) => [id, { ranges: [], nodeIndices: new Set() }]));
+            this._bodyIndex = createIndex([...this._bodyGroups.values()].flat(), bodies);
+            for (const id of bodies.keys()) this._changedBodyIds.add(id);
+        }
+        if (this._bodyIndex && this._changedBodyIds.size > 0) {
+            const nodes = this._bodyRefitNodes;
+            nodes.clear();
+            for (const id of this._changedBodyIds) {
+                const body = this._bodyIndex.bodies.get(id);
+                updateBodyCoordinates(this._bodyIndex, body, this._poseTracker.get(id));
+                for (const node of body.nodeIndices) nodes.add(node);
+            }
+            if (nodes.size > 0) {
+                this._bodyIndex.geometry.attributes.position.needsUpdate = true;
+                this._bodyIndex.bvh.refit(nodes);
+            }
+        }
+        this._changedBodyIds.clear();
+        if (this._movedBodyIds.size === 0) {
             this._activeStaticIndex = this.fullStaticIndex;
             this._queryBodyIndex = null;
             return;
-        }
-        const key = poses.map(poseKey).join("\n");
-        if (key !== this._bodyBakeKey) {
-            disposeIndex(this._bodyIndex);
-            const baked = [];
-            for (const pose of poses) {
-                for (const primitive of this._bodyGroups.get(String(pose.id)) ?? []) {
-                    baked.push(rigidBodyPoseMoved(pose) ? movePrimitive(primitive, pose) : primitive);
-                }
-            }
-            this._bodyIndex = createIndex(baked);
-            this._bodyBakeKey = key;
         }
         this._activeStaticIndex = this.staticIndex;
         this._queryBodyIndex = this._bodyIndex;
@@ -453,6 +518,10 @@ export class CpuLidarScene {
         this.episodeIndex = null;
         this.actorIndexes.clear();
         this._bodyGroups.clear();
+        this._poseTracker.clear();
+        this._changedBodyIds.clear();
+        this._movedBodyIds.clear();
+        this._bodyRefitNodes.clear();
         this.disposed = true;
     }
 }

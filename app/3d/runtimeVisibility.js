@@ -23,6 +23,32 @@ export function setDeviceVisualsVisible(data, visible) {
     }
 }
 
+export function sensorMarkerShown(data, device) {
+    return device?.enabled !== false && data?.simulation?.()?.debugVisuals?.sensorMarkers !== false;
+}
+
+export function originMarkerShown(data) {
+    return data?.simulation?.()?.debugVisuals?.originMarker !== false;
+}
+
+export function applySensorMarkersVisible(data, visible) {
+    const shown = visible !== false;
+    for (const device of data.devices()?.devices ?? []) {
+        const show = shown && device.enabled !== false;
+        for (const root of [device._mesh, device.pointsGroup, device.lines]) {
+            if (root) root.visible = show;
+        }
+    }
+}
+
+export function applyOriginMarkersVisible(data, visible) {
+    const shown = visible !== false;
+    for (const vehicle of data.vehicles()?.vehicles ?? []) {
+        const marker = vehicle.sceneObject?.getObjectByName?.("vehicle-origin-debug");
+        if (marker) marker.visible = shown;
+    }
+}
+
 export function setRoadAuthoringHandlesVisible(data, visible) {
     const environment = data?.environment?.();
     if (environment) environment.authoringHelpersVisible = Boolean(visible);

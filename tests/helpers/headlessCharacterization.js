@@ -242,7 +242,7 @@ export async function generateHeadlessCharacterization(tape) {
         throw new Error("Action-tape steps must be positive integers in non-decreasing order.");
     }
 
-    const manifest = createDefaultRunManifest(tape.manifestOverrides);
+    const manifest = createDefaultRunManifest({ ...tape.manifestOverrides, cameraObjectMotion: undefined });
     // PR 1 characterizes the frozen v10 input contract independently of new authoring defaults.
     manifest.version = 10;
     const resolved = resolvedRun(manifest);

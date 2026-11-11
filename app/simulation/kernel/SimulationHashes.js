@@ -172,6 +172,7 @@ function legacySimulationSemanticProjection(resolved = {}) {
     projectWorldEnvironmentIdentity(projection);
     if (projection.manifest) {
         delete projection.manifest.logging;
+        delete projection.manifest.cameraObjectMotion;
         delete projection.manifest.sensorTransports;
         omitSensorInheritance(projection.manifest.sensorRig);
         // Candidate-model declarations are evidence provenance only. Project v10
@@ -324,6 +325,7 @@ export function simulationSemanticProjection(resolved = {}) {
         // recipe may carry source-bound use hashes and must not duplicate or
         // leak evidence into simulation semantics.
         delete manifest.renderRecipe;
+        delete manifest.cameraObjectMotion;
         delete manifest.logging;
         delete manifest.provenance;
         delete manifest.plugins;

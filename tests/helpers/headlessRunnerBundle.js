@@ -157,6 +157,7 @@ export function rehashRunBundle(bundle) {
             next.resolved.world,
             next.resolved.vehicles,
             selection,
+            { cameraObjectMotion: next.resolved.manifest.cameraObjectMotion },
         );
         next.resolved.dependencyHashes.renderScene = next.resolved.renderScene.hash;
     } else {

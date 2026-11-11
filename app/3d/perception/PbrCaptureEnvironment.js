@@ -2,6 +2,9 @@ import * as THREE from "three";
 
 import { CameraRenderProducts } from "./CameraRenderProducts.js";
 import { readRenderTargetPixelsWithFence } from "../util/glReadback.js";
+import { assertVisualCaptureInput, createVisualCaptureInput } from "../environment/visual/VisualCapturePipeline.js";
+import { canonicalExactStringify } from "../../simulation/visual/VisualLayer.js";
+import { LIVE_CAMERA_OBJECT_MOTION } from "../../simulation/render/CameraObjectMotion.js";
 
 function identity(value) {
     return value;
@@ -34,6 +37,7 @@ export class PbrCaptureEnvironment {
         this.alignedReadback = alignedReadback;
         this.cameras = new Map();
         this.calibrations = new Map();
+        this.captureEpoch = 0;
     }
 
     /**
@@ -87,12 +91,26 @@ export class PbrCaptureEnvironment {
         vehicles = requests[0]?.vehicles ?? this.vehicles,
         prepare = true,
     } = {}) {
+        const epoch = this.captureEpoch;
+        const liveRequests = requests.filter((request) => request.captureInput?.version === 2);
+        const sceneHandle = this.runtime.cameraOptions().captureSceneHandle;
+        if (requests.length && (sceneHandle.objectMotion === LIVE_CAMERA_OBJECT_MOTION || liveRequests.length)) {
+            const first = requests[0].captureInput;
+            for (const request of requests) {
+                assertVisualCaptureInput(request.captureInput, { sceneHandle, captureTimeNs: first.captureTimeNs });
+                if (canonicalExactStringify(request.captureInput.objectPoses) !== canonicalExactStringify(first.objectPoses)) {
+                    throw new Error("PBR sync-group cameras require the same frozen object poses.");
+                }
+            }
+            this.runtime.applyRigidBodyPoses(first.objectPoses);
+        }
         if (prepare) {
             const devices = requests.map((request) => ({
                 renderRuntime: this.runtime,
                 getPosition: () => request.captureInput.pose.position,
             }));
             await this.runtime.prepareCapture({ devices, vehicles });
+            if (epoch !== this.captureEpoch) throw new Error("PBR capture environment was reset.");
         }
         const completed = [];
         for (const request of requests) {
@@ -100,7 +118,13 @@ export class PbrCaptureEnvironment {
             const wantsPixels = enabled.rgb || enabled.depth || enabled.semantic || enabled.instance;
             const camera = wantsPixels ? this.camera(request) : null;
             const localScene = this.runtime.cameraOptions().captureSceneHandle;
-            const captureInput = {
+            const captureInput = request.captureInput.version === 2 ? createVisualCaptureInput({
+                calibration: this._canonicalCalibration(String(request.id), request.captureInput.calibration),
+                pose: request.captureInput.pose,
+                sceneHandle: localScene,
+                captureTimeNs: request.captureInput.captureTimeNs,
+                objectPoses: request.captureInput.objectPoses,
+            }) : {
                 ...request.captureInput,
                 calibration: this._canonicalCalibration(String(request.id), request.captureInput.calibration),
                 scene: {
@@ -114,6 +138,7 @@ export class PbrCaptureEnvironment {
                 enabled,
                 renderProducts: camera.products,
             }) : {};
+            if (epoch !== this.captureEpoch) throw new Error("PBR capture environment was reset.");
             const result = {
                 id: request.id,
                 type: "camera",
@@ -135,10 +160,13 @@ export class PbrCaptureEnvironment {
     }
 
     reset() {
+        this.captureEpoch += 1;
+        this.runtime.reset?.();
         for (const camera of this.cameras.values()) camera.products.reset?.();
     }
 
     dispose() {
+        this.captureEpoch += 1;
         for (const camera of this.cameras.values()) camera.products.dispose();
         this.cameras.clear();
         this.calibrations.clear();

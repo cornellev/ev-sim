@@ -45,7 +45,8 @@ export class CpuLidarWorkerService {
             }
             const config = this.configs.get(payload.sensorId);
             if (!config) throw new Error(`Unknown CPU LiDAR sensor "${payload.sensorId}".`);
-            this.scene.setRigidBodyPoses(payload.rigidBodyPoses);
+            // Every capture carries a full snapshot, including removals.
+            this.scene.setRigidBodyPoses(payload.rigidBodyPoses ?? []);
             const buffer = this.scene.capture(config, payload.vehicles);
             return { buffer, captureMs: performance.now() - start };
         }

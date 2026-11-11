@@ -2,6 +2,7 @@ import { MAX_BOXES } from "../data/ObjectDatabase";
 import { Box } from "../data/objects/Box";
 import { common, Shader, standardVTX } from "../shaders/Shader";
 import Device from "./Device";
+import { sensorMarkerShown } from "../runtimeVisibility.js";
 import * as THREE from "three";
 
 const frag2d = `
@@ -206,6 +207,9 @@ export class LiDAR2d extends Device {
 
         scene.add(lineGroup);
         this.lines = lineGroup;
+        const shown = sensorMarkerShown(this.getParent()?.getParent(), this);
+        this._mesh.visible = shown;
+        this.lines.visible = shown;
     }
 
     execute() {

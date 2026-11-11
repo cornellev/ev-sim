@@ -12,6 +12,7 @@ import {
     multiplyMat4,
     quaternionFromRotationMatrix,
 } from "../../../math/linalg.js";
+import { LIVE_CAMERA_OBJECT_MOTION, snapshotCameraObjectPoses } from "../../../simulation/render/CameraObjectMotion.js";
 
 export const VISUAL_CAMERA_CALIBRATION_KIND = "cev-sim.visual-camera-calibration";
 export const VISUAL_CAMERA_CALIBRATION_VERSION = 1;
@@ -602,7 +603,7 @@ export function applyProjectionToThreeCamera(camera, calibration) {
     return projection;
 }
 
-export function createOwnedCaptureScene({ role, scene, generation = 1, descriptionHash = null } = {}) {
+export function createOwnedCaptureScene({ role, scene, generation = 1, descriptionHash = null, objectMotion, objectMotionBindings } = {}) {
     if (!CAPTURE_SCENE_ROLE_SET.has(role)) {
         throw contractError("VISUAL_CAPTURE_SCENE_ROLE_INVALID", `Unsupported capture-scene role "${role}".`);
     }
@@ -615,6 +616,14 @@ export function createOwnedCaptureScene({ role, scene, generation = 1, descripti
         scene,
         generation: normalizedGeneration,
         descriptionHash: descriptionHash === null ? null : String(descriptionHash),
+        ...(objectMotion === undefined ? {} : { objectMotion,
+            ...(objectMotionBindings === undefined ? {} : { objectMotionBindings: Object.freeze(objectMotionBindings.map((binding) => Object.freeze({
+                ...binding,
+                spawnPosition: Object.freeze({ ...binding.spawnPosition }),
+                spawnRotation: Object.freeze({ ...binding.spawnRotation }),
+                appearanceInstanceIds: Object.freeze([...binding.appearanceInstanceIds]),
+            }))) }),
+        }),
     });
 }
 
@@ -625,6 +634,8 @@ export function recreateOwnedCaptureScene(handle, { scene, descriptionHash = han
         scene,
         generation: checked.generation + 1,
         descriptionHash,
+        objectMotion: checked.objectMotion,
+        objectMotionBindings: checked.objectMotionBindings,
     });
 }
 
@@ -659,7 +670,7 @@ export function assertOwnedCaptureScene(handle, { role = null } = {}) {
     return handle;
 }
 
-export function createVisualCaptureInput({ calibration, pose, sceneHandle, captureTimeNs } = {}) {
+export function createVisualCaptureInput({ calibration, pose, sceneHandle, captureTimeNs, objectMotion, objectPoses = [] } = {}) {
     const checkedCalibration = assertVisualCameraCalibration(calibration);
     const checkedScene = assertOwnedCaptureScene(sceneHandle);
     const timestamp = integerNanoseconds(captureTimeNs ?? pose?.captureTimeNs);
@@ -670,9 +681,17 @@ export function createVisualCaptureInput({ calibration, pose, sceneHandle, captu
         rotation: pose?.quaternion ?? pose?.rotation,
     });
     const projectionMatrix = projectionMatrixFromCalibration(checkedCalibration);
+    const live = (objectMotion ?? checkedScene.objectMotion) === LIVE_CAMERA_OBJECT_MOTION;
+    if (objectMotion !== undefined && objectMotion !== checkedScene.objectMotion) {
+        throw contractError("VISUAL_CAPTURE_INPUT_INVALID", "Object motion must match the trusted scene policy.");
+    }
     const input = Object.freeze({
         kind: VISUAL_CAPTURE_INPUT_KIND,
-        version: VISUAL_CAPTURE_INPUT_VERSION,
+        version: live ? 2 : VISUAL_CAPTURE_INPUT_VERSION,
+        ...(live ? {
+            objectMotion: LIVE_CAMERA_OBJECT_MOTION,
+            objectPoses: snapshotCameraObjectPoses(objectPoses, checkedScene.objectMotionBindings),
+        } : {}),
         captureTimeNs: timestamp,
         calibration: checkedCalibration,
         pose: checkedPose,
@@ -689,17 +708,35 @@ export function createVisualCaptureInput({ calibration, pose, sceneHandle, captu
     return input;
 }
 
-export function assertVisualCaptureInput(input) {
-    if (input?.kind !== VISUAL_CAPTURE_INPUT_KIND || input?.version !== VISUAL_CAPTURE_INPUT_VERSION) {
+export function assertVisualCaptureInput(input, { sceneHandle = null, captureTimeNs = input?.captureTimeNs } = {}) {
+    if (input?.kind !== VISUAL_CAPTURE_INPUT_KIND || ![1, 2].includes(input?.version)) {
         throw contractError(
             "VISUAL_CAPTURE_INPUT_KIND_UNSUPPORTED",
             `Expected ${VISUAL_CAPTURE_INPUT_KIND}@${VISUAL_CAPTURE_INPUT_VERSION}.`,
         );
     }
+    if (captureTimeNs !== input.captureTimeNs || (sceneHandle && (
+        input.scene.generation !== sceneHandle.generation || input.scene.descriptionHash !== sceneHandle.descriptionHash
+        || input.scene.role !== sceneHandle.role
+        || (input.version === 2) !== (sceneHandle.objectMotion === LIVE_CAMERA_OBJECT_MOTION)
+    ))) throw contractError("VISUAL_CAPTURE_INPUT_INVALID", "Capture time or scene generation is stale.");
+    if (input.version === 2) {
+        if (input.objectMotion !== LIVE_CAMERA_OBJECT_MOTION) throw contractError("VISUAL_CAPTURE_INPUT_INVALID", "Unsupported capture object motion.");
+        if (!Array.isArray(input.objectPoses)) throw contractError("VISUAL_CAPTURE_INPUT_INVALID", "Live capture requires an object poses array.");
+        for (const pose of input.objectPoses ?? []) {
+            assertExactKeys(pose, ["id", "position", "rotation"], "captureInput.objectPoses");
+        }
+        const bindings = sceneHandle?.objectMotionBindings ?? (input.objectPoses ?? []).map(({ id }) => ({ id }));
+        const poses = snapshotCameraObjectPoses(input.objectPoses, bindings);
+        if (poses.some((pose, index) => pose.id !== input.objectPoses[index].id)) {
+            throw contractError("VISUAL_CAPTURE_INPUT_INVALID", "Object poses must be sorted.");
+        }
+    }
     if (CANONICAL_CAPTURE_INPUTS.has(input)) return input;
     assertExactKeys(input, [
         "kind", "version", "captureTimeNs", "calibration", "pose", "projectionMatrix",
         "viewProjectionMatrix", "scene", "outputRows",
+        ...(input.version === 2 ? ["objectMotion", "objectPoses"] : []),
     ], "captureInput");
     assertExactKeys(input.pose, [
         "captureTimeNs", "position", "quaternion", "matrixWorld", "viewMatrix", "matrixLayout",

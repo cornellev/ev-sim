@@ -200,6 +200,18 @@ services it before launching accumulated simulation debt. Operational status
 and browser performance reports identify the selected implementation and the
 pre-run worker fallback reason.
 
+Rigid-body pose publication uses immutable per-object snapshots with scalar
+revisions. Each sensor consumer maintains its own applied state. Browser LiDAR
+stores authored geometry and stable texture slots at scene projection, then
+updates only changed sources before a capture. Viewport meshes independently
+skip unchanged transforms. CPU LiDAR retains one combined body BVH and refits
+the affected ranges; an entirely authored scene retains its original static
+index. Pooled analytic GPU rendering keeps environment-scoped geometry and
+bounded exact shader specializations resident. Runtime motion never mutates
+the resolved geometry resources or world identity. Camera motion uses the
+explicit run policy and trusted render-scene bindings described in the
+visual-layer contract.
+
 The kernel owns the run-scoped `prepare/reset/step/finalize/dispose`
 lifecycle. Resets reconstruct component state and seeded streams, while
 finalization returns pure assertion/scenario results and reverse-order

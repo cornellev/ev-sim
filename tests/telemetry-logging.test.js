@@ -536,7 +536,8 @@ test("TimelineStore clamps seeks and preserves shared playback state", () => {
     assert.deepEqual(timeline.getSnapshot().selection, { startUs: 100, endUs: 900 });
 });
 
-test("TimelineStore throttles ui subscribers during playback but keeps seek urgent", () => {
+test("TimelineStore throttles ui subscribers during playback but keeps seek urgent", (t) => {
+    t.mock.method(performance, "now", () => 2000);
     const timeline = new TimelineStore();
     timeline.setDuration(10_000_000);
     timeline.set({ playing: true, timeUs: 0 });

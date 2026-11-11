@@ -13,7 +13,13 @@ import {
     createOwnedCaptureScene,
     createVisualCaptureInput,
     createVisualCapturePassSet,
+    assertVisualCaptureInput,
 } from "../environment/visual/VisualCapturePipeline.js";
+import {
+    LIVE_CAMERA_OBJECT_MOTION,
+    assertCameraObjectMotionFields,
+    CameraObjectPoseTracker,
+} from "../../simulation/render/CameraObjectMotion.js";
 import {
     VisualLayerMaterializer,
     sanitizeMeasuredAppearanceObject,
@@ -24,6 +30,8 @@ import { addPbrRoadMarkings } from "./PbrRoadMarkings.js";
 import { rep103PoseToThree } from "../../autonomy/CoordinateFrames.js";
 import { browserSimulationPerformance } from "../../simulation/performance/BrowserSimulationPerformance.js";
 import { RendererPresentationLease } from "./RendererPresentationLease.js";
+import { cameraSceneDetections } from "../../simulation/render/CameraObjectTruth.js";
+import { assertCanonicalAnalyticRenderSceneDescription, hashRenderScene } from "../../simulation/render/RenderScene.js";
 
 const PROVIDER = Object.freeze({ id: "pbr-mesh", version: 1 });
 const ROAD_SURFACE_COLOR = 0x2d3034;
@@ -301,6 +309,7 @@ export class BrowserPbrRenderRuntime {
         this.vehicleSource = vehicles;
         this.batchAnalyticGeometry = batchAnalyticGeometry !== false;
         this.generation = 0;
+        this.captureEpoch = 0;
         this.controller = null;
         this.materializer = null;
         this.appearanceScene = null;
@@ -312,6 +321,21 @@ export class BrowserPbrRenderRuntime {
         this._primitiveRenderableIds = new Map();
         this._semanticIds = null;
         this.actorGroups = new Map();
+        this.objectGroups = new Map();
+        this.objectPoses = Object.freeze([]);
+        this.objectMotionBindings = [];
+        this.objectMotion = undefined;
+        this.objectAppearanceMatrices = new Map();
+        this.objectRequiredChunkIds = [];
+        this.objectPoseTracker = new CameraObjectPoseTracker();
+        this.captureObjectPoseTracker = new CameraObjectPoseTracker();
+        this.objectMotionStates = new Map();
+        this.objectAppearanceRoots = new Map();
+        this._objectAppearanceChildren = [];
+        this._objectAppearanceTopologyRevision = null;
+        this._objectPosition = new THREE.Vector3();
+        this._objectRotation = new THREE.Quaternion();
+        this._objectUnitScale = new THREE.Vector3(1, 1, 1);
         this.assetLeases = [];
         this.ownedActorMaterials = [];
         this.environmentTextureLease = null;
@@ -366,6 +390,10 @@ export class BrowserPbrRenderRuntime {
             const renderScene = resolved?.renderScene;
             const description = renderScene?.description;
             assertPbrRenderSceneDescription(description);
+            assertCameraObjectMotionFields(description, {
+                world: resolved.world?.description,
+                visualLayer: resolved.visualLayer?.description,
+            });
             if (hashPbrRenderScene(description) !== renderScene.hash) {
                 throw new Error("Resolved PBR render-scene hash does not match its description.");
             }
@@ -381,6 +409,15 @@ export class BrowserPbrRenderRuntime {
             this.analyticScene.userData.cevSimCaptureTopologyRevision = 1;
             this.analyticScene.userData.cevSimCaptureTransformRevision = 1;
             this._configureRecipe(description.recipe);
+            this.objectMotion = description.objectMotion;
+            this.renderSceneDescription = description;
+            this.objectMotionBindings = structuredClone(description.objectMotionBindings ?? []);
+            const appearanceIds = new Set(this.objectMotionBindings.flatMap((binding) => binding.appearanceInstanceIds));
+            for (const instance of resolved.visualLayer.description.instances) {
+                if (!appearanceIds.has(instance.id)) continue;
+                this.objectAppearanceMatrices.set(instance.id, new THREE.Matrix4().fromArray(instance.matrix));
+                this.objectRequiredChunkIds.push(...instance.chunkIds);
+            }
             this._buildAnalyticScene(description.analyticTruth.description, description.actors);
             addPbrRoadMarkings(this.appearanceScene, resolved.world?.description?.roads);
 
@@ -410,7 +447,7 @@ export class BrowserPbrRenderRuntime {
                 descriptor: resolved.visualLayer.description,
                 access: resolved.evidence.visualAssets.access,
                 uses,
-            }, resolved.world, { interest: initialInterest });
+            }, resolved.world, { interest: { ...initialInterest, requiredChunkIds: this.objectRequiredChunkIds } });
             this._appearanceResidencySignature = this._residencySignature();
             this._throwIfStale(generation);
 
@@ -430,14 +467,20 @@ export class BrowserPbrRenderRuntime {
                 scene: this.appearanceScene,
                 generation,
                 descriptionHash: renderScene.hash,
+                objectMotion: this.objectMotion,
+                objectMotionBindings: this.objectMotionBindings,
             });
             this.analyticSceneHandle = createOwnedCaptureScene({
                 role: "analytic-truth",
                 scene: this.analyticScene,
                 generation,
                 descriptionHash: description.analyticTruth.hash,
+                objectMotion: this.objectMotion,
+                objectMotionBindings: this.objectMotionBindings,
             });
             this._updateActors(this._vehicles());
+            this._initializeObjectMotion();
+            this._applyObjectPoses(this.objectPoses);
             this._setReadyStatus();
             return this.status;
         } catch (error) {
@@ -457,6 +500,7 @@ export class BrowserPbrRenderRuntime {
         try {
             const materializerStatus = await this.materializer.updateInterest({
                 positions: positions.length > 0 ? positions : [{ x: 0, y: 0, z: 0 }],
+                requiredChunkIds: this.objectRequiredChunkIds,
             });
             if (materializerStatus.status === "error") {
                 throw new Error(materializerStatus.error?.message || "Required PBR residency failed.");
@@ -482,7 +526,13 @@ export class BrowserPbrRenderRuntime {
 
     async captureCamera({ captureInput, enabled, renderProducts, signal = this.controller?.signal } = {}) {
         if (!this.ready) throw infrastructureError(new Error("PBR render runtime is not ready."));
+        const generation = this.generation;
+        const captureEpoch = this.captureEpoch;
         try {
+            assertVisualCaptureInput(captureInput, { sceneHandle: this.appearanceSceneHandle });
+            if (this.objectMotion === LIVE_CAMERA_OBJECT_MOTION) {
+                this._applyObjectPoses(captureInput.objectPoses);
+            }
             const visualPassSet = enabled.rgb ? createVisualCapturePassSet({
                 family: VISUAL_CAPTURE_PASS_FAMILIES.visual,
                 captureInput,
@@ -500,6 +550,7 @@ export class BrowserPbrRenderRuntime {
                 pose: captureInput.pose,
                 sceneHandle: this.analyticSceneHandle,
                 captureTimeNs: captureInput.captureTimeNs,
+                objectPoses: captureInput.objectPoses,
             }) : null;
             const analyticPassSet = analyticInput ? createVisualCapturePassSet({
                 family: VISUAL_CAPTURE_PASS_FAMILIES.analytic,
@@ -514,6 +565,8 @@ export class BrowserPbrRenderRuntime {
                 analyticRenderables: this.analyticRenderables,
                 signal,
             });
+            this._throwIfStale(generation);
+            if (captureEpoch !== this.captureEpoch) throw infrastructureError(new Error("PBR capture was reset."), "PBR_CAPTURE_SUPERSEDED");
             for (const [name, durationMs] of Object.entries(
                 renderProducts?._alignedProducts?.lastCaptureTimings ?? {},
             )) {
@@ -538,7 +591,7 @@ export class BrowserPbrRenderRuntime {
             };
         } catch (error) {
             const failure = infrastructureError(error, "PBR_CAPTURE_FAILED");
-            this._setStatus("error", failure);
+            if (generation === this.generation && captureEpoch === this.captureEpoch) this._setStatus("error", failure);
             throw failure;
         }
     }
@@ -551,6 +604,12 @@ export class BrowserPbrRenderRuntime {
         this.rendererLease.reset({ preserveListeners });
         this.status = this._snapshot("idle");
         if (!preserveListeners) this.listeners.clear();
+    }
+
+    reset() {
+        this.captureEpoch += 1;
+        this.applyRigidBodyPoses([]);
+        if (this.ready) this._applyObjectPoses(this.objectPoses);
     }
 
     _configureRecipe(recipe) {
@@ -572,13 +631,25 @@ export class BrowserPbrRenderRuntime {
 
     _buildAnalyticScene(analyticTruth, actorDescriptions) {
         const actorById = new Map(actorDescriptions.map((entry) => [entry.actorId, entry]));
+        const objectIds = new Set(this.objectMotionBindings.map((binding) => binding.id));
+        const staticPrimitives = analyticTruth.staticPrimitives.filter((primitive) => !objectIds.has(primitive.sourceId));
+        for (const binding of this.objectMotionBindings) {
+            const group = new THREE.Group();
+            group.matrixAutoUpdate = false;
+            group.userData.cevSimCaptureDynamic = true;
+            this.analyticScene.add(group);
+            const primitives = analyticTruth.staticPrimitives.filter((primitive) => primitive.sourceId === binding.id);
+            if (this.batchAnalyticGeometry) this._addBatchedAnalyticPrimitives(primitives, group, { idPrefix: `object:${binding.id}` });
+            else for (const primitive of primitives) this._addAnalyticPrimitive(primitive, group);
+            this.objectGroups.set(binding.id, group);
+        }
         if (this.batchAnalyticGeometry) {
-            this._addBatchedAnalyticPrimitives(analyticTruth.staticPrimitives, this.analyticScene, {
+            this._addBatchedAnalyticPrimitives(staticPrimitives, this.analyticScene, {
                 idPrefix: "static",
             });
-            this._addBatchedRoadAppearance(analyticTruth.staticPrimitives);
+            this._addBatchedRoadAppearance(staticPrimitives);
         } else {
-            for (const primitive of analyticTruth.staticPrimitives) {
+            for (const primitive of staticPrimitives) {
                 this._addAnalyticPrimitive(primitive, this.analyticScene);
                 this._addRoadAppearance(primitive);
             }
@@ -816,9 +887,113 @@ export class BrowserPbrRenderRuntime {
         if (appearanceMovedAny) this.appearanceScene.userData.cevSimCaptureTransformRevision += 1;
     }
 
+    applyRigidBodyPoses(poses = []) {
+        if (this.objectMotion !== LIVE_CAMERA_OBJECT_MOTION) return;
+        if (this.objectPoseTracker.sync(poses).size) this.objectPoses = this.objectPoseTracker.poses;
+    }
+
+    captureDetections(captureInput) {
+        return cameraSceneDetections(this.renderSceneDescription, captureInput,
+            new Map([...this.actorGroups].map(([id, groups]) => [id, groups.analytic.matrix.elements])));
+    }
+
+    _initializeObjectMotion() {
+        this.objectPoseTracker = new CameraObjectPoseTracker(this.objectMotionBindings);
+        this.captureObjectPoseTracker = new CameraObjectPoseTracker(this.objectMotionBindings);
+        this.objectPoses = this.objectPoseTracker.poses;
+        for (const binding of this.objectMotionBindings) {
+            const { spawnPosition: p, spawnRotation: q } = binding;
+            const spawnInverse = new THREE.Matrix4().compose(
+                this._objectPosition.set(p.x, p.y, p.z),
+                this._objectRotation.set(q.x, q.y, q.z, q.w),
+                this._objectUnitScale,
+            ).invert();
+            this.objectMotionStates.set(binding.id, {
+                group: this.objectGroups.get(binding.id),
+                spawnInverse,
+                delta: new THREE.Matrix4(),
+                appearances: binding.appearanceInstanceIds.map((id) => ({ id, authored: this.objectAppearanceMatrices.get(id), next: new THREE.Matrix4() })),
+            });
+        }
+    }
+
+    _refreshObjectAppearanceRoots() {
+        const children = this.appearanceScene.children;
+        const topology = this.appearanceScene.userData.cevSimCaptureTopologyRevision;
+        if (topology === this._objectAppearanceTopologyRevision && children.length === this._objectAppearanceChildren.length
+            && children.every((child, index) => child === this._objectAppearanceChildren[index])) return new Set();
+        const roots = new Map();
+        if (this.objectAppearanceMatrices.size) this.appearanceScene.traverse((object) => {
+            const id = object.userData?.visualInstanceId;
+            if (this.objectAppearanceMatrices.has(id) && object.parent?.userData?.visualInstanceId !== id) {
+                const entries = roots.get(id) ?? [];
+                entries.push(object);
+                roots.set(id, entries);
+            }
+        });
+        for (const id of this.objectAppearanceMatrices.keys()) {
+            if (!roots.get(id)?.length) throw new Error(`Required live PBR appearance ${id} is not resident.`);
+        }
+        const changed = new Set();
+        for (const [id, state] of this.objectMotionStates) {
+            if (state.appearances.some((appearance) => {
+                const previous = this.objectAppearanceRoots.get(appearance.id) ?? [];
+                const next = roots.get(appearance.id) ?? [];
+                return previous.length !== next.length || previous.some((root, index) => root !== next[index]);
+            })) changed.add(id);
+        }
+        this.objectAppearanceRoots = roots;
+        this._objectAppearanceChildren = [...children];
+        this._objectAppearanceTopologyRevision = topology;
+        return changed;
+    }
+
+    _applyObjectPoses(poses) {
+        if (this.objectMotion !== LIVE_CAMERA_OBJECT_MOTION) return new Set();
+        const changed = this.captureObjectPoseTracker.sync(poses);
+        const appearanceChanged = this._refreshObjectAppearanceRoots();
+        let analyticMoved = false;
+        let appearanceMoved = false;
+        for (const id of new Set([...changed, ...appearanceChanged])) {
+            const state = this.objectMotionStates.get(id);
+            if (changed.has(id)) {
+                const pose = this.captureObjectPoseTracker.tracker.get(id);
+                if (pose) state.delta.compose(
+                    this._objectPosition.set(pose.position.x, pose.position.y, pose.position.z),
+                    this._objectRotation.set(pose.rotation.x, pose.rotation.y, pose.rotation.z, pose.rotation.w),
+                    this._objectUnitScale,
+                ).multiply(state.spawnInverse);
+                else state.delta.identity();
+                if (!matrixElementsMatch(state.group.matrix, state.delta)) {
+                    state.group.matrix.copy(state.delta);
+                    state.group.matrixWorldNeedsUpdate = true;
+                    state.group.updateMatrixWorld(true);
+                    analyticMoved = true;
+                }
+            }
+            for (const appearance of state.appearances) {
+                const instances = this.objectAppearanceRoots.get(appearance.id);
+                if (!instances?.length) throw new Error(`Required live PBR appearance ${appearance.id} is not resident.`);
+                appearance.next.copy(state.delta).multiply(appearance.authored);
+                for (const root of instances) {
+                    root.userData.cevSimCaptureDynamic = true;
+                    if (matrixElementsMatch(root.matrix, appearance.next)) continue;
+                    root.matrix.copy(appearance.next);
+                    root.matrixAutoUpdate = false;
+                    root.matrixWorldNeedsUpdate = true;
+                    root.updateWorldMatrix(true, true);
+                    appearanceMoved = true;
+                }
+            }
+        }
+        if (analyticMoved) this.analyticScene.userData.cevSimCaptureTransformRevision += 1;
+        if (appearanceMoved) this.appearanceScene.userData.cevSimCaptureTransformRevision += 1;
+        return changed;
+    }
+
     _residencySignature(residency = this.materializer?.residencySnapshot?.()) {
         const ids = residency?.residentChunkIds ?? residency?.residentChunks ?? [];
-        return Array.isArray(ids) ? [...ids].map(String).sort().join("\0") : String(ids ?? "");
+        return `${Array.isArray(ids) ? [...ids].map(String).sort().join("\0") : String(ids ?? "")}\0${JSON.stringify(residency?.selectedLods ?? {})}`;
     }
 
     _vehicles() {
@@ -887,6 +1062,19 @@ export class BrowserPbrRenderRuntime {
         this._primitiveRenderableIds = new Map();
         this._semanticIds = null;
         this.actorGroups = new Map();
+        this.objectGroups = new Map();
+        this.objectPoses = Object.freeze([]);
+        this.objectMotionBindings = [];
+        this.objectMotion = undefined;
+        this.renderSceneDescription = null;
+        this.objectAppearanceMatrices = new Map();
+        this.objectRequiredChunkIds = [];
+        this.objectPoseTracker = new CameraObjectPoseTracker();
+        this.captureObjectPoseTracker = new CameraObjectPoseTracker();
+        this.objectMotionStates = new Map();
+        this.objectAppearanceRoots = new Map();
+        this._objectAppearanceChildren = [];
+        this._objectAppearanceTopologyRevision = null;
         this.rootUseHashes = [];
         this._appearanceResidencySignature = null;
         this.renderPolicy = null;
@@ -931,5 +1119,94 @@ export class BrowserPbrRenderRuntime {
             return;
         }
         await Promise.all(useHashes.map((useHash) => this.authorizeSourceUse({ useHash, operations })));
+    }
+}
+
+/** Explicit live analytic cameras own their geometry; historical cameras keep their existing path. */
+export class BrowserAnalyticRenderRuntime extends BrowserPbrRenderRuntime {
+    async prepare(resolved, { vehicles = this._vehicles() } = {}) {
+        this.dispose({ preserveListeners: true });
+        const description = resolved.renderScene?.description;
+        assertCanonicalAnalyticRenderSceneDescription(description);
+        if (hashRenderScene(description) !== resolved.renderScene.hash) throw new Error("Analytic render-scene hash mismatch.");
+        assertCameraObjectMotionFields(description, { world: resolved.world.description });
+        this.controller = new AbortController();
+        this.objectMotion = description.objectMotion;
+        this.objectMotionBindings = structuredClone(description.objectMotionBindings ?? []);
+        this.renderSceneDescription = description;
+        this.appearanceScene = new THREE.Scene();
+        this.analyticScene = new THREE.Scene();
+        for (const scene of [this.appearanceScene, this.analyticScene]) {
+            scene.userData.cevSimCaptureTopologyRevision = 1;
+            scene.userData.cevSimCaptureTransformRevision = 1;
+            scene.background = new THREE.Color(0, 0, 0);
+        }
+        this._buildAnalyticScene(description, description.actors.map((actor) => ({ actorId: actor.actorId, transform: new THREE.Matrix4().toArray() })));
+        disposeOwnedScene(this.appearanceScene);
+        const originals = [];
+        this.analyticScene.traverse((object) => originals.push(object));
+        const cloned = this.analyticScene.clone(true);
+        const clones = [];
+        cloned.traverse((object) => clones.push(object));
+        const paired = new Map(originals.map((object, index) => [object, clones[index]]));
+        const bindings = new Map(this.analyticBindings.map((binding) => [binding.renderableId, binding]));
+        cloned.traverse((object) => {
+            if (!object.isMesh) return;
+            object.geometry = object.geometry.clone();
+            const binding = bindings.get(object.userData.renderableId);
+            const color = description.materials.find((material) => material.semanticId === binding?.semanticId)?.colorRgba;
+            object.material = new THREE.MeshBasicMaterial({
+                color: color ? new THREE.Color().setRGB(color[0] / 255, color[1] / 255, color[2] / 255, THREE.SRGBColorSpace) : semanticColor(binding?.semanticId ?? 0),
+                side: THREE.DoubleSide,
+            });
+        });
+        this.appearanceScene = cloned;
+        for (const groups of this.actorGroups.values()) groups.appearance = paired.get(groups.analytic);
+        this.renderPolicy = { exposure: 1, outputColorSpace: "srgb", toneMapping: "none", backgroundColorRgba: [0, 0, 0, 1] };
+        for (const [key, role] of [["appearanceSceneHandle", "measured-appearance"], ["analyticSceneHandle", "analytic-truth"]]) {
+            this[key] = createOwnedCaptureScene({
+                role,
+                scene: role === "measured-appearance" ? this.appearanceScene : this.analyticScene,
+                generation: this.generation,
+                descriptionHash: resolved.renderScene.hash,
+                objectMotion: this.objectMotion,
+                objectMotionBindings: this.objectMotionBindings,
+            });
+        }
+        this.analyticAppearanceObjects = new Map([...this.objectGroups].map(([id, group]) => [id, paired.get(group)]));
+        this._initializeObjectMotion();
+        this._updateActors(vehicles);
+        this._setReadyStatus();
+        this.applyRigidBodyPoses([]);
+        return this.status;
+    }
+
+    _applyObjectPoses(poses) {
+        const changed = super._applyObjectPoses(poses);
+        let moved = false;
+        for (const id of changed) {
+            const appearance = this.analyticAppearanceObjects.get(id);
+            const matrix = this.objectGroups.get(id).matrix;
+            if (matrixElementsMatch(appearance.matrix, matrix)) continue;
+            appearance.matrix.copy(matrix);
+            appearance.matrixWorldNeedsUpdate = true;
+            appearance.updateMatrixWorld(true);
+            moved = true;
+        }
+        if (moved) this.appearanceScene.userData.cevSimCaptureTransformRevision += 1;
+        return changed;
+    }
+
+    async prepareCapture({ vehicles = this._vehicles() } = {}) {
+        this._updateActors(vehicles);
+    }
+
+    _snapshot(state, error = null) {
+        return { ...super._snapshot(state, error), provider: { id: "canonical-analytic", version: 1 } };
+    }
+
+    _releaseResources() {
+        super._releaseResources();
+        this.analyticAppearanceObjects = new Map();
     }
 }

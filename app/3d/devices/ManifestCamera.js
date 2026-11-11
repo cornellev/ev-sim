@@ -27,6 +27,7 @@ import {
 } from "../environment/visual/VisualCapturePipeline.js";
 import { getSharedPerceptionTruthIndex } from "../../autonomy/PerceptionTruthIndex.js";
 import { browserSimulationPerformance } from "../../simulation/performance/BrowserSimulationPerformance.js";
+import { LIVE_CAMERA_OBJECT_MOTION } from "../../simulation/render/CameraObjectMotion.js";
 
 function gaussian(rng) {
     return gaussianSample(rng);
@@ -359,10 +360,18 @@ export class ManifestCamera extends Device {
             },
             sceneHandle: this.captureSceneHandle,
             captureTimeNs,
+            objectPoses: this.renderRuntime.objectPoses,
         });
-        const truth = this._refreshTruth(data, scene, vehicles);
+        const live = this.lastCaptureInput.objectMotion === LIVE_CAMERA_OBJECT_MOTION;
+        const truth = live ? [] : this._refreshTruth(data, scene, vehicles);
         const calibration = this.config.calibration;
-        const imageDetections = projectTruthBoundsToImage(
+        const products = calibration.products ?? {};
+        const outputs = this.config.outputs ?? {};
+        const needsDetections = (products.detections2d === true && outputs.detections2dTopicId)
+            || (products.detections3d === true && outputs.detections3dTopicId);
+        const imageDetections = live
+            ? needsDetections ? this.renderRuntime.captureDetections(this.lastCaptureInput) : []
+            : projectTruthBoundsToImage(
             truth.filter((record) => record.visible && record.semanticId !== 0),
             this.sensorCamera,
             calibration.width,

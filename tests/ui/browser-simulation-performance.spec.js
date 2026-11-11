@@ -195,11 +195,12 @@ test("rejected PBR worker falls back inline without starving car, follow, or orb
         const pauseFrame = presented.at(-1);
         const implementation = engine.renderRuntime?.implementation;
         const fallbackCode = engine.renderProviderStatus?.fallbackReason?.code;
+        const workerCauseCode = engine.renderProviderStatus?.fallbackReason?.workerCauseCode;
         const displayedFrames = engine.frames;
         engine.dispose();
         car.geometry.dispose();
         car.material.dispose();
-        return { deferred, followFrame, orbitFrame, pauseFrame, implementation, fallbackCode, displayedFrames };
+        return { deferred, followFrame, orbitFrame, pauseFrame, implementation, fallbackCode, workerCauseCode, displayedFrames };
     });
 
     expect(result.deferred).toBe(true);
@@ -212,6 +213,7 @@ test("rejected PBR worker falls back inline without starving car, follow, or orb
     expect(result.orbitFrame.cameraZ).toBe(result.followFrame.cameraZ + 2);
     expect(result.pauseFrame.cameraZ).toBe(result.orbitFrame.cameraZ);
     expect(result.implementation).toBe("inline");
-    expect(result.fallbackCode).toBe("PBR_WORKER_CAPABILITY_UNAVAILABLE");
+    expect(result.fallbackCode).toBe("PBR_WORKER_UNAVAILABLE");
+    expect(result.workerCauseCode).toBe("PBR_WORKER_CAPABILITY_UNAVAILABLE");
     expect(result.displayedFrames).toBeGreaterThanOrEqual(3);
 });

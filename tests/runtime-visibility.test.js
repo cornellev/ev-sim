@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+    applyOriginMarkersVisible,
+    applySensorMarkersVisible,
     clearLaneHighlights,
+    originMarkerShown,
+    sensorMarkerShown,
     setDeviceVisualsVisible,
     setRoadAuthoringHandlesVisible,
     setVehiclesVisible,
@@ -84,6 +88,57 @@ test("editor mode visibility hides vehicle and detached device visuals", () => {
     assert.equal(vehicleRoot.visible, false);
     assert.deepEqual(deviceRoots.map((root) => root.visible), [false, false, false, false]);
     assert.deepEqual(laneMeshes.map((mesh) => mesh.visible), [false, false]);
+});
+
+test("sensor marker switch hides lidar meshes and leaves the capture camera", () => {
+    const pointsGroup = { visible: true };
+    const lines = { visible: true };
+    const mesh = { visible: true };
+    const sensorCamera = { visible: true };
+    const disabledPoints = { visible: true };
+    const data = {
+        devices: () => ({
+            devices: [
+                { enabled: true, pointsGroup, lines, _mesh: mesh, sensorCamera },
+                { enabled: false, pointsGroup: disabledPoints },
+            ],
+        }),
+    };
+
+    applySensorMarkersVisible(data, false);
+    assert.equal(pointsGroup.visible, false);
+    assert.equal(lines.visible, false);
+    assert.equal(mesh.visible, false);
+    assert.equal(sensorCamera.visible, true);
+    assert.equal(disabledPoints.visible, false);
+
+    applySensorMarkersVisible(data, true);
+    assert.equal(pointsGroup.visible, true);
+    assert.equal(disabledPoints.visible, false);
+});
+
+test("origin marker switch toggles only the debug plate", () => {
+    const marker = { visible: true };
+    const data = {
+        vehicles: () => ({
+            vehicles: [
+                { sceneObject: { getObjectByName: (name) => (name === "vehicle-origin-debug" ? marker : null) } },
+                { sceneObject: null },
+            ],
+        }),
+    };
+
+    applyOriginMarkersVisible(data, false);
+    assert.equal(marker.visible, false);
+    applyOriginMarkersVisible(data, true);
+    assert.equal(marker.visible, true);
+});
+
+test("marker helpers stay shown when the simulation has no preference", () => {
+    assert.equal(sensorMarkerShown(null, { enabled: true }), true);
+    assert.equal(sensorMarkerShown({ simulation: () => ({}) }, { enabled: false }), false);
+    assert.equal(originMarkerShown(null), true);
+    assert.equal(originMarkerShown({ simulation: () => ({ debugVisuals: { originMarker: false } }) }), false);
 });
 
 test("simulation mode hides the road authoring handle group", () => {

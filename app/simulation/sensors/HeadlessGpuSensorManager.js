@@ -2,12 +2,16 @@ import { gaussianSample } from "../../autonomy/LocalizationMeasurements.js";
 import { cloneJson } from "../../util/cloneJson.js";
 import { analyticGpuCameraPose } from "./AnalyticGpuCameraPose.js";
 import { SensorPublisher } from "./SensorPublisher.js";
-import { buildCameraInfo, buildImageMessage } from "./SensorMessages.js";
+import { buildCameraInfo, buildImageMessage, buildDetection2DArray, buildDetection3DArray } from "./SensorMessages.js";
 import { compareUtf8 } from "../world/WorldDescription.js";
 import { assertGpuSensorBackendSelection } from "./GpuSensorBackend.js";
 import { buildLidarCapture } from "./LidarProducts.js";
 import { reduceLidarOccupancy } from "../occupancy/reduceLidarOccupancy.js";
 import { isScanningLidarType } from "./SensorTypeRegistry.js";
+import { LIVE_CAMERA_OBJECT_MOTION, snapshotCameraObjectPoses, cameraObjectPosesWithSpawn } from "../render/CameraObjectMotion.js";
+import { cameraSceneDetections } from "../render/CameraObjectTruth.js";
+import { eulerToQuaternion } from "../../autonomy/CoordinateFrames.js";
+import { mat4FromQuaternionTranslation } from "../../math/linalg.js";
 
 function clone(value) {
     return cloneJson(value);
@@ -81,6 +85,7 @@ class HeadlessGpuSensorDevice {
                 pose,
                 sceneHandle: this.manager.pbrSceneHandle,
                 captureTimeNs: context.captureTimeNs,
+                objectPoses: this.manager.cameraObjectPoses(),
             });
             const products = this.config.calibration.products || {};
             const outputs = this.config.outputs || {};
@@ -113,6 +118,19 @@ class HeadlessGpuSensorDevice {
         const material = this.manager.scene.description?.materials?.[0]?.colorRgba || [64, 96, 128, 255];
         const products = this.config.calibration?.products || {};
         const outputs = this.config.outputs || {};
+        const liveCamera = this.type === "camera" && this.manager.renderScene.description.objectMotion === LIVE_CAMERA_OBJECT_MOTION;
+        const analyticPose = this.type === "camera" ? analyticGpuCameraPose({ sensor: this.config, vehicles, ...dimensions }) : null;
+        const objectPoses = liveCamera ? this.manager.cameraObjectPoses() : null;
+        const captureInput = liveCamera ? this.manager.visualCapture.createVisualCaptureInput({
+            calibration: this.manager.cameraCalibrations.get(this.id),
+            pose: {
+                position: { x: analyticPose.origin[0], y: analyticPose.origin[1], z: analyticPose.origin[2] },
+                rotation: { x: -analyticPose.inverseQ[0], y: -analyticPose.inverseQ[1], z: -analyticPose.inverseQ[2], w: analyticPose.inverseQ[3] },
+            },
+            sceneHandle: this.manager.cameraSceneHandle,
+            captureTimeNs: context.captureTimeNs,
+            objectPoses,
+        }) : null;
         return {
             id: this.id,
             type: this.type,
@@ -122,21 +140,18 @@ class HeadlessGpuSensorDevice {
             sampleIndex: context.sampleIndex,
             rngState: context.rng._state,
             ...(this.type === "camera" ? {
+                ...(this.manager.renderScene.description.objectMotion === LIVE_CAMERA_OBJECT_MOTION ? {
+                    cameraObjectMotion: LIVE_CAMERA_OBJECT_MOTION,
+                    captureInput,
+                    objectPoses,
+                    rigidBodyPoses: cameraObjectPosesWithSpawn(objectPoses, this.manager.renderScene.description.objectMotionBindings),
+                } : {}),
                 provider: { id: "canonical-analytic", version: 1 },
                 products: {
                     rgb: products.rgb === true && Boolean(outputs.imageTopicId),
                     depth: products.depth === true && Boolean(outputs.depthTopicId),
                 },
-                analyticPose: analyticGpuCameraPose({
-                    sensor: this.config,
-                    vehicles: vehicles.map((vehicle) => ({
-                        id: vehicle.telemetryId || vehicle.id,
-                        position: vehicle.position,
-                        rotation: vehicle.rotation,
-                    })),
-                    width: dimensions.width,
-                    height: dimensions.height,
-                }),
+                analyticPose,
             } : {}),
             includeObservation: this.perceptionObservations
                 && (this.type === "camera"
@@ -550,6 +565,7 @@ export class HeadlessGpuSensorManager {
         this.renderRuntime = null;
         this.pbr = false;
         this.pbrSceneHandle = null;
+        this.cameraSceneHandle = null;
         this.cameraCalibrations = new Map();
         this.transformRuntime = null;
         this.rigidBodyPoses = [];
@@ -569,6 +585,31 @@ export class HeadlessGpuSensorManager {
 
     applyRigidBodyPoses(poses) {
         this.rigidBodyPoses = Array.isArray(poses) ? poses : [];
+    }
+
+    detectionMessages(device, context) {
+        const detections = context.cameraDetections;
+        if (!detections) return [];
+        const { products } = device.config.calibration;
+        const outputs = device.config.outputs;
+        const frameId = device.config.measurementFrameId || device.config.frameId;
+        return [
+            ...(products.detections2d === true && outputs.detections2dTopicId ? [{
+                topicId: outputs.detections2dTopicId, signal: "detections2d", frameId,
+                value: buildDetection2DArray({ detections, timeNs: context.captureTimeNs, frameId }),
+            }] : []),
+            ...(products.detections3d === true && outputs.detections3dTopicId ? [{
+                topicId: outputs.detections3dTopicId, signal: "detections3d", frameId,
+                value: buildDetection3DArray({ detections, timeNs: context.captureTimeNs, frameId: this.transformRuntime?.frames?.map || "map" }),
+            }] : []),
+        ];
+    }
+
+    cameraObjectPoses() {
+        const description = this.renderScene?.description;
+        return description?.objectMotion === LIVE_CAMERA_OBJECT_MOTION
+            ? snapshotCameraObjectPoses(this.rigidBodyPoses, description.objectMotionBindings)
+            : [];
     }
 
     async configureFromManifest(sensorRig = {}, options = {}) {
@@ -622,11 +663,21 @@ export class HeadlessGpuSensorManager {
                 scene: {},
                 generation: this.renderRuntime.generation,
                 descriptionHash: this.renderScene.hash,
+                objectMotion: this.renderScene.description.objectMotion,
+                objectMotionBindings: this.renderScene.description.objectMotionBindings,
             });
             this.cameraCalibrations = new Map(cameras.map((camera) => [
                 camera.id,
                 visualCapture.createVisualCameraCalibration(camera.calibration),
             ]));
+        }
+        if (this.renderScene?.description.objectMotion === LIVE_CAMERA_OBJECT_MOTION) {
+            this.cameraSceneHandle = this.pbrSceneHandle ?? visualCapture.createOwnedCaptureScene({
+                role: "analytic-truth", scene: {}, generation: (this.cameraSceneGeneration = (this.cameraSceneGeneration ?? 0) + 1),
+                descriptionHash: this.renderScene.hash, objectMotion: LIVE_CAMERA_OBJECT_MOTION,
+                objectMotionBindings: this.renderScene.description.objectMotionBindings,
+            });
+            this.cameraCalibrations = new Map(cameras.map((camera) => [camera.id, visualCapture.createVisualCameraCalibration(camera.calibration)]));
         }
         this.scene = this.renderScene || this.lidarGeometry;
         this.seed = String(options.seed ?? "0");
@@ -671,6 +722,13 @@ export class HeadlessGpuSensorManager {
                 publisher.health.captureAttempts += 1;
                 const request = device.request(context);
                 if (!request) continue;
+                if (device.type === "camera" && request.captureInput?.version === 2
+                    && ((device.config.calibration.products.detections2d === true && device.config.outputs?.detections2dTopicId)
+                        || (device.config.calibration.products.detections3d === true && device.config.outputs?.detections3dTopicId))) {
+                    const actors = new Map((request.vehicles ?? []).map((vehicle) => [vehicle.telemetryId || vehicle.id,
+                        mat4FromQuaternionTranslation(eulerToQuaternion(vehicle.rotation ?? {}), vehicle.position ?? {})]));
+                    context.cameraDetections = cameraSceneDetections(this.renderScene.description, request.captureInput, actors);
+                }
                 const key = device.config.syncGroupId
                     ? `${device.config.syncGroupId}:${context.captureTimeNs}`
                     : `${device.id}:${context.captureTimeNs}`;
@@ -716,9 +774,11 @@ export class HeadlessGpuSensorManager {
             }));
             const staged = [];
             for (const { entry, captured } of capturedRoutes.flat()) {
+                const result = await entry.device.process(captured, entry.context);
+                result.messages.push(...this.detectionMessages(entry.device, entry.context));
                 staged.push({
                     entry,
-                    result: await entry.device.process(captured, entry.context),
+                    result,
                 });
             }
             const checkpoints = new Map(staged.map(({ entry }) => [
@@ -792,6 +852,7 @@ export class HeadlessGpuSensorManager {
         this.renderRuntime = null;
         this.pbr = false;
         this.pbrSceneHandle = null;
+        this.cameraSceneHandle = null;
         this.cameraCalibrations.clear();
         this.transformRuntime = null;
         this.rigidBodyPoses = [];

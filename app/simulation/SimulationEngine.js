@@ -2,7 +2,7 @@ import { clamp } from "three/src/math/MathUtils.js";
 import { PerspectiveViewController } from "../3d/camera/PerspectiveViewController.js";
 import { attachPerspectiveView, detachPerspectiveView } from "../3d/camera/perspectiveViewRegistry.js";
 import { AutonomyOverlay } from "../3d/overlay/AutonomyOverlay.js";
-import { BrowserPbrRenderRuntime } from "../3d/perception/BrowserPbrRenderRuntime.js";
+import { BrowserAnalyticRenderRuntime, BrowserPbrRenderRuntime } from "../3d/perception/BrowserPbrRenderRuntime.js";
 import { BrowserPbrWorkerRuntime } from "../3d/perception/BrowserPbrWorkerRuntime.js";
 import { ColliderViewportPreview } from "../3d/perception/ColliderViewportPreview.js";
 import { LidarViewportPreview } from "../3d/perception/LidarViewportPreview.js";
@@ -17,6 +17,8 @@ import { createPhysicsBackendSelection } from "../physics/PhysicsBackend.js";
 import { applyRigidBodyViewportPoses, restoreAuthoredRigidBodyPoses } from "../3d/editor/projection/applyRigidBodyPoses.js";
 import { createKeyboardDriveState, stepKeyboardDrive } from "./keyboardDrive.js";
 import { BrowserPacketRelaySink } from "./sensors/BrowserPacketRelaySink.js";
+import { applyOriginMarkersVisible, applySensorMarkersVisible } from "../3d/runtimeVisibility.js";
+import { LIVE_CAMERA_OBJECT_MOTION } from "./render/CameraObjectMotion.js";
 
 const KERNEL_PROPERTIES = [
     "stepNs",
@@ -135,6 +137,7 @@ export class SimulationEngine {
             lanes: true,
             controls: true,
         };
+        this.debugVisuals = { sensorMarkers: true, originMarker: true };
 
         const telemetry = this.data.bindings?.()?.signalStore ?? null;
         const pluginModuleSource = options.pluginModuleSource ?? new BrowserPluginModuleSource();
@@ -330,6 +333,16 @@ export class SimulationEngine {
         this._disposeRendering();
         const provider = resolvedRun?.renderScene?.description?.provider;
         const profile = resolvedRun?.renderScene?.description?.productProfile ?? null;
+        if (provider?.id === "canonical-analytic" && Number(provider.version) === 1
+            && resolvedRun.renderScene.description.objectMotion === LIVE_CAMERA_OBJECT_MOTION) {
+            const runtime = new BrowserAnalyticRenderRuntime({
+                renderer: this.renderer,
+                vehicles: () => this.data.vehicles?.()?.vehicles ?? [],
+            });
+            this._bindRenderRuntime(runtime);
+            await runtime.prepare(resolvedRun, { vehicles: options.vehicles });
+            return runtime;
+        }
         if (provider?.id !== "pbr-mesh" || Number(provider?.version) !== 1) {
             this.renderProviderStatus = provider ? {
                 provider: { ...provider },
@@ -461,6 +474,7 @@ export class SimulationEngine {
             effectiveRealtimeRate: this._effectiveRealtimeRate(),
             scenarioDiagnostics: { enabled: this.scenarioDiagnostics.enabled },
             autonomyOverlay: { ...this._autonomyOverlayEnabled },
+            debugVisuals: { ...this.debugVisuals },
         };
     }
 
@@ -540,6 +554,7 @@ export class SimulationEngine {
             effectiveRealtimeRate: this._effectiveRealtimeRate(),
             scenarioDiagnostics: { enabled: this.scenarioDiagnostics.enabled },
             autonomyOverlay: { ...this._autonomyOverlayEnabled },
+            debugVisuals: { ...this.debugVisuals },
         };
     }
 
@@ -794,6 +809,14 @@ export class SimulationEngine {
         this._emit();
     }
 
+    setDebugVisuals(patch = {}) {
+        this.debugVisuals = { ...this.debugVisuals, ...patch };
+        applySensorMarkersVisible(this.data, this.debugVisuals.sensorMarkers);
+        applyOriginMarkersVisible(this.data, this.debugVisuals.originMarker);
+        this.render();
+        this._emit();
+    }
+
     setWorkspaceActive(active, { preservePlayback = false } = {}) {
         const nextActive = Boolean(active);
         if (nextActive) {
@@ -938,9 +961,6 @@ export class SimulationEngine {
         const frameNs = this._pendingFrameNs;
         this._pendingFrameNs = 0;
         const generation = this._advanceGeneration;
-        const startMs = this._nowMs();
-        const startTimeNs = this.timeNs;
-        const startSteps = this.steps;
         const pending = this._serializeAsyncAdvance(() => {
             if (generation !== this._advanceGeneration) return;
             return this._advanceSimulationAsync(frameNs / 1e9);
@@ -948,13 +968,6 @@ export class SimulationEngine {
         this._advanceInFlight = pending;
         pending.then(() => {
             if (generation === this._advanceGeneration) {
-                const durationMs = Math.max(0, this._nowMs() - startMs);
-                browserSimulationPerformance.recordTiming("simulationAdvance", durationMs);
-                browserSimulationPerformance.recordSimulation(
-                    this.timeNs - startTimeNs,
-                    durationMs,
-                    this.steps - startSteps,
-                );
                 this._emitFrame();
             }
         }).catch((error) => {
@@ -1043,9 +1056,10 @@ export class SimulationEngine {
         const frameStartMs = this.realtime ? this._nowMs() : 0;
         const pacingStartMs = this._nowMs();
         const pacingStartNs = this.timeNs;
+        const pacingStartSteps = this.steps;
         if (!this.deterministic) {
             this._fixedStep(scaledDt);
-            this._recordPacingWindow(pacingStartNs, pacingStartMs);
+            this._recordPacingWindow(pacingStartNs, pacingStartMs, pacingStartSteps);
             return;
         }
 
@@ -1066,18 +1080,22 @@ export class SimulationEngine {
                 break;
             }
         }
-        this._recordPacingWindow(pacingStartNs, pacingStartMs);
+        this._recordPacingWindow(pacingStartNs, pacingStartMs, pacingStartSteps);
     }
 
     _usesAsyncSensors() {
         return Boolean(this.renderRuntime || this.data.devices?.()?.requiresAsyncCapture);
     }
 
-    _recordPacingWindow(startTimeNs, startWallMs) {
+    _recordPacingWindow(startTimeNs, startWallMs, startSteps) {
         const advancedNs = Math.max(0, this.timeNs - startTimeNs);
         const wallMs = Math.max(0, this._nowMs() - startWallMs);
         this._pacingAdvancedNs += advancedNs;
         this._pacingWallMs += wallMs;
+        if (this.steps > startSteps) {
+            browserSimulationPerformance.recordTiming("simulationAdvance", wallMs);
+            browserSimulationPerformance.recordSimulation(advancedNs, wallMs, this.steps - startSteps);
+        }
     }
 
     _submitKeyboardDrive() {
@@ -1130,9 +1148,10 @@ export class SimulationEngine {
         const frameStartMs = this.realtime ? this._nowMs() : 0;
         const pacingStartMs = this._nowMs();
         const pacingStartNs = this.timeNs;
+        const pacingStartSteps = this.steps;
         if (!this.deterministic) {
             await this._fixedStepAsync(scaledDt);
-            this._recordPacingWindow(pacingStartNs, pacingStartMs);
+            if (generation === this._advanceGeneration) this._recordPacingWindow(pacingStartNs, pacingStartMs, pacingStartSteps);
             return;
         }
 
@@ -1152,7 +1171,7 @@ export class SimulationEngine {
             if (shouldContinue === false) break;
             if (this.realtime && this._nowMs() - frameStartMs > this.realtimeStepBudgetMs) break;
         }
-        this._recordPacingWindow(pacingStartNs, pacingStartMs);
+        if (generation === this._advanceGeneration) this._recordPacingWindow(pacingStartNs, pacingStartMs, pacingStartSteps);
     }
 
     async _fixedStepAsync(dt) {

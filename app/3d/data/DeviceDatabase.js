@@ -8,7 +8,7 @@ import { BrowserCpuLidarRuntime } from "../devices/BrowserCpuLidarRuntime.js";
 import { SensorPublisher as BrowserSensorPublisher } from "../devices/SensorPublisher.js";
 import { encodeTopicValue, registerMsgDefinition } from "../../client/TopicCodec.js";
 import { browserSimulationPerformance } from "../../simulation/performance/BrowserSimulationPerformance.js";
-import { syncRigidBodyLidarSolids } from "../editor/projection/rigidBodyLidarSolids.js";
+import { setRigidBodyLidarPoses } from "../editor/projection/rigidBodyLidarSolids.js";
 
 function summarizeMeasurementState(state) {
     if (state == null) return null;
@@ -235,6 +235,7 @@ export class DeviceDatabase extends Database {
     }
 
     resetSchedule(runtimeOptions = {}) {
+        setRigidBodyLidarPoses(this.parent, []);
         this.renderRuntime?.reset?.();
         this.pluginSensorScene?.reset();
         for (const device of this.devices) {
@@ -249,9 +250,9 @@ export class DeviceDatabase extends Database {
     }
 
     applyRigidBodyPoses(poses) {
-        const next = poses ?? [];
+        const next = setRigidBodyLidarPoses(this.parent, poses ?? []);
         this.pluginSensorScene?.setRigidBodyPoses?.(next);
-        syncRigidBodyLidarSolids(this.parent, next);
+        this.renderRuntime?.applyRigidBodyPoses?.(next);
     }
 
     get requiresAsyncCapture() {
@@ -372,6 +373,7 @@ export class DeviceDatabase extends Database {
     }
 
     disposeRun() {
+        setRigidBodyLidarPoses(this.parent, []);
         const runVehicles = new Set(this.parent?.vehicles?.()?.vehicles || []);
         for (const device of [...this.devices]) {
             if (device.manifestManaged || runVehicles.has(device.getParent?.())) {

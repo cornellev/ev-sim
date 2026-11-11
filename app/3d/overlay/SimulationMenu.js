@@ -224,6 +224,18 @@ export function SimulationMenu({
                                         checked={sensorPanelVisible}
                                         onChange={(value) => onSensorPanelVisibleChange?.(value)}
                                     />
+                                    <MenuToggle
+                                        label="Sensor markers"
+                                        icon={<FaBroadcastTower className="h-3 w-3" />}
+                                        checked={simState?.debugVisuals?.sensorMarkers !== false}
+                                        onChange={(value) => sim?.setDebugVisuals?.({ sensorMarkers: value })}
+                                    />
+                                    <MenuToggle
+                                        label="Origin marker"
+                                        icon={<FaCube className="h-3 w-3" />}
+                                        checked={simState?.debugVisuals?.originMarker !== false}
+                                        onChange={(value) => sim?.setDebugVisuals?.({ originMarker: value })}
+                                    />
                                 </PanelSection>
                             </FlyoutPanel>
                         )}
@@ -231,9 +243,9 @@ export function SimulationMenu({
                         {openPanel === "views" && (
                             <FlyoutPanel
                                 title="Operator Views"
-                                subtitle="Used for viewing the scene."
+                                subtitle="Give yourself a different perspective!"
                             >
-                                <PanelSection title="Tools">
+                                {/* <PanelSection title="Tools">
                                     <div className="grid grid-cols-2 gap-1.5">
                                         <MenuButton compact title="Open sensor viewer and inspector" className="justify-start">
                                             <FaSlidersH className="h-3 w-3" />
@@ -252,21 +264,9 @@ export function SimulationMenu({
                                             SimView
                                         </MenuButton>
                                     </div>
-                                </PanelSection>
+                                </PanelSection> */}
                                 <PanelSection title="Views">
                                     <div className="grid grid-cols-2 gap-1.5">
-                                        <MenuButton compact title="Open sensor viewer and inspector" className="justify-start">
-                                            <FaSlidersH className="h-3 w-3" />
-                                            Normal Render
-                                        </MenuButton>
-                                        <MenuButton compact title="Open world view editor and viewer" className="justify-start">
-                                            <BiWorld className="h-3 w-3" />
-                                            Sensor Render
-                                        </MenuButton>
-                                        <MenuButton compact title="Open vehicle viewer, editor, and inspector" className="justify-start">
-                                            <FaEdit className="h-3 w-3" />
-                                            Life Render
-                                        </MenuButton>
                                         <MenuButton
                                             compact
                                             active={lidarViewportEnabled}

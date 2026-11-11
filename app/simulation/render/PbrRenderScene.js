@@ -22,6 +22,7 @@ import {
 } from "../lidar/LidarGeometry.js";
 import { compareUtf8 } from "../world/WorldDescription.js";
 import { skyConfigToManifest } from "../../3d/skybox/EnvironmentSkyConfig.js";
+import { cameraObjectMotionFields, assertCameraObjectMotionFields } from "./CameraObjectMotion.js";
 
 export const PBR_RENDER_RECIPE_KIND = "cev-sim.pbr-render-recipe";
 export const PBR_RENDER_RECIPE_VERSION = 1;
@@ -431,6 +432,7 @@ export function createPbrRenderSceneResource({
     renderRecipe,
     assetClosure,
     sky = null,
+    cameraObjectMotion,
 } = {}) {
     if (!worldResource?.description || !worldResource?.hash) fail("world", "resolved world resource is required");
     assertVisualLayer(visualLayerResource?.description);
@@ -467,6 +469,7 @@ export function createPbrRenderSceneResource({
             composition: "world-pose-times-visual-to-actor@1",
         },
         actors: resolvedActors(recipe, analyticTruth),
+        ...cameraObjectMotionFields(cameraObjectMotion, worldResource.description, visualLayerResource.description),
     };
     assertPbrRenderSceneDescription(description);
     return { description, hash: hashPbrRenderScene(description) };
@@ -477,7 +480,7 @@ export function assertPbrRenderSceneDescription(value) {
     keys(source, [
         "kind", "version", "provider", "productProfile", "coordinateFrame", "worldHash",
         "visualLayerHash", "recipe", "recipeHash", "assetClosure", "assetClosureHash",
-        "analyticTruth", "dynamicTransforms", "actors",
+        "analyticTruth", "dynamicTransforms", "actors", "objectMotion", "objectMotionBindings",
     ], "renderScene");
     if (source.kind !== PBR_RENDER_SCENE_KIND || source.version !== PBR_RENDER_SCENE_VERSION) {
         fail("renderScene", `expected ${PBR_RENDER_SCENE_KIND} version ${PBR_RENDER_SCENE_VERSION}`);
@@ -504,6 +507,7 @@ export function assertPbrRenderSceneDescription(value) {
         fail("renderScene.assetClosureHash", "does not match the exact asset closure");
     }
     assertLidarGeometryResource(source.analyticTruth);
+    assertCameraObjectMotionFields(source);
     exact(
         source.coordinateFrame,
         source.analyticTruth.description.coordinateFrame,

@@ -499,7 +499,7 @@ test("CPU LiDAR hits a moved primitive at its live pose and misses the spawn pos
     scene.dispose();
 });
 
-test("moved rigid bodies share one index until a pose changes", () => {
+test("moved rigid bodies refit one shared index when a pose changes", () => {
     const boxes = [0, 1].map((index) => createBoxLidarTwin({
         id: `box-${index}`,
         sourceId: `box-${index}`,
@@ -550,7 +550,7 @@ test("moved rigid bodies share one index until a pose changes", () => {
     assert.equal(scene.staticIndex, reduced);
     scene.setRigidBodyPoses([pose("box-0", 4, 5), pose("box-1", 7, 3)]);
     scene.capture(sensor, [ego]);
-    assert.notEqual(scene._bodyIndex, shared);
+    assert.equal(scene._bodyIndex, shared);
     assert.equal(scene.staticIndex, reduced);
     scene.dispose();
 });

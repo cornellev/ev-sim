@@ -35,6 +35,7 @@ import { assertLidarGeometryResource } from "../../app/simulation/lidar/LidarGeo
 import { createSensorDefinitionRegistry } from "../../app/simulation/sensors/SensorTypeRegistry.js";
 import { planSensorAdmission } from "../../app/simulation/sensors/SensorAdmission.js";
 import { assertRenderSceneResource } from "../../app/simulation/render/RenderScene.js";
+import { assertCameraObjectMotion, assertCameraObjectMotionFields } from "../../app/simulation/render/CameraObjectMotion.js";
 import {
     RenderSceneProviderError,
     renderSceneProviderRegistry,
@@ -302,6 +303,11 @@ function verifyBundleStructure(verified, { requireRuntime = false } = {}) {
     }
 
     const requestsCamera = sensors.some((sensor) => sensor.enabled !== false && sensor.type === "camera");
+    try {
+        assertCameraObjectMotion(resolved.manifest.cameraObjectMotion);
+    } catch (error) {
+        invalid("BUNDLE_INVALID", error.message);
+    }
     if (requestsCamera && !resolved.renderScene) {
         invalid("BUNDLE_INVALID", "This camera run bundle predates persisted render scenes; re-resolve and export the run manifest.");
     }
@@ -318,6 +324,13 @@ function verifyBundleStructure(verified, { requireRuntime = false } = {}) {
         }
         try {
             assertRenderSceneResource(resolved.renderScene);
+            if (resolved.renderScene.description.objectMotion !== resolved.manifest.cameraObjectMotion) {
+                throw new Error("Render scene object motion does not match the authored policy.");
+            }
+            assertCameraObjectMotionFields(resolved.renderScene.description, {
+                world: resolved.world.description,
+                visualLayer: resolved.visualLayer?.description,
+            });
         } catch (error) {
             invalid("BUNDLE_HASH_MISMATCH", error.message);
         }

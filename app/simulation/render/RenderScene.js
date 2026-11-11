@@ -17,6 +17,7 @@ import {
     hashPbrRenderScene,
 } from "./PbrRenderScene.js";
 import { VISUAL_RENDER_PROVIDERS } from "../visual/VisualLayer.js";
+import { cameraObjectMotionFields, assertCameraObjectMotionFields } from "./CameraObjectMotion.js";
 
 export const RENDER_SCENE_KIND = "cev-sim.render-scene";
 export const RENDER_SCENE_VERSION = 1;
@@ -45,7 +46,7 @@ function colorForSemanticId(semanticId) {
     ];
 }
 
-export function createRenderScene(worldResource, vehicleDependencies = []) {
+export function createRenderScene(worldResource, vehicleDependencies = [], context = {}) {
     const geometry = createLidarGeometry(worldResource, vehicleDependencies);
     const semanticIds = [...new Set([
         ...geometry.staticPrimitives.map((entry) => entry.semanticId),
@@ -61,6 +62,7 @@ export function createRenderScene(worldResource, vehicleDependencies = []) {
         coordinateFrame: geometry.coordinateFrame,
         staticPrimitives: geometry.staticPrimitives,
         actors: geometry.actors,
+        ...cameraObjectMotionFields(context.cameraObjectMotion, worldResource.description ?? worldResource),
         materials: semanticIds.map((semanticId) => ({
             id: `semantic-${semanticId}`,
             semanticId,
@@ -85,6 +87,7 @@ export function assertCanonicalAnalyticRenderSceneDescription(description) {
         actors: description.actors,
     });
     if (!Array.isArray(description.materials)) throw new TypeError("Render scene requires a materials array.");
+    assertCameraObjectMotionFields(description);
     const ids = description.materials.map((entry) => String(entry?.id || ""));
     if (ids.some((id) => !id) || new Set(ids).size !== ids.length
         || [...ids].sort(compareUtf8).some((id, index) => id !== ids[index])) {
@@ -98,6 +101,8 @@ export function assertCanonicalAnalyticRenderSceneDescription(description) {
         staticPrimitives: description.staticPrimitives,
         actors: description.actors,
         materials: description.materials,
+        ...(description.objectMotion === undefined ? {} : { objectMotion: description.objectMotion }),
+        ...(description.objectMotionBindings === undefined ? {} : { objectMotionBindings: description.objectMotionBindings }),
     });
     if (simulationSha256(rebuilt) !== simulationSha256(description)) {
         throw new TypeError("Render scene contains non-canonical fields.");
@@ -110,8 +115,8 @@ export function hashCanonicalAnalyticRenderScene(description) {
     return simulationSha256(description);
 }
 
-function createCanonicalAnalyticRenderSceneResource(worldResource, vehicleDependencies = []) {
-    const description = createRenderScene(worldResource, vehicleDependencies);
+function createCanonicalAnalyticRenderSceneResource(worldResource, vehicleDependencies = [], context = {}) {
+    const description = createRenderScene(worldResource, vehicleDependencies, context);
     return { description, hash: hashCanonicalAnalyticRenderScene(description) };
 }
 

@@ -294,7 +294,7 @@ export function inferExecutionProfile(manifest, context = {}) {
 }
 
 function baselineOverrides(manifest) {
-    const overrides = {};
+    const overrides = { cameraObjectMotion: manifest?.cameraObjectMotion };
     if (manifest?.id != null) overrides.id = manifest.id;
     if (manifest?.name != null) overrides.name = manifest.name;
     if (manifest?.description != null) overrides.description = manifest.description;

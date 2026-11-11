@@ -215,6 +215,7 @@ async function dispatch(method, payload = {}) {
     }
     if (method === "prepareCapture") {
         actors = payload.vehicles || [];
+        runtime.applyRigidBodyPoses(payload.objectPoses ?? []);
         const devices = (payload.positions || []).map((position) => ({
             renderRuntime: runtime,
             getPosition: () => position,

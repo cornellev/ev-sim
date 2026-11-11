@@ -1978,6 +1978,15 @@ function Sensors({
     };
     return (
         <div id="run-focus-sensors" tabIndex={-1} className="space-y-4">
+            <AdvancedFields label="Camera object motion">
+                <Field label="Object motion">
+                    <select value={draft.cameraObjectMotion ?? "legacy"} onChange={(event) => update(["cameraObjectMotion"], event.target.value)}>
+                        {draft.cameraObjectMotion === undefined && <option value="legacy" disabled>Legacy authored motion (unset)</option>}
+                        <option value="authored@1">Authored poses</option>
+                        <option value="live-rigid-bodies@1">Live rigid bodies</option>
+                    </select>
+                </Field>
+            </AdvancedFields>
             {draft.renderRecipe && (
                 <p id="run-focus-render-recipe" tabIndex={-1} className="text-[12px] text-[var(--slate-muted)]">
                     Render recipe is stored on this run. Edit it in the JSON tab.

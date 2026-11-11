@@ -8,6 +8,7 @@ import {
     restoreAuthoredRigidBodyPoses,
 } from "../app/3d/editor/projection/applyRigidBodyPoses.js";
 import { Triangle } from "../app/3d/data/objects/Triangle.js";
+import { flushRigidBodyLidarSolids, setRigidBodyLidarPoses } from "../app/3d/editor/projection/rigidBodyLidarSolids.js";
 import {
     sphereFromPrimitive,
     trianglesFromSolid,
@@ -170,6 +171,8 @@ test("DeviceDatabase forwards rigid-body poses to the Helios runtime", async () 
         objects: () => objects,
     });
     scanDatabase.applyRigidBodyPoses([pose("box", 2)]);
+    assert.equal(objects.triangles()[0].a.x, authoredX);
+    flushRigidBodyLidarSolids(scanDatabase.parent);
     const moved = objects.triangles()[0];
     assert.equal(moved.a.x, authoredX + 2);
     assert.equal(objects.textures.data._trianglePosData[objects.triangles().indexOf(moved) * 12], authoredX + 2);
@@ -322,7 +325,11 @@ test("browser GPU shader solids follow a rigid body and restore the authored ver
         objects: () => database,
         scene: { getObjectByName() { return null; } },
     };
-    applyRigidBodyViewportPoses(data, [pose("box", 2), pose("ball", 2)]);
+    const poses = [pose("box", 2), pose("ball", 2)];
+    setRigidBodyLidarPoses(data, poses);
+    applyRigidBodyViewportPoses(data, poses);
+    assert.equal(database.spheres()[0].position.x, 1);
+    flushRigidBodyLidarSolids(data);
     const movedBox = database.triangles().filter((triangle) => triangle.environmentSourceId === "box");
     for (const [index, triangle] of movedBox.entries()) {
         assert.deepEqual([triangle.a.x, triangle.b.x, triangle.c.x], authored[index].map((value) => value + 2));

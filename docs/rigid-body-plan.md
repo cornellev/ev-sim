@@ -76,18 +76,52 @@ entering the environment editor put each rigid-body mesh and its Rapier
 body back on that authored transform. A resolved run keeps the world it
 was prepared with.
 
-CPU LiDAR keeps body triangles in the authored static index until a body
-leaves its spawn pose. A capture then bakes every rigid body into one
-world-space index and queries that index once. The headless sensor manager
-and the browser device database pass those live poses into the CPU scan,
-including a Helios plugin. Headless GPU LiDAR bakes the same moved triangles
-into a scanning-LiDAR frame. The browser device database rewrites the hidden
-primitive and asset-lidar slots from the authored solid plus that pose before
-the GPU scan. Stop, reset, and the environment editor put those slots back
-on the authored vertices. The resolved lidar resource and `lidarGeometryHash` stay the
-authored geometry. Photoreal and analytic cameras keep the authored pose.
+CPU LiDAR uses the original static index while bodies remain at spawn. For
+moving bodies, a capture updates changed triangle ranges and refits affected
+nodes in one reusable world-space BVH. The headless sensor manager and browser
+device database forward immutable per-object poses, including to Helios.
+Browser GPU LiDAR updates registered primitive and asset-lidar slots immediately
+before a scan consumes them. Receipt of a pose and viewport presentation do not
+rebuild shader solids. Stop, reset, and editor entry restore authored vertices.
+Resolved LiDAR resources and `lidarGeometryHash` remain authored and immutable.
+Camera motion is separately versioned by the run's `cameraObjectMotion` policy;
+absent policy retains historical authored captures. The live camera contract is
+recorded in the visual-layer plan.
 
 ## Progress and decision log
+
+### 2026-11-10 — Rigid-body performance packages
+
+The performance trace attributed 94.18% of sampled frame work to two copies of
+the browser LiDAR solid sync, rather than the Rapier step. WP01 adds reporting
+for both synchronous and asynchronous simulation advances and deterministic
+1,000/5,000-triangle fixtures. WP02 indexes texture slots and captures authored
+geometry at registration. WP03 tracks scalar pose revisions per object and
+removes LiDAR work from viewport presentation. WP04 defers hidden-solid writes
+until a consuming scan; unchanged poses and spawn-only bodies write no slots.
+WP05 reuses the CPU combined BVH, updates changed body ranges, and refits their
+nodes. WP06 retains pooled GPU geometry and exact shader specializations with
+bounded resource accounting. WP07–WP09 introduce opt-in, hash-bound live camera
+motion and make it the default for newly authored runs; their contracts and
+acceptance are recorded in the visual-layer and run-manifest documentation.
+
+The deterministic motion benchmark is `npm run benchmark:rigid-body-motion`.
+It measures changed and unchanged browser geometry preparation separately from
+GPU rendering. CPU timing is diagnostic and is not evidence for native GPU
+frame-rate acceptance. Existing world, solver, plant, and characterization
+identities remain pinned. Hosted, NVIDIA, Jetson, and native browser performance
+acceptance require their own recorded evidence.
+
+Final maintenance verification: `npm run lint` passes with three existing
+warnings. `npm test -- --test-concurrency=2 --test-timeout=120000` passes
+2,711 cases with nine hardware/toolchain skips and zero failures. The isolated
+production build passes. All seven pinned
+characterization checks pass without fixture changes. Browser, direct headless,
+CLI, gRPC, and Python parity and the quick lifecycle soak pass. Browser reporting
+and presentation checks pass, as does isolated PBR cloud pixel/depth/ID parity.
+The 5,000-triangle local preparation benchmark measured about 6.3 ms at the
+median for changed poses and 0.003 ms for unchanged poses; this is diagnostic
+CPU preparation timing, not a frame-rate or GPU acceptance claim.
 
 ### 2026-11-10 — Contact host uses the resolved vehicle physics configuration
 

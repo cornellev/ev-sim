@@ -320,6 +320,17 @@ controls, or the fixture in a CFG package.
 
 ## Decision log
 
+### 2026-11-10 — WP09 exposes camera motion without migrating saved runs
+
+Approved rigid-body camera maintenance adds optional `cameraObjectMotion` to
+Advanced Sensors and the effective summary. Factory-created runs explicitly
+select live motion; saved built-ins and old documents stay unset. Comparison
+baselines copy the current policy, including absence, so opening Simple or applying
+an execution preset does not infer a migration. The selector changes the draft
+only on an explicit edit. This is WP09 maintenance, not a new CFG package or a
+change to CFG-06's acceptance status. Mode/session tests pass in the 79-case focused
+camera suite; parent integration records full npm/lint and browser results.
+
 ### 2026-11-06 — Keep two execution presets
 
 Keep Standard Simulation and External Controller as lightweight patches over

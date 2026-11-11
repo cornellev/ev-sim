@@ -1,6 +1,5 @@
 /**
- * Copy live rigid-body poses onto viewport meshes and the hidden shader
- * solids sampled by browser GPU LiDAR. The environment document stays at
+ * Copy live rigid-body poses onto viewport meshes. The environment document stays at
  * the authored spawn pose. Stop, reset, and the environment editor write
  * that authored pose back with `restoreAuthoredRigidBodyPoses`.
  */
@@ -42,12 +41,14 @@ export function applyRigidBodyViewportPoses(data, poses = []) {
         for (const pose of poses) {
             const mesh = viewportMesh(data, { id: pose.id, typeId: pose.host });
             if (!mesh?.position?.set || !mesh?.quaternion?.set) continue;
+            if (mesh.position.x === pose.position.x && mesh.position.y === pose.position.y && mesh.position.z === pose.position.z
+                && mesh.quaternion.x === pose.rotation.x && mesh.quaternion.y === pose.rotation.y
+                && mesh.quaternion.z === pose.rotation.z && mesh.quaternion.w === pose.rotation.w) continue;
             mesh.position.set(pose.position.x, pose.position.y, pose.position.z);
             mesh.quaternion.set(pose.rotation.x, pose.rotation.y, pose.rotation.z, pose.rotation.w);
             mesh.updateMatrixWorld?.(true);
         }
     }
-    syncRigidBodyLidarSolids(data, poses);
 }
 
 /** Put rigid-body meshes back on the document transform. Does not write the document. */

@@ -759,7 +759,7 @@ export class StorageService {
         return uses;
     }
 
-    async _resolvePbrVisualRun({ environment, world, vehicles, selection, renderRecipe }) {
+    async _resolvePbrVisualRun({ environment, world, vehicles, selection, renderRecipe, cameraObjectMotion }) {
         await this.visualAssets.initialize();
         const baseDescriptorHash = environment?.visualLayer?.descriptorHash ?? null;
         const baseAccessHash = environment?.visualLayer?.accessHash ?? null;
@@ -908,6 +908,7 @@ export class StorageService {
             renderRecipe: recipe,
             assetClosure,
             sky: environment?.sky ?? null,
+            cameraObjectMotion,
         });
         const evidence = {
             kind: PBR_RUN_EVIDENCE_KIND,
@@ -1958,6 +1959,9 @@ export class StorageService {
         const expectedRevision = input.expectedRevision ?? manifest.revision;
         const current = await this.getRunManifest(manifestId);
         const candidate = { ...manifest, id: manifestId };
+        if (manifest.cameraObjectMotion === undefined && current?.cameraObjectMotion !== undefined) {
+            candidate.cameraObjectMotion = current.cameraObjectMotion;
+        }
         if (!Object.hasOwn(manifest, "renderRecipe") && Object.hasOwn(current ?? {}, "renderRecipe")) {
             candidate.renderRecipe = structuredClone(current.renderRecipe);
         }
@@ -2312,9 +2316,12 @@ export class StorageService {
                 vehicles: resolvedVehicles,
                 selection: renderSelection,
                 renderRecipe: manifest.renderRecipe,
+                cameraObjectMotion: manifest.cameraObjectMotion,
             }));
         } else if (renderSelection) {
-            renderScene = createRenderSceneResource(world, resolvedVehicles, renderSelection);
+            renderScene = createRenderSceneResource(world, resolvedVehicles, renderSelection, {
+                cameraObjectMotion: manifest.cameraObjectMotion,
+            });
         }
 
         const definitionHash = semanticHash(definitionManifest);
@@ -3624,6 +3631,9 @@ export class StorageService {
             throw new Error(`Run manifest "${nextId}" already exists.`);
         }
         const candidate = { ...manifest, id: nextId };
+        if (manifest.cameraObjectMotion === undefined && current.cameraObjectMotion !== undefined) {
+            candidate.cameraObjectMotion = current.cameraObjectMotion;
+        }
         if (!Object.hasOwn(manifest, "renderRecipe") && Object.hasOwn(current, "renderRecipe")) {
             candidate.renderRecipe = structuredClone(current.renderRecipe);
         }
@@ -4471,7 +4481,7 @@ function environmentImportHash(manifest) {
 }
 
 function builtInDefaultRunManifest() {
-    const manifest = createDefaultRunManifest();
+    const manifest = createDefaultRunManifest({ cameraObjectMotion: undefined });
     return {
         ...manifest,
         revision: 1,

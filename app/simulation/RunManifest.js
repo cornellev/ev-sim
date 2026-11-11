@@ -29,6 +29,7 @@ import { canonicalStringify } from "./canonicalJson.js";
 import { canonicalNumericTree } from "./kernel/SimulationHashes.js";
 import { observationProfileChoices } from "./headless/ProfileRegistry.js";
 import { renderSceneProviderRegistry } from "./render/RenderSceneProviderRegistry.js";
+import { assertCameraObjectMotion, LIVE_CAMERA_OBJECT_MOTION } from "./render/CameraObjectMotion.js";
 import { normalizePbrRenderRecipe } from "./render/PbrRenderScene.js";
 import { normalizePluginSelection } from "../plugin/PluginSelection.js";
 import {
@@ -528,6 +529,7 @@ export function applyManifestOracleProduct(manifest, sensorIndex, productKey, en
 
 export function createDefaultRunManifest(overrides = {}) {
     const base = {
+        cameraObjectMotion: LIVE_CAMERA_OBJECT_MOTION,
         kind: RUN_MANIFEST_KIND,
         version: RUN_MANIFEST_VERSION,
         id: "igvc-default",
@@ -654,6 +656,7 @@ export function normalizeRunManifest(value, {
     sensorRegistry = sensorTypeRegistry,
 } = {}) {
     const source = object(value);
+    assertCameraObjectMotion(source.cameraObjectMotion);
     if (!allowMissingKind && source.kind !== undefined && source.kind !== RUN_MANIFEST_KIND) {
         throw new Error(`Unsupported run manifest kind: ${JSON.stringify(source.kind)}.`);
     }
@@ -743,6 +746,7 @@ export function normalizeRunManifest(value, {
             modules: { ...DEFAULT_MODULES, ...object(clock.modules) },
         },
         sensorRig,
+        ...(source.cameraObjectMotion === undefined ? {} : { cameraObjectMotion: source.cameraObjectMotion }),
         ...(observationProfile ? { observationProfile } : {}),
         scripts: {
             enabled: scripts.enabled !== false,
