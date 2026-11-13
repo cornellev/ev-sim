@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 
 import { JsonFileStore } from "./JsonFileStore.js";
+import { ProtobufInterfaceStore } from "./ProtobufInterfaceStore.js";
 import { VisualLayerDescriptorStore } from "./VisualLayerDescriptorStore.js";
 import { VisualLayerAccessStore } from "./VisualLayerAccessStore.js";
 import { BakeReuseManifestStore } from "./BakeReuseManifestStore.js";
@@ -116,6 +117,7 @@ import {
 import { Semaphore, createMutex } from "./visual-assets/semaphore.js";
 import { fsyncDir, maybeFault, writeExclusiveFile } from "./visual-assets/atomicFs.js";
 import { computeSimulationSemanticHash } from "../../app/simulation/kernel/SimulationHashes.js";
+import { createProtobufInterfaceResource, planProtobufRouteAdmission } from "../../app/interfaces/ProtobufRunBinding.js";
 import { assertZeroSpeedResponse, contactHostForVehicle } from "../../app/simulation/vehicles/ContactHostContract.js";
 import { resolveVehiclePhysicsConfig } from "../../app/simulation/vehicles/VehiclePhysicsConfig.js";
 import {
@@ -333,6 +335,7 @@ export class StorageService {
     /** @param {string} [dataDir] Absolute path to the data directory. */
     constructor(dataDir = DEFAULT_DATA_DIR, options = {}) {
         this.dataDir = dataDir;
+        this._protobufInterfaces = new ProtobufInterfaceStore(dataDir, options.protobufInterfaces);
         this.marketplaceExecutablePolicy = options.marketplaceExecutablePolicy ?? null;
         this.environmentsDir = path.join(dataDir, "environments");
         this.scriptsDir = path.join(dataDir, "scripts");
@@ -426,6 +429,15 @@ export class StorageService {
     listPluginLibrary() {
         return this.plugins.listInstalled();
     }
+
+    listProtobufInterfaces() { return this._protobufInterfaces.list(); }
+    getProtobufInterface(hash) { return this._protobufInterfaces.getByHash(hash); }
+    getProtobufInterfaceSource(id) { return this._protobufInterfaces.getSource(id); }
+    putProtobufInterface(document, options) { return this._protobufInterfaces.putImmutable(document, options); }
+    importProtobufSources(input, options) { return this._protobufInterfaces.importSources(input, options); }
+    importProtobufDescriptor(input, options) { return this._protobufInterfaces.importDescriptor(input, options); }
+    checkProtobufInterfaceUpdate(id, input, options) { return this._protobufInterfaces.checkUpdate(id, input, options); }
+    applyProtobufInterfaceUpdate(id, input) { return this._protobufInterfaces.applyUpdate(id, input); }
 
     getPluginPackage(packageHash) {
         return this.plugins.getPackage(packageHash);
@@ -2326,6 +2338,16 @@ export class StorageService {
 
         const definitionHash = semanticHash(definitionManifest);
         const calibration = buildCalibrationBundle(manifest);
+        let protobufInterface;
+        if (manifest.protobuf.mode === "zenoh") {
+            let document;
+            try { document = await this.getProtobufInterface(manifest.protobuf.interfaceHash); }
+            catch (error) {
+                throw Object.assign(new Error(`Protobuf interface cannot be verified: ${error.message}`, { cause: error }), { path: "protobuf.interfaceHash" });
+            }
+            if (!document) throw Object.assign(new Error(`Protobuf interface ${manifest.protobuf.interfaceHash} is unavailable.`), { path: "protobuf.interfaceHash" });
+            protobufInterface = createProtobufInterfaceResource(document, manifest.protobuf.interfaceHash);
+        }
         const resolved = resolvedRunJsonSnapshot({
             kind: RUN_MANIFEST_KIND,
             version: RUN_MANIFEST_VERSION,
@@ -2335,6 +2357,7 @@ export class StorageService {
             manifest,
             definitionHash,
             calibration,
+            ...(protobufInterface ? { protobufInterface } : {}),
             environment: { hash: environmentHash, manifest: environment },
             world,
             ...(lidarGeometry ? { lidarGeometry } : {}),
@@ -2377,6 +2400,7 @@ export class StorageService {
                 ...(renderScene ? { renderScene: renderScene.hash } : {}),
                 ...(evidenceHash ? { evidence: evidenceHash } : {}),
                 calibration: calibration.hash,
+                ...(protobufInterface ? { protobufInterface: protobufInterface.hash } : {}),
                 scripts: Object.fromEntries(scripts.map((entry) => [entry.scriptId, entry.hash])),
                 ...(resolvedPlugins.length > 0 ? { plugins: pluginDependencyHashes(resolvedPlugins) } : {}),
                 ...(pluginSensors ? { pluginSensors: pluginSensors.hash } : {}),
@@ -2386,6 +2410,8 @@ export class StorageService {
                 vehicleAssets: Object.fromEntries(resolvedVehicles.map((entry) => [entry.vehicleId, entry.assetHashes])),
                 },
             }, { sensorRegistry });
+        planProtobufRouteAdmission({ manifest: resolved.manifest, interfaceResource: protobufInterface,
+            schemas: resolved.schemas, resolvedRun: resolved });
         assertZeroSpeedResponse(resolved, pluginSession.plants);
         resolved.simulationSemanticHash = computeSimulationSemanticHash(resolved);
         resolved.resolvedHash = semanticHash(resolved);
@@ -2408,6 +2434,9 @@ export class StorageService {
     async importRunBundle(bundle = {}) {
         verifyRunBundleIntegrity(bundle);
         await this._assertLocalPbrImportDependencies(bundle.resolved);
+        if (bundle.resolved.version === 12 && bundle.resolved.protobufInterface) {
+            await this.putProtobufInterface(bundle.resolved.protobufInterface.document);
+        }
         for (const resource of bundle.resolved.pluginPackages ?? []) {
             await this.plugins.putPackage(resource);
         }
@@ -3707,7 +3736,7 @@ export class StorageService {
             await this.resolveRunManifest(manifest.id, manifest);
             return [];
         } catch (error) {
-            const path = /plugin/i.test(error.message) ? "plugins" : "dependencies";
+            const path = error.path ?? (/plugin/i.test(error.message) ? "plugins" : "dependencies");
             return [{ path, message: error.message }];
         }
     }

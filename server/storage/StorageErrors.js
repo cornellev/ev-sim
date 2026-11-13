@@ -180,6 +180,21 @@ export class StorageHttpError extends Error {
     }
 }
 
+export function protobufStorageError(code, message, { currentRevision, issues } = {}) {
+    const statusCode = {
+        PROTOBUF_INVALID: 400, PROTOBUF_NOT_FOUND: 404, PROTOBUF_REVISION_CONFLICT: 409,
+        PROTOBUF_CORRUPT: 409, PROTOBUF_TOO_LARGE: 413, PROTOBUF_ACQUISITION_FAILED: 502,
+        PROTOBUF_IO: 500, PROTOBUF_INVALIDATION_ACCEPTANCE_REQUIRED: 409,
+    }[code] ?? 400;
+    const error = new StorageHttpError(message, { statusCode, code, currentRevision });
+    if (issues) {
+        error.issues = issues;
+        const original = error.toJSON.bind(error);
+        error.toJSON = () => ({ ...original(), issues });
+    }
+    return error;
+}
+
 export function environmentRevisionConflict(expectedRevision, currentRevision, label = "Environment") {
     const current = Number.isInteger(currentRevision) && currentRevision >= 0 ? currentRevision : 0;
     const message = !Number.isInteger(expectedRevision) || expectedRevision < 0

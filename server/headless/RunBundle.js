@@ -16,6 +16,7 @@ import {
 } from "../../app/simulation/visual/VisualLayer.js";
 import { computeSimulationSemanticHash } from "../../app/simulation/kernel/SimulationHashes.js";
 import { HeadlessEpisodeError } from "../../app/simulation/headless/HeadlessErrors.js";
+import { normalizeProtobufRunConfig, planProtobufRouteAdmission } from "../../app/interfaces/ProtobufRunBinding.js";
 import { assertResolvedContactHosts } from "../../app/simulation/vehicles/ContactHostContract.js";
 import { verifyPluginPackage } from "../../app/plugin/PluginPackage.js";
 import {
@@ -62,8 +63,8 @@ export function verifyRunBundleIntegrity(bundle) {
         invalid("BUNDLE_INVALID", "The run bundle does not contain an immutable resolved run.");
     }
     if (resolved.kind !== RUN_MANIFEST_KIND || !Number.isInteger(resolved.version)
-        || resolved.version < 1 || resolved.version > 11) {
-        invalid("BUNDLE_INVALID", "Unsupported resolved run manifest version; expected 1–11.");
+        || resolved.version < 1 || resolved.version > 12) {
+        invalid("BUNDLE_INVALID", "Unsupported resolved run manifest version; expected 1–12.");
     }
     let identityVersion;
     try {
@@ -76,6 +77,7 @@ export function verifyRunBundleIntegrity(bundle) {
     if (!bundle.manifest || stringify(bundle.manifest) !== stringify(resolved.manifest)) {
         invalid("BUNDLE_INVALID", "The bundle manifest does not match the resolved manifest.");
     }
+    if (resolved.version === 12) verifyProtobufSnapshot(resolved);
     const resolvedHash = computeResolvedRunHash(resolved);
     if (!bundle.resolvedHash || (resolved.version >= 10 && !resolved.resolvedHash)
         || (resolved.resolvedHash && bundle.resolvedHash !== resolved.resolvedHash)
@@ -195,6 +197,31 @@ function verifyPluginClosure(resolved) {
         }
     }
     return plugins.map((entry) => packageById.get(entry.pluginId));
+}
+
+function verifyProtobufSnapshot(resolved) {
+    try {
+        const config = normalizeProtobufRunConfig(resolved.manifest?.protobuf);
+        if (canonicalExactStringify(config) !== canonicalExactStringify(resolved.manifest?.protobuf)) {
+            invalid("BUNDLE_INVALID", "Manifest v12 requires a normalized protobuf selection.");
+        }
+        if (config.mode === "disabled") {
+            if (Object.hasOwn(resolved, "protobufInterface") || Object.hasOwn(resolved.dependencyHashes ?? {}, "protobufInterface")) {
+                invalid("BUNDLE_INVALID", "Disabled Protobuf runs cannot carry interface resources or dependencies.");
+            }
+        } else if (resolved.dependencyHashes?.protobufInterface !== config.interfaceHash) {
+            invalid("BUNDLE_HASH_MISMATCH", "Protobuf interface dependency does not match its manifest pin.");
+        }
+        if (config.mode === "zenoh" && (!resolved.schemas || typeof resolved.schemas !== "object"
+            || Array.isArray(resolved.schemas) || Object.values(resolved.schemas).some((definition) => typeof definition !== "string"))) {
+            invalid("BUNDLE_INVALID", "Protobuf snapshots require an embedded local schema closure.");
+        }
+        planProtobufRouteAdmission({ manifest: resolved.manifest, interfaceResource: resolved.protobufInterface,
+            schemas: resolved.schemas, resolvedRun: resolved });
+    } catch (error) {
+        if (error instanceof HeadlessEpisodeError) throw error;
+        invalid(error.code === "BUNDLE_HASH_MISMATCH" ? error.code : "BUNDLE_INVALID", error.message, { path: error.path });
+    }
 }
 
 function verifyBundleStructure(verified, { requireRuntime = false } = {}) {
@@ -391,7 +418,7 @@ function verifyBundleStructure(verified, { requireRuntime = false } = {}) {
 export function verifyRunBundle(bundle) {
     const verified = verifyRunBundleIntegrity(bundle);
     const { resolved } = verified;
-    if (![10, 11].includes(resolved.version)) {
+    if (![10, 11, 12].includes(resolved.version)) {
         invalid("UNSUPPORTED_CAPABILITY", "Historical bundles require authoring import and re-resolution before execution.");
     }
     verifyBundleStructure(verified, { requireRuntime: true });

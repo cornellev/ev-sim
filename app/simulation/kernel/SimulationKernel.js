@@ -1,4 +1,5 @@
 import { CandidateOutputRuntime } from "../../autonomy/CandidateOutputRuntime.js";
+import { assertProtobufExecutionCapabilities } from "../../interfaces/ProtobufRunBinding.js";
 import { assertResolvedContactHosts } from "../vehicles/ContactHostContract.js";
 import { ControlRuntime } from "../../autonomy/ControlRuntime.js";
 import { getBuiltInVehicleManifest } from "../../vehicles/BuiltInVehicleManifests.js";
@@ -381,6 +382,7 @@ export class SimulationKernel {
         episodePhase = "start",
     } = {}) {
         if (!resolved?.manifest) throw new Error("Resolved run manifest is required.");
+        assertProtobufExecutionCapabilities(resolved);
         if (resolvedUsesPlugins(resolved) && typeof this.context.plugins?.prepare !== "function") {
             throw pluginError(
                 PLUGIN_ERROR_CODES.UNAVAILABLE,

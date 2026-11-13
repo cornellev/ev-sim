@@ -175,6 +175,13 @@ export function rehashRunBundle(bundle) {
     return next;
 }
 
+export function historicalV11RunBundle(bundle) {
+    const next = structuredClone(bundle);
+    next.resolved.version = next.resolved.manifest.version = 11;
+    delete next.resolved.manifest.protobuf;
+    return rehashRunBundle(next);
+}
+
 function sensorsWithDeclaredOutputs(sensors, topics) {
     const declared = new Set((topics || []).map((topic) => topic.id));
     return sensors.map((sensor) => {

@@ -87,7 +87,7 @@ test("VIS-12a real direct resolution ignores refreshed visual locks for state, L
         manifest.sensorRig.sensors.forEach((sensor) => { sensor.enabled = sensor.type === type; });
         const before = await service.resolveRunManifest(manifest.id, manifest);
         assert.deepEqual(before.identityProfile, WORLD_BOUND_IDENTITY);
-        assert.equal(before.version, 11);
+        assert.equal(before.version, 12);
         assert.equal(defaultEpisodeIdentity(before).version, 2);
         verifyRunBundle(bundleFor(before));
         const changed = { ...current, visualLayer: { descriptorHash: "a".repeat(64) }, evidence: { reportHash: "b".repeat(64) } };
@@ -273,7 +273,7 @@ test("VIS-12a direct and supervisor reset hashes agree for legacy and v11 with e
                 simulationSemanticHash: bundle.simulationSemanticHash, canonicalJson: Buffer.from(canonicalRunBundleStringify(bundle)) }],
             episodes: [spec], artifactPolicy: { profile: 3, outputUri: path.join(root, `output-${bundle.resolved.version}`) },
         };
-        if (bundle.resolved.version === 11) {
+        if (bundle.resolved.version >= 11) {
             const rejected = await supervisor.createBatch(request);
             assert.equal(rejected.error.code, 6, rejected.error.message);
             assert.equal(supervisor.activeEnvironmentCount, 0);
@@ -301,7 +301,7 @@ test("VIS-12a managed execution retains legacy and v11 episode identities", asyn
         const session = new ManagedHeadlessSession();
         t.after(() => session.close());
         const prepared = await session.prepare(bundle);
-        assert.equal(session.episodeIdentity.version, bundle.resolved.version === 11 ? 2 : 1);
+        assert.equal(session.episodeIdentity.version, bundle.resolved.version >= 11 ? 2 : 1);
         assert.equal(prepared.episodeHash, computeEpisodeHash(managedEpisodeIdentity(bundle.resolved)));
         const result = await session.run({ outputUri: path.join(root, `managed-${bundle.resolved.version}`),
             artifactPolicy: { profile: "disabled" } });
@@ -323,7 +323,9 @@ test("VIS-12a v11 golden bytes and hashes are independent of legacy goldens", as
     assert.equal(computeSimulationSemanticHash(resolved), expected.simulationSemanticHash);
     assert.deepEqual(identities(resolved), { semantic: expected.simulationSemanticHash,
         browser: expected.browserEpisodeHash, headless: expected.headlessEpisodeHash });
-    assert.equal(canonicalRunBundleStringify(await createPortableHeadlessBundle()), bytes.toString());
+    const current = await createPortableHeadlessBundle();
+    assert.equal(current.resolved.version, 12);
+    assert.equal(current.simulationSemanticHash, expected.simulationSemanticHash);
     bundle.manifest.name = "mutated";
     assert.throws(() => runBundleBytes(bundle), /immutable bundle content changed/);
     const unsafe = structuredClone(resolved);
@@ -335,7 +337,7 @@ test("VIS-12a v11 golden bytes and hashes are independent of legacy goldens", as
 });
 
 
-test("VIS-12a legacy authoring import re-resolves as v11 without changing source bytes", async (t) => {
+test("legacy authoring import re-resolves as v12 without changing source bytes", async (t) => {
     const { service } = await temporaryService(t);
     const bytes = await fs.readFile(new URL("legacy-analytic.v10.json", fixtureRoot));
     const { bundle } = verifyRunBundleBytes(bytes);
@@ -347,7 +349,7 @@ test("VIS-12a legacy authoring import re-resolves as v11 without changing source
         expectedRevision: existing?.revision ?? 0,
     });
     const imported = await service.importRunBundle(bundle);
-    assert.equal(imported.version, 11);
+    assert.equal(imported.version, 12);
     const resolved = await service.resolveRunManifest(imported.id);
     assert.deepEqual(resolved.identityProfile, WORLD_BOUND_IDENTITY);
     assert.equal(resolved.world.hash, bundle.resolved.world.hash);

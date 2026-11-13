@@ -1,0 +1,37 @@
+// Import text inside comments must not become a dependency: import "missing.proto";
+syntax = "proto3";
+package tests.protobuf;
+import public "common.proto";
+import "google/protobuf/timestamp.proto";
+
+enum Mode {
+  MODE_UNSPECIFIED = 0;
+  MODE_READY = 1;
+}
+
+message Batch {
+  repeated Sample samples = 1;
+}
+
+message Sample {
+  uint64 time_ns = 1;
+  int64 delta = 2;
+  uint32 count = 3;
+  float ratio = 4;
+  bool enabled = 5;
+  bytes data = 6;
+  optional double altitude = 7;
+  oneof choice {
+    bool selected = 8;
+    bytes blob = 9;
+  }
+  repeated Child children = 10;
+  map<string, uint64> counters = 11;
+  map<uint64, Child> indexed = 12;
+  google.protobuf.Timestamp stamp = 13;
+  repeated uint32 bins = 14;
+  repeated uint32 unpacked = 15 [packed = false];
+  Mode mode = 16;
+  map<string, bool> flags = 17;
+  map<bool, string> labels = 18;
+}

@@ -64,7 +64,7 @@ test("inheritance off is a no-op and normalization drops inactive markers", () =
     });
     assert.equal(dropped.sensorRig.inheritance, undefined);
     assert.equal(dropped.sensorRig.sensors[0].inheritedFrom, undefined);
-    assert.equal(dropped.version, 11);
+    assert.equal(dropped.version, 12);
 
     const kept = normalizeRunManifest({
         ...manifest,

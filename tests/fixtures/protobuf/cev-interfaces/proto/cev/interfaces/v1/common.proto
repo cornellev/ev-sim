@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package cev.interfaces.v1;
+
+// Units are SI. Angles are radians. Axes follow ROS REP-103: body frames
+// are x forward, y left, z up. World frames are x east, y north, z up.
+
+// First field of every topic message.
+message Header {
+  uint64 stamp_ns = 1;
+  // Transform frame of the data
+  string frame_id = 2;
+  // per-topic sequential id
+  uint64 seq = 3;
+}
+
+message Vector3 {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+}
+
+message Quaternion {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+  double w = 4;
+}
+
+message Point2 {
+  double x = 1;
+  double y = 2;
+}
+
+message Pose2 {
+  Point2 position = 1;
+  // Counter-clockwise from +x, in (-pi, pi].
+  double heading = 2;
+}
+
+// WGS84.
+message GeoPoint {
+  double latitude_deg = 1;
+  double longitude_deg = 2;
+  // Height above the ellipsoid.
+  optional double altitude_m = 3;
+}

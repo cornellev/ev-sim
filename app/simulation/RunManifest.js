@@ -9,6 +9,7 @@ import {
     validateRunSensorDefinition,
 } from "./sensors/SensorTypeRegistry.js";
 import { normalizeSensorTransports, reconcileSensorTransportBindings } from "./sensors/SensorTransports.js";
+import { normalizeProtobufRunConfig } from "../interfaces/ProtobufRunBinding.js";
 import {
     catalogMetadata,
     defaultManifestTopics,
@@ -44,7 +45,8 @@ import {
 } from "../util/plainGeometry.js";
 
 export const RUN_MANIFEST_KIND = "cev-sim.run-manifest";
-export const RUN_MANIFEST_VERSION = 11;
+export const RUN_MANIFEST_VERSION = 12;
+export const RUN_MANIFEST_V11 = 11;
 export const RUN_MANIFEST_V10 = 10;
 export const LEGACY_RUN_MANIFEST_VERSION = 1;
 export const RUN_MANIFEST_V2 = 2;
@@ -672,17 +674,22 @@ export function normalizeRunManifest(value, {
         RUN_MANIFEST_V8,
         RUN_MANIFEST_V9,
         RUN_MANIFEST_V10,
+        RUN_MANIFEST_V11,
         RUN_MANIFEST_VERSION,
     ];
     if (!supported.includes(sourceVersion)) {
         throw new Error(`Unsupported run manifest version ${source.version}; expected version 1–${RUN_MANIFEST_VERSION}.`);
     }
-    if (sourceVersion < RUN_MANIFEST_VERSION && source.plugins !== undefined) {
+    if (sourceVersion < RUN_MANIFEST_V11 && source.plugins !== undefined) {
         throw new Error("Plugin selection requires run-manifest version 11.");
     }
-    if (sourceVersion < RUN_MANIFEST_VERSION && source.sensorTransports !== undefined) {
+    if (sourceVersion < RUN_MANIFEST_V11 && source.sensorTransports !== undefined) {
         throw new Error("Sensor transport bindings require run-manifest version 11.");
     }
+    if (sourceVersion < RUN_MANIFEST_VERSION && source.protobuf !== undefined) {
+        throw new Error("Protobuf interface selection requires run-manifest version 12.");
+    }
+    const protobuf = normalizeProtobufRunConfig(source.protobuf);
     const plugins = normalizePluginSelection(source.plugins);
     const sensorTransports = normalizeSensorTransports(source.sensorTransports);
     const initial = object(source.initialState);
@@ -761,6 +768,7 @@ export function normalizeRunManifest(value, {
         },
         ...(plugins ? { plugins } : {}),
         ...(reconciledTransports ? { sensorTransports: reconciledTransports } : {}),
+        protobuf,
         topics,
         controls: normalizeControlsConfig(controlsSource, { targetVehicleId: defaultTarget }),
         assertions: (Array.isArray(source.assertions) ? source.assertions : []).map(assertion),

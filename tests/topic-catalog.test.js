@@ -156,9 +156,10 @@ test("default manifest includes live perception return contracts and controls-co
 test("v7 manifests without candidate returns gain them on normalize", () => {
     const source = createDefaultRunManifest();
     source.version = 7;
+    delete source.protobuf;
     source.topics = source.topics.filter((entry) => !DEFAULT_CANDIDATE_RETURN_CONTRACT_IDS.includes(entry.contractId));
     const migrated = normalizeRunManifest(source);
-    assert.equal(migrated.version, 11);
+    assert.equal(migrated.version, 12);
     for (const id of DEFAULT_CANDIDATE_RETURN_CONTRACT_IDS) {
         const topic = migrated.topics.find((entry) => entry.contractId === id);
         assert.ok(topic, id);
@@ -169,11 +170,11 @@ test("v7 manifests without candidate returns gain them on normalize", () => {
 test("v8+ manifests can omit candidate return topics", () => {
     const source = createDefaultRunManifest();
     source.topics = source.topics.filter((entry) => !DEFAULT_CANDIDATE_RETURN_CONTRACT_IDS.includes(entry.contractId));
-    const kept = normalizeRunManifest({ ...source, version: 8 });
+    const kept = normalizeRunManifest({ ...source, version: 8, protobuf: undefined });
     for (const id of DEFAULT_CANDIDATE_RETURN_CONTRACT_IDS) {
         assert.ok(!kept.topics.some((entry) => entry.contractId === id), id);
     }
-    assert.equal(kept.version, 11);
+    assert.equal(kept.version, 12);
     assert.ok(kept.controls);
     assert.equal(kept.controls.stalePolicy, "stop");
 });
@@ -191,7 +192,7 @@ test("topic input queue rejects undeclared topics and preserves arrival ordering
     assert.equal(drained[0].info.value.speed, 2);
 });
 
-test("v2 manifests normalize to v9 with controls-command migration", () => {
+test("v2 manifests normalize to v12 with controls-command migration", () => {
     const legacy = normalizeRunManifest({
         kind: "cev-sim.run-manifest",
         version: 2,
@@ -205,7 +206,7 @@ test("v2 manifests normalize to v9 with controls-command migration", () => {
             required: true,
         }],
     });
-    assert.equal(legacy.version, 11);
+    assert.equal(legacy.version, 12);
     assert.equal(legacy.topics[0].contractId, "controls-command");
     assert.equal(legacy.topics[0].name, "/controls/command");
     assert.equal(validateRunManifest(legacy).ok, true);

@@ -1,7 +1,7 @@
 import { computeResolvedRunHash } from "../../app/simulation/RunManifest.js";
 import { getBuiltInVehicleManifest } from "../../app/vehicles/BuiltInVehicleManifests.js";
 import { DEFAULT_DYNAMIC_BICYCLE } from "../../app/vehicles/VehicleManifest.js";
-import { createPortableHeadlessBundle, createPluginPortableHeadlessBundle, rehashRunBundle } from "./headlessRunnerBundle.js";
+import { createPortableHeadlessBundle, createPluginPortableHeadlessBundle, historicalV11RunBundle } from "./headlessRunnerBundle.js";
 import { pluginFixtureResource } from "./pluginFixtures.js";
 
 // Build historical content without authoring normalization, including after the v2 migration lands.
@@ -47,5 +47,5 @@ export async function contactHostBundle({ model, plugin = false, nested = false,
         bundle.resolved.dependencyHashes.vehicles = { [record.vehicleId]: record.hash };
         bundle.resolved.dependencyHashes.vehicleAssets = { [record.vehicleId]: {} };
     }
-    return rehashRunBundle(bundle);
+    return historicalV11RunBundle(bundle);
 }

@@ -142,7 +142,7 @@ function setupControls(scene, camera, renderer, data) {
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
     controls.screenSpacePanning = false;
-    controls.minDistance = 4;
+    controls.minDistance = 0.5;
     controls.maxDistance = 10000;
     controls.maxPolarAngle = Math.PI / 2;
     // set camera far plane to 1000

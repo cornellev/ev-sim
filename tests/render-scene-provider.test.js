@@ -331,7 +331,8 @@ test("VIS-02 explicit-camera v11 identity vectors are independent of legacy and 
     const camera = resolved.manifest.sensorRig.sensors.find((sensor) => sensor.type === "camera");
     assert.deepEqual(camera.render, DEFAULT_CAMERA_RENDER_SELECTION);
     assert.equal(resolved.renderScene.hash, expected.renderSceneHash);
-    assert.equal(resolved.resolvedHash, expected.resolvedHash);
+    assert.equal(resolved.version, 12);
+    assert.notEqual(resolved.resolvedHash, expected.resolvedHash);
     assert.equal(computeSimulationSemanticHash(resolved), expected.simulationSemanticHash);
     const actual = identities(resolved);
     assert.deepEqual(actual, {

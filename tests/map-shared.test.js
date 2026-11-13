@@ -87,6 +87,11 @@ test("fitMapViewport centers on the AABB and clamps zoom", () => {
     assert.equal(fitted.centerZ, 10);
     assert.ok(fitted.zoom >= MAP_MIN_ZOOM);
     assert.ok(fitted.zoom <= MAP_MAX_ZOOM);
+    const size = { width: 800, height: 600 };
+    const center = { x: 400, y: 300 };
+    const pastOldCap = zoomMapViewport({ centerX: 0, centerZ: 0, zoom: 8 }, center, size, 4);
+    assert.equal(pastOldCap.zoom, 16);
+    assert.equal(zoomMapViewport(pastOldCap, center, size, 2).zoom, MAP_MAX_ZOOM);
     assert.deepEqual(fitMapViewport([], { width: 800, height: 600 }), { ...DEFAULT_MAP_VIEWPORT });
     assert.ok(mapWheelZoomFactor(100) < 1);
     assert.ok(mapWheelZoomFactor(-100) > 1);

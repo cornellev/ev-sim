@@ -49,15 +49,15 @@ export function assertRunIdentityCounters(manifest = {}, scenario = null) {
 
 export function simulationIdentityVersion(resolved = {}) {
     const profile = resolved.identityProfile;
-    if (resolved.kind === "cev-sim.run-manifest" && Number(resolved.version) > 11) {
+    if (resolved.kind === "cev-sim.run-manifest" && Number(resolved.version) > 12) {
         throw new Error(`Unsupported resolved manifest version ${resolved.version}.`);
     }
-    if (Number(resolved.version) === 11 && resolved.kind === "cev-sim.run-manifest") {
+    if ([11, 12].includes(Number(resolved.version)) && resolved.kind === "cev-sim.run-manifest") {
         const worldBound = profile?.id === WORLD_BOUND_IDENTITY.id && profile?.version === WORLD_BOUND_IDENTITY.version;
         const pluginBound = profile?.id === WORLD_BOUND_PLUGINS_IDENTITY.id
             && profile?.version === WORLD_BOUND_PLUGINS_IDENTITY.version;
         if (!profile || Object.keys(profile).length !== 2 || (!worldBound && !pluginBound)) {
-            throw new Error("Manifest v11 requires identityProfile world-bound@2 or world-bound-plugins@1.");
+            throw new Error(`Manifest v${resolved.version} requires identityProfile world-bound@2 or world-bound-plugins@1.`);
         }
         const usesPlugins = resolvedUsesPlugins(resolved);
         if (usesPlugins && !pluginBound) throw new Error("Resolved plugin resources require identityProfile world-bound-plugins@1.");

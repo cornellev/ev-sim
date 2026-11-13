@@ -1,0 +1,48 @@
+syntax = "proto3";
+package cev.onboarding.v1;
+
+// SI units; world +x/+y, CCW yaw. Pose is at the rear axle midpoint.
+message Point2 { double x = 1; double y = 2; }
+message Pose2 { Point2 position = 1; double yaw_rad = 2; }
+message VehicleState { Pose2 pose = 1; double speed_mps = 2; }
+message LidarScan { repeated Point2 points = 1; Pose2 sensor_in_vehicle = 2; }
+message Observation { uint64 time_ns = 1; VehicleState state = 2; LidarScan scan = 3; }
+message Grid {
+  Point2 origin = 1; double resolution_m = 2; uint32 width = 3;
+  uint32 height = 4; repeated uint32 weights = 5;
+}
+message Path { repeated Point2 points = 1; }
+message DriveCommand { double speed_mps = 1; double steering_rad = 2; }
+message VehicleSpec {
+  double wheelbase_m = 1; double length_m = 2; double width_m = 3;
+  Point2 rear_axle_in_base = 4; Pose2 sensor_in_vehicle = 5;
+  double max_speed_mps = 6; double max_steering_rad = 7;
+  bool hardware_calibrated = 8;
+}
+message Header {
+  string run_id = 1; uint64 sequence = 2; uint64 time_ns = 3; string frame_id = 4;
+}
+enum Availability { UNSPECIFIED = 0; NOT_READY = 1; READY = 2; NO_PATH = 3; INVALID = 4; }
+message StateUpdate { Header header = 1; VehicleState state = 2; }
+message LidarUpdate { Header header = 1; LidarScan scan = 2; }
+message MapUpdate {
+  Header header = 1; Header source = 2; VehicleState state = 3;
+  Grid grid = 4; Availability availability = 5;
+}
+message PathUpdate {
+  Header header = 1; Header source = 2; uint64 map_sequence = 3;
+  Path path = 4; Availability availability = 5;
+}
+message CommandUpdate {
+  Header header = 1; Header source = 2; uint64 path_sequence = 3;
+  uint64 state_sequence = 4; uint64 valid_until_ns = 5; DriveCommand command = 6;
+}
+message RunInfo {
+  Header header = 1; string schema_hash = 2; Point2 goal = 3;
+  VehicleSpec vehicle = 4; Grid grid = 5; double goal_tolerance_m = 6;
+  double timeout_s = 7; string mode = 8; Path control_path = 9;
+}
+message NodeStatus {
+  Header header = 1; string node = 2; bool ready = 3;
+  string detail = 4; uint32 pid = 5;
+}

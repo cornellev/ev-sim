@@ -26,7 +26,7 @@ export const TYPE_DECODERS = Object.entries(TYPE_ENCODERS).reduce((acc, [k, v]) 
 export const DYNAMIC_TYPE_BYTE = 0xff;
 export const MAX_TOPIC_NAME_LEN = 255;
 const DYNAMIC_SCHEMAS = new Map();
-const STD_ALIASES = {
+export const STD_ALIASES = {
 	"std_msgs/String": "string",
 	"std_msgs/Int32": "int32",
 	"std_msgs/Float32": "float32",
@@ -91,7 +91,7 @@ export async function registerMsgDefinitionFromFile(typeName, fileText) {
 	registerMsgDefinition(typeName, text);
 }
 
-export function registerMsgDefinition(typeName, msgText) {
+export function parseMsgDefinition(typeName, msgText) {
 	const packageName = typeName.includes("/") ? typeName.split("/")[0] : null;
 	const fields = [];
 	for (const rawLine of msgText.split(/\r?\n/)) {
@@ -107,7 +107,11 @@ export function registerMsgDefinition(typeName, msgText) {
 			arrayLen: fieldType.arrayLen,
 		});
 	}
-	registerMessageSchema(typeName, fields);
+	return fields;
+}
+
+export function registerMsgDefinition(typeName, msgText) {
+	registerMessageSchema(typeName, parseMsgDefinition(typeName, msgText));
 }
 
 export function requireBytes(bytes, offset, size, label) {

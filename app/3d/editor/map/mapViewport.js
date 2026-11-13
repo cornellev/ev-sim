@@ -1,7 +1,7 @@
 import { MAP_WORLD_SCALE, screenToWorld } from "./mapCoords.js";
 
 export const MAP_MIN_ZOOM = 0.25;
-export const MAP_MAX_ZOOM = 8;
+export const MAP_MAX_ZOOM = 16;
 export const MAP_FIT_PADDING = 48;
 
 export const DEFAULT_MAP_VIEWPORT = Object.freeze({

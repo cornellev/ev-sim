@@ -125,6 +125,7 @@ test("v3 manifests migrate sensor poses to REP-103 without changing physical pla
     const migrated = normalizeRunManifest({
         ...createDefaultRunManifest(),
         version: 3,
+        protobuf: undefined,
         sensorRig: {
             rootFrameId: "base_link",
             sensors: [{
@@ -138,7 +139,7 @@ test("v3 manifests migrate sensor poses to REP-103 without changing physical pla
             }],
         },
     });
-    assert.equal(migrated.version, 11);
+    assert.equal(migrated.version, 12);
     assert.deepEqual(migrated.sensorRig.sensors[0].pose.position, { x: 1.5, y: 0, z: 0.5 });
     assert.equal(migrated.sensorRig.sensors[0].mountFrameId, "front_camera_link");
 });

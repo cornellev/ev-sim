@@ -221,10 +221,26 @@ export class GitHubUrdfClient {
             await response.body?.cancel?.();
             throw new GitHubUrdfError("vehicle.github.file-bytes", `GitHub response exceeds ${maxBytes} bytes.`, { path: pathname });
         }
-        const bytes = new Uint8Array(await response.arrayBuffer());
-        if (bytes.byteLength > maxBytes) {
-            throw new GitHubUrdfError("vehicle.github.file-bytes", `GitHub response exceeds ${maxBytes} bytes.`, { path: pathname });
-        }
+        const reader = response.body?.getReader();
+        const chunks = [];
+        let length = 0;
+        try {
+            while (reader) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                length += value.byteLength;
+                if (length > maxBytes) throw new GitHubUrdfError("vehicle.github.file-bytes", `GitHub response exceeds ${maxBytes} bytes.`, { path: pathname });
+                chunks.push(value);
+            }
+        } catch (error) {
+            await reader?.cancel().catch(() => {});
+            if (this.signal?.aborted) throw this.#cancelled();
+            if (timed.aborted) throw this.#deadline();
+            throw error;
+        } finally { reader?.releaseLock(); }
+        const bytes = new Uint8Array(length);
+        let offset = 0;
+        for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
         if (raw) return { status: response.status, body: bytes, etag: headerValue(response.headers, "etag") };
         try {
             return {

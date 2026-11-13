@@ -909,6 +909,53 @@ cev-sim does not embed ROS. `app/3d/managers/ClientManager.js` creates a browser
 
 Orchestrator can be found from [this repository](https://github.com/cornellev/orchestrator).
 
+The separate [Zenoh/Protobuf roadmap](zenoh-protobuf-plan.md) replaces this
+process in nine packages. ZPB-01 adds `app/interfaces/ProtobufInterface.js`
+for immutable schema/route configuration, `ProtobufSchema.js` for isolated
+descriptor loading and exact-value codecs, and
+`server/interfaces/ProtobufSourceLoader.js` for bounded local imports.
+This package does not change live transport, run-manifest v11, or existing
+headless Protobuf and hash contracts.
+
+ZPB-02 adds `server/storage/ProtobufInterfaceStore.js`, owned by
+`StorageService`, for immutable interfaces at
+`protobuf-interfaces/sha256/<hash>.json` and revisioned authoring records at
+`protobuf-interfaces/sources/<sourceId>.json`. Filesystem, uploaded, and pinned
+public GitHub sources use the shared ZPB-01 compiler. Source records retain
+per-schema commit pins/file digests, one pending update, the latest applied
+receipt, and disabled route/bootstrap drafts. These records are nonsemantic;
+credentials and reflection roots are never persisted.
+
+Update checking reports schema-invalid routes before adoption. Explicit
+application publishes a valid new immutable interface with surviving routes,
+then commits its source pointer. Broken definitions remain available with repair
+diagnostics and never reactivate automatically. Applying the cached preview
+requires no network access. Storage APIs and eight MCP tools expose this
+authoring behavior. The store has one owner in the existing server process.
+
+ZPB-03 makes run-manifest v12 the authoring writer. Its `protobuf` selection
+chooses disabled/Zenoh mode, an immutable interface hash, and explicit external
+control. `StorageService.resolveRunManifest()` embeds `{document, hash}` and a
+dependency pin after one verified store read. `ProtobufRunBinding.js` rebuilds
+descriptor roots, topic indexes, typed field admission, control ownership, and
+concrete run-key bindings without a global message registry. Reflection roots
+and Maps remain execution-only. Run-bundle verification uses embedded content
+and local schemas; JSON/package imports republish that immutable content without
+creating source records. The exact `bundle.json` carries descriptors.
+
+The v12 full hash binds the interface. Its semantic projection retains v11
+identity for disabled/publish-only selections and binds subscribed routes,
+their descriptor fingerprints, and frozen values mapped into inputs. Source
+provenance and host transport configuration remain outside that contract.
+Historical received bundles keep their bytes and algorithms. Python admits v12
+with JCS envelope bytes and checks interface@1's existing sorted-key JSON hash
+and exact descriptor digests before forwarding to authoritative JS verification.
+
+Zenoh execution is rejected before browser replacement or kernel preparation
+until later ZPB transport packages implement it. ZPB-04 supplies mapping/adapters;
+ZPB-05 supplies browser transport and the configuration panel. No headless
+Protobuf or run-package format change is introduced here.
+
 ## Assets
 
 Browser-served assets live under `public/`. Current important asset groups are:

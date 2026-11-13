@@ -2,6 +2,8 @@ import { compareUtf8Bytes } from "../../math/compareUtf8.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { simulationIdentityVersion } from "./RunIdentity.js";
+import { protobufInputContractHash } from "../../interfaces/ProtobufRunBinding.js";
+import { calibrationBundleHash } from "../../autonomy/CalibrationBundle.js";
 import { comparePluginText, normalizeResolvedPlugins } from "../../plugin/PluginSelection.js";
 
 export const SIMULATION_HASH_VERSION = 1;
@@ -316,6 +318,23 @@ export function simulationSemanticProjection(resolved = {}) {
     projectEvidence(projection);
     projectVehiclePluginDependencies(projection);
     const manifest = projection.manifest;
+    if (resolved.version === 12) {
+        projection.version = 11;
+        if (manifest) {
+            manifest.version = 11;
+            delete manifest.protobuf;
+        }
+        delete projection.protobufInterface;
+        if (projection.dependencyHashes) delete projection.dependencyHashes.protobufInterface;
+        // The calibration envelope records the writer version, not new sensor meaning.
+        if (projection.calibration?.manifestVersion === 12) {
+            projection.calibration.manifestVersion = 11;
+            projection.calibration.hash = calibrationBundleHash(projection.calibration);
+            if (projection.dependencyHashes) projection.dependencyHashes.calibration = projection.calibration.hash;
+        }
+        const inputHash = protobufInputContractHash(resolved);
+        if (inputHash) projection.protobufInputs = { version: 1, hash: inputHash };
+    }
     const pluginSensorIds = resolvedPluginSensorIds(resolved);
     omitIdentityMetadata(manifest);
     if (manifest) {

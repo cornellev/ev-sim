@@ -4,6 +4,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { CEV_SIM_VERSION } from "../../app/version.js";
 import { registerEnvironmentTools } from "./environmentTools.js";
 import { registerPluginTools } from "./pluginTools.js";
+import { registerProtobufInterfaceTools } from "./protobufInterfaceTools.js";
 import { registerScriptingTools } from "./scriptingTools.js";
 import { registerBindingTools } from "./bindingTools.js";
 import { registerLoggingTools } from "./loggingTools.js";
@@ -64,6 +65,7 @@ export function createSensorFusionMcpServer(storage, logService, headlessExperim
 
     registerEnvironmentTools(server, storage);
     registerPluginTools(server, storage);
+    registerProtobufInterfaceTools(server, storage);
     registerScriptingTools(server, storage);
     registerBindingTools(server, storage);
     registerRunManifestTools(server, storage);

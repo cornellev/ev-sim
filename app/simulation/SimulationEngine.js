@@ -1,4 +1,5 @@
 import { clamp } from "three/src/math/MathUtils.js";
+import { assertProtobufExecutionCapabilities } from "../interfaces/ProtobufRunBinding.js";
 import { PerspectiveViewController } from "../3d/camera/PerspectiveViewController.js";
 import { attachPerspectiveView, detachPerspectiveView } from "../3d/camera/perspectiveViewRegistry.js";
 import { AutonomyOverlay } from "../3d/overlay/AutonomyOverlay.js";
@@ -871,6 +872,7 @@ export class SimulationEngine {
 
     async applyRunManifest(resolved, options = {}) {
         if (!resolved?.manifest) throw new Error("Resolved run manifest is required.");
+        assertProtobufExecutionCapabilities(resolved);
         this.pause();
         await this.whenIdle();
         this.scenarioDiagnostics.configure(null);

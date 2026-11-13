@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package cev.interfaces;
+
+// Units are SI. Angles are radians. Body frames follow ROS REP-103:
+// x forward, y left, z up.
+
+message Vector3 {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+}
+
+message Imu {
+  uint64 stamp_ns = 1;
+  // m/s^2
+  Vector3 linear_acceleration = 2;
+  // rad/s about x (roll), y (pitch), z (yaw)
+  Vector3 angular_velocity = 3;
+}
+
+message WheelSpeed {
+  uint64 stamp_ns = 1;
+  // positive => forward motion
+  double rev_per_s = 2;
+}

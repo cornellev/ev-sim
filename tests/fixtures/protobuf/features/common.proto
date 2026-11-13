@@ -1,0 +1,7 @@
+syntax = "proto3";
+package tests.protobuf;
+
+message Child {
+  double x = 1;
+  string label = 2;
+}

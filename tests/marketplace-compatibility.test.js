@@ -8,7 +8,7 @@ import { createDefaultVehicleManifest } from "../app/vehicles/VehicleManifest.js
 import { computeEpisodeHash, defaultEpisodeIdentity } from "../app/simulation/kernel/SimulationHashes.js";
 import { encodeRunPackage, hashRunPackageManifest } from "../server/headless/VisualAssetPack.js";
 import { StorageService } from "../server/storage/StorageService.js";
-import { createPluginPortableHeadlessBundle } from "./helpers/headlessRunnerBundle.js";
+import { createPluginPortableHeadlessBundle, historicalV11RunBundle } from "./helpers/headlessRunnerBundle.js";
 import { pluginFixtureResource } from "./helpers/pluginFixtures.js";
 
 const fixtureRoot = new URL("./fixtures/marketplace/", import.meta.url);
@@ -17,7 +17,7 @@ const runPackage = JSON.parse(await fs.readFile(new URL("../visual-layer/run-pac
 
 test("MKT-01 preserves plugin package and plugin-enabled run identities", async () => {
     const resource = await pluginFixtureResource();
-    const bundle = await createPluginPortableHeadlessBundle(resource);
+    const bundle = historicalV11RunBundle(await createPluginPortableHeadlessBundle(resource));
     assert.equal(resource.packageHash, compatibility.plugin.packageHash);
     assert.equal(resource.runtimeHash, compatibility.plugin.runtimeHash);
     assert.equal(bundle.resolvedHash, compatibility.plugin.resolvedHash);

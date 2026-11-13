@@ -375,12 +375,21 @@ and removes its private Unix socket directory.
 `load_bundle` retains `received_bytes` and their `bundle_bytes_hash` alongside
 `canonical_json` and `canonical_json_hash`. An optional
 `expected_bundle_bytes_hash` validates an externally supplied exact digest.
-It rejects duplicate JSON keys and malformed UTF-8; v11 uses JCS, while v10
+It rejects duplicate JSON keys and malformed UTF-8; v11/v12 use JCS, while v10
 keeps its legacy serialization. These digests do not replace authoritative
 JavaScript semantic verification.
 
-Loaded v11 bundles declare `identity_profile = "world-bound@2"` and
+Loaded plugin-free v11/v12 bundles declare `identity_profile = "world-bound@2"` and
 `required_protocol_minor = 3`. The client checks both the protocol and the
 advertised identity profile before creating a batch. Legacy v10 bundles remain
 usable with protocol 1.2 supervisors, including explicitly launched local
 supervisors. No local Python simulator or semantic hash implementation is added.
+
+ZPB-03 adds v12 bundle and run-package ingestion. The reader validates the
+normalized Protobuf selection, snapshot/dependency pins, schema fingerprints,
+normalized ID ordering, and interface@1's existing JS sorted-key JSON digest.
+Interface hashing retains integer map-key ordering distinct from envelope JCS.
+Descriptors remain embedded in `bundle.json`, with no Python source acquisition
+or additional archive entries. Authoritative route/hash verification stays in
+JavaScript. Zenoh snapshots are inspectable; execution currently fails visibly
+with `UNSUPPORTED_CAPABILITY` until later ZPB transport packages are available.

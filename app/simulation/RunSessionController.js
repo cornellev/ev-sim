@@ -1,4 +1,5 @@
 import { getRecordingController } from "../logging/RecordingController.js";
+import { assertProtobufExecutionCapabilities } from "../interfaces/ProtobufRunBinding.js";
 import { buildRecordingOptions } from "../logging/RecordingOptions.js";
 import { builtInProfile } from "../logging/LogProfiles.js";
 import { getTelemetryStore } from "../telemetry/TelemetryRuntime.js";
@@ -149,6 +150,7 @@ export class RunSessionController {
 
     async prepare(resolved, { autoplay = false, episodePhase = "start", manifestRevision = null } = {}) {
         if (!resolved?.manifest || !resolved?.resolvedHash) throw new Error("A resolved run manifest is required.");
+        assertProtobufExecutionCapabilities(resolved);
         // Reject unsupported measured providers before replacing or stopping an
         // active browser run and before loading any environment/sensor state.
         assertEnabledCameraRenderRuntime(resolved.manifest.sensorRig?.sensors, resolved.renderScene, {

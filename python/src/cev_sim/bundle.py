@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
 import math
@@ -86,7 +88,7 @@ def _legacy_json(value: Any) -> bytes:
 def canonical_bundle_bytes(document: Mapping[str, Any]) -> bytes:
     try:
         resolved = document.get("resolved")
-        if isinstance(resolved, Mapping) and resolved.get("version") == 11:
+        if isinstance(resolved, Mapping) and resolved.get("version") in (11, 12):
             return rfc8785.dumps(document)
         return _legacy_json(document)
     except (rfc8785.CanonicalizationError, TypeError, ValueError, UnicodeError) as error:
@@ -206,6 +208,64 @@ def _invalid_constant(value: str) -> None:
     raise ValueError(f"Non-finite JSON number {value}")
 
 
+def _check_protobuf_snapshot(resolved: Mapping[str, Any], manifest: Mapping[str, Any]) -> None:
+    config = manifest.get("protobuf")
+    if (not isinstance(config, dict) or set(config) != {"mode", "interfaceHash", "externalController"}
+            or config["mode"] not in ("disabled", "zenoh")
+            or type(config["externalController"]) is not bool):
+        raise CevSimConfigurationError("Manifest v12 requires a normalized protobuf selection")
+    dependencies = resolved.get("dependencyHashes")
+    if not isinstance(dependencies, dict):
+        raise CevSimConfigurationError("Protobuf snapshot requires dependency hashes")
+    if config["mode"] == "disabled":
+        if (config["interfaceHash"] is not None or config["externalController"]
+                or "protobufInterface" in resolved or "protobufInterface" in dependencies):
+            raise CevSimConfigurationError("Disabled Protobuf runs cannot carry an interface")
+        return
+    _validate_sha256(config["interfaceHash"], "protobuf.interfaceHash")
+    resource = resolved.get("protobufInterface")
+    if (not isinstance(resource, dict) or set(resource) != {"document", "hash"}
+            or resource["hash"] != config["interfaceHash"]
+            or dependencies.get("protobufInterface") != config["interfaceHash"]):
+        raise CevSimConfigurationError("Protobuf interface snapshot and pins must agree")
+    document = resource["document"]
+    if (not isinstance(document, dict) or set(document) != {"kind", "version", "schemas", "routes", "bootstrap"}
+            or document["kind"] != "cev-sim.protobuf-interface"
+            or not _json_integer(document["version"]) or document["version"] != 1):
+        raise CevSimConfigurationError("Protobuf snapshot requires an interface v1 document")
+    for key, limit in (("schemas", 16), ("routes", 64), ("bootstrap", 64)):
+        entries = document[key]
+        if not isinstance(entries, list) or len(entries) > limit or (key == "schemas" and not entries):
+            raise CevSimConfigurationError(f"Invalid protobuf {key} bounds")
+        ids = [entry.get("id") if isinstance(entry, dict) else None for entry in entries]
+        if (not all(isinstance(name, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", name)
+                    for name in ids)
+                or len(set(ids)) != len(ids) or ids != sorted(ids, key=lambda name: name.encode("utf-8"))):
+            raise CevSimConfigurationError(f"Protobuf {key} must have unique sorted identifiers")
+    for schema in document["schemas"]:
+        if set(schema) != {"id", "fingerprint", "descriptorBase64"}:
+            raise CevSimConfigurationError("Invalid protobuf schema snapshot")
+        _validate_sha256(schema["fingerprint"], "protobuf schema fingerprint")
+        encoded = schema["descriptorBase64"]
+        if not isinstance(encoded, str) or len(encoded) > 4 * ((700_000 + 2) // 3):
+            raise CevSimConfigurationError("Protobuf descriptor exceeds its byte limit")
+        try:
+            descriptor = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError) as error:
+            raise CevSimConfigurationError("Invalid protobuf descriptor base64") from error
+        if (not descriptor or len(descriptor) > 700_000
+                or base64.b64encode(descriptor).decode("ascii") != encoded
+                or hashlib.sha256(descriptor).hexdigest() != schema["fingerprint"]):
+            raise CevSimConfigurationError("Protobuf descriptor fingerprint does not match exact bytes")
+    # Interface v1 uses the existing JS sorted-key serializer, including integer map keys.
+    try:
+        content = _legacy_json(document)
+    except (TypeError, ValueError, UnicodeError, RecursionError) as error:
+        raise CevSimConfigurationError("Invalid protobuf interface JSON") from error
+    if len(content) > 16 * 1024**2 or hashlib.sha256(content).hexdigest() != resource["hash"]:
+        raise CevSimConfigurationError("Protobuf interface content does not match its hash")
+
+
 def load_bundle(value: BundleInput, *, expected_bundle_bytes_hash: str | None = None) -> LoadedBundle:
     try:
         if isinstance(value, Mapping):
@@ -229,10 +289,10 @@ def load_bundle(value: BundleInput, *, expected_bundle_bytes_hash: str | None = 
     if not isinstance(resolved, dict) or resolved.get("kind") != "cev-sim.run-manifest":
         raise CevSimConfigurationError("Run bundle requires a resolved run manifest")
     version = resolved.get("version")
-    if not _json_integer(version) or version not in (10, 11):
+    if not _json_integer(version) or version not in (10, 11, 12):
         raise CevSimConfigurationError("Unsupported resolved version; import and re-resolve historical bundles")
     identity_profile = None
-    if version == 11:
+    if version in (11, 12):
         profile = resolved.get("identityProfile")
         supported_profiles = (
             {"id": "world-bound", "version": 2},
@@ -241,7 +301,7 @@ def load_bundle(value: BundleInput, *, expected_bundle_bytes_hash: str | None = 
         if (not isinstance(profile, dict) or profile not in supported_profiles
                 or not _json_integer(profile["version"])):
             raise CevSimConfigurationError(
-                "Manifest v11 requires identityProfile world-bound@2 or world-bound-plugins@1"
+                f"Manifest v{version} requires identityProfile world-bound@2 or world-bound-plugins@1"
             )
         identity_profile = f"{profile['id']}@{profile['version']}"
     elif "identityProfile" in resolved:
@@ -250,7 +310,7 @@ def load_bundle(value: BundleInput, *, expected_bundle_bytes_hash: str | None = 
     if (not isinstance(manifest, dict) or manifest != resolved.get("manifest")
             or manifest.get("kind") != "cev-sim.run-manifest" or manifest.get("version") != version):
         raise CevSimConfigurationError("Bundle and resolved manifest versions/content must agree")
-    if version == 11:
+    if version in (11, 12):
         selection = manifest.get("plugins")
         locks = (
             selection.get("artifacts", [])
@@ -280,12 +340,14 @@ def load_bundle(value: BundleInput, *, expected_bundle_bytes_hash: str | None = 
             raise CevSimConfigurationError(f"Run bundle {label} must be a lowercase SHA-256 hex digest")
         if resolved.get(label) != digest:
             raise CevSimConfigurationError(f"Run bundle and resolved {label} must agree")
-    if version == 11:
+    if version in (11, 12):
         try:
             _check_counters(manifest, (resolved.get("scenario") or {}).get("scenario") or {})
             _check_pbr_shape(resolved, manifest)
         except (AttributeError, TypeError) as error:
             raise CevSimConfigurationError(f"Invalid run identity counter structure: {error}") from error
+    if version == 12:
+        _check_protobuf_snapshot(resolved, manifest)
     canonical = canonical_bundle_bytes(document)
     return LoadedBundle(
         document=document,

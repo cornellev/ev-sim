@@ -652,6 +652,7 @@ Compatibility is evaluated separately at each boundary:
 | Bundle v1 / resolved v10 | Preserve received bytes and existing algorithms | Supported | Existing analytic path remains supported |
 | Older authored manifests | N/A unless a historical bundle verifier exists | Normalize and re-resolve | Only through a newly resolved supported bundle |
 | Bundle v1 / manifest v11 / `world-bound@2` | New version-dispatched algorithms | Supported | Protocol 1.3 and advertised identity profile required |
+| Bundle v1 / manifest v12 / `world-bound@2` or `world-bound-plugins@1` | Existing profiles plus ZPB-03 input contract projection | Supported | Protocol 1.3 and advertised identity profile required; Zenoh mode is inspectable but execution awaits later ZPB transport packages |
 | Bundle v1 / manifest v11 / selected `pbr-mesh@1` | Exact inner render/closure/evidence verification | Supported when local authoring dependencies exist | Browser simulation supported by VIS-14; normal-worker headless/Python supported by VIS-15a with same-host admission and probed backend v2 |
 | Earlier immutable bundles | Retain legacy import verification where its algorithm applies | Verify before normalizing | Explicit re-resolution required |
 | Unknown versions or identities | Explicit compatibility error | Rejected | Rejected |
@@ -660,12 +661,13 @@ Verification never normalizes or rewrites received immutable bundle bytes.
 Authoring import is not proof of executable compatibility.
 
 `verifyRunBundleIntegrity` checks received envelope hashes before authoring
-import; `verifyRunBundle` additionally requires executable resolved v10 or
-v11 and the existing resource/backend contracts. Historical resolved v1–v9
+import; `verifyRunBundle` additionally requires resolved v10, v11, or v12
+and the existing resource/backend contracts. Runtime preparation rejects v12
+Zenoh mode until its transport is implemented. Historical resolved v1–v9
 can use the existing legacy import verifier only where their hashes match its
 algorithm; otherwise they fail explicitly. No historical verifier is inferred.
 
-New resolutions always produce v11, including resolutions of imported older
+New resolutions always produce v12, including resolutions of imported older
 authoring documents. v10 bundles without an identity selector keep semantic
 and episode v1 algorithms. Missing/unknown v11 selectors and selectors on
 legacy bundles fail. `SIMULATION_HASH_VERSION`, metric-world, legacy analytic

@@ -1,10 +1,72 @@
 # Deterministic simulation runs
 
-Every professional simulation launch is defined by a saved `cev-sim.run-manifest` version 11 document. The server normalizes and validates the authoring document, resolves its environment, canonical world description, physics backend identity, scripts, bindings, autonomy catalog metadata, deterministic calibration bundle, ROS schema closure, and contract endpoints, then computes SHA-256 definition, full resolved, and simulation-semantic hashes. A running session holds that resolved snapshot and never applies Config edits in place.
+Every professional simulation launch is defined by a saved `cev-sim.run-manifest` version 12 document. The server normalizes and validates the authoring document, resolves its environment, canonical world description, physics backend identity, scripts, bindings, autonomy catalog metadata, deterministic calibration bundle, ROS schema closure, contract endpoints, and selected Protobuf interface, then computes SHA-256 definition, full resolved, and simulation-semantic hashes. A running session holds that resolved snapshot and never applies Config edits in place.
+
+## Pinned Protobuf interfaces (ZPB-03)
+
+Manifest v12 writes an explicit selection. Omission normalizes to:
+
+```json
+"protobuf": { "mode": "disabled", "interfaceHash": null, "externalController": false }
+```
+
+Select a stored immutable interface by its lowercase SHA-256 hash:
+
+```json
+"protobuf": { "mode": "zenoh", "interfaceHash": "<64 lowercase hex digits>", "externalController": false }
+```
+
+Disabled mode forbids an interface pin or external control. Unknown selection
+fields are errors. Source IDs, endpoints, credentials, queue limits, and SHM
+configuration are not manifest fields. Updating a source pointer does not change
+a saved pin; select the new immutable hash explicitly to adopt an update.
+
+Resolution reads the selected interface once and embeds
+`resolved.protobufInterface = { document, hash }` together with
+`resolved.dependencyHashes.protobufInterface`. The complete normalized
+`cev-sim.protobuf-interface@1` document contains all descriptor bytes, routes,
+and bootstrap records. Missing, corrupt, or mismatched pins fail validation at
+`protobuf.interfaceHash`. Bundle verification rebuilds route admission from this
+snapshot and the embedded local schema closure, without storage or network reads.
+JSON and run-package imports persist its immutable document before saving the
+authoring manifest. Descriptors remain inside exact `bundle.json`; run-bundle@1
+and run-package@1 have no new archive entries or format versions.
+
+Routes must name exact manifest topic IDs with matching input/output direction.
+Field mappings are checked against isolated descriptor roots, local scalar or
+`.msg` field shapes, declared metadata, and available frozen `run.*` fields.
+Unknown paths, array/map descent, incompatible shapes, invalid local constants,
+and unavailable named adapters fail admission. Numeric scale/offset conversions
+require numeric source and destination scalars. `run.runId` is a later execution
+binding; resolved/semantic hashes cannot be used as mapping inputs. Concrete key
+binding rejects unsafe run IDs and collisions after `{run_id}` expansion.
+
+Each subscribed local input has one route owner. A controls-command subscription
+requires `externalController:true`, exactly one candidate controls subscription,
+candidate manifest/topic authority and producer, and `routeDownstream:true`.
+All subscription contracts enter simulation semantics because local scripts can
+consume those inputs even when actuator routing is disabled.
+
+The full interface pin enters definition and resolved identity. Publish-only
+routes and bootstrap changes leave simulation and episode identity unchanged.
+The semantic projection binds subscribed routes, their schema IDs/fingerprints,
+external-controller selection, and frozen run values mapped into inputs. Host
+transport settings stay operational. Disabled and publish-only v12 projections
+retain the corresponding v11 semantic/episode identities and identity profiles.
+
+ZPB-03 admits offline snapshots and structural inspection. Browser and shared
+kernel preparation reject Zenoh mode with `UNSUPPORTED_CAPABILITY` before
+replacing an active run or preparing simulation state. Mapping execution,
+transport sessions, and adapters arrive in later ZPB packages. Disabled mode
+continues normal execution.
+
+v1–v11 authoring documents migrate to v12. Received historical bundles are
+verified before authoring migration and retain their original bytes and hash
+algorithms; inspection never adds the new selection or resource.
 
 Binding resolution includes every global library binding plus the ids listed in `scripts.bindingIds`. The Bindings workspace manages those ids through manifest checkboxes. Scripts referenced by effective bindings are resolved automatically; entries in `scripts.artifacts` remain optional hash locks. Those locks hash the compiled artifact bytes, including `version`, so recompiling a script from v2 to v3 changes the script lock, `resolvedHash`, `simulationSemanticHash`, and `episodeHash` without changing `worldHash`. Legacy portable manifests use a nonempty `embeddedBindings` array as their frozen set. MKT-11 adds optional `scripts.bindingSource: "embedded"`; when present, `embeddedBindings` is the complete effective set even when it is empty. Absence preserves the existing v11 normalization and hash bytes.
 
-Manifest v11 may also select trusted local simulator plugins with
+Manifest v11 introduced trusted local simulator plugin selection, retained in v12, with
 `plugins: { enabled, artifacts }`. Each artifact entry locks one `pluginId` to
 an exact package SHA-256 and an explicit sorted capability grant. Resolution
 admits one version per plugin ID and verifies every reachable compiled-script
@@ -160,7 +222,7 @@ goal; that message enters `episodeHash` only when one of them is present.
 Existing v10
 bundles retain their bytes, legacy algorithms, analytic resources and backend
 identities. Authoring import verifies before normalization; a newly resolved
-import uses v11. Missing or unknown identity selectors fail explicitly.
+import now uses v12. Missing or unknown identity selectors fail explicitly.
 
 PLG-02 selects `{ id: "world-bound-plugins", version: 1 }` only when the
 resolved run has an effective plugin package closure. Its semantic projection
@@ -179,7 +241,7 @@ locks and evidence do not alter episode identity; stale locks still fail.
 Exact received bytes are preserved at CLI, Python, supervisor, and persisted
 queue ingestion boundaries. A byte-oriented verifier can check an external
 `bundleBytesHash`; canonical wire serialization is separate. Legacy v10
-serialization remains unchanged, while v11 uses JCS. See
+serialization remains unchanged, while v11 and v12 use JCS. See
 [Visual Layer Contracts](visual-layer.md) for the support table and byte rules.
 
 Marketplace transfer does not extend the run contracts. A marketplace run
@@ -406,7 +468,7 @@ Simulation time is `stepIndex * stepNs`, using integer nanoseconds. Realtime spe
 
 ## Frames, calibration, and synchronization
 
-Manifest version 11 stores sensor extrinsics in REP-103 (`+X` forward, `+Y` left, `+Z` up) relative to `base_link`. v1–v10 authoring documents normalize to v11, retaining v10 provenance and supplying an empty `provenance.candidateModels` list for older inputs; saved `/ackdrive` topics rewrite to `/controls/command`. Cameras declare a mount frame (`*_link`) and an optical measurement frame (`*_optical_frame`, `+Z` forward, `+X` right, `+Y` down). LiDAR mount and measurement frames are identical. Localization sensors use mount/measurement frames (`imu_link`, `gnss_link`, `wheel_odom_link`). Scene/vehicle coordinates remain internal Three.js coordinates; conversion happens only at the ROS/TF boundary.
+Manifest version 12 stores sensor extrinsics in REP-103 (`+X` forward, `+Y` left, `+Z` up) relative to `base_link`. v1–v11 authoring documents normalize to v12, retaining v10 provenance and supplying an empty `provenance.candidateModels` list for older inputs; saved `/ackdrive` topics rewrite to `/controls/command`. Cameras declare a mount frame (`*_link`) and an optical measurement frame (`*_optical_frame`, `+Z` forward, `+X` right, `+Y` down). LiDAR mount and measurement frames are identical. Localization sensors use mount/measurement frames (`imu_link`, `gnss_link`, `wheel_odom_link`). Scene/vehicle coordinates remain internal Three.js coordinates; conversion happens only at the ROS/TF boundary.
 
 `sensorRig` also declares canonical `map`, `odom`, and `base_link` frame ids, the owning vehicle id, and optional synchronization groups keyed by declared topic ids. Default manifests include `perception-primary` (camera + LiDAR measured and optional oracle products) and `localization-primary` (IMU, GNSS, wheel odometry). Sensors in the same group captured on the same simulation step share a synchronization key in telemetry metadata.
 

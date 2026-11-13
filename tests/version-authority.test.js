@@ -49,5 +49,5 @@ test("release dist metadata tracks RUN_MANIFEST_VERSION", async () => {
     const source = await fs.readFile(path.join(ROOT, "scripts/build-headless-dist.mjs"), "utf8");
     assert.match(source, /RUN_MANIFEST_VERSION/);
     assert.doesNotMatch(source, /manifestVersion:\s*9\b/);
-    assert.equal(RUN_MANIFEST_VERSION, 11);
+    assert.equal(RUN_MANIFEST_VERSION, 12);
 });
