@@ -210,7 +210,7 @@ test("interface refuses stale fingerprints, unresolved references, unsafe keys, 
         (value) => { value.routes[0].mapping.adapter = "other"; },
         (value) => { value.routes[0].mapping = { adapter: "custom", config: { tooLarge: "x".repeat(PROTOBUF_LIMITS.payloadBytes + 1) } }; },
         (value) => { value.schemas[0].githubUrl = "https://github.com/example/repo"; },
-        (value) => { value.routes = Array(1); }, (value) => { value.version = 2; },
+        (value) => { value.routes = Array(1); }, (value) => { value.version = 3; },
     ];
     for (const mutate of mutations) {
         const value = document(); mutate(value);

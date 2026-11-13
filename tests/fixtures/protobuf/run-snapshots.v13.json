@@ -1,0 +1,31 @@
+{
+  "disabled": {
+    "file": "run-disabled.v13.json",
+    "bundleBytesHash": "849a991c114cb450135bb9f4aab73f121b23676fcf96206d33268f1ed8f43c7e",
+    "definitionHash": "963cd4afe8d04c36404bbf1b24e2ba05ff3a277a95eaa17bccf5d06de0c1f1e3",
+    "resolvedHash": "722fda7bfb3a6b172ffde02aaf1afd504d451eef2d2021aa0c907c12d8ca324f",
+    "simulationSemanticHash": "fd3934ad0c8495b411873798e31df9a4286e7f2bedd2c7e5d8036a9f7cf633c6",
+    "episodeHash": "993f3528106ddae1281c09a55146ec063d574750b1f98c77efb16ae401dc130b",
+    "nativeContractsHash": "0614bc0fe44584db700b99db4c1afa69541bc6af011f661d51b1c574736375d5"
+  },
+  "publish": {
+    "file": "run-publish.v13.json",
+    "bundleBytesHash": "4e5b485398d1ea57c8eab25272d7b19df1f93d38ff71783ff2435445c341db87",
+    "definitionHash": "36305bf012594757d63e8bf122bd5f234c7b3f23ee41c8a7d08078c58ca71715",
+    "resolvedHash": "62f3f1f8205b55277fc7580649e5c96ff23106e6c4889cc22bea33ad6d8dd2fb",
+    "simulationSemanticHash": "fd3934ad0c8495b411873798e31df9a4286e7f2bedd2c7e5d8036a9f7cf633c6",
+    "episodeHash": "993f3528106ddae1281c09a55146ec063d574750b1f98c77efb16ae401dc130b",
+    "nativeContractsHash": "0614bc0fe44584db700b99db4c1afa69541bc6af011f661d51b1c574736375d5",
+    "interfaceHash": "7a08f8b10f7ae98d685d3fe2c43fee44e95f9f3b070dba95981cf6db530cc6ef"
+  },
+  "controls": {
+    "file": "run-controls.v13.json",
+    "bundleBytesHash": "3784da5554d57eb990547cea69c39aee9a821ddd23004b58236cee760b8b700d",
+    "definitionHash": "52a8eb0e2db24afd89b605167bc371eb37b5030dc5866123ce073a02234ad9c3",
+    "resolvedHash": "f5d8e9a58afd002ef4a39cad06a084a40458eacd454e09cc0ff10e2fe16af095",
+    "simulationSemanticHash": "aca28b5d76998412853fc382cec5415fc7a915c2f4095b073641cef759e13956",
+    "episodeHash": "9f13154e0b5ce6b95c29aff7d56dfe4132ef8b0bf9ce63d57477265e047490a4",
+    "nativeContractsHash": "0614bc0fe44584db700b99db4c1afa69541bc6af011f661d51b1c574736375d5",
+    "interfaceHash": "753a16c1df19540519281ce5150d2fccaed3288259fa1687f1465d85ae9d660c"
+  }
+}

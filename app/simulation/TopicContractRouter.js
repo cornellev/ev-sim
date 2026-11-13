@@ -12,6 +12,7 @@ import {
     topicSignalPath,
 } from "../scripting/runtime/SignalPaths.js";
 import { isHeavyValue } from "../scripting/runtime/SignalStore.js";
+import { validateNativeTopicValue } from "./NativeTopicContracts.js";
 
 function topicRosType(topic) {
     return topic?.schema?.type || topic?.type || null;
@@ -34,6 +35,8 @@ export class TopicContractRouter {
     constructor(manifest, options = {}) {
         this.manifest = manifest;
         this.telemetry = options.telemetry ?? null;
+        this.publicationPort = options.publicationPort ?? null;
+        this.runId = options.runId ?? manifest?.id ?? null;
         this.byName = new Map((manifest?.topics || []).map((topic) => [topic.name, topic]));
         this.byId = new Map((manifest?.topics || []).map((topic) => [topic.id, topic]));
         this.byContractId = new Map((manifest?.topics || []).map((topic) => [topic.contractId || topic.id, topic]));
@@ -95,7 +98,8 @@ export class TopicContractRouter {
         if (!PRODUCER_NAMESPACES.includes(topic.producer)) {
             return { ok: false, code: "invalid-producer", message: `Invalid producer "${topic.producer}" for "${info.name}".` };
         }
-        const payloadCheck = validateInboundPayload(topic.contractId || topic.id, expectedType, info.value);
+        const payloadCheck = topic.valueContract ? validateNativeTopicValue(topic.valueContract, info.value)
+            : validateInboundPayload(topic.contractId || topic.id, expectedType, info.value);
         if (!payloadCheck.ok) {
             return { ok: false, code: payloadCheck.code, message: payloadCheck.message, topic };
         }
@@ -232,9 +236,14 @@ export class TopicContractRouter {
         return this._writeActive(topic, { ...info, captureTimeNs }, { applyStep, applyTimeNs, arrivalTimeNs });
     }
 
-    routeOutbound(topicIdOrName, info, metadata = {}) {
+    routeOutbound(topicIdOrName, info, metadata = {}, { publishTransport = true } = {}) {
         const topic = this.getTopic(topicIdOrName);
-        if (!topic || topic.direction !== "output" || typeof this.telemetry?.publishSignal !== "function") return { ok: false };
+        if (!topic || topic.direction !== "output") return { ok: false };
+        if (topic.valueContract) {
+            const validation = validateNativeTopicValue(topic.valueContract, info.value);
+            if (!validation.ok) return validation;
+            metadata = { runId: this.runId, ...metadata };
+        } else if (typeof this.telemetry?.publishSignal !== "function") return { ok: false };
         const producer = metadata.producer || topic.producer || "simulator";
         const producerPath = this.producerPath(topic, producer);
         const logClass = resolvePayloadLogClass(info.value, metadata.logClass);
@@ -258,7 +267,7 @@ export class TopicContractRouter {
                 logClass,
                 history: logClass === "heavy" ? undefined : false,
                 descriptorMetadata: {
-                    rosType: topicRosType(topic),
+                    ...(topic.valueContract ? { valueContract: topic.valueContract, topicId: topic.id } : { rosType: topicRosType(topic) }),
                     topic: topic.name,
                     contractId: topic.contractId,
                     producer,
@@ -278,7 +287,7 @@ export class TopicContractRouter {
             this.lastProducer.set(topic.contractId || topic.id, {
                 value: retainedValue,
                 topic: topic.name,
-                typeStr: info.typeStr ?? topicRosType(topic),
+                ...(topic.valueContract ? { topicId: topic.id, valueContract: topic.valueContract, metadata: { ...metadata } } : { typeStr: info.typeStr ?? topicRosType(topic) }),
                 contractId: topic.contractId,
                 producer,
                 sequence: metadata.sequenceId ?? null,
@@ -310,6 +319,11 @@ export class TopicContractRouter {
                 metadata,
             });
         }
+        if (publishTransport && topic.valueContract && this.publicationPort) {
+            const acceptance = this.publicationPort({ topicId: topic.id, valueContract: topic.valueContract, value: info.value, metadata });
+            if (acceptance?.then) throw new Error("Topic publication port must return synchronous acceptance.");
+            if (acceptance === false || acceptance?.ok === false) return { ok: false, code: "transport-rejected", acceptance };
+        }
         return { ok: true, producerPath };
     }
 
@@ -331,8 +345,9 @@ export class TopicContractRouter {
             : (typeof structuredClone === "function" ? structuredClone(info.value) : info.value);
         const envelope = {
             value,
+            ...(topic.valueContract ? { topicId: topic.id, valueContract: topic.valueContract } : {}),
             topic: topic.name,
-            typeStr: info.typeStr ?? topicRosType(topic),
+            ...(topic.valueContract ? { metadata: { ...metadata, captureTimeNs: info.captureTimeNs, arrivalTimeNs, applyTimeNs, applyStep } } : { typeStr: info.typeStr ?? topicRosType(topic) }),
             contractId: topic.contractId,
             producer,
             authority: topic.authority,
@@ -354,7 +369,7 @@ export class TopicContractRouter {
             replayRole: topic.direction === "input" ? "input" : (producer === "oracle" ? "derived" : "state"),
             logClass: payloadLogClass,
             descriptorMetadata: {
-                rosType: envelope.typeStr,
+                ...(topic.valueContract ? { valueContract: topic.valueContract, topicId: topic.id } : { rosType: envelope.typeStr }),
                 topic: topic.name,
                 contractId: topic.contractId,
                 producer,

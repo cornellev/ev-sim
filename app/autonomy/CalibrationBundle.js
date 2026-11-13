@@ -105,7 +105,7 @@ export function buildCalibrationBundle(manifest, options = {}) {
                 threePose: rep103PoseToThree(sensor.pose),
                 calibration: structuredClone(sensor.calibration || {}),
                 outputs: structuredClone(sensor.outputs || {}),
-                schema: structuredClone(sensor.schema || {}),
+                ...(manifest.version === 13 ? {} : { schema: structuredClone(sensor.schema || {}) }),
                 health: structuredClone(sensor.health || {}),
                 noise: structuredClone(sensor.noise || {}),
                 ...(sensor.poseReference === "map" ? { poseReference: "map" } : {}),

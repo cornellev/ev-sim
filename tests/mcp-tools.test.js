@@ -602,6 +602,9 @@ test("run manifest MCP suite exposes catalog, lifecycle, portable, and launch ca
     };
     registerRunManifestTools(server, {});
     assert.deepEqual(tools, [
+        "run_manifest_plan_native_migration",
+        "run_manifest_validate_native_migration",
+        "run_manifest_apply_native_migration",
         "run_manifest_list",
         "run_manifest_get",
         "run_manifest_create",

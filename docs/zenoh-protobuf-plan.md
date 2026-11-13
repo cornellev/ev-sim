@@ -8,6 +8,15 @@ contract, run-manifest documentation, and architecture before runtime changes.
 
 ## Accepted decisions
 
+- Revised ZPB-04–09 removes built-in ROS message contracts as well as the
+  orchestrator. Native topic contracts@1 are the local boundary; interface@2
+  maps them to independently selected Protobuf schemas. No permanent
+  onboarding-specific adapters or `.msg` conversion path remains at release.
+- Run-manifest v13 is opt-in during ZPB-04–07. ZPB-08 switches the authoring
+  writer after native consumers and reviewed migration are ready. Historical
+  interface@1 and v1–v12 run bytes/hashes remain immutable and become
+  inspection/migration inputs after cutover, without a legacy execution mode.
+
 - Author explicit JSON configuration. Infer neither sensor wiring nor frames,
   calibration, units, or control authority from a message name. An authoring
   script may produce configuration once; no script runs to forward each sample.
@@ -90,7 +99,9 @@ start with `value`, `metadata`, or `run`; dotted paths contain safe identifiers.
 Conversions target numeric scalars. Assignments cannot overlap, descend into a
 map/repeated field, or contain executable expressions. Publisher destinations,
 subscriber Protobuf sources, and publisher constants are schema-checked now.
-Local topic paths and named adapters are admitted in ZPB-03/04 before execution.
+Interface@1 retains named adapter declarations for historical inspection;
+execution never admits them. ZPB-04 interface@2 replaces that path with native
+contracts and compiled field/collection/transform mappings.
 Bootstrap records contain `{id, schemaId, messageType, value, repeatMs}`;
 `repeatMs` defaults to zero, meaning once. A bootstrap publisher with no field
 assignments sends that typed value directly in ZPB-04.
@@ -124,7 +135,7 @@ Accept unknown numeric proto3 enum values and ignore unknown wire fields.
 | ZPB-01 | — | Interface contract, descriptor codec, local source loader | Implemented and verified |
 | ZPB-02 | 01 | Persistent imports and pinned GitHub updates | Implemented and verified |
 | ZPB-03 | 01, 02 | Manifest v12 and immutable resolved interface resources | Implemented and verified |
-| ZPB-04 | 03 | Shared mapping runtime and publication hook | Planned |
+| ZPB-04 | 03 | Native products, shared mapping/publication, opt-in v13 and reviewed migration | Implemented and verified |
 | ZPB-05 | 04 | Browser Zenoh lifecycle and file-based configuration | Planned |
 | ZPB-06 | 04 | Native Zenoh addon and shared memory | Planned |
 | ZPB-07 | 06 | Headless publication and realtime controller mode | Planned |
@@ -297,15 +308,41 @@ into an input makes that value semantic. `run.runId` stays execution identity.
 Concrete key binding is ready for the later transport lifecycle; ZPB-03 rejects
 Zenoh execution universally until those transports exist.
 
-### ZPB-04 — mapping and a shared publication hook
+### ZPB-04 — native products, mapping and shared publication
 
 Create `app/interfaces/ProtobufMapping.js` with `compileMapping()` and
 `applyMapping()`. Create `app/interfaces/ProtobufRouteRuntime.js` with
 `configure()`, `publishTopic()`, `acceptInbound()`, `reset()`, and `dispose()`.
-Add a small named adapter registry in `app/interfaces/ProtobufAdapters.js` for
-the actual onboarding state/lidar/control shapes and documented CEV SI/frame
-conversions. Use existing calibration and vehicle dimensions. No dynamic imports
-from an interface document and no general scripting language.
+Create `NativeTopicContracts.js`, `NativeSensorProducts.js`, and
+`NativeProductTransforms.js`. Interface@2 supports typed fields, repeated
+projection, explicit frozen calibration/vehicle bindings, and fixed quaternion,
+offset and frame operations. Do not create `ProtobufAdapters.js` or hardcode
+onboarding message types. No executable expressions or dynamic imports.
+
+Working packages: (1) native contracts/interface@2; (2) products from existing
+captures in one measurement pass; (3) compiled mapping; (4) native command
+validation and next-step routing; (5) route runtime/bootstrap/publication;
+(6) opt-in v13 resources/identity/offline readers; (7) reviewed migration
+previews and explicit revision-checked adoption; (8) parity and acceptance.
+Native values are local; descriptors remain the selected external contract.
+Headless state-product publication hookup remains ZPB-07.
+
+| Working package | Concrete implementation | Data and acceptance |
+| --- | --- | --- |
+| WP1 — contracts | `app/simulation/NativeTopicContracts.js::{getNativeTopicContract,normalizeNativeTopic,validateNativeTopicValue}`; `app/interfaces/ProtobufInterface.js::normalizeProtobufInterface()` | `valueContract:{id,version:1}`, strict native shapes, interface@2; exact closure and malformed-value checks |
+| WP2 — captures | `app/simulation/sensors/NativeSensorProducts.js::buildNative*()`; `LidarProducts.js::buildLidarCapture()`; browser `Manifest{Imu,Gnss,WheelOdometry,Camera}.js` and headless sensor managers | Owned packed point/image arrays and direct state products; one LiDAR noise/dropout pass, no ROS codec in native capture |
+| WP3 — mapping | `app/interfaces/ProtobufMappingDefinition.js::normalizeMappingDefinition()`; `ProtobufMapping.js::{compileMapping,applyMapping}`; `NativeProductTransforms.js::{bindNativeProductContext,poseAtOffset,frameTransform}` | Typed path entries, repeated projections, frozen explicit geometry/calibration bindings, fixed operations; exact integers, defaults/presence, root values and byte validation |
+| WP4 — commands | `app/autonomy/ControlCommand.js::{normalizeControlCommand,controlCommandValue}`; `ControlRuntime.js::ingestCommand()`; `TopicInputQueue.js::enqueue()` and kernel topic delivery | Native SI command, exact sequence, run/frame/time identity; next-step queue with newest rejection, authority and stale policy preserved |
+| WP5 — publication | `app/interfaces/ProtobufRouteRuntime.js::{configure,publishTopic,acceptInbound,deliver,reset,dispose}`; `SensorPublisher.js::_deliverNativeProduct()`; `TopicContractRouter.js` and runtime contexts | Topic/key indexes, ordered bootstrap schedule, generation fencing, synchronous injected publication port; 16 MiB payload and 64 MiB temporary batch limits, acceptance distinct from application |
+| WP6 — v13 identity | `RunManifest.js`, `CalibrationBundle.js`, kernel `RunIdentity.js`/`SimulationHashes.js`, `server/storage/StorageService.js::resolveRunManifest()`, `server/headless/RunBundle.js`, `python/src/cev_sim/bundle.py` | Opt-in v13, pinned native contract resource, interface@2; no native ROS closure/catalog, subscription semantics and separate frozen native vectors, historical vectors unchanged |
+| WP7 — adoption | `app/interfaces/NativeRunMigration.js::{planNativeRunMigration,validateNativeRunMigration,applyNativeRunMigration}`; `server/interfaces/NativeGraphCompiler.js::recompileNativeGraph()`; storage methods and REST/MCP migration endpoints | Reviewable original/candidate/script plans and blocked paths; exact revision/dependency checks, archive, new artifact IDs and updated references/pins, manifest written last; unreviewed consumers block |
+| WP8 — evidence | `tests/protobuf-native-runtime.test.js`, `tests/native-run-migration.test.js`, `tests/sensor-publication-counts.test.js`, `tests/fixtures/protobuf/*.v13.json`, `python/tests/test_bundle.py` | Shared browser/headless mapped bytes, owned CPU LiDAR with unusable ROS codec, bounded inputs/reset/bootstrap, native physical/phase parity, offline/tamper/migration checks, full regression/parity/Python gates |
+
+Migration freezes the reviewed embedded binding set. This package supports
+constant/simulation binding inputs, simulation triggers and signal outputs;
+library bindings, topic/signal consumer selectors, unknown graph nodes, scenarios
+and plugins block until their reviewed ZPB-08 migration. Original compiled
+artifacts are preserved; supported editable graphs are explicitly recompiled.
 
 Reuse `app/simulation/TopicContractRouter.js::routeOutbound()` and
 `routeInbound()` and `app/simulation/TopicInputQueue.js`; add the transport
@@ -319,6 +356,10 @@ Gate: browser/headless mapping parity, bootstrap scheduling in integer
 simulation time, unchanged delivery ordering and characterization, invalid
 samples rejected before publication, and bounded inbound admission. Distinguish
 transport acceptance from command application.
+Compare physical values and phase ordering with historical tapes while adding
+separate native identity vectors; never rewrite historical evidence. v13
+semantics bind native contracts and subscribed mappings and need not equal
+historical ROS-shaped runs.
 
 ### ZPB-05 — browser transport and authoring surface
 
@@ -336,6 +377,7 @@ errors. Mount it through `app/config/SimpleRunWorkspace.js` and the existing
 shared `app/config/runConfigSession.js`; retain simple/advanced mode conventions.
 No visual wiring canvas. The old path may exist only while migration gates
 are incomplete and must be deleted by ZPB-09.
+Native runs bypass ROS schema registration, echo discovery and `.msg` codecs.
 
 Gate: real router binary round trip, isolated concurrent run IDs, reconnect
 without stale bindings, required-route startup failure, bootstrap lifetime,
@@ -372,7 +414,9 @@ own the native session inside each environment process. Add explicit realtime
 external-controller CLI/config selection in `bin/cev-sim.js` and the runner.
 Publish the same resolved routes as browser runs. Admit commands into
 `TopicInputQueue`, then the existing `app/autonomy/ControlRuntime.js` and
-`ControlCommandAdapter.js` at fixed-step boundaries.
+native `ControlCommand.js` validation at fixed-step boundaries. Hook up state
+products from the existing headless capture results without changing policy
+observation arrays or the Python tensor protocol.
 
 Preserve run/sequence identity, simulation-time validity, next-step application,
 single authority, calibrated speed/steering conversion, stale stop/hold/fallback
@@ -385,6 +429,14 @@ stale/wrong-run/duplicate commands, pause/reset/stop, transport failure, and
 existing Gym/Python regression tests. Compare the committed action tape.
 
 ### ZPB-08 — onboarding and ownership migration
+
+Switch the writer to v13 only after reviewed migration and native consumers
+are ready. Move configuration selectors, BindingRuntime, plugin topic/system
+consumers, scenarios, CandidateOutputRuntime, visualization, GoalPublisher,
+TransformRuntime, and log metadata to native contracts. Recompile changed
+graphs and republish immutable artifacts only through explicit adoption;
+ambiguous custom messages and unavailable sources require repair. Preserve
+old artifacts for inspection. Version affected plugin/scenario contracts.
 
 Add `examples/interfaces/onboarding.protobuf-interface.json` and a small
 `cev-interfaces` example using the immutable import format. Update
@@ -410,7 +462,10 @@ consumers using the pinned schemas without a running orchestrator.
 Remove `server/ensureOrchestrator.js` and its startup/shutdown calls in
 `server/App.js`. Delete orchestrator-specific client/channel/codec code in
 `app/client/Client.js`, `ProtobufChannel.js`, and `TopicCodec.js` after all
-callers move; keep any still-used local contract logic at its existing layer.
+callers move. Delete active ROS catalogs, `.msg` parsers/codecs/assets, message
+builders, stamped command wrappers, ROS-only encode workers and metadata, and
+all old-type conversion branches. Retain only isolated historical inspection
+and migration code; it cannot be imported by the execution graph.
 Remove orchestration `.msg` sync/fallbacks in `ClientManager`, obsolete
 `public/messages/` assets, installer flags/checkout/venv logic, environment
 variables, tests for the deleted protocol, and stale documentation references.
@@ -422,8 +477,16 @@ APIs, actual browser/headless/Jetson round trips, SHM soak/cleanup, onboarding,
 and required lint/full/headless/parity/CLI/Python suites. Record hardware and
 hosted evidence separately from unit results. Do not mark missing hardware
 evidence as passed.
+Fresh native browser/headless execution must initialize no ROS schema/codec
+and construct no ROS message wrapper. Missing configured products fail
+admission visibly. There is no final optional legacy mode.
 
 ## Progress and decision log
+
+- 2026-11-12: Revised ZPB-04–09 at user direction to retire local ROS artifacts.
+  Native contracts@1/interface@2/v13 form the new boundary. Default authoring
+  cutover remains ZPB-08; exact historical resources remain inspectable.
+  ZPB-04 implements the native boundary; transport and hardware gates remain open.
 
 - 2026-11-12: Accepted the nine dependency-ordered packages and the decisions
   above. ZPB-01 creates an additive contract and loader only. Existing runtime
@@ -483,4 +546,35 @@ evidence as passed.
   tests passed. No live Zenoh router, transport, or hardware acceptance is claimed
   for this snapshot milestone.
 
-Next fresh context: **ZPB-04**, using its mapping/publication gate above.
+- 2026-11-12: Implemented all eight revised ZPB-04 working packages. Native
+  topic contracts and products replace local ROS wrappers in opt-in v13;
+  interface@2 compiles generic paths, collections and fixed pose operations.
+  The shared delivery port, simulation-time bootstrap scheduler, exact native
+  commands and bounded next-step queue preserve capture and step ordering.
+  No production adapter registry or onboarding-specific type mapping was added.
+  Reviewed adoption archives originals, recompiles editable graph sources into
+  new artifacts, updates reference/hash pins, freezes embedded bindings and
+  rejects changed revisions/dependencies or unreviewed consumers. REST and MCP
+  expose preview/validate/apply. JavaScript and Python inspect exact native
+  snapshots offline. Default writing stays v12; Zenoh execution remains visibly
+  unavailable until its transport gates. Headless state-topic hookup remains
+  ZPB-07, consumer/default cutover ZPB-08, active ROS deletion ZPB-09.
+
+- 2026-11-12: ZPB-04 verification completed. Final focused native mapping,
+  migration, interface and publication checks passed all 32 tests. The approved
+  full `npm test -- --test-concurrency=4` run passed 2,778 tests, nine skipped,
+  zero failures (2,787 total). `npm run lint` passed with zero errors and the
+  same three existing React-hook warnings. Python passed all 154 tests; Ruff
+  passed for the changed Python files. Whole-tree Python Ruff still reports
+  two pre-existing E501 lines in `python/src/cev_sim/world.py` (206 and 241).
+  Browser/direct/CLI/gRPC/Python parity passed all four cases: state-only,
+  CPU LiDAR, road geometry v2 and asset metric v1. Native browser/headless
+  delivery produced identical mapped bytes; an actual native CPU LiDAR run
+  succeeded with an unusable ROS codec and retained prior-frame buffers.
+  Current, dynamic and contact characterization replays and historical
+  checksum checks passed. New v13 identities were added separately; historical
+  run snapshots and tapes were not regenerated. Socket-bound checks required
+  approved execution outside the sandbox. Live Zenoh, browser authoring/lifecycle,
+  native SHM, NVIDIA and Jetson evidence are reserved for ZPB-05–09.
+
+Next fresh context: **ZPB-05**, using its browser transport/authoring gate above.

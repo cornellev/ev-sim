@@ -146,12 +146,12 @@ export class HeadlessCpuLidarSensorManager {
         this.seed = String(options.seed ?? "0");
         this.transformRuntime = options.transformRuntime ?? null;
         const messageCodec = options.messageCodec ?? this.messageCodec;
-        if (typeof messageCodec?.encodeTopicValue !== "function"
-            || typeof messageCodec?.registerMsgDefinition !== "function") {
+        if (!options.nativeTopics && (typeof messageCodec?.encodeTopicValue !== "function"
+            || typeof messageCodec?.registerMsgDefinition !== "function")) {
             throw new Error("CPU LiDAR requires a headless message-codec adapter.");
         }
         for (const [type, definition] of Object.entries(options.schemas ?? {})) {
-            messageCodec.registerMsgDefinition(type, definition);
+            messageCodec?.registerMsgDefinition?.(type, definition);
         }
         const { CpuLidarScene, lidarSensorWorldPose } = await import("./CpuLidarScene.js");
         this.scene = new CpuLidarScene(options.lidarGeometry);
@@ -174,7 +174,10 @@ export class HeadlessCpuLidarSensorManager {
                 runtimeData: this.runtimeData,
                 perceptionObservations: options.perceptionObservations,
                 sensorOccupancy: options.sensorOccupancy,
-                encodeTopicValue: messageCodec.encodeTopicValue,
+                encodeTopicValue: messageCodec?.encodeTopicValue,
+                nativeTopics: options.nativeTopics,
+                runId: options.runId,
+                publicationPort: options.publicationPort,
                 // Capture timing is diagnostic only and must not perturb deterministic state.
                 nowNs: () => 0,
             });

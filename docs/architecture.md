@@ -952,9 +952,29 @@ with JCS envelope bytes and checks interface@1's existing sorted-key JSON hash
 and exact descriptor digests before forwarding to authoritative JS verification.
 
 Zenoh execution is rejected before browser replacement or kernel preparation
-until later ZPB transport packages implement it. ZPB-04 supplies mapping/adapters;
+until later ZPB transport packages implement it. ZPB-04 supplies native mapping;
 ZPB-05 supplies browser transport and the configuration panel. No headless
 Protobuf or run-package format change is introduced here.
+
+ZPB-04 adds opt-in run-manifest v13 and interface@2. `NativeTopicContracts.js`
+pins local product shapes, and `NativeSensorProducts.js` builds values from the
+existing capture without constructing ROS wrappers. `ProtobufMapping.js`
+compiles typed paths, repeated projections and fixed pose operations against
+isolated descriptors and explicit frozen bindings. `ProtobufRouteRuntime.js`
+owns route indexes, simulation-time bootstrap schedules, generation fencing
+and bounded subscription admission into `TopicInputQueue` for the next step.
+It has no outbound queue. Browser and headless contexts expose the same
+synchronous publication port at sensor delivery and local topic publication.
+`ControlRuntime.ingestCommand()` accepts exact native sequence strings and
+retains existing authority, deadline, watchdog, delay and actuator limits.
+
+Native bundles bind `nativeTopicContracts` instead of ROS schema closures;
+their identities are distinct from historical bundles. Publish-only interface
+changes remain operational. Reviewed native migrations preserve originals and
+recompile supported graph sources into new artifacts at an exact revision.
+The v12 writer stays default until ZPB-08; ZPB-09 removes active ROS catalogs,
+codecs, builders, workers, wrappers and orchestrator infrastructure. Historical
+inspection/migration remains isolated from execution.
 
 ## Assets
 

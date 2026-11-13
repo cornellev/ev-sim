@@ -17,6 +17,7 @@ import {
 import { computeSimulationSemanticHash } from "../../app/simulation/kernel/SimulationHashes.js";
 import { HeadlessEpisodeError } from "../../app/simulation/headless/HeadlessErrors.js";
 import { normalizeProtobufRunConfig, planProtobufRouteAdmission } from "../../app/interfaces/ProtobufRunBinding.js";
+import { assertNativeTopicContractResource, normalizeNativeTopic } from "../../app/simulation/NativeTopicContracts.js";
 import { assertResolvedContactHosts } from "../../app/simulation/vehicles/ContactHostContract.js";
 import { verifyPluginPackage } from "../../app/plugin/PluginPackage.js";
 import {
@@ -63,8 +64,8 @@ export function verifyRunBundleIntegrity(bundle) {
         invalid("BUNDLE_INVALID", "The run bundle does not contain an immutable resolved run.");
     }
     if (resolved.kind !== RUN_MANIFEST_KIND || !Number.isInteger(resolved.version)
-        || resolved.version < 1 || resolved.version > 12) {
-        invalid("BUNDLE_INVALID", "Unsupported resolved run manifest version; expected 1–12.");
+        || resolved.version < 1 || resolved.version > 13) {
+        invalid("BUNDLE_INVALID", "Unsupported resolved run manifest version; expected 1–13.");
     }
     let identityVersion;
     try {
@@ -77,7 +78,7 @@ export function verifyRunBundleIntegrity(bundle) {
     if (!bundle.manifest || stringify(bundle.manifest) !== stringify(resolved.manifest)) {
         invalid("BUNDLE_INVALID", "The bundle manifest does not match the resolved manifest.");
     }
-    if (resolved.version === 12) verifyProtobufSnapshot(resolved);
+    if ([12, 13].includes(resolved.version)) verifyProtobufSnapshot(resolved);
     const resolvedHash = computeResolvedRunHash(resolved);
     if (!bundle.resolvedHash || (resolved.version >= 10 && !resolved.resolvedHash)
         || (resolved.resolvedHash && bundle.resolvedHash !== resolved.resolvedHash)
@@ -203,7 +204,7 @@ function verifyProtobufSnapshot(resolved) {
     try {
         const config = normalizeProtobufRunConfig(resolved.manifest?.protobuf);
         if (canonicalExactStringify(config) !== canonicalExactStringify(resolved.manifest?.protobuf)) {
-            invalid("BUNDLE_INVALID", "Manifest v12 requires a normalized protobuf selection.");
+            invalid("BUNDLE_INVALID", "Manifest requires a normalized protobuf selection.");
         }
         if (config.mode === "disabled") {
             if (Object.hasOwn(resolved, "protobufInterface") || Object.hasOwn(resolved.dependencyHashes ?? {}, "protobufInterface")) {
@@ -212,7 +213,14 @@ function verifyProtobufSnapshot(resolved) {
         } else if (resolved.dependencyHashes?.protobufInterface !== config.interfaceHash) {
             invalid("BUNDLE_HASH_MISMATCH", "Protobuf interface dependency does not match its manifest pin.");
         }
-        if (config.mode === "zenoh" && (!resolved.schemas || typeof resolved.schemas !== "object"
+        if (resolved.version === 13) {
+            for (const topic of resolved.manifest.topics) normalizeNativeTopic(topic);
+            if (resolved.manifest.sensorRig?.sensors?.some((sensor) => sensor.schema !== undefined)) invalid("BUNDLE_INVALID", "Native sensor declarations cannot contain ROS schemas.");
+            if (resolved.schemas !== undefined || resolved.autonomyCatalog !== undefined || resolved.manifest.autonomyCatalog !== undefined || resolved.calibration?.sensors?.some((sensor) => sensor.schema !== undefined)) invalid("BUNDLE_INVALID", "Native bundles cannot contain a ROS schema closure or catalog.");
+            assertNativeTopicContractResource(resolved.nativeTopicContracts, resolved.manifest.topics);
+            if (resolved.dependencyHashes?.nativeTopicContracts !== resolved.nativeTopicContracts.hash) invalid("BUNDLE_HASH_MISMATCH", "Native contract dependency does not match its resource.");
+        }
+        if (resolved.version === 12 && config.mode === "zenoh" && (!resolved.schemas || typeof resolved.schemas !== "object"
             || Array.isArray(resolved.schemas) || Object.values(resolved.schemas).some((definition) => typeof definition !== "string"))) {
             invalid("BUNDLE_INVALID", "Protobuf snapshots require an embedded local schema closure.");
         }
@@ -418,7 +426,7 @@ function verifyBundleStructure(verified, { requireRuntime = false } = {}) {
 export function verifyRunBundle(bundle) {
     const verified = verifyRunBundleIntegrity(bundle);
     const { resolved } = verified;
-    if (![10, 11, 12].includes(resolved.version)) {
+    if (![10, 11, 12, 13].includes(resolved.version)) {
         invalid("UNSUPPORTED_CAPABILITY", "Historical bundles require authoring import and re-resolution before execution.");
     }
     verifyBundleStructure(verified, { requireRuntime: true });

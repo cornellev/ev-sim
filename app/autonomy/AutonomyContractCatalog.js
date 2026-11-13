@@ -760,7 +760,8 @@ export function validateTopicAgainstCatalog(topic, index = 0) {
 }
 
 export function isControlsCommandTopic(topic) {
-    return topic?.contractId === "controls-command"
+    return topic?.valueContract?.id === "cev.control-command"
+        || topic?.contractId === "controls-command"
         || topic?.name === "/controls/command"
         || topic?.id === "controls-command";
 }

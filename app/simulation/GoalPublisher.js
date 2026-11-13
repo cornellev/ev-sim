@@ -41,19 +41,22 @@ export class GoalPublisher {
         const pose = scenarioGoalPose(this.resolvedRun);
         if (!pose) return null;
         const declared = this.topicRouter?.getTopic?.(GOAL_TOPIC) ?? null;
+        const native = this.resolvedRun?.version === 13;
+        const value = native ? { pose } : pose;
         if (declared && declared.name === GOAL_TOPIC) {
             if (!isPoseGoalOutput(declared)) return null;
             this.topicRouter.routeOutbound(declared.id || declared.name, {
-                value: pose,
-                typeStr: GOAL_MESSAGE_TYPE,
+                value,
+                ...(native ? {} : { typeStr: GOAL_MESSAGE_TYPE }),
             }, {
                 captureTimeNs: timeNs,
+                ...(native ? { simTimeNs: timeNs } : {}),
                 deliveryTimeNs: timeNs,
                 cycle: 0,
                 logClass: "standard",
             });
-        } else {
-            this.telemetry?.publishSignal?.(topicSignalPath(GOAL_TOPIC), pose, {
+        } else if (!native) {
+            this.telemetry?.publishSignal?.(topicSignalPath(GOAL_TOPIC), value, {
                 timeUs: Math.round(Number(timeNs) / 1000),
                 cycle: 0,
                 source: "oracle",
@@ -67,7 +70,7 @@ export class GoalPublisher {
                 },
             });
         }
-        if (this.client?.isOpen?.()) {
+        if (!native && this.client?.isOpen?.()) {
             this.client.publish(GOAL_TOPIC, GOAL_MESSAGE_TYPE, pose).catch?.(() => {});
         }
         return pose;
@@ -96,5 +99,5 @@ function orientationFromArrival(route, position) {
 
 function isPoseGoalOutput(topic) {
     const type = topic?.schema?.type || topic?.type;
-    return topic?.direction === "output" && type === GOAL_MESSAGE_TYPE;
+    return topic?.direction === "output" && (type === GOAL_MESSAGE_TYPE || topic?.valueContract?.id === "cev.goal");
 }

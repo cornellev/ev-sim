@@ -7,6 +7,10 @@ import { buildDiagnosticArray } from "./SensorMessages.js";
 import { simulationSha256 } from "../kernel/SimulationHashes.js";
 import { encodeNativeSensorPacket, packetPayloadDigest } from "./NativeSensorPacket.js";
 import { browserSimulationPerformance } from "../performance/BrowserSimulationPerformance.js";
+import { validateNativeTopicValue } from "../NativeTopicContracts.js";
+import { isHeavyValue } from "../../scripting/runtime/SignalStore.js";
+import { estimatePayloadBytes } from "../TopicInputQueue.js";
+import { buildNativeDiagnostics } from "./NativeSensorProducts.js";
 
 const DEFAULT_MAX_QUEUE_BYTES = 64 * 1024 * 1024;
 
@@ -60,8 +64,11 @@ export class SensorPublisher {
         nativePacketSink = null,
         pluginStrict = false,
         pluginIdentity = null,
+        nativeTopics = false,
+        publicationPort = null,
+        runId = null,
     } = {}) {
-        if (typeof encodeTopicValue !== "function") {
+        if (!nativeTopics && typeof encodeTopicValue !== "function") {
             throw new TypeError("SensorPublisher requires an encodeTopicValue port.");
         }
         this.device = device;
@@ -69,6 +76,9 @@ export class SensorPublisher {
         this.seed = seed;
         this.topics = new Map(topics.map((topic) => [topic.id, topic]));
         this.topicRouter = topicRouter;
+        this.nativeTopics = nativeTopics;
+        this.publicationPort = publicationPort;
+        this.runId = runId;
         this.calibrationHash = calibrationHash;
         this.runtimeData = runtimeData;
         this.encodeTopicValue = encodeTopicValue;
@@ -360,7 +370,7 @@ export class SensorPublisher {
                 topicId: diagnosticsTopicId,
                 signal: "diagnostics",
                 frameId: this.config.measurementFrameId || this.config.frameId,
-                value: buildDiagnosticArray({
+                value: (this.nativeTopics ? buildNativeDiagnostics : buildDiagnosticArray)({
                     timeNs: captureTimeNs,
                     frameId: this.config.measurementFrameId || this.config.frameId,
                     sensorId: this.config.id,
@@ -372,7 +382,7 @@ export class SensorPublisher {
         }
         const frameBytes = estimateFrameBytes(
             frameMessages,
-            this.encodingPool?.estimateEncodeBytes ?? (() => 0),
+            this.nativeTopics ? estimatePayloadBytes : this.encodingPool?.estimateEncodeBytes ?? (() => 0),
         ) + estimateObservationBytes(observation)
             + nativePackets.reduce((total, packet) => total + packet.payload.byteLength, 0);
         if (this.queue.length >= this.maxQueueFrames || this.queuedBytes + frameBytes > this.maxQueueBytes) {
@@ -436,7 +446,7 @@ export class SensorPublisher {
     _beginEncode(frame) {
         const heavy = frame.messages.filter((message) => {
             const topic = this.topics.get(message.topicId);
-            return topic && this.encodingPool?.isHeavySensorValue?.(message.value);
+            return topic && !topic.valueContract && this.encodingPool?.isHeavySensorValue?.(message.value);
         });
         if (heavy.length === 0) {
             frame.encodeReady = true;
@@ -597,6 +607,7 @@ export class SensorPublisher {
             if (this.pluginStrict) throw this._strictPublishError(`Unknown topic "${message.topicId}".`, frame, "publish");
             return false;
         }
+        if (topic.valueContract) return this._deliverNativeProduct(topic, message, frame, clock);
         if (typeof (topic.schema?.type || topic.type) !== "string" || !(topic.schema?.type || topic.type).trim()) {
             this._event("publish-failed", "error", { sampleIndex: frame.sampleIndex, topic: topic.name, reason: "missing-topic-schema" });
             if (this.pluginStrict) throw this._strictPublishError("Missing topic schema.", frame, "publish");
@@ -744,6 +755,37 @@ export class SensorPublisher {
             if (this.pluginStrict) throw this._strictPublishError("Local publication rejected.", frame, "publish");
         }
         return published;
+    }
+
+    _deliverNativeProduct(topic, message, frame, clock) {
+        const validation = validateNativeTopicValue(topic.valueContract, message.value);
+        if (!validation.ok || typeof message.signal !== "string" || !message.signal) {
+            this._event("publish-failed", "error", { topic: topic.name, reason: validation.message ?? "missing-local-signal-path" });
+            return false;
+        }
+        const path = `devices.${this.device.telemetryId}.${message.signal}`;
+        const metadata = { topicId: topic.id, valueContract: topic.valueContract, topic: topic.name, runId: this.runId,
+            frameId: message.frameId || this.config.measurementFrameId || this.config.frameId,
+            simTimeNs: clock.timeNs, captureTimeNs: frame.captureTimeNs, deliveryTimeNs: frame.deliveryTimeNs,
+            scheduledDeliveryTimeNs: frame.scheduledDeliveryTimeNs, captureStep: frame.captureStep,
+            scheduledDeliveryStep: frame.scheduledDeliveryStep, actualDeliveryStep: clock.step,
+            sequenceId: frame.sequence, syncGroupKey: frame.syncGroupKey, calibrationHash: this.calibrationHash, canonicalSignalPath: path };
+        const telemetry = this._data()?.bindings?.()?.signalStore;
+        if (typeof telemetry?.publishSignal !== "function") return false;
+        const local = telemetry?.publishSignal?.(path, message.value, { timeUs: Math.round(frame.deliveryTimeNs / 1000), cycle: clock.step,
+            source: "sensors", type: "json", category: "devices", replayRole: "derived", retention: "latest",
+            logClass: isHeavyValue(message.value) ? "heavy" : "standard", descriptorMetadata: metadata });
+        if (local === false) return false;
+        const routed = this.topicRouter?.routeOutbound(topic.id, { value: message.value }, metadata, { publishTransport: !this.publicationPort });
+        if (routed?.ok === false) return false;
+        if (this.publicationPort) {
+            const acceptance = this.publicationPort({ topicId: topic.id, valueContract: topic.valueContract, value: message.value, metadata });
+            if (acceptance?.then) throw new Error("Sensor publication requires synchronous acceptance.");
+            if (acceptance !== true && acceptance?.ok !== true) return false;
+        }
+        this.health.encodeTimeNs = 0;
+        this.health.lastPayloadBytes = estimatePayloadBytes(message.value);
+        return true;
     }
 
     _deliverNativePackets(frame, clock) {

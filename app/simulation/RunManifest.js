@@ -10,6 +10,8 @@ import {
 } from "./sensors/SensorTypeRegistry.js";
 import { normalizeSensorTransports, reconcileSensorTransportBindings } from "./sensors/SensorTransports.js";
 import { normalizeProtobufRunConfig } from "../interfaces/ProtobufRunBinding.js";
+import { normalizeNativeTopic, NATIVE_SENSOR_OUTPUT_CONTRACTS } from "./NativeTopicContracts.js";
+import { normalizeControlSetpoint } from "../autonomy/ControlCommand.js";
 import {
     catalogMetadata,
     defaultManifestTopics,
@@ -46,6 +48,7 @@ import {
 
 export const RUN_MANIFEST_KIND = "cev-sim.run-manifest";
 export const RUN_MANIFEST_VERSION = 12;
+export const NATIVE_RUN_MANIFEST_VERSION = 13;
 export const RUN_MANIFEST_V11 = 11;
 export const RUN_MANIFEST_V10 = 10;
 export const LEGACY_RUN_MANIFEST_VERSION = 1;
@@ -137,7 +140,7 @@ function normalizeActuatorOverrides(value = {}) {
     return out;
 }
 
-export function normalizeControlsConfig(value = {}, { targetVehicleId = "ego" } = {}) {
+export function normalizeControlsConfig(value = {}, { targetVehicleId = "ego", native = false } = {}) {
     const source = object(value);
     if (source.zeroSpeedResponse !== undefined && source.zeroSpeedResponse !== "brake-v1") {
         throw new TypeError('controls.zeroSpeedResponse must be "brake-v1" when provided.');
@@ -149,7 +152,7 @@ export function normalizeControlsConfig(value = {}, { targetVehicleId = "ego" } 
         referenceShadow: source.referenceShadow !== false,
         watchdogNs: Math.max(0, Math.floor(finite(source.watchdogNs, DEFAULT_CONTROLS.watchdogNs))),
         stalePolicy,
-        fallbackCommand: stalePolicy === "fallback" ? normalizeSiCommand(source.fallbackCommand) : normalizeSiCommand(source.fallbackCommand),
+        fallbackCommand: (native ? normalizeControlSetpoint : normalizeSiCommand)(source.fallbackCommand),
         referenceSource: text(source.referenceSource, DEFAULT_CONTROLS.referenceSource) || null,
         actuatorOverrides: normalizeActuatorOverrides(source.actuatorOverrides),
         ...(source.keyboardDrive === true ? { keyboardDrive: true } : {}),
@@ -336,6 +339,7 @@ function normalizeSensorRig(source = {}, sourceVersion = RUN_MANIFEST_VERSION, r
     const inheritance = sensorInheritance(rig);
     const sensors = (Array.isArray(rig.sensors) ? rig.sensors : [])
         .map((entry) => withInheritedFrom(migrateSensorToV4(entry, sourceVersion, registry), entry, inheritance));
+    if (sourceVersion === NATIVE_RUN_MANIFEST_VERSION) for (const sensor of sensors) delete sensor.schema;
     let syncGroups = Array.isArray(rig.syncGroups) ? rig.syncGroups.map(syncGroup) : [];
     if (sourceVersion < RUN_MANIFEST_V7 && sensors.length > 0 && syncGroups.length === 0) {
         syncGroups = defaultSyncGroups();
@@ -676,9 +680,10 @@ export function normalizeRunManifest(value, {
         RUN_MANIFEST_V10,
         RUN_MANIFEST_V11,
         RUN_MANIFEST_VERSION,
+        NATIVE_RUN_MANIFEST_VERSION,
     ];
     if (!supported.includes(sourceVersion)) {
-        throw new Error(`Unsupported run manifest version ${source.version}; expected version 1–${RUN_MANIFEST_VERSION}.`);
+        throw new Error(`Unsupported run manifest version ${source.version}; expected version 1–${NATIVE_RUN_MANIFEST_VERSION}.`);
     }
     if (sourceVersion < RUN_MANIFEST_V11 && source.plugins !== undefined) {
         throw new Error("Plugin selection requires run-manifest version 11.");
@@ -698,7 +703,10 @@ export function normalizeRunManifest(value, {
     if (scripts.bindingSource !== undefined && scripts.bindingSource !== "embedded") {
         throw new Error('scripts.bindingSource must be "embedded" when provided.');
     }
-    const migratedTopics = (Array.isArray(source.topics) ? source.topics : []).map(topic);
+    const native = sourceVersion === NATIVE_RUN_MANIFEST_VERSION;
+    if (native && (source.sensorRig?.sensors ?? []).some((sensor) => sensor.schema !== undefined)) throw new Error("Native sensor declarations cannot contain legacy schemas.");
+    if (native && source.autonomyCatalog !== undefined) throw new Error("Native manifests cannot contain a ROS autonomy catalog.");
+    const migratedTopics = (Array.isArray(source.topics) ? source.topics : []).map(native ? normalizeNativeTopic : topic);
     // Ensure candidate returns for pre-v8 and always rewrite legacy ackdrive via migrateLegacyTopic.
     const topics = sourceVersion < RUN_MANIFEST_V8
         ? ensureCandidateReturnTopics(migratedTopics)
@@ -730,7 +738,7 @@ export function normalizeRunManifest(value, {
     };
     return {
         kind: RUN_MANIFEST_KIND,
-        version: RUN_MANIFEST_VERSION,
+        version: native ? NATIVE_RUN_MANIFEST_VERSION : RUN_MANIFEST_VERSION,
         id: text(source.id, "untitled-run"),
         name: text(source.name, "Untitled Run"),
         description: text(source.description),
@@ -770,7 +778,7 @@ export function normalizeRunManifest(value, {
         ...(reconciledTransports ? { sensorTransports: reconciledTransports } : {}),
         protobuf,
         topics,
-        controls: normalizeControlsConfig(controlsSource, { targetVehicleId: defaultTarget }),
+        controls: normalizeControlsConfig(controlsSource, { targetVehicleId: defaultTarget, native }),
         assertions: (Array.isArray(source.assertions) ? source.assertions : []).map(assertion),
         parameters: (Array.isArray(source.parameters) ? source.parameters : []).map(parameter),
         ...(source.renderRecipe === undefined || source.renderRecipe === null
@@ -781,9 +789,9 @@ export function normalizeRunManifest(value, {
             profileId: text(source.logging?.profileId, "simulation-run-full-sensors"),
         },
         provenance: normalizeManifestProvenance(source.provenance),
-        autonomyCatalog: source.autonomyCatalog?.version
+        ...(!native ? { autonomyCatalog: source.autonomyCatalog?.version
             ? { ...catalogMetadata(), ...object(source.autonomyCatalog) }
-            : catalogMetadata(),
+            : catalogMetadata() } : {}),
     };
 }
 
@@ -829,15 +837,17 @@ export function validateRunManifest(value, {
                 issues.push({ path: `sensorRig.sensors.${index}.outputs.${key}`, message: `Unknown topic id \"${topicId}\".` });
             }
             const linked = topics.get(topicId);
-            const linkedType = linked?.schema?.type || linked?.type;
-            const expectedType = definition?.run?.outputs?.find((output) => output.key === key)?.rosType;
+            const native = manifest.version === NATIVE_RUN_MANIFEST_VERSION;
+            const linkedType = native ? linked?.valueContract?.id : linked?.schema?.type || linked?.type;
+            const expectedType = native ? NATIVE_SENSOR_OUTPUT_CONTRACTS[key] : definition?.run?.outputs?.find((output) => output.key === key)?.rosType;
+            if (native && topicId && !expectedType) issues.push({ path: `sensorRig.sensors.${index}.outputs.${key}`, message: "Sensor output has no admitted native contract." });
             if (topicId && linked && expectedType && linkedType !== expectedType) {
                 issues.push({ path: `sensorRig.sensors.${index}.outputs.${key}`, message: `Sensor product requires ${expectedType}, not ${linkedType}.` });
             }
             if (topicId && linked && linked.direction !== "output") {
                 issues.push({ path: `sensorRig.sensors.${index}.outputs.${key}`, message: "Sensor products require an output topic." });
             }
-            if (topicId && linked && sensorEntry.schema[key] !== linkedType) {
+            if (!native && topicId && linked && sensorEntry.schema[key] !== linkedType) {
                 issues.push({ path: `sensorRig.sensors.${index}.schema.${key}`, message: `Schema must match topic type "${linkedType}".` });
             }
         }
@@ -854,10 +864,10 @@ export function validateRunManifest(value, {
     issues.push(...validateSensorRigFrames(manifest));
     issues.push(...validateSyncGroups(manifest));
     for (const [index, topicEntry] of manifest.topics.entries()) {
-        issues.push(...validateTopicAgainstCatalog(topicEntry, index));
+        if (manifest.version !== NATIVE_RUN_MANIFEST_VERSION) issues.push(...validateTopicAgainstCatalog(topicEntry, index));
     }
     issues.push(...validateManifestTopicAuthority(manifest));
-    const controlsTopics = (manifest.topics || []).filter((topic) => topic.stage === "controls" || topic.contractId === "controls-command");
+    const controlsTopics = (manifest.topics || []).filter((topic) => topic.valueContract?.id === "cev.control-command" || topic.stage === "controls" || topic.contractId === "controls-command");
     if (controlsTopics.length > 1) {
         issues.push({ path: "topics", message: "Only one canonical controls-command input is allowed." });
     }

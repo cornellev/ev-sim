@@ -16,3 +16,11 @@
   characterization tapes. Review future deltas as contract changes.
 
 The upstream fixtures are pinned evidence. Tests do not download or update them.
+
+`run-{disabled,publish,controls}.v13.json` and `run-snapshots.v13.json` are the
+separate ZPB-04 native migration vectors. They retain the v12 synthetic world
+and exact descriptors, replace local contracts/calibration metadata, and bind
+interface@2. Disabled and publish-only native identities match; subscribed
+control identities differ. The synthetic speed-only controller uses an explicit
+constant sequence for identity testing, so it is not a live controller example.
+The v12 files and all characterization tapes remain unchanged.

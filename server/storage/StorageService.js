@@ -62,7 +62,6 @@ import {
     RUN_BUNDLE_KIND,
     RUN_BUNDLE_VERSION,
     RUN_MANIFEST_KIND,
-    RUN_MANIFEST_VERSION,
     canonicalStringify,
     computeResolvedRunHash,
     createDefaultRunManifest,
@@ -74,6 +73,10 @@ import {
     schemaClosureForManifest,
 } from "../../app/autonomy/AutonomyContractCatalog.js";
 import { buildCalibrationBundle } from "../../app/autonomy/CalibrationBundle.js";
+import { createNativeTopicContractResource } from "../../app/simulation/NativeTopicContracts.js";
+import { planNativeRunMigration, validateNativeRunMigration, applyNativeRunMigration } from "../../app/interfaces/NativeRunMigration.js";
+import { recompileNativeGraph } from "../interfaces/NativeGraphCompiler.js";
+import { createScriptDocument } from "../../app/scripting/EditorDocument.js";
 import {
     WORLD_BOUND_IDENTITY,
     WORLD_BOUND_PLUGINS_IDENTITY,
@@ -1966,6 +1969,42 @@ export class StorageService {
         return this._writeRunManifest(id, validation.manifest, { expectedRevision: 0, create: true });
     }
 
+    async planNativeRunMigration(manifestId, input = {}) {
+        const manifest = await this.getRunManifest(manifestId);
+        if (!manifest) throw new Error(`Run manifest "${manifestId}" does not exist.`);
+        const interfaceResource = manifest.protobuf.mode === "zenoh"
+            ? createProtobufInterfaceResource(await this.getProtobufInterface(manifest.protobuf.interfaceHash), manifest.protobuf.interfaceHash) : null;
+        const scripts = (await Promise.all(manifest.scripts.artifacts.map((reference) => this.getScript(reference.scriptId)))).filter(Boolean);
+        const resolvedRun = await this.resolveRunManifest(manifestId);
+        return planNativeRunMigration({ manifest, interfaceResource, scripts, resolvedRun, mappingOverrides: input.mappingOverrides, scriptPaths: input.scriptPaths });
+    }
+
+    validateNativeRunMigration(plan) { return validateNativeRunMigration(plan); }
+
+    async applyNativeRunMigration(manifestId, { plan, expectedRevision } = {}) {
+        const current = await this.getRunManifest(manifestId);
+        if (!current || current.id !== plan?.original?.manifest?.id || canonicalStringify(current) !== canonicalStringify(plan.original.manifest)) throw new Error("Native migration source changed; create a new preview.");
+        for (const source of plan.original.scripts) {
+            if (canonicalStringify(await this.getScript(source.id)) !== canonicalStringify(source)) throw new Error(`Script ${source.id} changed after migration planning.`);
+        }
+        const reviewed = plan.request?.resolvedRun?.resolvedHash;
+        if (!reviewed || (await this.resolveRunManifest(manifestId)).resolvedHash !== reviewed) throw new Error("Native migration dependencies changed; create a new preview.");
+        const adopted = applyNativeRunMigration(plan, { expectedRevision, recompile: recompileNativeGraph });
+        const archive = this._fileStore(path.join(this.dataDir, "native-run-migrations", `${adopted.archiveHash}.json`), null);
+        const previous = await archive.read();
+        if (previous && canonicalStringify(previous) !== canonicalStringify(adopted.original)) throw new Error("Native migration archive content mismatch.");
+        if (!previous) await archive.write(adopted.original);
+        if (adopted.interfaceResource) await this.putProtobufInterface(adopted.interfaceResource.document);
+        for (const script of adopted.scripts) {
+            const existing = await this.getScript(script.id);
+            if (existing && semanticHash(existing.latestValidArtifact) !== semanticHash(script.artifact)) throw new Error(`Native migration script ${script.id} already exists with different content.`);
+            if (!existing) await this.putScript(createScriptDocument({ id: script.id, name: script.name, graph: script.graph, latestValidArtifact: script.artifact }));
+        }
+        await this.resolveRunManifest(manifestId, adopted.manifest);
+        const manifest = await this.putRunManifest(manifestId, { manifest: adopted.manifest, expectedRevision });
+        return { ok: true, manifest, archiveHash: adopted.archiveHash };
+    }
+
     async putRunManifest(manifestId, input = {}) {
         const manifest = input.manifest ?? input;
         const expectedRevision = input.expectedRevision ?? manifest.revision;
@@ -2350,7 +2389,7 @@ export class StorageService {
         }
         const resolved = resolvedRunJsonSnapshot({
             kind: RUN_MANIFEST_KIND,
-            version: RUN_MANIFEST_VERSION,
+            version: manifest.version,
             identityProfile: {
                 ...(resolvedPlugins.length > 0 ? WORLD_BOUND_PLUGINS_IDENTITY : WORLD_BOUND_IDENTITY),
             },
@@ -2381,14 +2420,14 @@ export class StorageService {
                 manifest: runParameters,
                 scenario: resolvedScenario?.parameters ?? { values: {}, bindings: [] },
             },
-            schemas: schemaClosureForManifest(manifest),
-            autonomyCatalog: catalogMetadata(),
+            ...(manifest.version === 13 ? { nativeTopicContracts: createNativeTopicContractResource(manifest.topics) }
+                : { schemas: schemaClosureForManifest(manifest), autonomyCatalog: catalogMetadata() }),
             contracts: (manifest.topics || []).map((topic) => ({
                 id: topic.id,
                 contractId: topic.contractId,
                 name: topic.name,
                 direction: topic.direction,
-                type: topic.schema?.type || topic.type,
+                ...(manifest.version === 13 ? { valueContract: topic.valueContract } : { type: topic.schema?.type || topic.type }),
                 producer: topic.producer,
                 authority: topic.authority,
             })),
@@ -2400,6 +2439,7 @@ export class StorageService {
                 ...(renderScene ? { renderScene: renderScene.hash } : {}),
                 ...(evidenceHash ? { evidence: evidenceHash } : {}),
                 calibration: calibration.hash,
+                ...(manifest.version === 13 ? { nativeTopicContracts: createNativeTopicContractResource(manifest.topics).hash } : {}),
                 ...(protobufInterface ? { protobufInterface: protobufInterface.hash } : {}),
                 scripts: Object.fromEntries(scripts.map((entry) => [entry.scriptId, entry.hash])),
                 ...(resolvedPlugins.length > 0 ? { plugins: pluginDependencyHashes(resolvedPlugins) } : {}),
@@ -2434,7 +2474,7 @@ export class StorageService {
     async importRunBundle(bundle = {}) {
         verifyRunBundleIntegrity(bundle);
         await this._assertLocalPbrImportDependencies(bundle.resolved);
-        if (bundle.resolved.version === 12 && bundle.resolved.protobufInterface) {
+        if ([12, 13].includes(bundle.resolved.version) && bundle.resolved.protobufInterface) {
             await this.putProtobufInterface(bundle.resolved.protobufInterface.document);
         }
         for (const resource of bundle.resolved.pluginPackages ?? []) {

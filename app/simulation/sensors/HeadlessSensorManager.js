@@ -40,7 +40,7 @@ export class HeadlessSensorManager {
         const pluginRecords = (options.sensorAdmission?.sensors ?? [])
             .filter((entry) => entry.kind === "plugin-range-image");
         const pluginTypes = new Set(pluginRecords.map((entry) => entry.sensor.type));
-        const needsMessageCodec = enabled.some((sensor) => sensor.type === "camera" || isScanningLidarType(sensor.type)
+        const needsMessageCodec = !options.nativeTopics && enabled.some((sensor) => sensor.type === "camera" || isScanningLidarType(sensor.type)
             || pluginTypes.has(sensor.type));
         const messageCodec = needsMessageCodec
             ? (options.messageCodec ?? this.options.messageCodec ?? await loadHeadlessMessageCodec())

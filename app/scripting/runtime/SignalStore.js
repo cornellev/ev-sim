@@ -95,8 +95,9 @@ function valuesEqual(a, b) {
 /** True for Image / PointCloud2-shaped payloads that must not be cloned or retained. */
 export function isHeavyValue(value) {
     if (!isPlainObject(value)) return false;
+    if ((ArrayBuffer.isView(value.positions) || Array.isArray(value.positions)) && Number.isInteger(value.count)) return true;
     if (ArrayBuffer.isView(value.data) || value.data instanceof ArrayBuffer) {
-        if (Number.isFinite(Number(value.width)) && Number.isFinite(Number(value.height)) && value.encoding != null) {
+        if (Number.isFinite(Number(value.width)) && Number.isFinite(Number(value.height)) && (value.encoding != null || value.pixelFormat != null)) {
             return true;
         }
         if (Number.isFinite(Number(value.width)) && Number.isFinite(Number(value.point_step)) && Array.isArray(value.fields)) {
@@ -131,10 +132,12 @@ export function summarizeBindingValue(value, depth = 0) {
     }
     if (isHeavyValue(value)) {
         return {
-            type: value.encoding != null ? "image" : "pointcloud",
+            type: value.encoding != null || value.pixelFormat != null ? "image" : "pointcloud",
             width: value.width ?? null,
             height: value.height ?? null,
             encoding: value.encoding ?? null,
+            pixelFormat: value.pixelFormat ?? null,
+            count: value.count ?? null,
             point_step: value.point_step ?? null,
             byteLength: ArrayBuffer.isView(value.data)
                 ? value.data.byteLength

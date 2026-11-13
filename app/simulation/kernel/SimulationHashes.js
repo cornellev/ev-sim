@@ -335,6 +335,13 @@ export function simulationSemanticProjection(resolved = {}) {
         const inputHash = protobufInputContractHash(resolved);
         if (inputHash) projection.protobufInputs = { version: 1, hash: inputHash };
     }
+    if (resolved.version === 13) {
+        delete manifest.protobuf;
+        delete projection.protobufInterface;
+        if (projection.dependencyHashes) delete projection.dependencyHashes.protobufInterface;
+        const inputHash = protobufInputContractHash(resolved);
+        if (inputHash) projection.protobufInputs = { version: 2, hash: inputHash };
+    }
     const pluginSensorIds = resolvedPluginSensorIds(resolved);
     omitIdentityMetadata(manifest);
     if (manifest) {

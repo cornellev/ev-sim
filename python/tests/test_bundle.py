@@ -13,6 +13,21 @@ from cev_sim.bundle import canonical_bundle_bytes, load_bundle, load_run_package
 from cev_sim.errors import CevSimConfigurationError
 
 
+@pytest.mark.parametrize("name", ["disabled", "publish", "controls"])
+def test_native_bundle_snapshots_verify_offline(repository_root: Path, name: str) -> None:
+    root = repository_root / "tests/fixtures/protobuf"
+    vectors = json.loads((root / "run-snapshots.v13.json").read_text())
+    content = (root / vectors[name]["file"]).read_bytes()
+    loaded = load_bundle(content)
+    assert loaded.resolved_hash == vectors[name]["resolvedHash"]
+    assert loaded.canonical_json == content
+    assert hashlib.sha256(content).hexdigest() == vectors[name]["bundleBytesHash"]
+    value = json.loads(content)
+    value["resolved"]["nativeTopicContracts"]["document"]["contracts"][0]["shape"] = {}
+    with pytest.raises(CevSimConfigurationError, match="Native contract"):
+        load_bundle(json.dumps(value).encode())
+
+
 def test_visual_layer_exact_bytes_match_javascript_golden(repository_root: Path) -> None:
     fixture = json.loads(
         (repository_root / "tests/fixtures/visual-layer/owned-layer.v1.json").read_text()

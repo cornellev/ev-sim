@@ -49,10 +49,10 @@ export function assertRunIdentityCounters(manifest = {}, scenario = null) {
 
 export function simulationIdentityVersion(resolved = {}) {
     const profile = resolved.identityProfile;
-    if (resolved.kind === "cev-sim.run-manifest" && Number(resolved.version) > 12) {
+    if (resolved.kind === "cev-sim.run-manifest" && Number(resolved.version) > 13) {
         throw new Error(`Unsupported resolved manifest version ${resolved.version}.`);
     }
-    if ([11, 12].includes(Number(resolved.version)) && resolved.kind === "cev-sim.run-manifest") {
+    if ([11, 12, 13].includes(Number(resolved.version)) && resolved.kind === "cev-sim.run-manifest") {
         const worldBound = profile?.id === WORLD_BOUND_IDENTITY.id && profile?.version === WORLD_BOUND_IDENTITY.version;
         const pluginBound = profile?.id === WORLD_BOUND_PLUGINS_IDENTITY.id
             && profile?.version === WORLD_BOUND_PLUGINS_IDENTITY.version;

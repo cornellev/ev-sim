@@ -1,6 +1,52 @@
 # Deterministic simulation runs
 
-Every professional simulation launch is defined by a saved `cev-sim.run-manifest` version 12 document. The server normalizes and validates the authoring document, resolves its environment, canonical world description, physics backend identity, scripts, bindings, autonomy catalog metadata, deterministic calibration bundle, ROS schema closure, contract endpoints, and selected Protobuf interface, then computes SHA-256 definition, full resolved, and simulation-semantic hashes. A running session holds that resolved snapshot and never applies Config edits in place.
+Every professional simulation launch is defined by a saved `cev-sim.run-manifest` document. Version 12 remains the default writer; version 13 is explicitly opted into during ZPB-04–07. The server resolves environment, world, physics, scripts, bindings, calibration, topic contracts and the selected Protobuf interface, then computes SHA-256 definition, full resolved, and simulation-semantic hashes. A running session holds that resolved snapshot and never applies Config edits in place.
+
+## Native topics and mapping (ZPB-04)
+
+Opt-in v13 topics replace `type` and `schema` with an exact native reference:
+
+```json
+{ "id": "imu", "name": "/imu", "direction": "output",
+  "producer": "simulator", "valueContract": { "id": "cev.imu", "version": 1 } }
+```
+
+Sensor declarations omit `schema`; their output keys must link to the matching
+built-in native contract. v13 resolves `nativeTopicContracts:{document,hash}`
+and its dependency hash instead of a ROS schema closure or autonomy catalog.
+Calibration snapshots also omit sensor schemas. Interface@2 is required for
+native routes; v12 continues requiring interface@1. Both descriptor snapshots
+retain their exact bytes. Bundle@1, run-package@1, and the headless wire protocol
+retain their formats. JavaScript and Python accept native snapshots offline.
+
+The [native mapping contract](zenoh-protobuf-mapping.md) documents fields,
+repeated projections, fixed pose operations, explicit calibration/vehicle
+bindings, command shapes, bootstrap scheduling and bounded next-step admission.
+Native IMU/GNSS/odometry/image/point/perception values come from the existing
+measurement pass. `SensorPublisher` publishes them at scheduled delivery without
+ROS encoding; the transport port returns synchronous acceptance. Headless
+state-topic publication remains ZPB-07.
+
+Native simulation identity binds native contracts and subscribed mappings,
+including frozen values and calibration/vehicle bindings. Disabled and
+publish-only native selections have equal semantic/episode hashes. Native
+identities intentionally differ from historical ROS-shaped identities while
+physical values and fixed-step ordering remain unchanged. Frozen v13 vectors
+are separate from the immutable v12 snapshots and characterization tapes.
+
+Reviewed migration uses `planNativeRunMigration()`,
+`validateNativeRunMigration()` and `applyNativeRunMigration(plan,{expectedRevision})`.
+REST and MCP delegate to storage. Adoption archives the originals, preserves
+descriptor bytes, checks the reviewed resolved dependency hash, and compiles
+supported editable graphs into new script IDs with updated parameter/binding
+references and hash pins. The reviewed embedded binding set is frozen explicitly.
+Custom messages, unsupported graph nodes, unbound field selectors, plugins,
+scenario consumers and nonembedded library bindings block adoption pending
+their explicit consumer migration. Embedded topic/signal input consumers and
+topic outputs also block until ZPB-08. The current preview supports a small set
+of scalar/topic/field graph nodes; it never edits immutable compiled artifacts.
+No saved user runs are migrated automatically. ZPB-08 switches the default
+writer after consumer migration, and ZPB-09 removes active ROS infrastructure.
 
 ## Pinned Protobuf interfaces (ZPB-03)
 
@@ -56,8 +102,9 @@ retain the corresponding v11 semantic/episode identities and identity profiles.
 
 ZPB-03 admits offline snapshots and structural inspection. Browser and shared
 kernel preparation reject Zenoh mode with `UNSUPPORTED_CAPABILITY` before
-replacing an active run or preparing simulation state. Mapping execution,
-transport sessions, and adapters arrive in later ZPB packages. Disabled mode
+replacing an active run or preparing simulation state. ZPB-04 implements native
+mapping with an injected publication port; live transport sessions arrive in
+ZPB-05–07. Disabled mode
 continues normal execution.
 
 v1–v11 authoring documents migrate to v12. Received historical bundles are

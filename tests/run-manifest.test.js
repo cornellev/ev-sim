@@ -70,7 +70,7 @@ test("run manifest v4 migrates v1-v3 and rejects future versions and duplicate s
     assert.ok(migrated.controls);
     assert.equal(migrated.controls.stalePolicy, "stop");
     assert.deepEqual(migrated.provenance.candidateModels, []);
-    assert.throws(() => normalizeRunManifest({ kind: "cev-sim.run-manifest", version: 13 }), /version 13/);
+    assert.throws(() => normalizeRunManifest({ kind: "cev-sim.run-manifest", version: 14 }), /version 14/);
     const manifest = createDefaultRunManifest();
     manifest.topics.push({ ...manifest.topics[0] });
     const validation = validateRunManifest(manifest);

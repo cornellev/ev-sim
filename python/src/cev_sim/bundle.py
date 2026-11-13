@@ -88,7 +88,7 @@ def _legacy_json(value: Any) -> bytes:
 def canonical_bundle_bytes(document: Mapping[str, Any]) -> bytes:
     try:
         resolved = document.get("resolved")
-        if isinstance(resolved, Mapping) and resolved.get("version") in (11, 12):
+        if isinstance(resolved, Mapping) and resolved.get("version") in (11, 12, 13):
             return rfc8785.dumps(document)
         return _legacy_json(document)
     except (rfc8785.CanonicalizationError, TypeError, ValueError, UnicodeError) as error:
@@ -208,12 +208,42 @@ def _invalid_constant(value: str) -> None:
     raise ValueError(f"Non-finite JSON number {value}")
 
 
+def _check_native_snapshot(resolved: Mapping[str, Any], manifest: Mapping[str, Any]) -> None:
+    if any(key in resolved for key in ("schemas", "autonomyCatalog")) or "autonomyCatalog" in manifest:
+        raise CevSimConfigurationError("Native bundles cannot contain ROS catalogs or schemas")
+    resource = resolved.get("nativeTopicContracts")
+    if not isinstance(resource, dict) or set(resource) != {"document", "hash"}:
+        raise CevSimConfigurationError("Native bundle requires a contract resource")
+    _validate_sha256(resource["hash"], "nativeTopicContracts.hash")
+    document = resource["document"]
+    if (not isinstance(document, dict) or set(document) != {"kind", "version", "contracts"}
+            or document["kind"] != "cev-sim.native-topic-contracts"
+            or type(document["version"]) is not int or document["version"] != 1
+            or not isinstance(document["contracts"], list)):
+        raise CevSimConfigurationError("Invalid native contract document")
+    references = {}
+    for topic in manifest.get("topics", []):
+        ref = topic.get("valueContract")
+        if ("type" in topic or "schema" in topic or not isinstance(ref, dict) or set(ref) != {"id", "version"}
+                or not isinstance(ref["id"], str) or type(ref["version"]) is not int or ref["version"] != 1):
+            raise CevSimConfigurationError("Invalid native topic reference")
+        references[ref["id"]] = ref["version"]
+    contracts = document["contracts"]
+    if (any(not isinstance(item, dict) or set(item) != {"id", "version", "shape"} for item in contracts)
+            or [item["id"] for item in contracts] != sorted(references)
+            or any(item["version"] != references[item["id"]] for item in contracts)):
+        raise CevSimConfigurationError("Native contract closure does not match topics")
+    if (hashlib.sha256(_legacy_json(document)).hexdigest() != resource["hash"]
+            or resolved.get("dependencyHashes", {}).get("nativeTopicContracts") != resource["hash"]):
+        raise CevSimConfigurationError("Native contract resource and dependency hashes do not agree")
+
+
 def _check_protobuf_snapshot(resolved: Mapping[str, Any], manifest: Mapping[str, Any]) -> None:
     config = manifest.get("protobuf")
     if (not isinstance(config, dict) or set(config) != {"mode", "interfaceHash", "externalController"}
             or config["mode"] not in ("disabled", "zenoh")
             or type(config["externalController"]) is not bool):
-        raise CevSimConfigurationError("Manifest v12 requires a normalized protobuf selection")
+        raise CevSimConfigurationError("Manifest requires a normalized protobuf selection")
     dependencies = resolved.get("dependencyHashes")
     if not isinstance(dependencies, dict):
         raise CevSimConfigurationError("Protobuf snapshot requires dependency hashes")
@@ -231,8 +261,9 @@ def _check_protobuf_snapshot(resolved: Mapping[str, Any], manifest: Mapping[str,
     document = resource["document"]
     if (not isinstance(document, dict) or set(document) != {"kind", "version", "schemas", "routes", "bootstrap"}
             or document["kind"] != "cev-sim.protobuf-interface"
-            or not _json_integer(document["version"]) or document["version"] != 1):
-        raise CevSimConfigurationError("Protobuf snapshot requires an interface v1 document")
+            or not _json_integer(document["version"])
+            or document["version"] != (2 if manifest["version"] == 13 else 1)):
+        raise CevSimConfigurationError("Protobuf interface version does not match the manifest")
     for key, limit in (("schemas", 16), ("routes", 64), ("bootstrap", 64)):
         entries = document[key]
         if not isinstance(entries, list) or len(entries) > limit or (key == "schemas" and not entries):
@@ -289,10 +320,10 @@ def load_bundle(value: BundleInput, *, expected_bundle_bytes_hash: str | None = 
     if not isinstance(resolved, dict) or resolved.get("kind") != "cev-sim.run-manifest":
         raise CevSimConfigurationError("Run bundle requires a resolved run manifest")
     version = resolved.get("version")
-    if not _json_integer(version) or version not in (10, 11, 12):
+    if not _json_integer(version) or version not in (10, 11, 12, 13):
         raise CevSimConfigurationError("Unsupported resolved version; import and re-resolve historical bundles")
     identity_profile = None
-    if version in (11, 12):
+    if version in (11, 12, 13):
         profile = resolved.get("identityProfile")
         supported_profiles = (
             {"id": "world-bound", "version": 2},
@@ -310,7 +341,7 @@ def load_bundle(value: BundleInput, *, expected_bundle_bytes_hash: str | None = 
     if (not isinstance(manifest, dict) or manifest != resolved.get("manifest")
             or manifest.get("kind") != "cev-sim.run-manifest" or manifest.get("version") != version):
         raise CevSimConfigurationError("Bundle and resolved manifest versions/content must agree")
-    if version in (11, 12):
+    if version in (11, 12, 13):
         selection = manifest.get("plugins")
         locks = (
             selection.get("artifacts", [])
@@ -340,13 +371,15 @@ def load_bundle(value: BundleInput, *, expected_bundle_bytes_hash: str | None = 
             raise CevSimConfigurationError(f"Run bundle {label} must be a lowercase SHA-256 hex digest")
         if resolved.get(label) != digest:
             raise CevSimConfigurationError(f"Run bundle and resolved {label} must agree")
-    if version in (11, 12):
+    if version in (11, 12, 13):
         try:
             _check_counters(manifest, (resolved.get("scenario") or {}).get("scenario") or {})
             _check_pbr_shape(resolved, manifest)
         except (AttributeError, TypeError) as error:
             raise CevSimConfigurationError(f"Invalid run identity counter structure: {error}") from error
-    if version == 12:
+    if version == 13:
+        _check_native_snapshot(resolved, manifest)
+    if version in (12, 13):
         _check_protobuf_snapshot(resolved, manifest)
     canonical = canonical_bundle_bytes(document)
     return LoadedBundle(

@@ -65,6 +65,8 @@ export function createHeadlessRuntimeContext(options = {}) {
         physics,
         scenarios,
         nativePacketSink: options.nativePacketSink ?? null,
+        publicationPort: options.publicationPort ?? null,
+        protobufRoutes: options.protobufRoutes ?? null,
         sensorTransportHost: options.sensorTransportHost ?? { adapters: [], endpoints: [] },
         prepareRendering: async (resolvedRun) => {
             const provider = resolvedRun.renderScene?.description?.provider;

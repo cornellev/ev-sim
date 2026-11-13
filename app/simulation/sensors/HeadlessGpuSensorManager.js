@@ -1,3 +1,4 @@
+import { buildNativeImage, buildNativeCameraInfo, buildNativeDetections2D, buildNativeDetections } from "./NativeSensorProducts.js";
 import { gaussianSample } from "../../autonomy/LocalizationMeasurements.js";
 import { cloneJson } from "../../util/cloneJson.js";
 import { analyticGpuCameraPose } from "./AnalyticGpuCameraPose.js";
@@ -230,7 +231,7 @@ class HeadlessGpuSensorDevice {
                 topicId: this.config.outputs.imageTopicId,
                 signal: "image",
                 frameId,
-                value: buildImageMessage({
+                value: (this.contractPublisher.nativeTopics ? buildNativeImage : buildImageMessage)({
                     data: pixels,
                     width: calibration.width,
                     height: calibration.height,
@@ -245,7 +246,7 @@ class HeadlessGpuSensorDevice {
                 topicId: this.config.outputs.cameraInfoTopicId,
                 signal: "cameraInfo",
                 frameId,
-                value: buildCameraInfo({ ...calibration, timeNs: context.captureTimeNs, frameId }),
+                value: (this.contractPublisher.nativeTopics ? buildNativeCameraInfo : buildCameraInfo)({ ...calibration, timeNs: context.captureTimeNs, frameId }),
             });
         }
         const result = {
@@ -354,7 +355,7 @@ class HeadlessGpuSensorDevice {
                     topicId: outputs.imageTopicId,
                     signal: "image",
                     frameId,
-                    value: buildImageMessage({
+                    value: (this.contractPublisher.nativeTopics ? buildNativeImage : buildImageMessage)({
                         data: rgba,
                         width,
                         height,
@@ -369,7 +370,7 @@ class HeadlessGpuSensorDevice {
                     topicId: outputs.cameraInfoTopicId,
                     signal: "cameraInfo",
                     frameId,
-                    value: buildCameraInfo({ ...calibration, timeNs: context.captureTimeNs, frameId }),
+                    value: (this.contractPublisher.nativeTopics ? buildNativeCameraInfo : buildCameraInfo)({ ...calibration, timeNs: context.captureTimeNs, frameId }),
                 });
             }
             if (depthRequired && outputs.depthTopicId) {
@@ -377,7 +378,7 @@ class HeadlessGpuSensorDevice {
                     topicId: outputs.depthTopicId,
                     signal: "depth",
                     frameId,
-                    value: buildImageMessage({
+                    value: (this.contractPublisher.nativeTopics ? buildNativeImage : buildImageMessage)({
                         data: depth,
                         width,
                         height,
@@ -469,7 +470,7 @@ class HeadlessGpuSensorDevice {
                 topicId,
                 signal,
                 frameId,
-                value: buildImageMessage({ data, width, height, timeNs: context.captureTimeNs, frameId, encoding }),
+                value: (this.contractPublisher.nativeTopics ? buildNativeImage : buildImageMessage)({ data, width, height, timeNs: context.captureTimeNs, frameId, encoding }),
             });
         };
         addImage(outputs.imageTopicId, "image", rgba, this.config.calibration.encoding || "rgba8");
@@ -478,7 +479,7 @@ class HeadlessGpuSensorDevice {
                 topicId: outputs.cameraInfoTopicId,
                 signal: "cameraInfo",
                 frameId,
-                value: buildCameraInfo({ ...this.config.calibration, timeNs: context.captureTimeNs, frameId }),
+                value: (this.contractPublisher.nativeTopics ? buildNativeCameraInfo : buildCameraInfo)({ ...this.config.calibration, timeNs: context.captureTimeNs, frameId }),
             });
         }
         addImage(outputs.depthTopicId, "depth", captured.depth, "32FC1");
@@ -596,11 +597,11 @@ export class HeadlessGpuSensorManager {
         return [
             ...(products.detections2d === true && outputs.detections2dTopicId ? [{
                 topicId: outputs.detections2dTopicId, signal: "detections2d", frameId,
-                value: buildDetection2DArray({ detections, timeNs: context.captureTimeNs, frameId }),
+                value: (device.contractPublisher.nativeTopics ? buildNativeDetections2D : buildDetection2DArray)({ detections, timeNs: context.captureTimeNs, frameId }),
             }] : []),
             ...(products.detections3d === true && outputs.detections3dTopicId ? [{
                 topicId: outputs.detections3dTopicId, signal: "detections3d", frameId,
-                value: buildDetection3DArray({ detections, timeNs: context.captureTimeNs, frameId: this.transformRuntime?.frames?.map || "map" }),
+                value: (device.contractPublisher.nativeTopics ? buildNativeDetections : buildDetection3DArray)({ detections, timeNs: context.captureTimeNs, frameId: this.transformRuntime?.frames?.map || "map" }),
             }] : []),
         ];
     }
@@ -621,12 +622,12 @@ export class HeadlessGpuSensorManager {
         assertGpuSensorBackendSelection(options.backendSelection);
         if (!this.rendererClient) throw new Error("GPU sensor backend requires a supervisor renderer client.");
         const messageCodec = options.messageCodec ?? this.messageCodec;
-        if (typeof messageCodec?.encodeTopicValue !== "function") {
+        if (!options.nativeTopics && (typeof messageCodec?.encodeTopicValue !== "function")) {
             throw new Error("GPU sensors require a headless message-codec adapter.");
         }
-        if (typeof messageCodec.registerMsgDefinition === "function") {
+        if (!options.nativeTopics && typeof messageCodec?.registerMsgDefinition === "function") {
             for (const [type, definition] of Object.entries(options.schemas ?? {})) {
-                messageCodec.registerMsgDefinition(type, definition);
+                messageCodec?.registerMsgDefinition?.(type, definition);
             }
         }
         const visualCapture = options.visualCapture ?? this.visualCapture;
@@ -702,7 +703,10 @@ export class HeadlessGpuSensorManager {
                 runtimeData: this.runtimeData,
                 perceptionObservations: options.perceptionObservations,
                 sensorOccupancy: options.sensorOccupancy,
-                encodeTopicValue: messageCodec.encodeTopicValue,
+                encodeTopicValue: messageCodec?.encodeTopicValue,
+                nativeTopics: options.nativeTopics,
+                runId: options.runId,
+                publicationPort: options.publicationPort,
                 nowNs: () => 0,
             });
         });

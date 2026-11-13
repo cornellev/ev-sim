@@ -1,5 +1,6 @@
 import { canonicalStringify } from "../simulation/canonicalJson.js";
 import { compareUtf8 } from "../math/compareUtf8.js";
+import { normalizeMappingDefinition } from "./ProtobufMappingDefinition.js";
 import {
     assertProtobufName,
     base64ToBytes,
@@ -89,7 +90,31 @@ function fieldAt(type, path, label) {
     return field;
 }
 
-function mapping(value, path, destinationType, sourceType, budget) {
+function mapping(value, path, destinationType, sourceType, budget, version) {
+    if (version === 2) {
+        let normalized;
+        try { normalized = normalizeMappingDefinition(json(value, path, 0, budget)); }
+        catch (error) { invalid(path, error.message); }
+        const check = (fields, type) => {
+            for (const entry of fields) {
+                if (entry.to === "") {
+                    if (entry.each) invalid(path, "message root cannot be a repeated destination");
+                    if (Object.hasOwn(entry, "value")) try { encodeMessage(type, entry.value); } catch (error) { invalid(path, error.message); }
+                    continue;
+                }
+                const field = fieldAt(type, entry.to, path);
+                if (entry.each) {
+                    if (!field.repeated || !field.resolvedType?.fields) invalid(path, "each requires a repeated message destination");
+                    check(entry.each.fields, field.resolvedType);
+                } else if (Object.hasOwn(entry, "value")) {
+                    const partial = entry.to.split(".").reverse().reduce((nested, part) => ({ [part]: nested }), entry.value);
+                    try { encodeMessage(type, partial); } catch (error) { invalid(path, error.message); }
+                }
+            }
+        };
+        if (destinationType) check(normalized.fields, destinationType);
+        return normalized;
+    }
     record(value, ["fields", "adapter", "config"], path);
     if (value.adapter !== undefined) {
         if (value.fields !== undefined) invalid(path, "choose field assignments or an adapter");
@@ -152,7 +177,7 @@ function list(value, max, path) {
 
 export function normalizeProtobufInterface(input) {
     record(input, ["kind", "version", "schemas", "routes", "bootstrap"], "interface");
-    if (input.kind !== PROTOBUF_INTERFACE_KIND || input.version !== PROTOBUF_INTERFACE_VERSION) invalid("interface", "unsupported kind or version");
+    if (input.kind !== PROTOBUF_INTERFACE_KIND || ![1, 2].includes(input.version)) invalid("interface", "unsupported kind or version");
     const budget = { nodes: PROTOBUF_LIMITS.valueNodes, bytes: 0 };
     const loaded = new Map();
     const schemas = list(input.schemas, PROTOBUF_INTERFACE_LIMITS.schemas, "schemas").map(({ entry, name, path }) => {
@@ -207,11 +232,11 @@ export function normalizeProtobufInterface(input) {
             record(entry.target, ["topicId"], `${path}.target`);
             result.target = { topicId: id(entry.target.topicId, `${path}.target.topicId`) };
         } else invalid(`${path}.direction`, "must be publish or subscribe");
-        result.mapping = mapping(entry.mapping, `${path}.mapping`, entry.direction === "publish" ? type : null, entry.direction === "subscribe" ? type : null, budget);
+        result.mapping = mapping(entry.mapping, `${path}.mapping`, entry.direction === "publish" ? type : null, entry.direction === "subscribe" ? type : null, budget, input.version);
         return result;
     });
     const sort = (entries) => entries.sort((left, right) => compareUtf8(left.id, right.id));
-    const document = { kind: PROTOBUF_INTERFACE_KIND, version: PROTOBUF_INTERFACE_VERSION, schemas: sort(schemas), routes: sort(routes), bootstrap: sort(bootstrap) };
+    const document = { kind: PROTOBUF_INTERFACE_KIND, version: input.version, schemas: sort(schemas), routes: sort(routes), bootstrap: sort(bootstrap) };
     if (encoder.encode(canonicalStringify(document)).byteLength > PROTOBUF_LIMITS.payloadBytes) invalid("interface", "document is too large");
     return document;
 }

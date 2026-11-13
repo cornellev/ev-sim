@@ -194,7 +194,7 @@ function lidarGridMeta(calibration) {
     return { rangeLimit, azimuth, elevation, azimuthCount };
 }
 
-function forEachLidarHit(buffer, calibration, bufferEncoding, onHit) {
+export function forEachLidarHit(buffer, calibration, bufferEncoding, onHit) {
     const { rangeLimit, azimuth, elevation, azimuthCount, layout } = lidarGridMeta(calibration);
     const legacy = bufferEncoding === "legacy-normalized";
     for (let offset = 0; offset + 3 < buffer.length; offset += 4) {

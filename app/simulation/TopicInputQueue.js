@@ -9,12 +9,6 @@ function estimatePayloadBytes(value) {
     if (typeof value === "number" || typeof value === "boolean") return 8;
     if (ArrayBuffer.isView(value)) return value.byteLength;
     if (value instanceof ArrayBuffer) return value.byteLength;
-    if (isHeavyValue(value)) {
-        const data = value.data;
-        if (ArrayBuffer.isView(data)) return data.byteLength + 64;
-        if (data instanceof ArrayBuffer) return data.byteLength + 64;
-        return 64;
-    }
     if (Array.isArray(value)) {
         let total = 24;
         for (const item of value) total += estimatePayloadBytes(item);
@@ -23,7 +17,7 @@ function estimatePayloadBytes(value) {
     if (typeof value === "object") {
         let total = 48;
         for (const child of Object.values(value)) total += estimatePayloadBytes(child);
-        return Math.min(total, 1_000_000);
+        return total;
     }
     return 8;
 }
@@ -84,13 +78,19 @@ export class TopicInputQueue {
         };
     }
 
-    enqueue(info, applyStep, { arrivalTimeNs = null } = {}) {
+    enqueue(info, applyStep, { arrivalTimeNs = null, rejectNewest = false } = {}) {
         if (!info?.name) return null;
         if (this.declaredInputs.size > 0 && !this.declaredInputs.has(info.name)) {
             return { rejected: true, reason: "undeclared-topic", info: cloneInfo(info) };
         }
+        const bytes = estimatePayloadBytes(info?.value);
+        if (rejectNewest && (this.queue.length >= this.maxEntries || this.queuedBytes + bytes > this.maxBytes)) {
+            this.droppedEntries += 1;
+            this.droppedBytes += bytes;
+            this.overflowEvents += 1;
+            return { rejected: true, reason: "queue-full", stats: this.getStats() };
+        }
         const cloned = cloneInfo(info);
-        const bytes = estimatePayloadBytes(cloned?.value);
         while (
             this.queue.length > 0
             && (this.queue.length >= this.maxEntries || this.queuedBytes + bytes > this.maxBytes)

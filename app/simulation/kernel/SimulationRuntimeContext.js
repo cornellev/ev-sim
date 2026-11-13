@@ -280,6 +280,7 @@ export function createSimulationRuntimeContext(options = {}) {
                     ...runtimeOptions,
                     cpuLidarWorkerFactory: options.cpuLidarWorkerFactory,
                     nativePacketSink: runtimeOptions?.nativePacketSink ?? options.nativePacketSink ?? null,
+                    publicationPort: runtimeOptions?.publicationPort ?? options.publicationPort ?? null,
                 });
             },
             resetSchedule() {
@@ -413,6 +414,8 @@ export function createSimulationRuntimeContext(options = {}) {
             },
         },
         topics: {
+            publicationPort() { return options.publicationPort ?? null; },
+            deliver(clock) { return options.protobufRoutes?.deliver?.(clock); },
             client() {
                 return resolve(options.topicClient) ?? null;
             },

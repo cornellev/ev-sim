@@ -24,6 +24,25 @@ function resolvedSummary(resolved) {
  * @param {import("../storage/StorageService.js").StorageService} storage
  */
 export function registerRunManifestTools(server, storage) {
+    server.registerTool("run_manifest_plan_native_migration", {
+        title: "Preview native run migration", description: "Create a reviewable native v13 migration preview. Preserve source artifacts and block unsupported paths.",
+        inputSchema: { manifestId: z.string().min(1), mappingOverrides: JsonObjectSchema.optional(), scriptPaths: JsonObjectSchema.optional() },
+    }, async ({ manifestId, ...input }) => {
+        try { return ok(await storage.planNativeRunMigration(manifestId, input)); } catch (error) { return fail(error); }
+    });
+    server.registerTool("run_manifest_validate_native_migration", {
+        title: "Validate native run migration", description: "Verify that a reviewed native migration preview is unchanged and has no blocked paths.",
+        inputSchema: { plan: JsonObjectSchema },
+    }, async ({ plan }) => {
+        try { return ok(storage.validateNativeRunMigration(plan)); } catch (error) { return fail(error); }
+    });
+    server.registerTool("run_manifest_apply_native_migration", {
+        title: "Adopt native run migration", description: "Adopt a reviewed preview at its exact source revision. Archive originals and recompile graph sources into new artifacts.",
+        inputSchema: { manifestId: z.string().min(1), expectedRevision: z.number().int().nonnegative(), plan: JsonObjectSchema },
+    }, async ({ manifestId, ...input }) => {
+        try { const result = await storage.applyNativeRunMigration(manifestId, input); publish(manifestId, "native-migrated", { revision: result.manifest.revision }); return ok(result); }
+        catch (error) { return fail(error); }
+    });
     server.registerTool("run_manifest_list", {
         title: "List run manifests",
         description: "List named deterministic simulation run manifests with revisions and hashes.",

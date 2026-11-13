@@ -1,3 +1,4 @@
+import { buildNativeOdometry } from "../../simulation/sensors/NativeSensorProducts.js";
 import * as THREE from "three";
 
 import Device from "./Device.js";
@@ -73,7 +74,7 @@ export class ManifestWheelOdometry extends Device {
             topicId: this.config.outputs.odometryTopicId,
             signal: "odometry",
             frameId,
-            value: buildOdometryMessage({
+            value: (this.contractPublisher.nativeTopics ? buildNativeOdometry : buildOdometryMessage)({
                 timeNs: captureTimeNs,
                 frameId,
                 childFrameId: measurement.childFrameId,

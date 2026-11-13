@@ -447,7 +447,7 @@ export class SimulationKernel {
             this.inputQueue = new TopicInputQueue(manifest.topics);
             this.planningCostmapPublisher?.dispose();
             this.planningCostmapPublisher = createPlanningCostmapPublisher(this.resolvedRun, this.context);
-            this.topicRouter = new TopicContractRouter(manifest, { telemetry: this.telemetry });
+            this.topicRouter = new TopicContractRouter(manifest, { telemetry: this.telemetry, publicationPort: this.context.topics.publicationPort?.() });
             this.localizationTruthPublisher = createLocalizationTruthPublisher(manifest, this.topicRouter);
             this.localizationTruthPublisher.stepNs = manifest.clock.stepNs;
             this.goalPublisher = new GoalPublisher({
@@ -520,6 +520,8 @@ export class SimulationKernel {
             this.context.scripts.setTopicScheduler((info) => this.queueTopicInput(info));
             this.context.scripts.setTopicRouter(this.topicRouter, manifest.topics);
             await this.context.devices.configureFromManifest(manifest.sensorRig, {
+                nativeTopics: manifest.version === 13,
+                runId: manifest.id,
                 seed: manifest.seed,
                 topics: manifest.topics,
                 topicRouter: this.topicRouter,
@@ -718,10 +720,11 @@ export class SimulationKernel {
         });
 
         const finishStep = () => {
-            phase("delivery", () => this.context.devices.deliver({
-                step: this.steps,
-                timeNs: this.timeNs,
-            }));
+            phase("delivery", () => {
+                const clock = { step: this.steps, timeNs: this.timeNs };
+                this.context.devices.deliver(clock);
+                this.context.topics.deliver?.(clock);
+            });
 
             // This legacy phase name is part of the PR 1 characterization. Only
             // derived state/telemetry remains here; graphics are updated by the
@@ -806,14 +809,15 @@ export class SimulationKernel {
             const handledByScenario = this.scenarioRuntime?.applyExternalTopic?.(entry.info) ?? false;
             const controlTopic = this.resolvedRun?.manifest?.topics?.find((topic) =>
                 topic.direction === "input"
-                && (topic.contractId === "controls-command"
-                    || topic.name === entry.info.name
+                && (topic.name === entry.info.name
                     || topic.id === entry.info.name)
             );
-            const isControlsCommand = controlTopic?.contractId === "controls-command"
+            const isControlsCommand = controlTopic?.valueContract?.id === "cev.control-command" || controlTopic?.contractId === "controls-command"
                 || entry.info.name === "/controls/command";
             if (!handledByScenario && isControlsCommand && this.controlRuntime) {
-                const controlResult = this.controlRuntime.ingestStampedCommand(entry.info, {
+                const ingest = this.resolvedRun.version === 13 ? "ingestCommand" : "ingestStampedCommand";
+                const controlResult = this.controlRuntime[ingest](entry.info, {
+                    runId: this.runId || this.resolvedRun.manifest.id,
                     vehicleId: this.resolvedRun?.manifest?.controls?.targetVehicleId || "ego",
                     producer: controlTopic?.producer || "candidate",
                     applyTimeNs,
@@ -935,7 +939,8 @@ export class SimulationKernel {
             sec: Math.floor(this.timeNs / 1e9),
             nanosec: this.timeNs % 1e9,
         };
-        this.telemetry.publishSignal("simulation.clock", stamp, {
+        const native = this.resolvedRun?.version === 13;
+        this.telemetry.publishSignal("simulation.clock", native ? { timeNs: this.timeNs } : stamp, {
             timeUs: Math.round(this.timeNs / 1000),
             cycle: this.steps,
             source: "simulation",
@@ -945,10 +950,11 @@ export class SimulationKernel {
             const topic = this.resolvedRun.manifest.topics.find((candidate) => candidate.id === "clock");
             if (topic) {
                 this.topicRouter?.routeOutbound?.("clock", {
-                    value: { clock: stamp },
+                    value: native ? { timeNs: this.timeNs } : { clock: stamp },
                     typeStr: topic.schema?.type || topic.type,
                 }, {
                     producer: "simulator",
+                    simTimeNs: this.timeNs,
                     captureTimeNs: this.timeNs,
                     deliveryTimeNs: this.timeNs,
                     cycle: this.steps,

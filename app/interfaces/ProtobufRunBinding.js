@@ -3,6 +3,7 @@ import { isControlsCommandTopic, schemaClosureForManifest } from "../autonomy/Au
 import { canonicalStringify } from "../simulation/canonicalJson.js";
 import { normalizeProtobufInterface } from "./ProtobufInterface.js";
 import { assertProtobufName, base64ToBytes, loadDescriptorSet, protobufFingerprint } from "./ProtobufSchema.js";
+import { compileMapping } from "./ProtobufMapping.js";
 
 const SHA256 = /^[a-f0-9]{64}$/;
 const encoder = new TextEncoder();
@@ -173,13 +174,16 @@ function validateMapping(route, wireShape, topicShape, resolvedRun) {
     }
 }
 
-export function planProtobufRouteAdmission({ manifest, interfaceResource, schemas = schemaClosureForManifest(manifest), adapters = new Map(), resolvedRun = { manifest } }) {
+export function planProtobufRouteAdmission({ manifest, interfaceResource, schemas, adapters = new Map(), resolvedRun = { manifest } }) {
     const config = normalizeProtobufRunConfig(manifest.protobuf);
     if (config.mode === "disabled") {
         if (interfaceResource !== undefined && interfaceResource !== null) invalid("protobufInterface", "disabled runs cannot carry an interface");
         return { schemas: new Map(), topics: new Map(), routes: [] };
     }
     const resource = assertProtobufInterfaceResource(interfaceResource, config.interfaceHash);
+    const native = manifest.version === 13;
+    if (resource.document.version !== (native ? 2 : 1)) invalid("protobufInterface.version", `run-manifest v${manifest.version} requires interface@${native ? 2 : 1}`);
+    schemas ??= native ? {} : schemaClosureForManifest(manifest);
     const loaded = new Map(resource.document.schemas.map((schema) => [schema.id, loadDescriptorSet(base64ToBytes(schema.descriptorBase64), schema.fingerprint)]));
     const topics = new Map();
     for (const topic of manifest.topics ?? []) {
@@ -199,6 +203,12 @@ export function planProtobufRouteAdmission({ manifest, interfaceResource, schema
             if (subscriptions.has(topicId)) invalid(`protobuf.routes.${route.id}`, "multiple subscriptions cannot own one local input");
             subscriptions.add(topicId);
             if (isControlsCommandTopic(topic)) controls.push(topic);
+        }
+        if (native) {
+            const admitted = { route, messageType: type, topicContract: topic };
+            try { admitted.compiled = compileMapping(admitted, { resolvedRun }); }
+            catch (error) { invalid(`protobuf.routes.${route.id}.mapping`, error.message); }
+            return admitted;
         }
         const localName = topic?.schema?.type || topic?.type;
         const topicShape = bootstrap ? protobufType(type)
@@ -236,23 +246,34 @@ export function bindProtobufRunKeys(interfaceResource, runId) {
 }
 
 export function protobufInputContractHash(resolved) {
-    if (resolved.version !== 12 || resolved.manifest?.protobuf?.mode !== "zenoh") return null;
+    if (![12, 13].includes(resolved.version) || resolved.manifest?.protobuf?.mode !== "zenoh") return null;
     const { document } = assertProtobufInterfaceResource(resolved.protobufInterface, resolved.manifest.protobuf.interfaceHash);
     const routes = document.routes.filter((route) => route.direction === "subscribe");
     if (!routes.length) return null;
     const used = new Set(routes.map((route) => route.schemaId));
-    const runValues = Object.fromEntries(routes.flatMap((route) => (route.mapping.fields ?? [])
-        .filter((field) => field.from?.startsWith("run.") && field.from !== "run.runId")
-        .map((field) => [field.from, runValue(resolved, field.from, "protobuf.inputContract")])));
+    const sources = [];
+    const collect = (entry) => {
+        for (const key of ["from", "offsetFrom", "fromFrame", "toFrame"]) if (entry[key]?.startsWith("run.") && entry[key] !== "run.runId") sources.push(entry[key]);
+        if (entry.each) { collect(entry.each); entry.each.fields.forEach(collect); }
+    };
+    routes.forEach((route) => { route.mapping.fields?.forEach(collect); route.mapping.derived?.forEach(collect); });
+    const runValues = Object.fromEntries(sources.map((path) => [path, runValue(resolved, path, "protobuf.inputContract")]));
+    const nativeBindings = resolved.version === 13 ? routes.map((route) => {
+        const schema = document.schemas.find((schema) => schema.id === route.schemaId);
+        const messageType = loadDescriptorSet(base64ToBytes(schema.descriptorBase64), schema.fingerprint).root.lookupType(route.messageType);
+        const topicContract = resolved.manifest.topics.find((topic) => topic.id === route.target.topicId);
+        return compileMapping({ route, messageType, topicContract }, { resolvedRun: resolved }).bindings;
+    }) : null;
     return protobufFingerprint(encoder.encode(canonicalStringify({
-        version: 1, externalController: resolved.manifest.protobuf.externalController,
+        version: resolved.version === 13 ? 2 : 1, externalController: resolved.manifest.protobuf.externalController,
         schemas: document.schemas.filter((schema) => used.has(schema.id)).map(({ id, fingerprint }) => ({ id, fingerprint })),
         routes, runValues,
+        ...(nativeBindings ? { nativeContracts: resolved.nativeTopicContracts.hash, bindings: nativeBindings } : {}),
     })));
 }
 
 export function assertProtobufExecutionCapabilities(resolved) {
-    if (resolved?.version === 12 && normalizeProtobufRunConfig(resolved.manifest?.protobuf).mode === "zenoh") {
+    if ([12, 13].includes(resolved?.version) && normalizeProtobufRunConfig(resolved.manifest?.protobuf).mode === "zenoh") {
         invalid("protobuf.mode", "Zenoh execution is unavailable until the ZPB transport runtime is implemented", "UNSUPPORTED_CAPABILITY");
     }
 }

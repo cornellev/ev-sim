@@ -61,8 +61,9 @@ export class TransformRuntime {
     }
 
     publishStaticTransforms(timeNs = 0) {
-        const transforms = staticTransformMessages(this.bundle, timeNs);
-        const payload = buildTFMessage(transforms);
+        const native = this.topicRouter?.getTopic?.("tf-static")?.valueContract;
+        const payload = native ? { transforms: this.bundle.staticTransforms.map((entry) => ({ parentFrameId: entry.parentFrameId, childFrameId: entry.childFrameId,
+            pose: { position: { ...entry.translation }, orientation: { ...entry.rotation } } })) } : buildTFMessage(staticTransformMessages(this.bundle, timeNs));
         this._routeOutbound("tf-static", payload, { captureTimeNs: timeNs, deliveryTimeNs: timeNs, cycle: 0 });
         this.staticPublished = true;
         return payload;
@@ -73,7 +74,8 @@ export class TransformRuntime {
             || vehicles[0]
             || null;
         const basePose = rep103PoseFromVehicle(vehicle);
-        const transforms = [
+        const native = this.topicRouter?.getTopic?.("tf")?.valueContract;
+        const transforms = native ? null : [
             buildTransformStamped({
                 timeNs,
                 parentFrameId: this.frames.map,
@@ -101,7 +103,10 @@ export class TransformRuntime {
         if (this._history.length > this._historyLimit) {
             this._history.splice(0, this._history.length - this._historyLimit);
         }
-        const payload = buildTFMessage(transforms);
+        const payload = native ? { transforms: [
+            { parentFrameId: this.frames.map, childFrameId: this.frames.odom, pose: { position: { x: 0, y: 0, z: 0 }, orientation: { x: 0, y: 0, z: 0, w: 1 } } },
+            { parentFrameId: this.frames.odom, childFrameId: this.frames.baseLink, pose: { position: basePose.position, orientation: eulerToQuaternion(basePose.rotation) } },
+        ] } : buildTFMessage(transforms);
         this._routeOutbound("tf", payload, { captureTimeNs: timeNs, deliveryTimeNs: timeNs, cycle: step });
         return payload;
     }
@@ -219,12 +224,13 @@ export class TransformRuntime {
     }
 
     _routeOutbound(contractId, payload, metadata) {
+        const native = this.topicRouter?.getTopic?.(contractId)?.valueContract;
         const routed = this.topicRouter?.routeOutbound?.(contractId, {
             value: payload,
-            typeStr: "tf2_msgs/TFMessage",
-        }, metadata);
+            ...(native ? {} : { typeStr: "tf2_msgs/TFMessage" }),
+        }, native ? { ...metadata, simTimeNs: metadata.deliveryTimeNs, actualDeliveryStep: metadata.cycle } : metadata);
         const topic = this.topicRouter?.getTopic?.(contractId);
-        if (topic && this.client?.isOpen?.()) {
+        if (!native && topic && this.client?.isOpen?.()) {
             this.client.publish(topic.name, topic.schema?.type || topic.type, payload).catch?.(() => {});
         }
         return routed;

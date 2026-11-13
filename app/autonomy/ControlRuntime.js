@@ -5,6 +5,7 @@
  */
 
 import { slewSteeringAngle } from "../simulation/vehicles/steeringLimits.js";
+import { normalizeControlCommand, controlCommandValue } from "./ControlCommand.js";
 import { DEFAULT_ACTUATOR_LIMITS } from "../vehicles/VehicleManifest.js";
 import {
     emptyInternalCommand,
@@ -43,6 +44,11 @@ function cloneCommand(command) {
 
 function vehicleStateKey(vehicleId) {
     return String(vehicleId || "ego");
+}
+function nextSequence(sequence) {
+    if (typeof sequence !== "string") return sequence + 1;
+    const next = BigInt(sequence) + 1n;
+    return (next < 1n << 64n ? next : (1n << 64n) - 1n).toString();
 }
 
 export class ControlRuntime {
@@ -146,6 +152,16 @@ export class ControlRuntime {
             producer: resolvedProducer,
             source: "topic",
         });
+        return this._ingestNormalized(normalized, info, target, resolvedProducer);
+    }
+
+    ingestCommand(info, { vehicleId = null, producer = null, applyTimeNs = 0, runId = this.manifest?.id } = {}) {
+        const target = vehicleId || this.controls?.targetVehicleId || "ego";
+        const resolvedProducer = producer || info?.producer || "candidate";
+        return this._ingestNormalized(normalizeControlCommand(info?.value, { runId, frameId: this.manifest?.sensorRig?.rootFrameId ?? "base_link", applyTimeNs, producer: resolvedProducer }), info, target, resolvedProducer);
+    }
+
+    _ingestNormalized(normalized, info, target, resolvedProducer) {
         if (!normalized.ok) {
             this._transitionEvent(target, "command-rejected", {
                 code: normalized.code,
@@ -158,7 +174,7 @@ export class ControlRuntime {
             return { ok: false, ...normalized };
         }
         const state = this._state(target);
-        if (normalized.command.sequence <= state.lastSequence) {
+        if (BigInt(normalized.command.sequence) <= BigInt(state.lastSequence)) {
             this._transitionEvent(target, "command-rejected", {
                 code: "sequence-regression",
                 message: "Command sequence must be strictly increasing.",
@@ -170,7 +186,7 @@ export class ControlRuntime {
             return { ok: false, code: "sequence-regression", command: null };
         }
         this.submitCommand(target, normalized.command, { producer: resolvedProducer });
-        state.lastSequence = Math.max(state.lastSequence, normalized.command.sequence);
+        state.lastSequence = normalized.command.sequence;
         return { ok: true, command: normalized.command };
     }
 
@@ -189,7 +205,7 @@ export class ControlRuntime {
             speedMps,
             steeringRadRep103,
             mode,
-            sequence: sequence ?? (state.lastSequence + 1),
+            sequence: sequence ?? nextSequence(state.lastSequence),
             captureTimeNs,
             producer,
             source,
@@ -293,10 +309,10 @@ export class ControlRuntime {
                 const fb = this.controls.fallbackCommand;
                 desired = internalCommandFromSi({
                     mode: fb.mode || "stop",
-                    speedMps: fb.speed,
-                    steeringRadRep103: fb.steering_angle,
-                    accelerationMps2: fb.acceleration,
-                    sequence: state.lastSequence + 1,
+                    speedMps: this.manifest?.version === 13 ? fb.speedMps : fb.speed,
+                    steeringRadRep103: this.manifest?.version === 13 ? fb.steeringRad : fb.steering_angle,
+                    accelerationMps2: this.manifest?.version === 13 ? fb.accelerationMps2 : fb.acceleration,
+                    sequence: nextSequence(state.lastSequence),
                     captureTimeNs: timeNs,
                     producer: "bypass",
                     source: "fallback",
@@ -306,7 +322,7 @@ export class ControlRuntime {
             } else {
                 desired = emptyInternalCommand({
                     mode: "stop",
-                    sequence: state.lastSequence + 1,
+                    sequence: nextSequence(state.lastSequence),
                     captureTimeNs: timeNs,
                     producer: "bypass",
                     source: "safe-stop",
@@ -317,7 +333,7 @@ export class ControlRuntime {
         } else {
             state.status = "ok";
             state.statusCode = null;
-            state.lastSequence = Math.max(state.lastSequence, selected.sequence);
+            if (BigInt(selected.sequence) > BigInt(state.lastSequence)) state.lastSequence = selected.sequence;
             state.lastHeartbeatNs = selected.captureTimeNs ?? timeNs;
             state.selected = cloneCommand(selected);
         }
@@ -375,7 +391,9 @@ export class ControlRuntime {
                 zeroSpeedResponse: this.controls.zeroSpeedResponse,
                 actuatorLimits: this.getLimits(vehicleId),
             } : {}),
-            activeEnvelope: toStampedAckermannEnvelope(state.applied, { applyTimeNs: timeNs }),
+            activeEnvelope: this.manifest?.version === 13
+                ? controlCommandValue(state.applied, { runId: this.manifest.id, applyTimeNs: timeNs })
+                : toStampedAckermannEnvelope(state.applied, { applyTimeNs: timeNs }),
         };
     }
 
@@ -460,7 +478,7 @@ export class ControlRuntime {
         const applied = state.applied;
         const achieved = state.achieved;
         const heartbeatNs = state.lastHeartbeatNs;
-        return normalizeControlsSnapshot({
+        const snapshot = normalizeControlsSnapshot({
             vehicleId: id,
             captureTimeNs: requested?.captureTimeNs ?? applied?.captureTimeNs ?? null,
             arrivalTimeNs: null,
@@ -502,6 +520,8 @@ export class ControlRuntime {
             } : null,
             wheelbase: this.getLimits(id).wheelbase,
         });
+        if (this.manifest?.version === 13) snapshot.sequence = String(applied?.sequence ?? requested?.sequence ?? 0);
+        return snapshot;
     }
 
     _defineSignals() {

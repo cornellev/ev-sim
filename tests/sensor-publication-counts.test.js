@@ -3,11 +3,35 @@ import test from "node:test";
 
 import { SensorPublisher } from "../app/simulation/sensors/SensorPublisher.js";
 import { SignalStore } from "../app/scripting/runtime/SignalStore.js";
+import { TopicContractRouter } from "../app/simulation/TopicContractRouter.js";
 
 const topic = { id: "output", name: "/test", type: "test/Message", direction: "output" };
 const message = { topicId: topic.id, signal: "measurement", value: { count: 1 } };
 const packet = { productId: "points", streamId: "main", packetIndex: 0, offsetNs: 0, payload: new Uint8Array([1]) };
 const clock = { step: 1, timeNs: 10_000_000 };
+
+test("native delivery publishes once after local acceptance and bypasses ROS encoding", () => {
+    const topic = { id: "output", name: "/native", direction: "output", valueContract: { id: "cev.points", version: 1 }, producer: "simulator", routeDownstream: false };
+    const store = new SignalStore(), accepted = [];
+    const publicationPort = (envelope) => { accepted.push(envelope); return { ok: true }; };
+    const router = new TopicContractRouter({ topics: [topic] }, { telemetry: store, publicationPort });
+    const output = new SensorPublisher({ telemetryId: "native" }, { id: "native", rateHz: 100, latency: { fixedNs: 0, jitterNs: 0 }, outputs: {} }, {
+        nativeTopics: true, topics: [topic], runtimeData: { bindings: () => ({ signalStore: store }) }, topicRouter: router, publicationPort,
+        encodeTopicValue: () => { throw new Error("ROS encoder called"); },
+    });
+    const value = { positions: new Float32Array([1, 2, 3]), intensities: new Float32Array([0.5]), count: 1 };
+    output.queue.push({ sampleIndex: 0, captureTimeNs: 0, captureStep: 0, deliveryTimeNs: 0, scheduledDeliveryTimeNs: 0, sequence: 0,
+        messages: [{ topicId: topic.id, signal: "points", value }] });
+    output.deliver(clock);
+    assert.equal(accepted.length, 1); assert.equal(accepted[0].metadata.actualDeliveryStep, clock.step);
+    assert.equal(accepted[0].value, value); assert.equal(output.health.publishedFrames, 1);
+    const retained = store.read("devices.native.points").value;
+    output.queue.push({ sampleIndex: 1, captureTimeNs: 0, captureStep: 0, deliveryTimeNs: 0, sequence: 1,
+        messages: [{ topicId: topic.id, signal: "points", value: { ...value, count: 5 } }] });
+    output.deliver(clock);
+    assert.equal(accepted.length, 1); assert.equal(store.read("devices.native.points").value, retained);
+    assert.equal(store.snapshot({ includeHeavy: false })["devices.native.points"], undefined);
+});
 
 function publisher(options = {}, data = null) {
     const store = new SignalStore();
