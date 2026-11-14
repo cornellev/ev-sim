@@ -9,6 +9,42 @@ writes), validates it, and resolves a bundle in memory. Unsaved Config drafts
 are not visible. `HeadlessRunner` and `SupervisorRunner` still accept only the
 verified bundle.
 
+## Native external controllers (ZPB-07)
+
+Install the verified Linux x64 or ARM64 addon and pinned Zenoh 1.10.2 router
+described in [zenoh-native-transport.md](zenoh-native-transport.md). The default
+controller mode is `policy`. Select `external-realtime` explicitly:
+
+```bash
+cev-sim validate --bundle external-v13.json --controller-mode external-realtime --zenoh-transport-config zenoh.json
+cev-sim run --bundle external-v13.json --controller-mode external-realtime --zenoh-transport-config zenoh.json --output runs/external
+cev-sim run --bundle external-v13.json --controller-mode external-realtime --config supervisor.json --output runs/external-supervised
+```
+
+Supervisor JSON may set `controllerMode: "external-realtime"` and
+`zenohTransport`; `--controller-mode` wins. A direct run uses
+`--zenoh-transport-config`; combining that option with `--config` is an error.
+External execution requires an immutable v13 Zenoh bundle with
+`protobuf.externalController: true`, one admitted native controls subscription,
+positive clock speed, and enabled inputs, controls and vehicles. It rejects
+`--actions`, `--tape`, `--episode` and replay. Seed, backends, vehicle state and
+step limit come from the frozen bundle. Scenario, plugin and binding consumers
+remain behind ZPB-08. The default manifest writer remains unchanged.
+
+Read `cev-sim.headless.external-ready` to obtain the fresh `descriptor.runId`
+and exact route keys. Commands carry that run identity and an increasing
+sequence. Valid bytes enter the input queue and apply at the next fixed step;
+simulation time determines freshness and watchdog behavior. Wall time paces the
+clock at `clock.speed` and checks resource timeouts. Late work discards pacing
+debt and never creates extra steps.
+
+An external run finishes at its frozen step limit or a stopping assertion.
+SIGINT/SIGTERM stops the clock, drains output and atomically publishes an
+interrupted result with exit code 130. Required transport failure requires reset
+and aborts artifact staging. Native queue and pacing diagnostics are nonsemantic
+result metadata. State products share capture samples with policy observations;
+publication does not change the Python tensor protocol or observation arrays.
+
 ## Commands
 
 ```bash

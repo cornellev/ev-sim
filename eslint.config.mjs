@@ -21,6 +21,8 @@ const eslintConfig = defineConfig([
     "python/build/**",
     "python/dist/**",
     "python/src/*.egg-info/**",
+    "native/zenoh-transport/target/**",
+    "native/zenoh-transport/prebuilds/**",
     "next-env.d.ts",
   ]),
 ]);

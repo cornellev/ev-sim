@@ -40,17 +40,18 @@ export class GoalPublisher {
     publish(timeNs = 0) {
         const pose = scenarioGoalPose(this.resolvedRun);
         if (!pose) return null;
-        const declared = this.topicRouter?.getTopic?.(GOAL_TOPIC) ?? null;
         const native = this.resolvedRun?.version === 13;
+        const goalTopic = native ? this.resolvedRun.manifest.topics.find((topic) => topic.valueContract?.id === "cev.goal" && topic.direction === "output") : null;
+        const declared = this.topicRouter?.getTopic?.(goalTopic?.id ?? GOAL_TOPIC) ?? null;
         const value = native ? { pose } : pose;
-        if (declared && declared.name === GOAL_TOPIC) {
+        if (declared && (native || declared.name === GOAL_TOPIC)) {
             if (!isPoseGoalOutput(declared)) return null;
             this.topicRouter.routeOutbound(declared.id || declared.name, {
                 value,
-                ...(native ? {} : { typeStr: GOAL_MESSAGE_TYPE }),
+                ...(native ? { valueContract: declared.valueContract } : { typeStr: GOAL_MESSAGE_TYPE }),
             }, {
                 captureTimeNs: timeNs,
-                ...(native ? { simTimeNs: timeNs } : {}),
+                ...(native ? { simTimeNs: timeNs, frameId: this.resolvedRun.calibration?.frames?.map ?? "map", sequenceId: "0", actualDeliveryStep: 0 } : {}),
                 deliveryTimeNs: timeNs,
                 cycle: 0,
                 logClass: "standard",

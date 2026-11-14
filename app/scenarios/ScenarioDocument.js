@@ -8,12 +8,15 @@ import {
 } from "../util/plainGeometry.js";
 
 export const SCENARIO_KIND = "cev-sim.scenario";
-export const SCENARIO_VERSION = 1;
+export const SCENARIO_VERSION = 2;
+export const LEGACY_SCENARIO_VERSION = 1;
+export const NATIVE_SCENARIO_VERSION = 2;
 export const SCENARIO_CATALOG_KIND = "cev-sim.scenario-catalog";
 export const SCENARIO_CATALOG_VERSION = 1;
 
 export const CONTROLLER_KINDS = Object.freeze([
     "external-ros",
+    "external-topic",
     "script",
     "script-with-route",
     "route-follower",
@@ -148,20 +151,21 @@ function normalizeActivation(value = {}) {
     };
 }
 
-function normalizeController(value = {}) {
+function normalizeController(value = {}, version = SCENARIO_VERSION) {
     const source = object(value);
+    if ((version === 1 && source.kind === "external-topic") || (version === 2 && source.kind === "external-ros")) throw new Error(`Controller ${source.kind} is unsupported in scenario v${version}.`);
     const kind = CONTROLLER_KINDS.includes(source.kind) ? source.kind : "route-follower";
     return {
         kind,
         activation: normalizeActivation(source.activation),
         scriptId: ["script", "script-with-route"].includes(kind) ? (text(source.scriptId) || null) : null,
-        topicId: kind === "external-ros" ? (text(source.topicId) || null) : null,
+        topicId: ["external-ros", "external-topic"].includes(kind) ? (text(source.topicId) || null) : null,
         inputs: Array.isArray(source.inputs) ? clone(source.inputs) : [],
         outputs: Array.isArray(source.outputs) ? clone(source.outputs) : [],
     };
 }
 
-function normalizeRoute(value = {}, index = 0) {
+function normalizeRoute(value = {}, index = 0, version = SCENARIO_VERSION) {
     const source = object(value);
     const rawWaypoints = Array.isArray(source.waypoints) ? source.waypoints : [];
     return {
@@ -169,7 +173,7 @@ function normalizeRoute(value = {}, index = 0) {
         name: text(source.name, index === 0 ? "Ego route" : `Route ${index + 1}`),
         actorId: text(source.actorId, index === 0 ? "ego" : makeId("actor", index)),
         initialSpeedMps: finite(source.initialSpeedMps, 0),
-        controller: normalizeController(source.controller),
+        controller: normalizeController(source.controller, version),
         waypoints: rawWaypoints.map((waypoint, waypointIndex) => normalizeWaypoint(
             waypoint,
             waypointIndex,
@@ -339,8 +343,9 @@ export function normalizeScenario(value, { allowMissingKind = false } = {}) {
     if (!allowMissingKind && source.kind !== undefined && source.kind !== SCENARIO_KIND) {
         throw new Error(`Unsupported scenario kind: ${JSON.stringify(source.kind)}.`);
     }
-    if (source.version !== undefined && Number(source.version) !== SCENARIO_VERSION) {
-        throw new Error(`Unsupported scenario version ${source.version}; expected ${SCENARIO_VERSION}.`);
+    const version = Number(source.version ?? SCENARIO_VERSION);
+    if (![LEGACY_SCENARIO_VERSION, NATIVE_SCENARIO_VERSION].includes(version)) {
+        throw new Error(`Unsupported scenario version ${source.version}; expected 1 or 2.`);
     }
     const rawActors = Array.isArray(source.actors) && source.actors.length > 0
         ? source.actors
@@ -348,7 +353,7 @@ export function normalizeScenario(value, { allowMissingKind = false } = {}) {
     const actors = rawActors.map(normalizeActor);
     return {
         kind: SCENARIO_KIND,
-        version: SCENARIO_VERSION,
+        version,
         id: text(source.id, "untitled-scenario"),
         name: text(source.name, "Untitled Scenario"),
         description: text(source.description),
@@ -358,7 +363,7 @@ export function normalizeScenario(value, { allowMissingKind = false } = {}) {
             expectedHash: text(source.environment?.expectedHash) || null,
         },
         actors,
-        routes: (Array.isArray(source.routes) ? source.routes : []).map(normalizeRoute),
+        routes: (Array.isArray(source.routes) ? source.routes : []).map((route, index) => normalizeRoute(route, index, version)),
         zones: (Array.isArray(source.zones) ? source.zones : []).map(normalizeZone),
         triggers: (Array.isArray(source.triggers) ? source.triggers : []).map(normalizeTrigger),
         completion: {
@@ -588,8 +593,8 @@ export function validateScenario(value, { requireVerifiedRoutes = true } = {}) {
                 }
             }
         }
-        if (route.controller.kind === "external-ros" && !route.controller.topicId) {
-            issues.push({ path: `routes.${index}.controller.topicId`, message: "External ROS controller requires a topic id." });
+        if (["external-ros", "external-topic"].includes(route.controller.kind) && !route.controller.topicId) {
+            issues.push({ path: `routes.${index}.controller.topicId`, message: "External controller requires a topic id." });
         }
     });
     if (scenario.freeDrive === true) {

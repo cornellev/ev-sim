@@ -202,6 +202,7 @@ export function createStorageRouter(service, { githubUrdf = null } = {}) {
     }));
     router.post("/run-manifests/:id/validate", handle(async (req) => service.validateRunManifest(req.params.id, req.body ?? null)));
     router.post("/run-manifests/:id/resolve", handle(async (req) => service.resolveRunManifest(req.params.id, req.body ?? null)));
+    router.post("/run-manifests/:id/native-context", handle(async (req) => service.nativeRunContext(req.params.id, req.body ?? {})));
     router.post("/run-manifests/:id/native-migration/plan", handle(async (req) => service.planNativeRunMigration(req.params.id, req.body ?? {})));
     router.post("/run-manifests/:id/native-migration/validate", handle(async (req) => service.validateNativeRunMigration(req.body?.plan)));
     router.post("/run-manifests/:id/native-migration/apply", handle(async (req) => service.applyNativeRunMigration(req.params.id, req.body ?? {})));

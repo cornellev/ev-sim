@@ -11,7 +11,6 @@ const handle = app.getRequestHandler();
 
 // just general logging + preflight checks
 const ready = require("./startup.js").startup(REPOSITORY_ROOT, process.env);
-const orchestrator = require("./ensureOrchestrator.js").ensureOrchestrator();
 
 if (!ready) {
     process.exit(1);
@@ -125,6 +124,13 @@ app.prepare().then(async () => {
     // read the body themselves. Plugin catalog/compile live on Express so they
     // can use StorageService.
     server.use(['/api', '/mcp'], createRequestSecurityMiddleware(httpSecurity));
+    const { readZenohBrowserConfig } = await import('./interfaces/ZenohBrowserConfig.js');
+    const { createZenohBrowserRouter } = await import('./routes/zenohBrowserRouter.js');
+    let zenohBrowserConfig = null;
+    let zenohBrowserConfigError = null;
+    try { zenohBrowserConfig = await readZenohBrowserConfig(process.env); }
+    catch (error) { zenohBrowserConfigError = error; console.error(`[zenoh-browser] ${error.message}`); }
+    server.use('/api/zenoh', createZenohBrowserRouter({ config: zenohBrowserConfig, error: zenohBrowserConfigError }));
     const jsonParser = express.json({ limit: process.env.CEV_SIM_JSON_LIMIT || '8mb' });
     const headlessJsonParser = express.json({ limit: process.env.CEV_SIM_HEADLESS_JSON_LIMIT || '1mb' });
     if (marketplaceService) server.use('/api/marketplace', createMarketplaceRouter(marketplaceService));
@@ -132,7 +138,17 @@ app.prepare().then(async () => {
     mountStorageApi(server, storageService, { jsonParser });
     server.use('/api/scripting', jsonParser, createScriptingRouter(storageService));
     server.use('/api/headless', headlessJsonParser, createHeadlessRouter(headlessExperimentService, cosmosClipJob));
-    server.use('/api/browser-sim', headlessJsonParser, createBrowserSimRouter(new BrowserSimService(storageService)));
+    const { ControlOwnershipService } = await import('./interfaces/ControlOwnershipService.js');
+    const { createControlOwnershipRouter } = await import('./routes/controlOwnershipRouter.js');
+    const { storageEvents } = await import('./mcp/events.js');
+    const controlOwnership = new ControlOwnershipService();
+    headlessExperimentService.controlOwnership = controlOwnership;
+    controlOwnership.on('change', (lease) => {
+        if (lease.target.kind === 'browser') storageEvents.publish({ domain: 'browser-sim', id: lease.target.id, action: 'control-ownership', data: { leaseId: lease.leaseId, status: lease.status } });
+    });
+    server.use('/api/interfaces/control-ownership', createControlOwnershipRouter(controlOwnership));
+    const browserSimService = new BrowserSimService(storageService, { controlOwnership });
+    server.use('/api/browser-sim', headlessJsonParser, createBrowserSimRouter(browserSimService));
     const { BrowserPacketRelay, readBrowserPacketHostConfig } = await import('./sensor-transports/BrowserPacketRelay.js');
     const { createBrowserPacketRouter } = await import('./routes/browserPacketRouter.js');
     const browserPacketRelay = new BrowserPacketRelay({ hostConfig: await readBrowserPacketHostConfig(process.env) });
@@ -173,10 +189,10 @@ app.prepare().then(async () => {
         if (shuttingDown) return;
         shuttingDown = true;
         httpServer.close();
+        controlOwnership.close();
         await browserPacketRelay.shutdown();
         await marketplaceService?.close();
         await headlessExperimentService.close();
-        await orchestrator.stop();
     };
     process.once('SIGTERM', shutdown);
     process.once('SIGINT', shutdown);

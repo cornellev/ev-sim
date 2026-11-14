@@ -49,6 +49,34 @@ function estimateObservationBytes(observation) {
         : Number(observation?.sharedMemory?.lengthBytes || 0);
 }
 
+export function deliverNativeSensorProduct({ deviceId, config, runId, calibrationHash, telemetry, topicRouter, publicationPort, onError = () => {} }, topic, message, frame, clock) {
+    const validation = validateNativeTopicValue(topic.valueContract, message.value);
+    if (!validation.ok || typeof message.signal !== "string" || !message.signal) {
+        onError( { topic: topic.name, reason: validation.message ?? "missing-local-signal-path" });
+        return false;
+    }
+    const path = `devices.${deviceId}.${message.signal}`;
+    const metadata = { topicId: topic.id, valueContract: topic.valueContract, topic: topic.name, runId: runId,
+        frameId: message.frameId || config.measurementFrameId || config.frameId,
+        simTimeNs: clock.timeNs, captureTimeNs: frame.captureTimeNs, deliveryTimeNs: frame.deliveryTimeNs,
+        scheduledDeliveryTimeNs: frame.scheduledDeliveryTimeNs, captureStep: frame.captureStep,
+        scheduledDeliveryStep: frame.scheduledDeliveryStep, actualDeliveryStep: clock.step,
+        sequenceId: frame.sequence, syncGroupKey: frame.syncGroupKey, calibrationHash: calibrationHash, canonicalSignalPath: path };
+    if (typeof telemetry?.publishSignal !== "function") return false;
+    const local = telemetry?.publishSignal?.(path, message.value, { timeUs: Math.round(frame.deliveryTimeNs / 1000), cycle: clock.step,
+        source: "sensors", type: "json", category: "devices", replayRole: "derived", retention: "latest",
+        logClass: isHeavyValue(message.value) ? "heavy" : "standard", descriptorMetadata: metadata });
+    if (local === false) return false;
+    const routed = topicRouter?.routeOutbound(topic.id, { value: message.value }, metadata, { publishTransport: !publicationPort });
+    if (routed?.ok === false) return false;
+    if (publicationPort) {
+        const acceptance = publicationPort({ topicId: topic.id, valueContract: topic.valueContract, value: message.value, metadata });
+        if (acceptance?.then) throw new Error("Sensor publication requires synchronous acceptance.");
+        if (acceptance !== true && acceptance?.ok !== true) return false;
+    }
+    return true;
+}
+
 export class SensorPublisher {
     constructor(device, config, {
         seed = "42",
@@ -758,34 +786,15 @@ export class SensorPublisher {
     }
 
     _deliverNativeProduct(topic, message, frame, clock) {
-        const validation = validateNativeTopicValue(topic.valueContract, message.value);
-        if (!validation.ok || typeof message.signal !== "string" || !message.signal) {
-            this._event("publish-failed", "error", { topic: topic.name, reason: validation.message ?? "missing-local-signal-path" });
-            return false;
+        const delivered = deliverNativeSensorProduct({ deviceId: this.device.telemetryId, config: this.config, runId: this.runId,
+            calibrationHash: this.calibrationHash, telemetry: this._data()?.bindings?.()?.signalStore,
+            topicRouter: this.topicRouter, publicationPort: this.publicationPort,
+            onError: (payload) => this._event("publish-failed", "error", payload) }, topic, message, frame, clock);
+        if (delivered) {
+            this.health.encodeTimeNs = 0;
+            this.health.lastPayloadBytes = estimatePayloadBytes(message.value);
         }
-        const path = `devices.${this.device.telemetryId}.${message.signal}`;
-        const metadata = { topicId: topic.id, valueContract: topic.valueContract, topic: topic.name, runId: this.runId,
-            frameId: message.frameId || this.config.measurementFrameId || this.config.frameId,
-            simTimeNs: clock.timeNs, captureTimeNs: frame.captureTimeNs, deliveryTimeNs: frame.deliveryTimeNs,
-            scheduledDeliveryTimeNs: frame.scheduledDeliveryTimeNs, captureStep: frame.captureStep,
-            scheduledDeliveryStep: frame.scheduledDeliveryStep, actualDeliveryStep: clock.step,
-            sequenceId: frame.sequence, syncGroupKey: frame.syncGroupKey, calibrationHash: this.calibrationHash, canonicalSignalPath: path };
-        const telemetry = this._data()?.bindings?.()?.signalStore;
-        if (typeof telemetry?.publishSignal !== "function") return false;
-        const local = telemetry?.publishSignal?.(path, message.value, { timeUs: Math.round(frame.deliveryTimeNs / 1000), cycle: clock.step,
-            source: "sensors", type: "json", category: "devices", replayRole: "derived", retention: "latest",
-            logClass: isHeavyValue(message.value) ? "heavy" : "standard", descriptorMetadata: metadata });
-        if (local === false) return false;
-        const routed = this.topicRouter?.routeOutbound(topic.id, { value: message.value }, metadata, { publishTransport: !this.publicationPort });
-        if (routed?.ok === false) return false;
-        if (this.publicationPort) {
-            const acceptance = this.publicationPort({ topicId: topic.id, valueContract: topic.valueContract, value: message.value, metadata });
-            if (acceptance?.then) throw new Error("Sensor publication requires synchronous acceptance.");
-            if (acceptance !== true && acceptance?.ok !== true) return false;
-        }
-        this.health.encodeTimeNs = 0;
-        this.health.lastPayloadBytes = estimatePayloadBytes(message.value);
-        return true;
+        return delivered;
     }
 
     _deliverNativePackets(frame, clock) {

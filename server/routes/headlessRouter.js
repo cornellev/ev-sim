@@ -85,6 +85,19 @@ const PreflightSchema = z.object({
     artifactProfile: z.enum(["evaluation", "training", "disabled"]).optional(),
 });
 
+const ExternalPrepareSchema = z.object({
+    externalRunId: z.string().regex(/^external-[A-Za-z0-9_-]{1,80}$/),
+    manifestId: z.string().trim().min(1).max(200),
+    controlLeaseId: z.string().min(1).max(200),
+    controlLeaseToken: z.string().min(1).max(200),
+}).strict();
+const ExternalCommandSchema = z.object({
+    action: z.enum(["pause", "resume", "stop", "bind-ownership"]),
+    runId: z.string().min(1).max(200),
+    controlLeaseId: z.string().min(1).max(200).optional(),
+    controlLeaseToken: z.string().min(1).max(200).optional(),
+}).strict();
+
 function sanitizeCase(entry = {}) {
     return {
         id: entry.id,
@@ -148,6 +161,16 @@ function assertSameOrigin(req) {
 export function createHeadlessRouter(headlessExperimentService, cosmosClipJob = null) {
     const router = express.Router();
     const artifactRoot = path.resolve(headlessExperimentService.artifactRoot);
+
+    router.post("/external-runs", handle(async (req) => {
+        assertSameOrigin(req);
+        return headlessExperimentService.prepareExternalRun(ExternalPrepareSchema.parse(req.body));
+    }));
+    router.get("/external-runs/:id", handle(async (req) => headlessExperimentService.externalRunStatus(req.params.id)));
+    router.post("/external-runs/:id/commands", handle(async (req) => {
+        assertSameOrigin(req);
+        return headlessExperimentService.commandExternalRun(req.params.id, ExternalCommandSchema.parse(req.body));
+    }));
 
     router.get("/capabilities", handle(async () => {
         let safetyLimits = SUPERVISOR_PRESETS.safety.limits;

@@ -1,0 +1,297 @@
+{
+  "kind": "cev-sim.protobuf-interface",
+  "version": 2,
+  "schemas": [
+    {
+      "id": "onboarding",
+      "fingerprint": "c1af914ec3f659a0c31e88efdb55d39cef9081f2db463f45a30146e8f35e0f95",
+      "descriptorBase64": "Crw6Cg5hdXRvbm9teS5wcm90bxIRY2V2Lm9uYm9hcmRpbmcudjEiJAoGUG9pbnQyEgwKAXgYASABKAFSAXgSDAoBeRgCIAEoAVIBeSJXCgVQb3NlMhI1Cghwb3NpdGlvbhgBIAEoCzIZLmNldi5vbmJvYXJkaW5nLnYxLlBvaW50MlIIcG9zaXRpb24SFwoHeWF3X3JhZBgCIAEoAVIGeWF3UmFkIlkKDFZlaGljbGVTdGF0ZRIsCgRwb3NlGAEgASgLMhguY2V2Lm9uYm9hcmRpbmcudjEuUG9zZTJSBHBvc2USGwoJc3BlZWRfbXBzGAIgASgBUghzcGVlZE1wcyKEAQoJTGlkYXJTY2FuEjEKBnBvaW50cxgBIAMoCzIZLmNldi5vbmJvYXJkaW5nLnYxLlBvaW50MlIGcG9pbnRzEkQKEXNlbnNvcl9pbl92ZWhpY2xlGAIgASgLMhguY2V2Lm9uYm9hcmRpbmcudjEuUG9zZTJSD3NlbnNvckluVmVoaWNsZSKPAQoLT2JzZXJ2YXRpb24SFwoHdGltZV9ucxgBIAEoBFIGdGltZU5zEjUKBXN0YXRlGAIgASgLMh8uY2V2Lm9uYm9hcmRpbmcudjEuVmVoaWNsZVN0YXRlUgVzdGF0ZRIwCgRzY2FuGAMgASgLMhwuY2V2Lm9uYm9hcmRpbmcudjEuTGlkYXJTY2FuUgRzY2FuIqQBCgRHcmlkEjEKBm9yaWdpbhgBIAEoCzIZLmNldi5vbmJvYXJkaW5nLnYxLlBvaW50MlIGb3JpZ2luEiEKDHJlc29sdXRpb25fbRgCIAEoAVILcmVzb2x1dGlvbk0SFAoFd2lkdGgYAyABKA1SBXdpZHRoEhYKBmhlaWdodBgEIAEoDVIGaGVpZ2h0EhgKB3dlaWdodHMYBSADKA1SB3dlaWdodHMiOQoEUGF0aBIxCgZwb2ludHMYASADKAsyGS5jZXYub25ib2FyZGluZy52MS5Qb2ludDJSBnBvaW50cyJOCgxEcml2ZUNvbW1hbmQSGwoJc3BlZWRfbXBzGAEgASgBUghzcGVlZE1wcxIhCgxzdGVlcmluZ19yYWQYAiABKAFSC3N0ZWVyaW5nUmFkIu0CCgtWZWhpY2xlU3BlYxIfCgt3aGVlbGJhc2VfbRgBIAEoAVIKd2hlZWxiYXNlTRIZCghsZW5ndGhfbRgCIAEoAVIHbGVuZ3RoTRIXCgd3aWR0aF9tGAMgASgBUgZ3aWR0aE0SRAoRcmVhcl9heGxlX2luX2Jhc2UYBCABKAsyGS5jZXYub25ib2FyZGluZy52MS5Qb2ludDJSDnJlYXJBeGxlSW5CYXNlEkQKEXNlbnNvcl9pbl92ZWhpY2xlGAUgASgLMhguY2V2Lm9uYm9hcmRpbmcudjEuUG9zZTJSD3NlbnNvckluVmVoaWNsZRIiCg1tYXhfc3BlZWRfbXBzGAYgASgBUgttYXhTcGVlZE1wcxIoChBtYXhfc3RlZXJpbmdfcmFkGAcgASgBUg5tYXhTdGVlcmluZ1JhZBIvChNoYXJkd2FyZV9jYWxpYnJhdGVkGAggASgIUhJoYXJkd2FyZUNhbGlicmF0ZWQibwoGSGVhZGVyEhUKBnJ1bl9pZBgBIAEoCVIFcnVuSWQSGgoIc2VxdWVuY2UYAiABKARSCHNlcXVlbmNlEhcKB3RpbWVfbnMYAyABKARSBnRpbWVOcxIZCghmcmFtZV9pZBgEIAEoCVIHZnJhbWVJZCJ3CgtTdGF0ZVVwZGF0ZRIxCgZoZWFkZXIYASABKAsyGS5jZXYub25ib2FyZGluZy52MS5IZWFkZXJSBmhlYWRlchI1CgVzdGF0ZRgCIAEoCzIfLmNldi5vbmJvYXJkaW5nLnYxLlZlaGljbGVTdGF0ZVIFc3RhdGUicgoLTGlkYXJVcGRhdGUSMQoGaGVhZGVyGAEgASgLMhkuY2V2Lm9uYm9hcmRpbmcudjEuSGVhZGVyUgZoZWFkZXISMAoEc2NhbhgCIAEoCzIcLmNldi5vbmJvYXJkaW5nLnYxLkxpZGFyU2NhblIEc2NhbiKaAgoJTWFwVXBkYXRlEjEKBmhlYWRlchgBIAEoCzIZLmNldi5vbmJvYXJkaW5nLnYxLkhlYWRlclIGaGVhZGVyEjEKBnNvdXJjZRgCIAEoCzIZLmNldi5vbmJvYXJkaW5nLnYxLkhlYWRlclIGc291cmNlEjUKBXN0YXRlGAMgASgLMh8uY2V2Lm9uYm9hcmRpbmcudjEuVmVoaWNsZVN0YXRlUgVzdGF0ZRIrCgRncmlkGAQgASgLMhcuY2V2Lm9uYm9hcmRpbmcudjEuR3JpZFIEZ3JpZBJDCgxhdmFpbGFiaWxpdHkYBSABKA4yHy5jZXYub25ib2FyZGluZy52MS5BdmFpbGFiaWxpdHlSDGF2YWlsYWJpbGl0eSKHAgoKUGF0aFVwZGF0ZRIxCgZoZWFkZXIYASABKAsyGS5jZXYub25ib2FyZGluZy52MS5IZWFkZXJSBmhlYWRlchIxCgZzb3VyY2UYAiABKAsyGS5jZXYub25ib2FyZGluZy52MS5IZWFkZXJSBnNvdXJjZRIhCgxtYXBfc2VxdWVuY2UYAyABKARSC21hcFNlcXVlbmNlEisKBHBhdGgYBCABKAsyFy5jZXYub25ib2FyZGluZy52MS5QYXRoUgRwYXRoEkMKDGF2YWlsYWJpbGl0eRgFIAEoDjIfLmNldi5vbmJvYXJkaW5nLnYxLkF2YWlsYWJpbGl0eVIMYXZhaWxhYmlsaXR5IswCCg1Db21tYW5kVXBkYXRlEjEKBmhlYWRlchgBIAEoCzIZLmNldi5vbmJvYXJkaW5nLnYxLkhlYWRlclIGaGVhZGVyEjEKBnNvdXJjZRgCIAEoCzIZLmNldi5vbmJvYXJkaW5nLnYxLkhlYWRlclIGc291cmNlEiMKDXBhdGhfc2VxdWVuY2UYAyABKARSDHBhdGhTZXF1ZW5jZRIlCg5zdGF0ZV9zZXF1ZW5jZRgEIAEoBFINc3RhdGVTZXF1ZW5jZRIkCg52YWxpZF91bnRpbF9ucxgFIAEoBFIMdmFsaWRVbnRpbE5zEjkKB2NvbW1hbmQYBiABKAsyHy5jZXYub25ib2FyZGluZy52MS5Ecml2ZUNvbW1hbmRSB2NvbW1hbmQSKAoQY29udHJvbF9sZWFzZV9pZBgHIAEoCVIOY29udHJvbExlYXNlSWQiigMKB1J1bkluZm8SMQoGaGVhZGVyGAEgASgLMhkuY2V2Lm9uYm9hcmRpbmcudjEuSGVhZGVyUgZoZWFkZXISHwoLc2NoZW1hX2hhc2gYAiABKAlSCnNjaGVtYUhhc2gSLQoEZ29hbBgDIAEoCzIZLmNldi5vbmJvYXJkaW5nLnYxLlBvaW50MlIEZ29hbBI4Cgd2ZWhpY2xlGAQgASgLMh4uY2V2Lm9uYm9hcmRpbmcudjEuVmVoaWNsZVNwZWNSB3ZlaGljbGUSKwoEZ3JpZBgFIAEoCzIXLmNldi5vbmJvYXJkaW5nLnYxLkdyaWRSBGdyaWQSKAoQZ29h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"
+    }
+  ],
+  "routes": [
+    {
+      "id": "command",
+      "schemaId": "onboarding",
+      "messageType": "cev.onboarding.v1.CommandUpdate",
+      "direction": "subscribe",
+      "key": "cev/onboarding/v1/{run_id}/command",
+      "target": {
+        "topicId": "controls-command"
+      },
+      "mapping": {
+        "fields": [
+          {
+            "to": "runId",
+            "from": "value.header.run_id"
+          },
+          {
+            "to": "leaseId",
+            "from": "value.control_lease_id"
+          },
+          {
+            "to": "sequence",
+            "from": "value.header.sequence"
+          },
+          {
+            "to": "captureTimeNs",
+            "from": "value.header.time_ns"
+          },
+          {
+            "to": "deadlineNs",
+            "from": "value.valid_until_ns"
+          },
+          {
+            "to": "speedMps",
+            "from": "value.command.speed_mps"
+          },
+          {
+            "to": "steeringRad",
+            "from": "value.command.steering_rad"
+          },
+          {
+            "to": "mode",
+            "value": "velocity"
+          },
+          {
+            "to": "frameId",
+            "value": "base_link"
+          },
+          {
+            "to": "accelerationMps2",
+            "value": 0
+          },
+          {
+            "to": "jerkMps3",
+            "value": 0
+          },
+          {
+            "to": "steeringRateRadps",
+            "value": 0
+          }
+        ],
+        "metadata": [
+          {
+            "to": "runId",
+            "from": "value.header.run_id"
+          },
+          {
+            "to": "frameId",
+            "from": "value.header.frame_id"
+          },
+          {
+            "to": "sequenceId",
+            "from": "value.header.sequence"
+          },
+          {
+            "to": "captureTimeNs",
+            "from": "value.header.time_ns"
+          }
+        ],
+        "checks": [
+          {
+            "from": "value.header.run_id",
+            "equalsFrom": "run.runId"
+          },
+          {
+            "from": "value.header.frame_id",
+            "value": "base_link"
+          }
+        ]
+      }
+    },
+    {
+      "id": "lidar",
+      "schemaId": "onboarding",
+      "messageType": "cev.onboarding.v1.LidarUpdate",
+      "direction": "publish",
+      "key": "cev/onboarding/v1/{run_id}/lidar",
+      "source": {
+        "topicId": "front-lidar-points"
+      },
+      "mapping": {
+        "fields": [
+          {
+            "to": "header.run_id",
+            "from": "run.runId"
+          },
+          {
+            "to": "header.sequence",
+            "from": "metadata.sequenceId",
+            "offset": 1
+          },
+          {
+            "to": "header.time_ns",
+            "from": "metadata.captureTimeNs"
+          },
+          {
+            "to": "header.frame_id",
+            "value": "front_lidar_frame"
+          },
+          {
+            "to": "scan.points",
+            "each": {
+              "from": "value.points",
+              "fields": [
+                {
+                  "to": "x",
+                  "from": "item.x"
+                },
+                {
+                  "to": "y",
+                  "from": "item.y"
+                }
+              ]
+            }
+          },
+          {
+            "to": "scan.sensor_in_vehicle.position.x",
+            "from": "bindings.sensor.poseInRearAxle.position.x"
+          },
+          {
+            "to": "scan.sensor_in_vehicle.position.y",
+            "from": "bindings.sensor.poseInRearAxle.position.y"
+          },
+          {
+            "to": "scan.sensor_in_vehicle.yaw_rad",
+            "from": "bindings.sensor.poseInRearAxle.orientation",
+            "operation": "quaternionYaw"
+          }
+        ],
+        "bindings": {
+          "vehicleId": "ego",
+          "sensorId": "front-lidar",
+          "rearWheelIds": [
+            "rear-left",
+            "rear-right"
+          ]
+        }
+      }
+    },
+    {
+      "id": "path",
+      "schemaId": "onboarding",
+      "messageType": "cev.onboarding.v1.PathUpdate",
+      "direction": "subscribe",
+      "key": "cev/onboarding/v1/{run_id}/path",
+      "target": {
+        "topicId": "planning-path"
+      },
+      "mapping": {
+        "fields": [
+          {
+            "to": "points",
+            "each": {
+              "from": "value.path.points",
+              "fields": [
+                {
+                  "to": "x",
+                  "from": "item.x"
+                },
+                {
+                  "to": "y",
+                  "from": "item.y"
+                },
+                {
+                  "to": "z",
+                  "value": 0
+                }
+              ]
+            }
+          }
+        ],
+        "metadata": [
+          {
+            "to": "runId",
+            "from": "value.header.run_id"
+          },
+          {
+            "to": "frameId",
+            "from": "value.header.frame_id"
+          },
+          {
+            "to": "sequenceId",
+            "from": "value.header.sequence"
+          },
+          {
+            "to": "captureTimeNs",
+            "from": "value.header.time_ns"
+          }
+        ],
+        "checks": [
+          {
+            "from": "value.header.run_id",
+            "equalsFrom": "run.runId"
+          },
+          {
+            "from": "value.header.frame_id",
+            "value": "map"
+          }
+        ]
+      }
+    },
+    {
+      "id": "state",
+      "schemaId": "onboarding",
+      "messageType": "cev.onboarding.v1.StateUpdate",
+      "direction": "publish",
+      "key": "cev/onboarding/v1/{run_id}/state",
+      "source": {
+        "topicId": "truth-odometry"
+      },
+      "mapping": {
+        "fields": [
+          {
+            "to": "header.run_id",
+            "from": "run.runId"
+          },
+          {
+            "to": "header.sequence",
+            "from": "metadata.sequenceId"
+          },
+          {
+            "to": "header.time_ns",
+            "from": "metadata.captureTimeNs"
+          },
+          {
+            "to": "header.frame_id",
+            "value": "map"
+          },
+          {
+            "to": "state.pose.position.x",
+            "from": "derived.rearPose.position.x"
+          },
+          {
+            "to": "state.pose.position.y",
+            "from": "derived.rearPose.position.y"
+          },
+          {
+            "to": "state.pose.yaw_rad",
+            "from": "derived.rearPose.orientation",
+            "operation": "quaternionYaw"
+          },
+          {
+            "to": "state.speed_mps",
+            "from": "value.linearVelocity.x"
+          }
+        ],
+        "bindings": {
+          "vehicleId": "ego",
+          "sensorId": "front-lidar",
+          "rearWheelIds": [
+            "rear-left",
+            "rear-right"
+          ]
+        },
+        "derived": [
+          {
+            "id": "rearPose",
+            "from": "value.pose",
+            "operation": "poseAtOffset",
+            "offsetFrom": "bindings.vehicle.rearAxleInBase"
+          }
+        ]
+      }
+    }
+  ],
+  "bootstrap": []
+}

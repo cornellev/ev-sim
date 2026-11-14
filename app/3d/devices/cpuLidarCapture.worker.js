@@ -13,3 +13,4 @@ self.onmessage = ({ data: { id, method, payload } }) => {
         } });
     }
 };
+self.postMessage({ type: "worker-ready" });

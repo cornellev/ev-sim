@@ -1,6 +1,8 @@
 import { createRequire } from "node:module";
 import process from "node:process";
 import { serialize } from "node:v8";
+import { randomUUID } from "node:crypto";
+import { HeadlessZenohRuntime } from "./HeadlessZenohRuntime.js";
 
 import { assertPhysicsBackendSelection, sortBackendSelections } from "../../app/physics/PhysicsBackend.js";
 import { ExperimentMetricCollector } from "../../app/experiments/ExperimentMetricCollector.js";
@@ -236,6 +238,7 @@ export class ManagedHeadlessSession {
         packetHub = null,
         sensorTransportHost = null,
         udpMaxQueueBytes = null,
+        zenohTransport = null,
     } = {}) {
         this.artifactSinkFactory = artifactSinkFactory;
         this.limits = limits;
@@ -249,6 +252,8 @@ export class ManagedHeadlessSession {
         this.sensorTransportHost = sensorTransportHost
             ?? hostDescriptorFromConfig(this.hostConfig);
         this.udpMaxQueueBytes = udpMaxQueueBytes;
+        this.zenohTransport = zenohTransport;
+        this.zenohRuntime = null;
         this.runtime = null;
         this.kernel = null;
         this.bundle = null;
@@ -270,6 +275,11 @@ export class ManagedHeadlessSession {
             this.bundle = cloneRunBundle(bundle);
             this.metricDefinitions = structuredClone(metricDefinitions);
             this.episodeIdentity = managedEpisodeIdentity(this.verified.resolved);
+            if (this.verified.resolved.manifest.protobuf?.mode === "zenoh") {
+                this.runId = `run-${randomUUID()}`;
+                this.zenohRuntime = new HeadlessZenohRuntime({ config: this.zenohTransport, limits: this.limits, queueBytes: () => this.health().queueBytes });
+                await this.zenohRuntime.prepare(this.verified.resolved, { runId: this.runId, episodeIdentity: this.episodeIdentity });
+            }
             this.packetHub.configure({
                 bindings: this.verified.resolved.manifest.sensorTransports?.bindings ?? [],
                 hostConfig: this.hostConfig,
@@ -282,11 +292,13 @@ export class ManagedHeadlessSession {
                 pluginModuleSource: this.pluginModuleSource,
                 nativePacketSink: this.packetHub,
                 sensorTransportHost: this.sensorTransportHost,
+                ...this.zenohRuntime?.runtimeOptions(),
             });
             this.kernel = new SimulationKernel(this.runtime.context);
             await this.kernel.prepare(this.verified.resolved, {
                 episode: this.episodeIdentity,
                 requireStateSensors: false,
+                runId: this.runId,
             });
         } catch (error) {
             await this.close();
@@ -326,12 +338,20 @@ export class ManagedHeadlessSession {
                 await this.packetHub.attachArtifactRoot(this.artifactSink.stagingDirectory);
             }
             await this.packetHub.activateGeneration();
+            if (this.zenohRuntime) {
+                await this.zenohRuntime.activate(this.kernel);
+                this.kernel.publishClock();
+                this.kernel.transformRuntime?.publishStaticTransforms?.(0);
+                this.zenohRuntime.routes.deliver({ step: 0, timeNs: 0 });
+            }
             this.kernel.play();
             this.state = "running";
             const interval = Math.max(1, Math.floor(Number(yieldEverySteps) || 100));
             let shouldContinue = true;
             while (shouldContinue) {
+                this.zenohRuntime?.assertHealthy();
                 shouldContinue = await this.kernel.advanceStepAsync();
+                this.zenohRuntime?.assertHealthy();
                 this.completedStep = this.kernel.steps;
                 await this.packetHub.drain();
                 if (shouldContinue && this.kernel.steps % interval === 0) {
@@ -339,6 +359,7 @@ export class ManagedHeadlessSession {
                 }
             }
             const finalization = this.kernel.finalize({ status: "completed" });
+            if (this.zenohRuntime) { this.zenohRuntime.active = false; await this.zenohRuntime.drain(); }
             const scenario = finalization.scenario;
             const assertionFailures = (finalization.assertions || [])
                 .filter((entry) => entry.status === "failed" && entry.severity === "error");
@@ -346,7 +367,7 @@ export class ManagedHeadlessSession {
             const runResult = {
                 kind: "cev-sim.run-result",
                 version: 1,
-                runId: `run-${finalization.episodeHash.slice(0, 16)}`,
+                runId: this.runId ?? `run-${finalization.episodeHash.slice(0, 16)}`,
                 manifestId: this.verified.resolved.manifest.id,
                 scenarioId: this.verified.resolved.scenario.scenario.id,
                 status: passed ? "passed" : "failed",
@@ -406,12 +427,13 @@ export class ManagedHeadlessSession {
                     return total + Number(device.contractPublisher.queuedBytes);
                 }
                 const deviceQueue = device.queue ?? [];
-                return total + (deviceQueue.length > 0 ? serialize(deviceQueue).byteLength : 0);
+                return total + (deviceQueue.length > 0 ? serialize(deviceQueue).byteLength : 0) + Number(device.nativeProductBytes || 0);
             }
             catch { return total; }
         }, 0);
         const recordingQueueBytes = Number(this.artifactSink?.recording?.queuedBytes || 0);
         const packetTransportQueueBytes = Number(this.packetHub?.queuedBytes || 0);
+        const zenohQueueBytes = Number(this.zenohRuntime?.diagnostics()?.queueBytes || 0);
         return {
             state: this.state,
             rssBytes: memory.rss,
@@ -419,7 +441,8 @@ export class ManagedHeadlessSession {
             cpuUserMicros: cpu.user,
             cpuSystemMicros: cpu.system,
             lastCompletedStep: this.completedStep,
-            queueBytes: queueBytes + sensorQueueBytes + recordingQueueBytes + packetTransportQueueBytes,
+            queueBytes: queueBytes + sensorQueueBytes + recordingQueueBytes + packetTransportQueueBytes + zenohQueueBytes,
+            zenohQueueBytes,
             sensorQueueBytes,
             inputQueueBytes: queueBytes,
             recordingQueueBytes,
@@ -428,6 +451,7 @@ export class ManagedHeadlessSession {
     }
 
     async abort() {
+        await this.zenohRuntime?.close();
         this.metricCollector?.stop();
         await this.packetHub?.abort?.();
         await this.artifactSink?.abort?.();

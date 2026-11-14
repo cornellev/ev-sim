@@ -178,6 +178,7 @@ test("validation issues point at a simple field or an advanced section", () => {
     const read = (path) => validationIssueTarget({ path }, draft);
 
     assert.equal(read("name").simpleFocusId, "simple-field-name");
+    assert.equal(read("protobuf.interfaceHash").tab, "Protobuf");
     assert.equal(read("scenario.id").simpleFocusId, "simple-field-scenario");
     assert.equal(read("scenario.egoVehicleId").simpleFocusId, "simple-field-vehicle");
     assert.equal(read("environment.id").simpleFocusId, "simple-field-environment");

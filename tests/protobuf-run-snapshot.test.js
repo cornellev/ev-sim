@@ -25,7 +25,7 @@ async function resolveFixture(t, { inbound = false } = {}) {
     const { dir, service } = await serviceFor(t);
     const { manifest, resource } = protobufRunFixture({ inbound });
     await service.putProtobufInterface(resource.document);
-    await service.createRunManifest(manifest);
+    await service._writeRunManifest(manifest.id, manifest, { create: true });
     const bundle = await service.exportRunManifest(manifest.id);
     return { dir, service, manifest, resource, bundle };
 }
@@ -48,7 +48,7 @@ test("resolution pins complete immutable interfaces and fails on missing or corr
     await assert.rejects(service.resolveRunManifest(manifest.id, manifest), /interface.*unavailable/);
     const validation = await service.validateRunManifest(manifest.id, manifest);
     assert.equal(validation.ok, false);
-    assert.equal(validation.issues[0].path, "protobuf.interfaceHash");
+    assert.equal(validation.issues[0].path, "version");
     await service.putProtobufInterface(resource.document);
     let reads = 0;
     const read = service.getProtobufInterface.bind(service);
@@ -80,7 +80,8 @@ test("v12 bundles verify offline and detect inner tampering after outer hashes a
     const bytes = Buffer.from(canonicalRunBundleStringify(bundle));
     const verified = verifyRunBundleBytes(bytes, { execution: false });
     assert.equal(verified.resolved.protobufInterface.hash, bundle.resolved.protobufInterface.hash);
-    verifyRunBundle(bundle);
+    verifyRunBundleIntegrity(bundle);
+    assert.throws(() => verifyRunBundle(bundle), /reviewed native migration/);
     for (const mutate of [
         (resolved) => { delete resolved.protobufInterface; },
         (resolved) => { delete resolved.schemas; },

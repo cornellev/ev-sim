@@ -1017,3 +1017,11 @@ change the outstanding PR-12 hosted, soak, NVIDIA x64, or Jetson ARM64 gates.
   fixture range changes `packageHash` and `runtimeHash` (and therefore
   plugin-enabled `resolvedHash` / simulation / episode identities) while
   leaving `uiHash` and `worldHash` unchanged.
+
+- **2026-11-14 — ZPB-08 native topic and sensor ABIs.** Packages opt into
+  `topicAbi: 2` for native topic values and `sensorAbi: 2` for packed native
+  point products. ABI 1 omission keeps historical package/runtime hashes.
+  Native run execution rejects selected topic ABI 1 and active sensor ABI 1
+  consumers; reviewed adoption creates pinned replacements. Native publication
+  keeps heavy-value and control capability restrictions. Managed plugin
+  observation/tensor contracts and plant ABIs are unchanged.

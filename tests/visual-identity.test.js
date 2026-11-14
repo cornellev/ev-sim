@@ -58,7 +58,7 @@ test("VIS-12a freezes v10 bytes, hashes and canonical episode identities", async
     const vectors = await readFixture("legacy-bundles.v1.json");
     for (const [name, vector] of Object.entries(vectors)) {
         const bytes = await fs.readFile(new URL(`legacy-${name}.v10.json`, fixtureRoot));
-        const verified = verifyRunBundleBytes(bytes, { expectedBundleBytesHash: vector.bundleBytesHash });
+        const verified = verifyRunBundleBytes(bytes, { expectedBundleBytesHash: vector.bundleBytesHash, execution: false });
         assert.equal(bytes.length, vector.byteLength);
         assert.equal(verified.identityVersion, 1);
         assert.equal(verified.resolvedHash, vector.resolvedHash);
@@ -87,7 +87,7 @@ test("VIS-12a real direct resolution ignores refreshed visual locks for state, L
         manifest.sensorRig.sensors.forEach((sensor) => { sensor.enabled = sensor.type === type; });
         const before = await service.resolveRunManifest(manifest.id, manifest);
         assert.deepEqual(before.identityProfile, WORLD_BOUND_IDENTITY);
-        assert.equal(before.version, 12);
+        assert.equal(before.version, 13);
         assert.equal(defaultEpisodeIdentity(before).version, 2);
         verifyRunBundle(bundleFor(before));
         const changed = { ...current, visualLayer: { descriptorHash: "a".repeat(64) }, evidence: { reportHash: "b".repeat(64) } };
@@ -217,7 +217,7 @@ test("VIS-12a prospective camera selections are projected without activating pro
 test("VIS-12a exact byte integrity is independent of normalized hashes and never normalizes verification", async (t) => {
     const bundle = await createPortableHeadlessBundle();
     const bytes = Buffer.from(canonicalRunBundleStringify(bundle));
-    const verified = verifyRunBundleBytes(bytes);
+    const verified = verifyRunBundleBytes(bytes, { execution: false });
     assert.equal(verifyRunBundleBytes(new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)).bundleBytesHash,
         verified.bundleBytesHash);
     assert.throws(() => verifyRunBundleBytes(bytes.toString()), /ArrayBuffer or typed-array/);
@@ -253,7 +253,7 @@ test("VIS-12a exact byte integrity is independent of normalized hashes and never
     assert.throws(() => verifyRunBundle(historical), /re-resolution/);
 });
 
-test("VIS-12a direct and supervisor reset hashes agree for legacy and v11 with explicit negotiation", async (t) => {
+test("VIS-12a direct and supervisor reject historical execution and agree on native reset hashes", async (t) => {
     const { root } = await temporaryService(t);
     const supervisor = new HeadlessSupervisor({ socket: path.join(root, "supervisor.sock") });
     t.after(() => supervisor.close());
@@ -266,6 +266,17 @@ test("VIS-12a direct and supervisor reset hashes agree for legacy and v11 with e
         const direct = new HeadlessSession();
         t.after(() => direct.close());
         const spec = normalizeEpisodeSpec(bundle.resolved, { resetSeed: "77" });
+        if (bundle.resolved.version < 13) {
+            await assert.rejects(direct.prepare(bundle, spec), /reviewed native migration/);
+            const rejected = await supervisor.createBatch({
+                clientProtocol: { major: 1, minor: 5 },
+                runBundles: [{ bundleId: spec.runBundleId, resolvedHash: bundle.resolvedHash, simulationSemanticHash: bundle.simulationSemanticHash, canonicalJson: Buffer.from(canonicalRunBundleStringify(bundle)) }],
+                episodes: [spec],
+            });
+            assert.notEqual(rejected.error.code, 0);
+            assert.equal(supervisor.activeEnvironmentCount, 0);
+            continue;
+        }
         const descriptor = await direct.prepare(bundle, spec);
         const request = {
             clientProtocol: { major: 1, minor },
@@ -291,9 +302,15 @@ test("VIS-12a direct and supervisor reset hashes agree for legacy and v11 with e
 });
 
 
-test("VIS-12a managed execution retains legacy and v11 episode identities", async (t) => {
+test("VIS-12a managed execution rejects historical bundles and preserves native episode identity", async (t) => {
     const { root } = await temporaryService(t);
     for (const source of [await readFixture("legacy-state.v10.json"), await createPortableHeadlessBundle()]) {
+        if (source.resolved.version < 13) {
+            const historical = new ManagedHeadlessSession();
+            t.after(() => historical.close());
+            await assert.rejects(historical.prepare(source), /reviewed native migration/);
+            continue;
+        }
         source.resolved.manifest.controls.authority = "reference";
         source.resolved.manifest.clock.maxSteps = 3;
         source.resolved.scenario.scenario.routes[0].controller = { kind: "route-follower" };
@@ -315,7 +332,7 @@ test("VIS-12a managed execution retains legacy and v11 episode identities", asyn
 test("VIS-12a v11 golden bytes and hashes are independent of legacy goldens", async () => {
     const expected = await readFixture("world-bound-state.v2.json");
     const bytes = await fs.readFile(new URL("world-bound-state.v11.json", fixtureRoot));
-    const { bundle, resolved, bundleBytesHash } = verifyRunBundleBytes(bytes);
+    const { bundle, resolved, bundleBytesHash } = verifyRunBundleBytes(bytes, { execution: false });
     assert.equal(bundleBytesHash, expected.bundleBytesHash);
     assert.equal(bytes.length, expected.byteLength);
     assert.equal(resolved.world.hash, expected.worldHash);
@@ -323,7 +340,7 @@ test("VIS-12a v11 golden bytes and hashes are independent of legacy goldens", as
     assert.equal(computeSimulationSemanticHash(resolved), expected.simulationSemanticHash);
     assert.deepEqual(identities(resolved), { semantic: expected.simulationSemanticHash,
         browser: expected.browserEpisodeHash, headless: expected.headlessEpisodeHash });
-    const current = await createPortableHeadlessBundle();
+    const current = await createPortableHeadlessBundle({ native: false });
     assert.equal(current.resolved.version, 12);
     assert.equal(current.simulationSemanticHash, expected.simulationSemanticHash);
     bundle.manifest.name = "mutated";
@@ -340,7 +357,7 @@ test("VIS-12a v11 golden bytes and hashes are independent of legacy goldens", as
 test("legacy authoring import re-resolves as v12 without changing source bytes", async (t) => {
     const { service } = await temporaryService(t);
     const bytes = await fs.readFile(new URL("legacy-analytic.v10.json", fixtureRoot));
-    const { bundle } = verifyRunBundleBytes(bytes);
+    const { bundle } = verifyRunBundleBytes(bytes, { execution: false });
     // Re-resolution of an unchanged ID/world; conflicting IDs are a separate import case.
     const environmentId = bundle.manifest.environment.id;
     const existing = await service.getEnvironment(environmentId);

@@ -816,7 +816,7 @@ test("run --config UDP succeeds and endpoint/pacing changes preserve semantic ha
     assert.equal(run.code, 0, run.stderr);
     await waitFor(() => data.received.length > 0);
 
-    const resource = await pluginSensorFixtureResource();
+    const resource = await pluginSensorFixtureResource({ native: true });
     const registry = createSensorDefinitionRegistry([verifyPluginPackage(resource)]);
     const base = await createPluginPcapHeadlessBundle();
     const withUdp = structuredClone(base);

@@ -123,7 +123,7 @@ test("simulation stamps round-trip through nanoseconds", () => {
 
 test("v3 manifests migrate sensor poses to REP-103 without changing physical placement", () => {
     const migrated = normalizeRunManifest({
-        ...createDefaultRunManifest(),
+        ...createDefaultRunManifest({ version: 12 }),
         version: 3,
         protobuf: undefined,
         sensorRig: {
@@ -145,7 +145,7 @@ test("v3 manifests migrate sensor poses to REP-103 without changing physical pla
 });
 
 test("calibration bundles are deterministic and hash-stable", () => {
-    const manifest = createDefaultRunManifest();
+    const manifest = createDefaultRunManifest({ version: 12 });
     const left = buildCalibrationBundle(manifest);
     const right = buildCalibrationBundle(manifest);
     assert.equal(left.hash, right.hash);

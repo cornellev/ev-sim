@@ -9,6 +9,7 @@ function controllerFor(policy, start) {
     const manifest = createDefaultRunManifest({ logging: { policy, profileId: "simulation-run-full-sensors" } });
     controller.snapshot.activeRunId = "run-test";
     controller.snapshot.activeResolved = {
+        version: 13,
         manifest,
         definitionHash: "definition",
         resolvedHash: "resolved",
@@ -137,6 +138,7 @@ test("prepare waits for a switched environment to mount and apply the resolved r
     controller.setEnvironmentHandler((environmentId) => { requestedEnvironment = environmentId; });
     const manifest = createDefaultRunManifest({ environment: { id: "igvc" }, logging: { policy: "disabled" } });
     const resolved = {
+        version: 13,
         manifest,
         resolvedHash: "resolved-environment-switch",
         environment: { manifest: { environmentId: "igvc" } },
@@ -177,6 +179,7 @@ test("prepare forwards episode stop phase to the simulation", async () => {
     });
     const manifest = createDefaultRunManifest({ environment: { id: "igvc" }, logging: { policy: "disabled" } });
     const resolved = {
+        version: 13,
         manifest,
         resolvedHash: "resolved-stop-phase",
         environment: { manifest: { environmentId: "igvc" } },
@@ -378,7 +381,7 @@ test("reset accepts the server-resolved snapshot and creates a fresh ready run",
     assert.equal(snapshot.activeResolved, resolved);
     assert.equal(snapshot.manifestRevision, 7);
     assert.equal(simulation.timeNs, 0);
-    assert.deepEqual(applied, [[resolved, { episodePhase: "stop" }]]);
+    assert.deepEqual(applied, [[resolved, { episodePhase: "stop", runId: snapshot.activeRunId }]]);
 });
 
 test("a timed-out preparation cannot launch later when preflight eventually finishes", async (t) => {

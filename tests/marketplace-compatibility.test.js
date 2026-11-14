@@ -17,7 +17,7 @@ const runPackage = JSON.parse(await fs.readFile(new URL("../visual-layer/run-pac
 
 test("MKT-01 preserves plugin package and plugin-enabled run identities", async () => {
     const resource = await pluginFixtureResource();
-    const bundle = historicalV11RunBundle(await createPluginPortableHeadlessBundle(resource));
+    const bundle = historicalV11RunBundle(await createPluginPortableHeadlessBundle(resource, { native: false }));
     assert.equal(resource.packageHash, compatibility.plugin.packageHash);
     assert.equal(resource.runtimeHash, compatibility.plugin.runtimeHash);
     assert.equal(bundle.resolvedHash, compatibility.plugin.resolvedHash);

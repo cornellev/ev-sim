@@ -54,6 +54,14 @@ Use `client.get_status(None)` for the server's current default tab, or
 `client.get_status(Some(browser_id))` for a specific page. Clock values remain
 decimal strings, including values larger than JavaScript's safe integer range.
 
+For onboarding command contract v2, acquire a lease through
+`/api/interfaces/control-ownership` and set `config.control_lease` to
+`ControlLease { id, token }`. Prepare with `autoplay = false`; the server binds
+the lease to the actual run before `resume`. The launcher must renew it every
+250 ms. Lease loss pauses and clears controls. Acquire a new lease, call
+`run.bind_control_lease(lease)`, then explicitly resume. Stop and prepare a new
+run for resets. Credentials stay private in requests and are redacted by Debug.
+
 ## Deadlines and errors
 
 Lifecycle calls poll receipts every 200 ms and have a 120-second total deadline.

@@ -69,6 +69,12 @@ export function SimulationRunStatus({ simState, runState, recordingState, sensor
             : "text-zinc-300";
 
     return (
+        <>
+        {runState?.transport?.state === "reconnecting" && (
+            <div role="status" aria-live="polite" className="pointer-events-none fixed bottom-20 left-1/2 z-30 -translate-x-1/2 rounded-[var(--radius)] border border-amber-300/20 bg-zinc-950/95 px-3 py-2 text-xs text-amber-200">
+                Reconnecting…
+            </div>
+        )}
         <header
             aria-label="Simulation run status"
             className="pointer-events-none fixed left-[320px] top-3 z-20 select-none max-md:hidden"
@@ -128,5 +134,6 @@ export function SimulationRunStatus({ simState, runState, recordingState, sensor
                 <span className={`ml-3 flex items-center gap-1.5 ${TONES[assertions.tone]}`}><FaFlagCheckered aria-hidden="true" className="h-2.5 w-2.5" />Assertions: {assertions.label}</span>
             </div>
         </header>
+        </>
     );
 }

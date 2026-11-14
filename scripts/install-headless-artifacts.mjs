@@ -7,6 +7,7 @@ import process from "node:process";
 
 import { RELEASE_MANIFEST_KIND, assertReport } from "../server/headless/ReleaseReports.js";
 import { parseOptions, run } from "./lib/headless-release-support.mjs";
+import { installZenohArtifact, verifyZenohReleaseArtifacts } from "./lib/zenoh-artifacts.mjs";
 
 async function checked(command, args, options = {}) {
     const result = await run(command, args, options);
@@ -35,6 +36,7 @@ async function verify(dist) {
     );
     if (!Array.isArray(manifest.artifacts)) throw new Error("Release manifest has no artifact records.");
     const expected = new Map();
+    await verifyZenohReleaseArtifacts(dist, manifest);
     for (const artifact of manifest.artifacts) {
         const file = path.join(dist, artifact.file);
         const stat = await fs.stat(file);
@@ -72,6 +74,7 @@ async function main() {
             "install", "--prefix", path.resolve(options.nodePrefix), "--ignore-scripts", "--no-audit", "--no-fund",
             path.join(dist, npmArtifact.file),
         ]);
+        await installZenohArtifact(dist, manifest, path.join(path.resolve(options.nodePrefix), "node_modules/cev-sim"));
     }
     if (options.pythonVenv) {
         const environment = path.resolve(options.pythonVenv);

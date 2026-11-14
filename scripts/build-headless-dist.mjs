@@ -6,6 +6,7 @@ import path from "node:path";
 import process from "node:process";
 
 import { parse } from "acorn";
+import { collectZenohArtifacts } from "./lib/zenoh-artifacts.mjs";
 
 import { RUN_MANIFEST_VERSION } from "../app/simulation/RunManifest.js";
 import { HEADLESS_PROTOCOL } from "../server/headless/HeadlessProtocol.js";
@@ -43,6 +44,9 @@ const COPY_ENTRIES = Object.freeze([
     "docs/marketplace-registry.md",
     "docs/sensor-packet-transports.md",
     "docs/sflog.md",
+    "docs/zenoh-native-transport.md",
+    "native/zenoh-transport/index.js",
+    "native/zenoh-transport/package.json",
     "LICENSE",
 ]);
 const JAVASCRIPT_ROOTS = Object.freeze([
@@ -152,6 +156,8 @@ function packageMetadata(rootPackage) {
         "ajv",
         "semver",
         "sharp",
+        "protobufjs",
+        "@xmldom/xmldom",
         "spdx-expression-parse",
         "three",
         "three-mesh-bvh",
@@ -303,7 +309,8 @@ async function main() {
         const version = pythonVersion(pyproject);
         if (version !== rootPackage.version) throw new Error(`JavaScript ${rootPackage.version} and Python ${version} versions differ.`);
         const artifactFiles = [npmTarball, ...pythonFiles];
-        const artifacts = await Promise.all(artifactFiles.map(fileRecord));
+        const nativeTransports = await collectZenohArtifacts(options.zenohArtifacts, output);
+        const artifacts = [...await Promise.all(artifactFiles.map(fileRecord)), ...nativeTransports.map(({ file, sizeBytes, sha256 }) => ({ file, sizeBytes, sha256 }))];
         const manifest = createReport(RELEASE_MANIFEST_KIND, {
             packageVersion: version,
             packages: { npm: version, python: version },
@@ -320,6 +327,7 @@ async function main() {
             ],
             provenance: processProvenance(),
             artifacts,
+            nativeTransports,
         });
         const manifestPath = path.join(output, "release-manifest.json");
         await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);

@@ -17,6 +17,7 @@ const protoSource = z.union([
 const descriptorSource = z.object({ kind: z.literal("descriptor"), filePath: z.string().min(1).max(4096).optional(), descriptorBase64: z.string().max(933_336).optional() }).strict();
 const jsonObject = z.record(z.string(), z.unknown());
 const importSchema = { sourceId: id, schemaId: id, expectedRevision: revision.optional(), baseHash: hash.optional(),
+    interfaceVersion: z.union([z.literal(1), z.literal(2)]).optional(),
     routes: z.array(jsonObject).max(64).optional(), bootstrap: z.array(jsonObject).max(64).optional() };
 
 export function registerProtobufInterfaceTools(server, storage) {

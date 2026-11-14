@@ -13,6 +13,9 @@ export function deriveSimulationStatus(runState = {}, simState = {}) {
     if (TERMINAL_FAILURES.has(runStatus) || runState.error && runStatus === "error") {
         return { label: runStatus === "assertion-failed" ? "Assertion failed" : "Run error", detail: runState.error || "The run stopped with an error", tone: "rose", source: hasManifest ? "manifest" : "scene" };
     }
+    if (runState.transport?.state === "reconnecting") {
+        return { label: "Reconnecting…", detail: "Restoring the Zenoh connection", tone: "amber", source: "manifest" };
+    }
     if (renderProvider?.state === "error") {
         return { label: "Render error", detail: renderProvider.diagnostic?.message || renderProvider.error?.message || "Measured camera rendering failed", tone: "rose", source: hasManifest ? "manifest" : "scene" };
     }

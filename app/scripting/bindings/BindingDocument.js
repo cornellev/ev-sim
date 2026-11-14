@@ -35,6 +35,7 @@ export const TRIGGER_KIND_ORDER = [
 export const INPUT_SOURCES = {
     SIGNAL: "signal",
     MESSAGE: "message",
+    MESSAGE_METADATA: "message-metadata",
     CONSTANT: "constant",
     SIM: "sim"
 };
@@ -123,7 +124,7 @@ export function normalizeInputMapping(mapping = {}) {
     if (source === INPUT_SOURCES.SIGNAL) {
         normalized.path = toTrimmedString(mapping.path);
         normalized.field = toTrimmedString(mapping.field);
-    } else if (source === INPUT_SOURCES.MESSAGE) {
+    } else if ([INPUT_SOURCES.MESSAGE, INPUT_SOURCES.MESSAGE_METADATA].includes(source)) {
         normalized.field = toTrimmedString(mapping.field);
     } else if (source === INPUT_SOURCES.CONSTANT) {
         normalized.value = mapping.value === undefined ? null : mapping.value;
@@ -148,7 +149,11 @@ export function normalizeOutputMapping(mapping = {}) {
         normalized.path = toTrimmedString(mapping.path);
     } else {
         normalized.topic = toTrimmedString(mapping.topic);
-        normalized.type = toTrimmedString(mapping.type);
+        if (mapping.valueContract !== undefined) {
+            const contract = mapping.valueContract;
+            if (!contract || typeof contract.id !== "string" || !Number.isInteger(contract.version) || contract.version < 1 || Object.keys(contract).some((key) => !["id", "version"].includes(key)) || mapping.type) throw new Error("Native binding outputs require an exact valueContract without a message type.");
+            normalized.valueContract = { id: contract.id, version: contract.version };
+        } else normalized.type = toTrimmedString(mapping.type);
     }
 
     return normalized;
@@ -296,7 +301,7 @@ export function validateBinding(binding) {
         if (mapping.source === INPUT_SOURCES.SIGNAL && !mapping.path) {
             issues.push(`Input "${mapping.input}" needs a signal path.`);
         }
-        if (mapping.source === INPUT_SOURCES.MESSAGE && trigger.kind !== TRIGGER_KINDS.TOPIC) {
+        if ([INPUT_SOURCES.MESSAGE, INPUT_SOURCES.MESSAGE_METADATA].includes(mapping.source) && trigger.kind !== TRIGGER_KINDS.TOPIC) {
             issues.push(`Input "${mapping.input}" reads the trigger message, but the trigger is not a topic.`);
         }
     });
@@ -305,7 +310,7 @@ export function validateBinding(binding) {
         if (mapping.sink === OUTPUT_SINKS.SIGNAL && !mapping.path) {
             issues.push(`Output "${mapping.output}" needs a signal path.`);
         }
-        if (mapping.sink === OUTPUT_SINKS.PUBLISH && (!mapping.topic || !mapping.type)) {
+        if (mapping.sink === OUTPUT_SINKS.PUBLISH && (!mapping.topic || (!mapping.type && !mapping.valueContract))) {
             issues.push(`Output "${mapping.output}" needs a topic and message type to publish.`);
         }
     });

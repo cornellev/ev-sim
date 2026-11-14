@@ -496,7 +496,7 @@ test("oracle truth publisher stays isolated from measured sensors", () => {
         registerMsgDefinition(type, definition);
     }
     const store = new SignalStore({}, { sourceId: "truth-test" });
-    const manifest = createDefaultRunManifest();
+    const manifest = createDefaultRunManifest({ version: 12 });
     const router = new TopicContractRouter(manifest, { telemetry: store });
     const publisher = createLocalizationTruthPublisher(manifest, router);
     const vehicle = mockVehicle({ velocity: { x: 1.5, y: 0, z: 0 } });
@@ -511,7 +511,7 @@ test("localization estimate loopback routes through candidate namespace", () => 
         registerMsgDefinition(type, definition);
     }
     const store = new SignalStore({}, { sourceId: "ekf-loopback" });
-    const manifest = createDefaultRunManifest();
+    const manifest = createDefaultRunManifest({ version: 12 });
     const router = new TopicContractRouter(manifest, { telemetry: store });
     const topic = manifest.topics.find((entry) => entry.contractId === "localization-estimate");
     const payload = buildOdometryMessage({
@@ -531,11 +531,11 @@ test("localization estimate loopback routes through candidate namespace", () => 
 });
 
 test("default manifest v6 includes localization sensors without migrating v4 runs", () => {
-    const defaults = createDefaultRunManifest();
+    const defaults = createDefaultRunManifest({ version: 12 });
     assert.equal(defaults.version, 12);
     assert.ok(defaults.sensorRig.sensors.some((sensor) => sensor.type === "imu"));
     assert.ok(defaults.topics.some((topic) => topic.contractId === "truth-odometry"));
-    const migrated = normalizeRunManifest({ ...createDefaultRunManifest({ sensorRig: { sensors: [] } }), version: 4, protobuf: undefined });
+    const migrated = normalizeRunManifest({ ...createDefaultRunManifest({ version: 12, sensorRig: { sensors: [] } }), version: 4, protobuf: undefined });
     assert.equal(migrated.version, 12);
     assert.equal(migrated.sensorRig.sensors.length, 0);
 });

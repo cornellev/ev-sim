@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { HeadlessSession } from "./HeadlessSession.js";
 import { ManagedHeadlessSession } from "./ManagedHeadlessSession.js";
+import { HeadlessExternalSession } from "./HeadlessExternalSession.js";
 import { HeadlessEpisode } from "../../app/simulation/headless/HeadlessEpisode.js";
 import { validateSharedTensorReference } from "./SharedTensorArena.js";
 import { verifyRunBundleBytes } from "./RunBundle.js";
@@ -134,9 +135,15 @@ async function command(name, payload = {}) {
             const managed = payload.mode === "managed-experiment";
             const hostConfig = payload.packetTransports ?? payload.hostConfig ?? null;
             const packetHub = createPacketHub(payload);
-            session = managed
+            session = payload.mode === "external-realtime"
+                ? new HeadlessExternalSession({ limits: payload.limits, rendererClient, hostConfig, packetHub,
+                    zenohTransport: payload.zenohTransport, sensorTransportHost: payload.sensorTransportHost,
+                    controlLease: payload.controlLease,
+                    udpMaxQueueBytes: payload.udpMaxQueueBytes })
+                : managed
                 ? new ManagedHeadlessSession({
                     limits: payload.limits,
+                    zenohTransport: payload.zenohTransport,
                     rendererClient,
                     pluginModuleSource,
                     hostConfig,
@@ -146,6 +153,7 @@ async function command(name, payload = {}) {
                 })
                 : new HeadlessSession({
                     limits: payload.limits,
+                    zenohTransport: payload.zenohTransport,
                     hostConfig,
                     packetHub,
                     sensorTransportHost: payload.sensorTransportHost,
@@ -175,6 +183,28 @@ async function command(name, payload = {}) {
         case "run-managed":
             if (!(session instanceof ManagedHeadlessSession)) throw Object.assign(new Error("Worker is not initialized for a managed experiment."), { code: "ENVIRONMENT_NOT_FOUND" });
             return { finalized: await session.run(payload) };
+        case "realtime-start": {
+            if (!(session instanceof HeadlessExternalSession)) throw Object.assign(new Error("Worker is not initialized for external control."), { code: "ENVIRONMENT_NOT_FOUND" });
+            const descriptor = await session.start(payload);
+            const runId = descriptor.runId;
+            session.waitForCompletion().then(({ state, error }) => process.send?.({
+                kind: "cev-sim.worker-realtime-complete", runId, state,
+                error: error ? serializedError(error) : null, health: health(),
+            }));
+            return { descriptor };
+        }
+        case "realtime-pause":
+        case "realtime-resume":
+        case "realtime-stop":
+        case "realtime-reset": {
+            if (!(session instanceof HeadlessExternalSession)) throw Object.assign(new Error("Worker is not initialized for external control."), { code: "ENVIRONMENT_NOT_FOUND" });
+            if (payload.runId && payload.runId !== session.runId) throw Object.assign(new Error("Lifecycle command belongs to another run."), { code: "INVALID_REQUEST" });
+            return { descriptor: await session[name.slice("realtime-".length)](payload) };
+        }
+        case "realtime-ownership": {
+            if (!(session instanceof HeadlessExternalSession)) throw Object.assign(new Error("Worker is not initialized for external control."), { code: "ENVIRONMENT_NOT_FOUND" });
+            return { descriptor: session.updateOwnership(payload) };
+        }
         case "reset": {
             if (!session || !initialized) throw Object.assign(new Error("Worker is not initialized."), { code: "ENVIRONMENT_NOT_FOUND" });
             const reset = await session.reset(payload.episodeSpec, {
@@ -185,6 +215,7 @@ async function command(name, payload = {}) {
         }
         case "step":
             if (!session) throw Object.assign(new Error("Worker is not initialized."), { code: "ENVIRONMENT_NOT_FOUND" });
+            if (session instanceof HeadlessExternalSession) throw Object.assign(new Error("Policy actions cannot advance an external-controller environment."), { code: "INVALID_REQUEST" });
             return { transition: await session.stepAsync(payload.action) };
         case "finalize":
             if (!session) throw Object.assign(new Error("Worker is not initialized."), { code: "ENVIRONMENT_NOT_FOUND" });

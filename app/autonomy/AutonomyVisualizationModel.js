@@ -1,4 +1,5 @@
 import { Quaternion, Vector3 } from "three";
+import { validateNativeTopicValue } from "../simulation/NativeTopicContracts.js";
 /**
  * Renderer-neutral primitives for candidate/oracle perception and localization overlays.
  * Capture-time metadata travels with each snapshot so replay does not need ROS re-decode.
@@ -110,7 +111,7 @@ export function normalizeControlsSnapshot(source = {}) {
     } : null);
     return {
         ...base,
-        sequence: Math.max(0, Math.floor(Number(source.sequence) || 0)),
+        sequence: typeof source.sequence === "string" ? source.sequence : Math.max(0, Math.floor(Number(source.sequence) || 0)),
         mode: String(source.mode || base.mode),
         authority: String(source.authority || base.authority),
         heartbeatAgeNs: finiteNumber(source.heartbeatAgeNs),
@@ -255,6 +256,14 @@ export function validateInboundPayload(contractId, typeStr, value) {
     }
 }
 
+function assertNativeVisualization(payload, valueContract, id) {
+    if (!valueContract) return false;
+    if (valueContract.id !== id || valueContract.version !== 1) throw new Error(`Visualization requires ${id}@1.`);
+    const validation = validateNativeTopicValue(valueContract, payload);
+    if (!validation.ok) throw new Error(validation.message);
+    return true;
+}
+
 function classFromResults(results = []) {
     const first = results[0]?.hypothesis || results[0];
     return {
@@ -263,24 +272,25 @@ function classFromResults(results = []) {
     };
 }
 
-export function normalizeDetections2D(payload, { source = "candidate", status = VISUALIZATION_STATUS.OK } = {}) {
-    const stampNs = extractHeaderCaptureTimeNs(payload);
-    const frameId = String(payload?.header?.frame_id || "");
+export function normalizeDetections2D(payload, { source = "candidate", status = VISUALIZATION_STATUS.OK, valueContract = null, metadata = {} } = {}) {
+    const native = assertNativeVisualization(payload, valueContract, "cev.detections-2d");
+    const stampNs = native ? metadata.captureTimeNs : extractHeaderCaptureTimeNs(payload);
+    const frameId = native ? String(metadata.frameId || "") : String(payload?.header?.frame_id || "");
     return (payload?.detections || []).map((det, index) => ({
         id: String(det.id || `${source}-2d-${index}`),
         source,
         status,
         frameId: String(det.header?.frame_id || frameId),
         captureTimeNs: extractHeaderCaptureTimeNs(det) ?? stampNs,
-        ...classFromResults(det.results),
+        ...(native ? { classId: det.classId, score: det.score } : classFromResults(det.results)),
         box2d: {
             center: {
-                x: Number(det.bbox?.center?.position?.x || 0),
-                y: Number(det.bbox?.center?.position?.y || 0),
+                x: Number(native ? det.center.x : det.bbox?.center?.position?.x || 0),
+                y: Number(native ? det.center.y : det.bbox?.center?.position?.y || 0),
             },
             size: {
-                x: Number(det.bbox?.size_x || 0),
-                y: Number(det.bbox?.size_y || 0),
+                x: Number(native ? det.size.x : det.bbox?.size_x || 0),
+                y: Number(native ? det.size.y : det.bbox?.size_y || 0),
             },
             theta: Number(det.bbox?.center?.theta || 0),
         },
@@ -293,20 +303,22 @@ export function normalizeDetections3D(payload, {
     source = "candidate",
     status = VISUALIZATION_STATUS.OK,
     transformToMap = null,
+    valueContract = null, metadata = {},
 } = {}) {
-    const stampNs = extractHeaderCaptureTimeNs(payload);
-    const frameId = String(payload?.header?.frame_id || "");
+    const native = assertNativeVisualization(payload, valueContract, "cev.detections-3d");
+    const stampNs = native ? metadata.captureTimeNs : extractHeaderCaptureTimeNs(payload);
+    const frameId = native ? String(metadata.frameId || "") : String(payload?.header?.frame_id || "");
     return (payload?.detections || []).map((det, index) => {
         const center = {
-            x: Number(det.bbox?.center?.position?.x || 0),
-            y: Number(det.bbox?.center?.position?.y || 0),
-            z: Number(det.bbox?.center?.position?.z || 0),
+            x: Number(native ? det.pose.position.x : det.bbox?.center?.position?.x || 0),
+            y: Number(native ? det.pose.position.y : det.bbox?.center?.position?.y || 0),
+            z: Number(native ? det.pose.position.z : det.bbox?.center?.position?.z || 0),
         };
-        const orientation = det.bbox?.center?.orientation || { x: 0, y: 0, z: 0, w: 1 };
+        const orientation = native ? det.pose.orientation : det.bbox?.center?.orientation || { x: 0, y: 0, z: 0, w: 1 };
         const size = {
-            x: Number(det.bbox?.size?.x || 0),
-            y: Number(det.bbox?.size?.y || 0),
-            z: Number(det.bbox?.size?.z || 0),
+            x: Number(native ? det.size.x : det.bbox?.size?.x || 0),
+            y: Number(native ? det.size.y : det.bbox?.size?.y || 0),
+            z: Number(native ? det.size.z : det.bbox?.size?.z || 0),
         };
         let mapPose = { position: center, rotation: orientation };
         let transformOk = true;
@@ -329,7 +341,7 @@ export function normalizeDetections3D(payload, {
             status: transformOk ? status : VISUALIZATION_STATUS.MISSING_FRAME,
             frameId: sourceFrameId,
             captureTimeNs: extractHeaderCaptureTimeNs(det) ?? stampNs,
-            ...classFromResults(det.results),
+            ...(native ? { classId: det.classId, score: det.score } : classFromResults(det.results)),
             box3d: {
                 center: mapPose.position,
                 size,
@@ -378,9 +390,11 @@ export function normalizeLanes(payload, {
     source = "candidate",
     status = VISUALIZATION_STATUS.OK,
     transformToMap = null,
+    valueContract = null, metadata = {},
 } = {}) {
-    const stampNs = extractHeaderCaptureTimeNs(payload);
-    const frameId = String(payload?.header?.frame_id || "map");
+    const native = assertNativeVisualization(payload, valueContract, "cev.lanes");
+    const stampNs = native ? metadata.captureTimeNs : extractHeaderCaptureTimeNs(payload);
+    const frameId = native ? String(metadata.frameId || "") : String(payload?.header?.frame_id || "map");
     const lanes = payload?.lanes || [];
     return lanes.map((lane, index) => {
         const points = (lane.points || []).map((point) => {
@@ -389,7 +403,7 @@ export function normalizeLanes(payload, {
                 y: Number(point.y || 0),
                 z: Number(point.z || 0),
             };
-            if (typeof transformToMap === "function" && payload?.header) {
+            if (typeof transformToMap === "function" && (native || payload?.header)) {
                 const resolved = transformToMap({
                     position,
                     rotation: { x: 0, y: 0, z: 0, w: 1 },
@@ -404,7 +418,7 @@ export function normalizeLanes(payload, {
             };
         });
         return {
-            id: `${source}-lane-${index}`,
+            id: native ? lane.id : `${source}-lane-${index}`,
             source,
             status,
             frameId,
@@ -414,17 +428,33 @@ export function normalizeLanes(payload, {
     });
 }
 
-export function normalizeSemanticImage(payload, { source = "candidate", status = VISUALIZATION_STATUS.OK } = {}) {
+export function normalizePath(payload, { valueContract, metadata = {}, transformToMap = null } = {}) {
+    assertNativeVisualization(payload, valueContract, "cev.path");
+    let status = VISUALIZATION_STATUS.OK;
+    const points = payload.points.map((point) => {
+        let position = point;
+        if (transformToMap) {
+            const resolved = transformToMap({ position: point, rotation: { x: 0, y: 0, z: 0, w: 1 }, frameId: metadata.frameId, captureTimeNs: metadata.captureTimeNs });
+            if (resolved?.ok) position = resolved.pose.position;
+            else status = VISUALIZATION_STATUS.MISSING_FRAME;
+        }
+        return { ...position, three: rep103ToThreeVector(position) };
+    });
+    return { points, status, captureTimeNs: metadata.captureTimeNs, sequenceId: metadata.sequenceId, frameId: metadata.frameId };
+}
+
+export function normalizeSemanticImage(payload, { source = "candidate", status = VISUALIZATION_STATUS.OK, valueContract = null, metadata = {} } = {}) {
     if (!payload) return null;
+    const native = assertNativeVisualization(payload, valueContract, "cev.image");
     return {
         source,
         status,
-        captureTimeNs: extractHeaderCaptureTimeNs(payload),
-        frameId: String(payload.header?.frame_id || ""),
+        captureTimeNs: native ? metadata.captureTimeNs : extractHeaderCaptureTimeNs(payload),
+        frameId: native ? String(metadata.frameId || "") : String(payload.header?.frame_id || ""),
         height: Number(payload.height || 0),
         width: Number(payload.width || 0),
-        encoding: String(payload.encoding || "16UC1"),
-        step: Number(payload.step || 0),
+        encoding: String(native ? payload.pixelFormat : payload.encoding || "16UC1"),
+        step: Number(native ? payload.strideBytes : payload.step || 0),
         data: payload.data ?? null,
     };
 }
@@ -432,11 +462,13 @@ export function normalizeSemanticImage(payload, { source = "candidate", status =
 export function normalizeOdometry(payload, {
     source = "candidate",
     status = VISUALIZATION_STATUS.OK,
+    valueContract = null, metadata = {},
 } = {}) {
     if (!payload) return null;
-    const position = payload.pose?.pose?.position || { x: 0, y: 0, z: 0 };
-    const orientation = payload.pose?.pose?.orientation || { x: 0, y: 0, z: 0, w: 1 };
-    const covariance = Array.isArray(payload.pose?.covariance) ? [...payload.pose.covariance] : new Array(36).fill(0);
+    const native = assertNativeVisualization(payload, valueContract, "cev.odometry");
+    const position = native ? payload.pose.position : payload.pose?.pose?.position || { x: 0, y: 0, z: 0 };
+    const orientation = native ? payload.pose.orientation : payload.pose?.pose?.orientation || { x: 0, y: 0, z: 0, w: 1 };
+    const covariance = native ? [...payload.poseCovariance] : Array.isArray(payload.pose?.covariance) ? [...payload.pose.covariance] : new Array(36).fill(0);
     const three = rep103PoseToThree({
         position,
         rotation: { x: 0, y: 0, z: 0 },
@@ -444,9 +476,9 @@ export function normalizeOdometry(payload, {
     return {
         source,
         status,
-        captureTimeNs: extractHeaderCaptureTimeNs(payload),
-        frameId: String(payload.header?.frame_id || ""),
-        childFrameId: String(payload.child_frame_id || "base_link"),
+        captureTimeNs: native ? metadata.captureTimeNs : extractHeaderCaptureTimeNs(payload),
+        frameId: native ? String(metadata.frameId || "") : String(payload.header?.frame_id || ""),
+        childFrameId: native ? payload.childFrameId : String(payload.child_frame_id || "base_link"),
         position: {
             x: Number(position.x || 0),
             y: Number(position.y || 0),

@@ -40,7 +40,10 @@ export class BrowserSimBridge {
         });
         const unsubscribeRun = this.controller.subscribe(() => this.sync());
         const unsubscribeExperiment = this.experiment?.subscribe(() => this.sync());
-        const timer = setInterval(() => this.sync(), BROWSER_SIM_HEARTBEAT_MS);
+        let lastHeartbeat = Date.now();
+        const timer = setInterval(() => {
+            if (this.controller.ownershipGuard?.lease || Date.now() - lastHeartbeat >= BROWSER_SIM_HEARTBEAT_MS) { lastHeartbeat = Date.now(); this.sync(); }
+        }, 250);
         this.sync();
         return () => {
             this.active = false;
@@ -84,10 +87,12 @@ export class BrowserSimBridge {
         }
         const registration = this.registration;
         try {
+            const requestedAt = performance.now();
             const heartbeat = await this._request(`/bridge/${registration.browserId}/heartbeat`, {
                 snapshot: this.snapshot(), activity: this.activity, sequence: ++this.reportSequence,
             }, registration);
             if (!this.active || this.registration !== registration) return;
+            if (heartbeat.controlLease) this.controller.updateControlOwnership?.(heartbeat.controlLease, { requestedAt });
             const completed = new Set();
             for (const operation of this.operations.values()) {
                 if (operation.completion && operation.registration === registration) {
@@ -98,6 +103,8 @@ export class BrowserSimBridge {
             if (heartbeat.command && !completed.has(heartbeat.command.commandId)) this._handle(heartbeat.command, registration);
         } catch (error) {
             if (!retried && error.code === "BROWSER_NOT_REGISTERED" && this.registration === registration) {
+                const lease = this.controller.ownershipGuard?.lease;
+                if (lease) this.controller.updateControlOwnership?.({ ...lease, status: "lost", remainingMs: 0 });
                 this.registration = null;
                 // The new server must not inherit executions or receipts from its predecessor.
                 this.operations.clear();
@@ -117,11 +124,12 @@ export class BrowserSimBridge {
         }
         operation.working = true;
         try {
+            const leaseRequestedAt = performance.now();
             const command = await this._request(`/bridge/${registration.browserId}/commands/${summary.commandId}/claim`, { claimId: operation.claimId }, registration);
             if (!this.active || this.registration !== registration) return;
             let error = null;
             try {
-                await this.execute(command);
+                await this.execute({ ...command, leaseRequestedAt });
             } catch (failure) {
                 error = { code: failure.code ?? "BROWSER_COMMAND_FAILED", message: String(failure.message).slice(0, 4096) };
             }
@@ -141,7 +149,9 @@ export class BrowserSimBridge {
     async _complete(operation) {
         const { registration, commandId } = operation;
         try {
-            await this._request(`/bridge/${registration.browserId}/commands/${commandId}/complete`, operation.completion, registration);
+            const requestedAt = performance.now();
+            const response = await this._request(`/bridge/${registration.browserId}/commands/${commandId}/complete`, operation.completion, registration);
+            if (response.controlLease) this.controller.updateControlOwnership?.(response.controlLease, { requestedAt });
             this.operations.delete(commandId);
         } catch (error) {
             if (["COMMAND_NOT_FOUND", "BROWSER_NOT_REGISTERED"].includes(error.code)) this.operations.delete(commandId);
@@ -160,13 +170,16 @@ export class BrowserSimBridge {
         const controller = this.controller;
         switch (command.action) {
             case "start":
-                await controller.prepare(command.resolved, { autoplay: command.autoplay, manifestRevision: command.manifestRevision });
+                await controller.prepare(command.resolved, { autoplay: command.autoplay, manifestRevision: command.manifestRevision, controlLease: command.controlLease, leaseRequestedAt: command.leaseRequestedAt });
                 break;
             case "pause":
                 if (controller.getSnapshot().status !== "ready") await controller.pause();
                 break;
             case "resume":
                 if (controller.getSnapshot().status !== "running") await controller.play();
+                break;
+            case "bind-ownership":
+                controller.rebindControlOwnership(command.controlLease, { requestedAt: command.leaseRequestedAt });
                 break;
             case "stop":
                 await controller.stop();

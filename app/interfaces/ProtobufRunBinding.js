@@ -253,10 +253,10 @@ export function protobufInputContractHash(resolved) {
     const used = new Set(routes.map((route) => route.schemaId));
     const sources = [];
     const collect = (entry) => {
-        for (const key of ["from", "offsetFrom", "fromFrame", "toFrame"]) if (entry[key]?.startsWith("run.") && entry[key] !== "run.runId") sources.push(entry[key]);
+        for (const key of ["from", "equalsFrom", "offsetFrom", "fromFrame", "toFrame"]) if (entry[key]?.startsWith("run.") && entry[key] !== "run.runId") sources.push(entry[key]);
         if (entry.each) { collect(entry.each); entry.each.fields.forEach(collect); }
     };
-    routes.forEach((route) => { route.mapping.fields?.forEach(collect); route.mapping.derived?.forEach(collect); });
+    routes.forEach((route) => { route.mapping.fields?.forEach(collect); route.mapping.derived?.forEach(collect); route.mapping.metadata?.forEach(collect); route.mapping.checks?.forEach(collect); });
     const runValues = Object.fromEntries(sources.map((path) => [path, runValue(resolved, path, "protobuf.inputContract")]));
     const nativeBindings = resolved.version === 13 ? routes.map((route) => {
         const schema = document.schemas.find((schema) => schema.id === route.schemaId);
@@ -272,8 +272,20 @@ export function protobufInputContractHash(resolved) {
     })));
 }
 
-export function assertProtobufExecutionCapabilities(resolved) {
-    if ([12, 13].includes(resolved?.version) && normalizeProtobufRunConfig(resolved.manifest?.protobuf).mode === "zenoh") {
-        invalid("protobuf.mode", "Zenoh execution is unavailable until the ZPB transport runtime is implemented", "UNSUPPORTED_CAPABILITY");
+export function assertProtobufExecutionCapabilities(resolved, { target = "headless", transport = null, controlOwnership } = {}) {
+    const config = normalizeProtobufRunConfig(resolved?.manifest?.protobuf);
+    if (resolved?.version === 13) {
+        const bindings = resolved.bindings?.entries ?? resolved.manifest.scripts?.embeddedBindings ?? [];
+        if (controlOwnership === false && resolved.manifest.topics.some((topic) => topic.direction === "input" && topic.valueContract?.id === "cev.control-command" && topic.valueContract.version === 2)) invalid("controls", "Control-command@2 requires an installed ownership guard", "UNSUPPORTED_CAPABILITY");
+        if (resolved.manifest.scenario && resolved.scenario?.scenario?.version !== 2) invalid("scenario", "Native runs require a reviewed scenario v2", "UNSUPPORTED_CAPABILITY");
+        for (const binding of bindings) {
+            if ((binding.inputs ?? []).some((input) => !["constant", "sim", "signal", "message", "message-metadata"].includes(input.source))) invalid(`bindings.${binding.id}`, "Unsupported native input source", "UNSUPPORTED_CAPABILITY");
+            for (const output of binding.outputs ?? []) if (output.sink === "publish") {
+                const topic = resolved.manifest.topics.find((topic) => topic.id === output.topic || topic.name === output.topic);
+                if (topic?.direction !== "output" || output.type || output.valueContract?.id !== topic.valueContract?.id || output.valueContract?.version !== topic.valueContract?.version) invalid(`bindings.${binding.id}`, "Native publication requires the declared output valueContract", "UNSUPPORTED_CAPABILITY");
+            }
+        }
+        if (config.mode !== "zenoh" || (target === "browser" && transport === "zenoh-browser") || (target === "headless" && transport === "zenoh-native")) return;
     }
+    if (config.mode === "zenoh") invalid("protobuf.mode", "Zenoh execution requires a native run and its configured transport", "UNSUPPORTED_CAPABILITY");
 }

@@ -9,6 +9,7 @@ import { HEADLESS_PROTOCOL } from "../server/headless/HeadlessProtocol.js";
 import { RELEASE_MANIFEST_KIND, assertReport } from "../server/headless/ReleaseReports.js";
 import { generateHeadlessCharacterization } from "../tests/helpers/headlessCharacterization.js";
 import { REPOSITORY_ROOT, parseOptions } from "./lib/headless-release-support.mjs";
+import { verifyZenohReleaseArtifacts } from "./lib/zenoh-artifacts.mjs";
 
 const NPM_TARBALL_LIMIT = 10 * 1024 * 1024;
 
@@ -65,6 +66,7 @@ async function checkDistribution(directory, expectedVersion, expectedNodeRange) 
             throw new Error(`npm tarball ${artifact.file} exceeds the 10 MiB ceiling.`);
         }
     }
+    await verifyZenohReleaseArtifacts(root, manifest);
     const names = manifest.artifacts.map((entry) => entry.file);
     if (names.filter((name) => name.endsWith(".tgz")).length !== 1
         || names.filter((name) => name.endsWith(".whl")).length !== 1

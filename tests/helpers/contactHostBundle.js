@@ -13,8 +13,8 @@ export async function contactHostBundle({ model, plugin = false, nested = false,
         },
     }) : null;
     const bundle = resource
-        ? await createPluginPortableHeadlessBundle(resource, { sensors: [] })
-        : await createPortableHeadlessBundle({ sensors: [] });
+        ? await createPluginPortableHeadlessBundle(resource, { sensors: [], native: false })
+        : await createPortableHeadlessBundle({ sensors: [], native: false });
     const manifest = getBuiltInVehicleManifest("big-car");
     manifest.id = "host-contract-car";
     if (resource) {

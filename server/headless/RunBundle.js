@@ -426,8 +426,8 @@ function verifyBundleStructure(verified, { requireRuntime = false } = {}) {
 export function verifyRunBundle(bundle) {
     const verified = verifyRunBundleIntegrity(bundle);
     const { resolved } = verified;
-    if (![10, 11, 12, 13].includes(resolved.version)) {
-        invalid("UNSUPPORTED_CAPABILITY", "Historical bundles require authoring import and re-resolution before execution.");
+    if (resolved.version !== 13) {
+        invalid("UNSUPPORTED_CAPABILITY", "Historical bundles require reviewed native migration and re-resolution before execution.");
     }
     verifyBundleStructure(verified, { requireRuntime: true });
     return verified;

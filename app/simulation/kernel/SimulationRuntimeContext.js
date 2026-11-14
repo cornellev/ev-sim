@@ -414,6 +414,16 @@ export function createSimulationRuntimeContext(options = {}) {
             },
         },
         topics: {
+            executionCapabilities() { return { target: options.renderTarget ?? "headless", transport: options.protobufTransport ?? null, controlOwnership: Boolean(resolve(options.controlOwnership)) }; },
+            configure(resolvedRun, runtimeOptions) {
+                if (resolvedRun.version !== 13 || !options.protobufRoutes) return;
+                const result = options.protobufRoutes.configure({ resolvedRun, ...runtimeOptions, publicationPort: options.protobufPublicationPort });
+                options.onProtobufGeneration?.(result.generation);
+            },
+            reset() {
+                if (options.protobufRoutes && !options.protobufRoutes.disposed) options.onProtobufGeneration?.(options.protobufRoutes.reset());
+            },
+            dispose() { options.protobufRoutes?.dispose(); },
             publicationPort() { return options.publicationPort ?? null; },
             deliver(clock) { return options.protobufRoutes?.deliver?.(clock); },
             client() {

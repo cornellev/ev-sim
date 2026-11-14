@@ -50,6 +50,7 @@ export class LocalizationTruthPublisher {
             cycle: step,
             logClass: "standard",
             frameId: truth.headerFrameId,
+            ...(native ? { sequenceId: String(step), actualDeliveryStep: step } : {}),
         });
 
         return payload;

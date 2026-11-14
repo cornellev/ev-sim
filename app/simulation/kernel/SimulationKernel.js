@@ -257,6 +257,7 @@ export class SimulationKernel {
         this.finalizedResult = null;
         this.telemetry?.resetRunState?.();
         this.inputQueue.reset();
+        this.context.topics?.reset?.();
         this.assertionEngine.reset();
         this.topicRouter?.reset?.();
         this.transformRuntime?.reset?.();
@@ -380,9 +381,10 @@ export class SimulationKernel {
         perceptionObservations = false,
         sensorOccupancy = false,
         episodePhase = "start",
+        runId = null,
     } = {}) {
         if (!resolved?.manifest) throw new Error("Resolved run manifest is required.");
-        assertProtobufExecutionCapabilities(resolved);
+        assertProtobufExecutionCapabilities(resolved, this.context?.topics?.executionCapabilities?.());
         if (resolvedUsesPlugins(resolved) && typeof this.context.plugins?.prepare !== "function") {
             throw pluginError(
                 PLUGIN_ERROR_CODES.UNAVAILABLE,
@@ -428,6 +430,7 @@ export class SimulationKernel {
                 || computeSimulationSemanticHash(this.resolvedRun);
             this.resolvedRun.simulationSemanticHash = this.simulationSemanticHash;
             const manifest = this.resolvedRun.manifest;
+            this.runId = manifest.version === 13 ? (runId ?? manifest.id) : manifest.id;
             await this.context.environment.prepare(
                 this.resolvedRun.environment,
                 this.resolvedRun,
@@ -445,9 +448,10 @@ export class SimulationKernel {
             }
 
             this.inputQueue = new TopicInputQueue(manifest.topics);
+            this.context.topics.configure?.(this.resolvedRun, { runId: this.runId, inputQueue: this.inputQueue });
             this.planningCostmapPublisher?.dispose();
             this.planningCostmapPublisher = createPlanningCostmapPublisher(this.resolvedRun, this.context);
-            this.topicRouter = new TopicContractRouter(manifest, { telemetry: this.telemetry, publicationPort: this.context.topics.publicationPort?.() });
+            this.topicRouter = new TopicContractRouter(manifest, { telemetry: this.telemetry, publicationPort: this.context.topics.publicationPort?.(), runId: this.runId });
             this.localizationTruthPublisher = createLocalizationTruthPublisher(manifest, this.topicRouter);
             this.localizationTruthPublisher.stepNs = manifest.clock.stepNs;
             this.goalPublisher = new GoalPublisher({
@@ -468,6 +472,7 @@ export class SimulationKernel {
             });
             this.candidateOutputRuntime.setTransformRuntime(this.transformRuntime);
             this.controlRuntime = new ControlRuntime({
+                runId: this.runId,
                 telemetry: this.telemetry,
                 manifest,
                 controls: manifest.controls,
@@ -521,7 +526,7 @@ export class SimulationKernel {
             this.context.scripts.setTopicRouter(this.topicRouter, manifest.topics);
             await this.context.devices.configureFromManifest(manifest.sensorRig, {
                 nativeTopics: manifest.version === 13,
-                runId: manifest.id,
+                runId: this.runId,
                 seed: manifest.seed,
                 topics: manifest.topics,
                 topicRouter: this.topicRouter,
@@ -806,7 +811,8 @@ export class SimulationKernel {
             }
             if (routed && routed.ok === false) continue;
             this.context.scripts.applyTopicUpdate(entry.info);
-            const handledByScenario = this.scenarioRuntime?.applyExternalTopic?.(entry.info) ?? false;
+            const handledByScenario = this.scenarioRuntime?.applyExternalTopic?.(entry.info, { applyTimeNs }) ?? false;
+            if (handledByScenario?.ok === false) continue;
             const controlTopic = this.resolvedRun?.manifest?.topics?.find((topic) =>
                 topic.direction === "input"
                 && (topic.name === entry.info.name
@@ -1097,6 +1103,7 @@ export class SimulationKernel {
         this.context.scripts.dispose?.();
         this.context.plugins?.dispose?.();
         this.context.inputs.dispose?.();
+        this.context.topics.dispose?.();
         this.context.environment.dispose?.();
         this.inputQueue.reset();
         this.telemetry?.resetRunState?.({ preservePaths: [] });

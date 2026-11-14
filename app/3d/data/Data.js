@@ -1,4 +1,3 @@
-import { Client } from "@/app/client/Client";
 import { KeyManager } from "../managers/KeyManager";
 import { MouseManager } from "../managers/MouseManager";
 import { City } from "./City";
@@ -45,9 +44,6 @@ export class Data {
         this.renderer = null;
         this.spark = null;
 
-        (async () => {
-            await this.clientManager.setup();
-        })();
     }
 
     /**

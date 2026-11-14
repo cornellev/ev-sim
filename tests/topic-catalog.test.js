@@ -36,7 +36,7 @@ test("autonomy catalog exposes versioned controls-command and retires ackdrive-l
     assert.equal(getAutonomyContract("controls-command").implementation, "live");
     assert.equal(getAutonomyContract("controls-command").units, "SI");
 
-    const manifest = createDefaultRunManifest();
+    const manifest = createDefaultRunManifest({ version: 12 });
     const closure = schemaClosureForManifest(manifest);
     assert.ok(closure["sensor_fusion_msgs/StampedAckermannDrive"]);
     assert.ok(!closure["sensor_fusion_msgs/AckermannDrive"]);
@@ -84,7 +84,7 @@ test("explicit required false on controls-command survives normalize", () => {
     });
     assert.equal(optional.required, false);
 
-    const manifest = createDefaultRunManifest();
+    const manifest = createDefaultRunManifest({ version: 12 });
     const controls = manifest.topics.find((topic) => topic.contractId === "controls-command");
     assert.equal(controls.required, true);
     const updated = normalizeRunManifest({
@@ -97,7 +97,7 @@ test("explicit required false on controls-command survives normalize", () => {
 });
 
 test("manifest authority validation rejects conflicting authority on the same contract", () => {
-    const manifest = createDefaultRunManifest();
+    const manifest = createDefaultRunManifest({ version: 12 });
     manifest.topics.push(topicFromContract("controls-command", { id: "controls-alt", authority: "reference" }));
     const issues = validateManifestTopicAuthority(manifest);
     assert.ok(issues.some((issue) => /Conflicting authority/i.test(issue.message)));
@@ -105,7 +105,7 @@ test("manifest authority validation rejects conflicting authority on the same co
 
 test("topic contract router writes producer and active namespaces for controls-command", () => {
     const store = new SignalStore({}, { sourceId: "router-test" });
-    const manifest = createDefaultRunManifest();
+    const manifest = createDefaultRunManifest({ version: 12 });
     const router = new TopicContractRouter(manifest, { telemetry: store });
     const topic = manifest.topics.find((entry) => entry.contractId === "controls-command");
     registerMsgDefinition("sensor_fusion_msgs/StampedAckermannDrive", catalogSchemas()["sensor_fusion_msgs/StampedAckermannDrive"]);
@@ -122,7 +122,7 @@ test("topic contract router writes producer and active namespaces for controls-c
 
 test("observational candidate returns skip active namespace by default", () => {
     const store = new SignalStore({}, { sourceId: "observe-test" });
-    const manifest = createDefaultRunManifest();
+    const manifest = createDefaultRunManifest({ version: 12 });
     const router = new TopicContractRouter(manifest, { telemetry: store });
     const topic = manifest.topics.find((entry) => entry.contractId === "localization-estimate");
     assert.equal(topic.routeDownstream, false);
@@ -154,7 +154,7 @@ test("default manifest includes live perception return contracts and controls-co
 });
 
 test("v7 manifests without candidate returns gain them on normalize", () => {
-    const source = createDefaultRunManifest();
+    const source = createDefaultRunManifest({ version: 12 });
     source.version = 7;
     delete source.protobuf;
     source.topics = source.topics.filter((entry) => !DEFAULT_CANDIDATE_RETURN_CONTRACT_IDS.includes(entry.contractId));
@@ -168,7 +168,7 @@ test("v7 manifests without candidate returns gain them on normalize", () => {
 });
 
 test("v8+ manifests can omit candidate return topics", () => {
-    const source = createDefaultRunManifest();
+    const source = createDefaultRunManifest({ version: 12 });
     source.topics = source.topics.filter((entry) => !DEFAULT_CANDIDATE_RETURN_CONTRACT_IDS.includes(entry.contractId));
     const kept = normalizeRunManifest({ ...source, version: 8, protobuf: undefined });
     for (const id of DEFAULT_CANDIDATE_RETURN_CONTRACT_IDS) {
@@ -180,7 +180,7 @@ test("v8+ manifests can omit candidate return topics", () => {
 });
 
 test("topic input queue rejects undeclared topics and preserves arrival ordering", () => {
-    const manifest = createDefaultRunManifest();
+    const manifest = createDefaultRunManifest({ version: 12 });
     const queue = new TopicInputQueue(manifest.topics);
     const rejected = queue.enqueue({ name: "/unknown", value: 1 }, 1);
     assert.equal(rejected.rejected, true);
@@ -218,7 +218,7 @@ test("v2 manifests normalize to v12 with controls-command migration", () => {
 
 test("inbound validity windows are enforced separately from transport timeout", () => {
     const store = new SignalStore({}, { sourceId: "validity-test" });
-    const manifest = createDefaultRunManifest();
+    const manifest = createDefaultRunManifest({ version: 12 });
     const stamped = topicFromContract("controls-command", {
         id: "controls-validity",
         name: "/controls/command-validity",
@@ -240,7 +240,7 @@ test("inbound validity windows are enforced separately from transport timeout", 
 
 test("stale inbound controls without fallback are rejected", () => {
     const store = new SignalStore({}, { sourceId: "stale-test" });
-    const manifest = createDefaultRunManifest();
+    const manifest = createDefaultRunManifest({ version: 12 });
     const primary = topicFromContract("controls-command", {
         id: "controls-stale",
         name: "/controls/command-stale",

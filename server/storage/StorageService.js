@@ -75,6 +75,8 @@ import {
 import { buildCalibrationBundle } from "../../app/autonomy/CalibrationBundle.js";
 import { createNativeTopicContractResource } from "../../app/simulation/NativeTopicContracts.js";
 import { planNativeRunMigration, validateNativeRunMigration, applyNativeRunMigration } from "../../app/interfaces/NativeRunMigration.js";
+import { bindNativeProductContext } from "../../app/interfaces/NativeProductTransforms.js";
+import { normalizeMappingDefinition } from "../../app/interfaces/ProtobufMappingDefinition.js";
 import { recompileNativeGraph } from "../interfaces/NativeGraphCompiler.js";
 import { createScriptDocument } from "../../app/scripting/EditorDocument.js";
 import {
@@ -178,6 +180,7 @@ import {
     normalizeBindingManifest,
 } from "../../app/scripting/bindings/BindingDocument.js";
 import { normalizeScriptDocument } from "../../app/scripting/EditorDocument.js";
+import { getGraphScriptReferences } from "../../app/scripting/GraphDocument.js";
 import {
     collectScenarioScriptIds,
     createDefaultScenario,
@@ -1947,6 +1950,7 @@ export class StorageService {
     }
 
     async _validateRunManifestWithPluginSensors(source) {
+        if (source.version !== undefined && Number(source.version) < 13) return { ok: false, manifest: source, issues: [{ path: "version", message: "Historical runs require reviewed native migration before saving or duplicating." }] };
         const envelope = validateRunManifest(source, { allowUnknownSensors: true });
         if (!envelope.ok) return envelope;
         try {
@@ -1970,16 +1974,43 @@ export class StorageService {
     }
 
     async planNativeRunMigration(manifestId, input = {}) {
-        const manifest = await this.getRunManifest(manifestId);
-        if (!manifest) throw new Error(`Run manifest "${manifestId}" does not exist.`);
+        const source = await this.getRunManifest(manifestId);
+        if (!source) throw new Error(`Run manifest "${manifestId}" does not exist.`);
+        const manifest = normalizeRunManifest(source);
         const interfaceResource = manifest.protobuf.mode === "zenoh"
             ? createProtobufInterfaceResource(await this.getProtobufInterface(manifest.protobuf.interfaceHash), manifest.protobuf.interfaceHash) : null;
-        const scripts = (await Promise.all(manifest.scripts.artifacts.map((reference) => this.getScript(reference.scriptId)))).filter(Boolean);
         const resolvedRun = await this.resolveRunManifest(manifestId);
-        return planNativeRunMigration({ manifest, interfaceResource, scripts, resolvedRun, mappingOverrides: input.mappingOverrides, scriptPaths: input.scriptPaths });
+        const targetInterfaceResource = input.interfaceHash ? createProtobufInterfaceResource(await this.getProtobufInterface(input.interfaceHash), input.interfaceHash) : null;
+        const scenario = manifest.scenario ? await this.getScenario(manifest.scenario.id) : null;
+        const roots = new Set([...manifest.scripts.artifacts.map((reference) => reference.scriptId), ...resolvedRun.bindings.entries.map((binding) => binding.scriptId), ...collectScenarioScriptIds(scenario), ...manifest.parameters.filter((parameter) => parameter.target?.kind === "script-input").map((parameter) => parameter.target.scriptId)]);
+        const scripts = new Map(), visiting = new Set();
+        const visit = async (id, depth = 0) => {
+            if (scripts.has(id)) return;
+            if (depth >= 64 || visiting.has(id) || scripts.size + visiting.size >= 64) throw new Error(`Native migration script closure contains a cycle or exceeds 64 scripts/depth at ${id}.`);
+            const document = await this.getScript(id);
+            if (!document) throw new Error(`Native migration source script ${id} is unavailable.`);
+            visiting.add(id);
+            for (const child of getGraphScriptReferences(document.graph).sort()) await visit(child, depth + 1);
+            visiting.delete(id); scripts.set(id, document);
+        };
+        for (const id of [...roots].filter(Boolean).sort()) await visit(id);
+        const pluginReplacements = {};
+        for (const [fromHash, toHash] of Object.entries(input.pluginReplacements ?? {})) {
+            if (!/^[a-f0-9]{64}$/.test(fromHash) || typeof toHash !== "string" || !/^[a-f0-9]{64}$/.test(toHash)) throw new Error("Plugin migration replacements require exact source and destination package hashes.");
+            pluginReplacements[fromHash] = await this.plugins.getPackage(toHash);
+        }
+        const vehicles = await Promise.all([...new Set(resolvedRun.vehicles.map((entry) => entry.vehicleId))].sort().map(async (id) => await this.getVehicleManifest(id) ?? resolvedRun.vehicles.find((entry) => entry.vehicleId === id).manifest));
+        return planNativeRunMigration({ manifest: source, interfaceResource, targetInterfaceResource, additionalTopics: input.additionalTopics, scenario, vehicles, scripts: [...scripts.values()], resolvedRun, mappingOverrides: input.mappingOverrides, scriptPaths: input.scriptPaths, topicContracts: input.topicContracts, bindingTopics: input.bindingTopics, pluginReplacements });
     }
 
     validateNativeRunMigration(plan) { return validateNativeRunMigration(plan); }
+
+    async nativeRunContext(manifestId, selection) {
+        const resolved = await this.resolveRunManifest(manifestId);
+        if (resolved.version !== 13) throw new Error("Native product context requires a native run.");
+        const normalized = normalizeMappingDefinition({ fields: [], bindings: selection }).bindings;
+        return { resolvedHash: resolved.resolvedHash, bindings: bindNativeProductContext(normalized, resolved) };
+    }
 
     async applyNativeRunMigration(manifestId, { plan, expectedRevision } = {}) {
         const current = await this.getRunManifest(manifestId);
@@ -1989,18 +2020,62 @@ export class StorageService {
         }
         const reviewed = plan.request?.resolvedRun?.resolvedHash;
         if (!reviewed || (await this.resolveRunManifest(manifestId)).resolvedHash !== reviewed) throw new Error("Native migration dependencies changed; create a new preview.");
-        const adopted = applyNativeRunMigration(plan, { expectedRevision, recompile: recompileNativeGraph });
+        if (plan.original.scenario && canonicalStringify(await this.getScenario(plan.original.scenario.id)) !== canonicalStringify(plan.original.scenario)) throw new Error("Native migration scenario source changed; create a new preview.");
+        const pluginSession = new PluginRunSession({
+            moduleSource: plan.pluginPackages?.length ? new NodePluginModuleSource({ pluginStore: this.plugins, authorizePackage: this.marketplaceExecutablePolicy?.authorizePackage.bind(this.marketplaceExecutablePolicy) }) : null,
+            plugins: (plan.candidate.plugins?.artifacts ?? []).map((lock) => {
+                const verified = verifyPluginPackage(plan.pluginPackages.find((resource) => resource.packageHash === lock.expectedHash));
+                return { pluginId: lock.pluginId, version: verified.document.version, packageHash: verified.resource.packageHash, runtimeHash: verified.resource.runtimeHash, capabilities: lock.capabilities };
+            }),
+            availableCapabilities: PLG03_RUNTIME_CAPABILITIES,
+            authorizePackage: this.marketplaceExecutablePolicy?.authorizePackage.bind(this.marketplaceExecutablePolicy),
+        });
+        let adopted;
+        try {
+            await pluginSession.prepareDefinitions(plan.pluginPackages ?? []);
+            adopted = applyNativeRunMigration(plan, { expectedRevision, recompile: (graph, name) => recompileNativeGraph(graph, name, { registry: pluginSession.registry, pluginSession }) });
+        } finally { pluginSession.dispose(); }
         const archive = this._fileStore(path.join(this.dataDir, "native-run-migrations", `${adopted.archiveHash}.json`), null);
         const previous = await archive.read();
         if (previous && canonicalStringify(previous) !== canonicalStringify(adopted.original)) throw new Error("Native migration archive content mismatch.");
         if (!previous) await archive.write(adopted.original);
         if (adopted.interfaceResource) await this.putProtobufInterface(adopted.interfaceResource.document);
+        for (const resource of adopted.pluginPackages) await this.plugins.putPackage(resource);
+        for (const vehicle of adopted.vehicles) {
+            const bundle = await this.exportVehicleBundle(vehicle.sourceId);
+            const source = plan.original.vehicles.find((source) => source.id === vehicle.sourceId);
+            const registry = createSensorDefinitionRegistry((plan.request.resolvedRun.pluginPackages ?? []).map((resource) => verifyPluginPackage(resource)));
+            if (canonicalStringify(bundle.manifest) !== canonicalStringify(normalizeVehicleManifest(source, { sensorRegistry: registry }))) throw new Error(`Vehicle ${vehicle.sourceId} changed after native migration planning.`);
+            const existing = await this.getVehicleManifest(vehicle.document.id);
+            if (existing) {
+                const nativeRegistry = createSensorDefinitionRegistry(adopted.pluginPackages.map((resource) => verifyPluginPackage(resource)));
+                if (canonicalStringify(normalizeVehicleManifest(existing, { sensorRegistry: nativeRegistry })) !== canonicalStringify(vehicle.document)) throw new Error(`Native vehicle ${vehicle.document.id} has different content.`);
+                continue;
+            }
+            bundle.manifest = vehicle.document;
+            bundle.pluginPackages = vehicle.document.pluginLocks.map((lock) => adopted.pluginPackages.find((resource) => resource.packageHash === lock.packageHash));
+            bundle.bundleHash = computeVehicleBundleHash(bundle);
+            const imported = await this.importVehicleBundle(bundle);
+            if (imported.id !== vehicle.document.id) throw new Error("Native vehicle destination changed during import; create a new preview.");
+        }
         for (const script of adopted.scripts) {
             const existing = await this.getScript(script.id);
             if (existing && semanticHash(existing.latestValidArtifact) !== semanticHash(script.artifact)) throw new Error(`Native migration script ${script.id} already exists with different content.`);
             if (!existing) await this.putScript(createScriptDocument({ id: script.id, name: script.name, graph: script.graph, latestValidArtifact: script.artifact }));
         }
+        if (adopted.scenario) {
+            const existing = await this.getScenario(adopted.scenario.id);
+            if (existing && semanticHash(stripScenarioMetadata(existing)) !== semanticHash(stripScenarioMetadata(adopted.scenario))) throw new Error("Native migration scenario destination has different content.");
+            if (!existing) await this.putScenario(adopted.scenario.id, { scenario: adopted.scenario, expectedRevision: 0 });
+        }
         await this.resolveRunManifest(manifestId, adopted.manifest);
+        if ((await this.resolveRunManifest(manifestId)).resolvedHash !== reviewed) throw new Error("Native migration dependencies changed before publication; create a new preview.");
+        for (const source of plan.original.scripts) if (canonicalStringify(await this.getScript(source.id)) !== canonicalStringify(source)) throw new Error(`Native migration script ${source.id} changed before publication.`);
+        if (plan.original.scenario && canonicalStringify(await this.getScenario(plan.original.scenario.id)) !== canonicalStringify(plan.original.scenario)) throw new Error("Native migration scenario changed before publication.");
+        for (const source of plan.original.vehicles) {
+            const stored = await this.getVehicleManifest(source.id);
+            if (stored && canonicalStringify(stored) !== canonicalStringify(source)) throw new Error(`Native migration vehicle ${source.id} changed before publication.`);
+        }
         const manifest = await this.putRunManifest(manifestId, { manifest: adopted.manifest, expectedRevision });
         return { ok: true, manifest, archiveHash: adopted.archiveHash };
     }
@@ -2543,6 +2618,7 @@ export class StorageService {
         if (existingManifest) incoming.id = `${incoming.id}-${bundle.resolvedHash.slice(0, 8)}`;
         const retryManifest = await this.getRunManifest(incoming.id);
         if (retryManifest && semanticHash(normalizeRunManifest(retryManifest)) === semanticHash(incoming)) return retryManifest;
+        if (incoming.version < 13) return this._writeRunManifest(incoming.id, incoming, { expectedRevision: 0, create: true });
         return this.createRunManifest(incoming);
     }
 
@@ -4756,7 +4832,7 @@ function assertScalarParameterValuesPreserved(document, declarations, values, ow
 }
 
 function scenarioUsesExternalController(scenario) {
-    return scenario.routes.some((route) => route.controller?.kind === "external-ros");
+    return scenario.routes.some((route) => ["external-ros", "external-topic"].includes(route.controller?.kind));
 }
 
 function buildScenarioInitialVehicles(scenario, egoVehicleId, preservedVehicles = []) {

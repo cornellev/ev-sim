@@ -43,7 +43,12 @@ const Command = z.object({
     runId: Id.optional(),
     autoplay: z.boolean().optional(),
     requestId: Id.optional(),
+    controlLeaseId: Id.optional(),
+    controlLeaseToken: Id.optional(),
 }).strict().superRefine((value, ctx) => {
+    if (Boolean(value.controlLeaseId) !== Boolean(value.controlLeaseToken)) ctx.addIssue({ code: "custom", message: "Control lease ID and credential must be supplied together." });
+    if (value.controlLeaseId && value.action === "start" && value.autoplay === true) ctx.addIssue({ code: "custom", message: "Owned runs must prepare paused." });
+    if (value.action === "bind-ownership" && !value.controlLeaseId) ctx.addIssue({ code: "custom", message: "A new control lease is required." });
     const field = value.action === "start" ? "manifestId" : "runId";
     if (!value[field]) ctx.addIssue({ code: "custom", path: [field], message: `${field} is required.` });
     if (value.action !== "start" && (value.manifestId !== undefined || value.autoplay !== undefined)) {
@@ -73,8 +78,9 @@ function parse(schema, input) {
 
 /** One process owns live tabs and bounded, non-durable command receipts. */
 export class BrowserSimService {
-    constructor(storage, { events = storageEvents, now = Date.now, maxBrowsers = 32, maxCommands = 256 } = {}) {
+    constructor(storage, { events = storageEvents, now = Date.now, maxBrowsers = 32, maxCommands = 256, controlOwnership = null } = {}) {
         this.storage = storage;
+        this.controlOwnership = controlOwnership;
         this.events = events;
         this.now = now;
         this.maxBrowsers = maxBrowsers;
@@ -116,6 +122,7 @@ export class BrowserSimService {
         const command = this.commands.get(browser.commandId);
         return {
             browserId,
+            controlLease: command?.request.controlLeaseId || browser.controlLeaseId ? this.controlOwnership.status(command?.request.controlLeaseId ?? browser.controlLeaseId) : null,
             command: command && ["accepted", "running"].includes(command.state) && command.ready
                 ? { commandId: command.commandId, browserId }
                 : null,
@@ -149,7 +156,8 @@ export class BrowserSimService {
 
     submit(input) {
         const request = parse(Command, input);
-        const normalized = { ...request, ...(request.action === "start" ? { autoplay: request.autoplay ?? true } : {}) };
+        const { controlLeaseToken, ...publicRequest } = request;
+        const normalized = { ...publicRequest, ...(request.action === "start" ? { autoplay: request.controlLeaseId ? false : request.autoplay ?? true } : {}) };
         const fingerprint = JSON.stringify(Object.keys(normalized).sort().map((key) => [key, normalized[key]]));
         this._expire();
         if (request.requestId) {
@@ -160,6 +168,14 @@ export class BrowserSimService {
             }
         }
         const browser = this._select(request.browserId);
+        if (browser.controlLeaseId && ["resume", "reset"].includes(request.action) && request.controlLeaseId !== browser.controlLeaseId) throw browserSimError("CONTROL_LEASE_REQUIRED", "This run requires its active control lease.");
+        if (request.controlLeaseId) {
+            const lease = this.controlOwnership?.authorize(request.controlLeaseId, controlLeaseToken);
+            if (!lease || lease.target.kind !== "browser" || lease.target.id !== browser.browserId) throw browserSimError("CONTROL_LEASE_TARGET", "Control lease belongs to another browser.");
+            if (!["start", "bind-ownership"].includes(request.action) && lease.runId !== request.runId) throw browserSimError("CONTROL_LEASE_RUN", "Control lease belongs to another run.");
+            if (request.action === "bind-ownership" && (!browser.controlLeaseId || lease.runId || lease.target.vehicleId !== browser.controlVehicleId)) throw browserSimError("CONTROL_LEASE_TARGET", "The new unbound lease must target this owned vehicle.");
+            if (request.action === "reset") throw browserSimError("CONTROL_LEASE_RESET", "Stop the owned run, acquire a new lease, and prepare a new run.");
+        }
         if (browser.commandId) throw browserSimError("BUSY", "Another command is active in this tab.");
         assertBrowserSimCommand(normalized, browser.snapshot);
         if (this.commands.size >= this.maxCommands) {
@@ -171,6 +187,7 @@ export class BrowserSimService {
             commandId: randomUUID(),
             browserId: browser.browserId,
             request: normalized,
+            leaseCredential: controlLeaseToken ?? null,
             fingerprint,
             state: "accepted",
             createdAt: this.now(),
@@ -204,7 +221,8 @@ export class BrowserSimService {
         command.claimId = claimId;
         command.state = "running";
         command.updatedAt = this.now();
-        return { ...this._receipt(command), ...command.request, browserId, resolved: command.resolved, manifestRevision: command.manifestRevision ?? null };
+        const controlLease = command.request.controlLeaseId ? this.controlOwnership.authorize(command.request.controlLeaseId, command.leaseCredential) : null;
+        return { ...this._receipt(command), ...command.request, browserId, resolved: command.resolved, manifestRevision: command.manifestRevision ?? null, controlLease };
     }
 
     complete(browserId, token, commandId, input) {
@@ -215,15 +233,28 @@ export class BrowserSimService {
             throw browserSimError("WRONG_CLAIM", "The command was not claimed by this browser execution.");
         }
         if (["succeeded", "failed"].includes(command.state)) return this._receipt(command);
+        let controlLease = null;
+        if (command.request.controlLeaseId && ["start", "bind-ownership"].includes(command.request.action) && !completion.error) {
+            try {
+                const expected = command.request.action === "start" ? command.resolved?.resolvedHash : browser.snapshot.resolvedHash;
+                if (!["ready", "paused"].includes(completion.snapshot.status) || completion.snapshot.resolvedHash !== expected || (command.request.action === "bind-ownership" && completion.snapshot.runId !== command.request.runId)) throw browserSimError("CONTROL_LEASE_PREPARE", "Owned runs must complete preparation paused with the resolved identity.");
+                const lease = this.controlOwnership.authorize(command.request.controlLeaseId, command.leaseCredential);
+                controlLease = this.controlOwnership.bindRun(lease.leaseId, command.leaseCredential, { target: lease.target, runId: completion.snapshot.runId, resolvedHash: completion.snapshot.resolvedHash });
+                browser.controlLeaseId = lease.leaseId;
+                browser.controlVehicleId = lease.target.vehicleId;
+            } catch (error) { completion.error = { code: error.code || "CONTROL_LEASE_PREPARE", message: error.message }; }
+        }
         command.state = completion.error ? "failed" : "succeeded";
         command.error = completion.error;
         command.snapshot = completion.snapshot;
         command.updatedAt = this.now();
         command.resolved = null;
+        command.leaseCredential = null;
+        if (command.request.action === "stop" || (command.request.action === "start" && !command.request.controlLeaseId)) browser.controlLeaseId = null;
         this._reportSnapshot(browser, completion);
         browser.lastSeenAt = this.now();
         if (browser.commandId === commandId) browser.commandId = null;
-        return this._receipt(command);
+        return { ...this._receipt(command), controlLease };
     }
 
     async _prepare(command, manifestId) {
@@ -234,6 +265,11 @@ export class BrowserSimService {
                 if (!source) throw browserSimError("MANIFEST_NOT_FOUND", `Run manifest "${id}" does not exist.`, 404);
                 command.manifestRevision = source.revision ?? null;
                 command.resolved = await this.storage.resolveRunManifest(id, { manifest: source });
+                if (command.request.controlLeaseId) {
+                    const lease = this.controlOwnership.authorize(command.request.controlLeaseId, command.leaseCredential);
+                    const controls = command.resolved.manifest.controls;
+                    if (command.resolved.version !== 13 || controls?.targetVehicleId !== lease.target.vehicleId || controls.authority !== "candidate" || !command.resolved.manifest.topics.some((topic) => topic.direction === "input" && topic.valueContract?.id === "cev.control-command" && topic.valueContract.version === 2)) throw browserSimError("CONTROL_LEASE_CONTRACT", "Owned runs require native control-command@2 with candidate authority on the leased vehicle.");
+                }
             }
             this._expire();
             if (command.state !== "accepted") {

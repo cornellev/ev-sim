@@ -7,6 +7,7 @@ import test from "node:test";
 import { Euler, Vector3 } from "three";
 
 import { createPluginPackage, verifyPluginPackage } from "../app/plugin/PluginPackage.js";
+import { pluginDependencyHashes } from "../app/plugin/PluginSelection.js";
 import { createPluginSensorsResource } from "../app/plugin/PluginSensorIdentity.js";
 import { HeadlessEpisode } from "../app/simulation/headless/HeadlessEpisode.js";
 import { measuredPerceptionProfileRef } from "../app/simulation/headless/ProfileRegistry.js";
@@ -30,8 +31,11 @@ import { verifyRunBundle } from "../server/headless/RunBundle.js";
 import { NodePluginModuleSource } from "../server/plugins/NodePluginModuleSource.js";
 import { hostDescriptorFromConfig } from "../server/sensor-transports/SensorTransportConfig.js";
 import { normalizeRunManifest } from "../app/simulation/RunManifest.js";
+import { defaultNativeManifestTopics } from "../app/simulation/NativeTopicCatalog.js";
+import { createNativeTopicContractResource } from "../app/simulation/NativeTopicContracts.js";
 import {
     createHeadlessImu,
+    pluginSensorFixtureResource,
     createPluginPortableHeadlessBundle,
     rehashRunBundle,
 } from "./helpers/headlessRunnerBundle.js";
@@ -117,6 +121,48 @@ async function fixtureEpisode(bundle, t) {
         pluginModuleSource: new NodePluginModuleSource({ runtimeRoot }),
     });
 }
+
+test("ABI 2 sensor capture publishes packed native points through the headless kernel", async (t) => {
+    const { bundle } = await fixtureBundle();
+    const resource = await fixtureResource({
+        mutateDocument(document) {
+            document.sensorTypes[0].sensorAbi = 2;
+            const product = document.sensorTypes[0].products[0];
+            delete product.rosType;
+            product.valueContract = { id: "cev.points", version: 1 };
+        },
+        mutateRuntime: (source) => source.replace("sampling.buildPointCloud2(buffer)", "sampling.buildNativePoints(buffer)"),
+    });
+    const verified = verifyPluginPackage(resource);
+    const registry = createSensorDefinitionRegistry([verified]);
+    const resolved = bundle.resolved;
+    resolved.version = 13;
+    for (const sensor of resolved.manifest.sensorRig.sensors) delete sensor.schema;
+    delete resolved.manifest.autonomyCatalog;
+    resolved.manifest = normalizeRunManifest({ ...resolved.manifest, version: 13, topics: defaultNativeManifestTopics(),
+        plugins: { enabled: true, artifacts: [{ pluginId: verified.document.id, expectedHash: resource.packageHash, capabilities: verified.document.capabilities }] },
+    }, { sensorRegistry: registry });
+    resolved.plugins = [{ pluginId: verified.document.id, version: verified.document.version, packageHash: resource.packageHash, runtimeHash: resource.runtimeHash, capabilities: verified.document.capabilities }];
+    resolved.pluginPackages = [resource];
+    resolved.dependencyHashes.plugins = pluginDependencyHashes(resolved.plugins);
+    resolved.nativeTopicContracts = createNativeTopicContractResource(resolved.manifest.topics);
+    resolved.dependencyHashes.nativeTopicContracts = resolved.nativeTopicContracts.hash;
+    delete resolved.autonomyContracts;
+    delete resolved.dependencyHashes.autonomyContracts;
+    resolved.pluginSensors = createPluginSensorsResource(planSensorAdmission({ manifest: resolved.manifest, sensorRegistry: registry, backendSelections: resolved.backendSelections }));
+    resolved.dependencyHashes.pluginSensors = resolved.pluginSensors.hash;
+    const episode = await fixtureEpisode(bundle, t);
+    t.after(() => episode.disposeAsync());
+    await episode.prepare(rehashRunBundle(bundle).resolved, { actionRepeat: 1, observationProfile: measuredPerceptionProfileRef() });
+    episode.reset();
+    await episode.stepAsync([0, 0]);
+    const sample = episode.runtime.signalStore.read("devices.fixture.pointCloud");
+    assert.equal(sample.exists, true);
+    assert.ok(sample.value.positions instanceof Float32Array);
+    assert.equal(sample.value.count, sample.value.positions.length / 3);
+    assert.equal(Object.hasOwn(sample.value, "header"), false);
+    assert.equal(episode.runtime.devices.plugin.devices[0].contractPublisher.getHealthSnapshot().errors, 0);
+});
 
 test("browser CPU worker preserves seeded plugin packets, observations, and trajectory hashes across resets", async (t) => {
     const { bundle } = await fixtureBundle(null, {
@@ -249,7 +295,7 @@ test("PLG-05 rejects invalid factories, capture shapes, backends, and package cl
 });
 
 test("PLG-06a verifies packet transports structurally and admits them only on a capable host", async () => {
-    const { resource, bundle } = await fixtureBundle();
+    const { resource, bundle } = await fixtureBundle(await pluginSensorFixtureResource({ native: true }));
     const verified = verifyPluginPackage(resource);
     const registry = createSensorDefinitionRegistry([verified]);
     const admission = planSensorAdmission({
@@ -576,7 +622,7 @@ test("PLG-05 runs a nonuniform 3x4 sensor through headless Gym observations, pac
 });
 
 test("PLG-05 executes embedded sensor packages through direct runner and managed sessions", async (t) => {
-    const { bundle } = await fixtureBundle();
+    const { bundle } = await fixtureBundle(await pluginSensorFixtureResource({ native: true }));
     const episodeSpec = {
         actionRepeat: 1,
         observationProfile: measuredPerceptionProfileRef(),

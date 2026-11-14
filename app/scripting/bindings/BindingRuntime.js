@@ -537,7 +537,7 @@ export class BindingRuntime {
 
     setTopicRouter(topicRouter = null, topics = []) {
         this._topicRouter = topicRouter;
-        this._runTopics = new Map((topics || []).map((topic) => [topic.name, topic]));
+        this._runTopics = new Map((topics || []).flatMap((topic) => [[topic.name, topic], [topic.id, topic]]));
     }
 
     _validateTopicSink(mapping) {
@@ -546,6 +546,7 @@ export class BindingRuntime {
             throw new Error(`Cannot publish "${mapping.topic}" because it is not declared in the run manifest.`);
         }
         const expectedType = topic.schema?.type || topic.type;
+        if (topic.valueContract && (mapping.type || mapping.valueContract?.id !== topic.valueContract.id || mapping.valueContract?.version !== topic.valueContract.version)) throw new Error(`Cannot publish "${mapping.topic}" with a different native contract.`);
         if (mapping.type && expectedType && mapping.type !== expectedType) {
             throw new Error(`Cannot publish "${mapping.topic}" as ${mapping.type}; manifest expects ${expectedType}.`);
         }
@@ -567,7 +568,7 @@ export class BindingRuntime {
     }
 
     applyTopicUpdate(info) {
-        const topic = info?.name;
+        const topic = info?.name ?? info?.topic;
         if (!topic) return;
 
         if (!this._topicsSeen.has(topic)) {
@@ -582,14 +583,14 @@ export class BindingRuntime {
             replayRole: "input",
             logClass: "standard",
             metadata: {
+                ...(info.valueContract ? { ...info.metadata, topicId: info.topicId, valueContract: info.valueContract } : {}),
                 typeStr: info.typeStr ?? null,
                 count: info.count ?? null,
                 routerSequence: info.routerSequence ?? null,
                 contractId: info.contractId ?? null,
             },
             descriptorMetadata: {
-                rosType: info.typeStr ?? null,
-                schema: info.schema ?? null,
+                ...(info.valueContract ? { topicId: info.topicId, valueContract: info.valueContract, ...info.metadata } : { rosType: info.typeStr ?? null, schema: info.schema ?? null }),
                 contractId: info.contractId ?? null,
             },
         });
@@ -599,9 +600,9 @@ export class BindingRuntime {
         this._orderedBindings()
             .filter((binding) => binding.enabled
                 && binding.trigger.kind === TRIGGER_KINDS.TOPIC
-                && binding.trigger.topic === topic)
+                && (binding.trigger.topic === topic || binding.trigger.topic === info.topicId))
             .forEach((binding) => {
-                this._dispatch(binding, { message: info.value, topic });
+                this._dispatch(binding, { message: info.value, messageMetadata: info.metadata, topic });
             });
 
         this._checkSignalTriggers();
@@ -888,6 +889,9 @@ export class BindingRuntime {
                         ? getByPath(context.message, mapping.field, null)
                         : (context.message ?? null);
                     break;
+                case INPUT_SOURCES.MESSAGE_METADATA:
+                    inputs[mapping.input] = mapping.field ? getByPath(context.messageMetadata, mapping.field, null) : context.messageMetadata ?? null;
+                    break;
                 case INPUT_SOURCES.CONSTANT:
                     inputs[mapping.input] = mapping.value ?? null;
                     break;
@@ -916,6 +920,14 @@ export class BindingRuntime {
 
             if (this._runTopics.size > 0) {
                 this._validateTopicSink(mapping);
+            }
+            const topic = this._runTopics.get(mapping.topic);
+            if (topic?.valueContract) {
+                const simulation = this.signalStore.read(SIGNAL_PATHS.SIMULATION)?.value ?? {};
+                const timeNs = Math.round((simulation.time ?? 0) * 1e9);
+                const result = this._topicRouter?.routeOutbound(topic.id, { value }, { producer: topic.producer, captureTimeNs: timeNs, deliveryTimeNs: timeNs, cycle: simulation.step ?? 0 });
+                if (!result?.ok) throw new Error(`Cannot publish "${mapping.topic}": ${result?.message ?? result?.code ?? "native router unavailable"}.`);
+                return;
             }
 
             const client = this._clientManager?.get?.();

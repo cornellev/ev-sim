@@ -174,14 +174,14 @@ export class HeadlessArtifactSink {
                     profile: builtInProfile(this.policy.signalProfileId),
                     appVersion: this.provenance.runtimeVersion,
                     gitHash: this.provenance.gitHash,
-                    runId: `run-${this.episode.kernel.episodeHash.slice(0, 16)}`,
+                    runId: this.episode.runId ?? `run-${this.episode.kernel.episodeHash.slice(0, 16)}`,
                     manifestId: this.bundle.resolved.manifest.id,
                     manifestRevision: this.bundle.resolved.manifest.revision ?? null,
                     definitionHash: this.bundle.resolved.definitionHash ?? null,
                     resolvedHash: this.bundle.resolvedHash,
                     provenance: this.provenance,
                     evidence: projectEvidenceFromResolvedRun(this.bundle.resolved, {
-                        runId: `run-${this.episode.kernel.episodeHash.slice(0, 16)}`,
+                        runId: this.episode.runId ?? `run-${this.episode.kernel.episodeHash.slice(0, 16)}`,
                         gitCommit: this.provenance.gitHash,
                         resolvedHash: this.bundle.resolvedHash,
                         simulationSemanticHash: this.bundle.resolved.simulationSemanticHash

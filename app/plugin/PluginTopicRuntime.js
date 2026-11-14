@@ -8,10 +8,11 @@ export const PLUGIN_TOPIC_QUEUE_LIMIT = 1024;
 const HEAVY_TOPIC_TYPE = /PointCloud|Image|CompressedImage|LaserScan/i;
 
 export function isPluginControlTopic(topic) {
-    return topic?.stage === "controls" || topic?.contractId === "controls-command";
+    return topic?.valueContract?.id === "cev.control-command" || topic?.stage === "controls" || topic?.contractId === "controls-command";
 }
 
 export function isPluginHeavyTopic(topic, value) {
+    if (["cev.points", "cev.semantic-points", "cev.image"].includes(topic?.valueContract?.id)) return true;
     const type = String(topic?.schema?.type || topic?.type || "");
     if (HEAVY_TOPIC_TYPE.test(type)) return true;
     return value !== undefined && isHeavyValue(value);
@@ -70,6 +71,7 @@ export class PluginTopicRuntime {
             systemId,
             topicId,
             topicName: topic.name,
+            ...(topic.valueContract ? { valueContract: topic.valueContract } : {}),
             identities: Object.freeze(topicIdentity(topic)),
             onMessage,
             index: this.subscriptions.length,
@@ -88,7 +90,8 @@ export class PluginTopicRuntime {
                 && subscription.topicName !== envelope.topic) {
                 continue;
             }
-            if (isPluginHeavyTopic(null, envelope.value)) {
+            if (subscription.valueContract && (envelope.valueContract?.id !== subscription.valueContract.id || envelope.valueContract?.version !== subscription.valueContract.version)) throw pluginError(PLUGIN_ERROR_CODES.STATE_INVALID, "Native plugin topic contract mismatch.", { pluginId: subscription.pluginId, requiresReset: true });
+            if (isPluginHeavyTopic(envelope, envelope.value)) {
                 throw pluginError(
                     PLUGIN_ERROR_CODES.RESOURCE,
                     `Plugin topic "${envelope.topic}" payload is too heavy to queue.`,
@@ -112,9 +115,10 @@ export class PluginTopicRuntime {
                 );
             }
             queue.push(Object.freeze(clonePluginJson({
+                ...(subscription.valueContract ? { topicId: envelope.topicId, valueContract: envelope.valueContract, metadata: envelope.metadata, captureTimeNs: envelope.captureTimeNs, sequenceId: envelope.sequenceId } : {}),
                 topic: envelope.topic,
-                contractId: envelope.contractId,
-                producer: envelope.producer,
+                contractId: envelope.contractId ?? null,
+                producer: envelope.producer ?? null,
                 sequence: envelope.sequence,
                 applyTimeNs: envelope.applyTimeNs,
                 applyStep: envelope.applyStep,

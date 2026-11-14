@@ -17,6 +17,21 @@ milestone.
 
 ## Starting and stopping
 
+ZPB-07 also provides the internal `runExternalController()` operation used by
+`cev-sim run --controller-mode external-realtime --config ...`. It creates one
+worker with the configured `zenohTransport` and shares GPU, asset-admission,
+UDP, resource-limit and teardown services with managed execution. The worker's
+clock pump leaves IPC available for health, pause, resume, stop and reset.
+Completion is a bounded notification, followed by ordinary artifact
+finalization. Supervisor shutdown cancels external operations before awaiting
+them, then enforces the existing shutdown and kill deadlines.
+
+This operation has no Gym action, reward or tensor facade. `CreateBatch` and
+Python request/response stepping remain policy operations and reject a run with
+external-controller authority. `controllerMode` in host JSON selects CLI
+behavior only. Native Zenoh is reported as environment transport configuration
+in capability diagnostics; it is not an additional gRPC transport.
+
 Exactly one listener is required:
 
 ```bash

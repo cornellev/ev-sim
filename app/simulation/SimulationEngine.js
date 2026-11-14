@@ -18,6 +18,7 @@ import { createPhysicsBackendSelection } from "../physics/PhysicsBackend.js";
 import { applyRigidBodyViewportPoses, restoreAuthoredRigidBodyPoses } from "../3d/editor/projection/applyRigidBodyPoses.js";
 import { createKeyboardDriveState, stepKeyboardDrive } from "./keyboardDrive.js";
 import { BrowserPacketRelaySink } from "./sensors/BrowserPacketRelaySink.js";
+import { ProtobufRouteRuntime } from "../interfaces/ProtobufRouteRuntime.js";
 import { applyOriginMarkersVisible, applySensorMarkersVisible } from "../3d/runtimeVisibility.js";
 import { LIVE_CAMERA_OBJECT_MOTION } from "./render/CameraObjectMotion.js";
 
@@ -144,7 +145,14 @@ export class SimulationEngine {
         const pluginModuleSource = options.pluginModuleSource ?? new BrowserPluginModuleSource();
         const scenarioRuntime = new ScenarioRuntime(this.data, { telemetry });
         this.packetRelay = options.packetRelay === undefined ? new BrowserPacketRelaySink() : options.packetRelay;
+        this.protobufRoutes = new ProtobufRouteRuntime();
         this.runtimeContext = createSimulationRuntimeContext({
+            protobufRoutes: this.protobufRoutes,
+            protobufTransport: "zenoh-browser",
+            controlOwnership: () => Boolean(this.ownershipGuard),
+            protobufPublicationPort: (packet) => this.data.client?.()?.publishProtobuf?.(packet) ?? false,
+            publicationPort: (envelope) => this.protobufRoutes.publishTopic(envelope),
+            onProtobufGeneration: (generation) => this.data.client?.()?.stageGeneration?.(generation),
             telemetry,
             nativePacketSink: this.packetRelay,
             sensorTransportHost: () => this.packetRelay?.hostDescriptor(),
@@ -624,6 +632,7 @@ export class SimulationEngine {
     }
 
     play() {
+        if (!this.resolvedRun) this.data.client?.()?.setup?.().catch((error) => console.warn("Legacy client setup failed:", error.message));
         this.syncEditorRigidBodies();
         this.restoreStoppedEditorBodies();
         this.startLoop();
@@ -872,7 +881,7 @@ export class SimulationEngine {
 
     async applyRunManifest(resolved, options = {}) {
         if (!resolved?.manifest) throw new Error("Resolved run manifest is required.");
-        assertProtobufExecutionCapabilities(resolved);
+        assertProtobufExecutionCapabilities(resolved, { target: "browser", transport: "zenoh-browser", controlOwnership: Boolean(this.ownershipGuard) });
         this.pause();
         await this.whenIdle();
         this.scenarioDiagnostics.configure(null);

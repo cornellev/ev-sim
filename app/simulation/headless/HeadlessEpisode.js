@@ -479,13 +479,15 @@ export class HeadlessEpisode {
         };
     }
 
-    async prepare(resolvedRun, episodeSpec = {}) {
+    async prepare(resolvedRun, episodeSpec = {}, { runId = null } = {}) {
+        this.runId = runId;
         const prepared = this._preflight(resolvedRun, episodeSpec);
         await this.kernel.prepare(resolvedRun, {
             episode: prepared.spec,
             requireStateSensors: true,
             perceptionObservations: prepared.measuredPerception,
             sensorOccupancy: prepared.sensorOccupancy,
+            runId,
         });
         this.resolvedRun = this.kernel.resolvedRun;
         this.episodeSpec = prepared.spec;

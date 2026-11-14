@@ -178,8 +178,8 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --onboarding)
-      [[ "$ORCHESTRATOR_CHOICE" != "0" ]] || fail "--onboarding requires orchestrator"
-      ONBOARDING=1; ORCHESTRATOR_CHOICE=1; ORCHESTRATOR_FLAG_SET=1; shift ;;
+      [[ "$ORCHESTRATOR_CHOICE" != "1" ]] || fail "--onboarding uses the native router; omit --orchestrator"
+      ONBOARDING=1; ORCHESTRATOR_CHOICE=0; ORCHESTRATOR_FLAG_SET=1; shift ;;
     --orchestrator-ref)
       ORCHESTRATOR_REF="${2:-}"
       [[ -n "$ORCHESTRATOR_REF" ]] || fail "--orchestrator-ref requires a revision"
@@ -1179,6 +1179,11 @@ configure_local_env
 configure_visual_source_registry
 
 configure_orchestrator
+
+if [[ "$ONBOARDING" -eq 1 ]]; then
+  step "Onboarding router"
+  (cd "$INSTALL_DIR" && node scripts/install-onboarding.mjs "$INSTALL_DIR") || fail "Pinned onboarding router installation failed"
+fi
 
 if [[ "$RUN_BUILD" -eq 1 ]]; then
   step "Building"

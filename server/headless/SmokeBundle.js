@@ -9,7 +9,7 @@ function scenarioDraft({ environmentId, actorId, endpoints }) {
     const point = (node) => ({ x: node.x, y: 0, z: node.z });
     return {
         kind: "cev-sim.scenario",
-        version: 1,
+        version: 2,
         id: "igvc-headless-smoke",
         name: "IGVC Headless Smoke",
         description: "Generated verified route for headless GPU and CLI smoke tests.",

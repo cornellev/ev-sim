@@ -1,0 +1,8 @@
+{
+  "name": "cev-sim-zenoh-transport",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "license": "Apache-2.0"
+}

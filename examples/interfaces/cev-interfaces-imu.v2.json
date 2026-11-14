@@ -1,0 +1,40 @@
+{
+  "kind": "cev-sim.protobuf-interface",
+  "version": 2,
+  "schemas": [
+    {
+      "id": "cev-interfaces",
+      "fingerprint": "5b77aaebb8af762c5453d2d97485d257cb18c7ce9ddfce1ddebcb3b3a0fbf493",
+      "descriptorBase64": "Cu8BChRjZXZfaW50ZXJmYWNlcy5wcm90bxIOY2V2LmludGVyZmFjZXMiKgoHVmVjdG9yMxIJCgF4GAEgASgBEgkKAXkYAiABKAESCQoBehgDIAEoASJgCgNJbXUSEAoIc3RhbXBfbnMYASABKAQSJAoTbGluZWFyX2FjY2VsZXJhdGlvbhgCIAEoCzIHVmVjdG9yMxIhChBhbmd1bGFyX3ZlbG9jaXR5GAMgASgLMgdWZWN0b3IzIjEKCldoZWVsU3BlZWQSEAoIc3RhbXBfbnMYASABKAQSEQoJcmV2X3Blcl9zGAIgASgBYgZwcm90bzM="
+    }
+  ],
+  "routes": [
+    {
+      "id": "imu",
+      "schemaId": "cev-interfaces",
+      "messageType": "cev.interfaces.Imu",
+      "direction": "publish",
+      "key": "cev/sensors/{run_id}/imu",
+      "source": {
+        "topicId": "imu"
+      },
+      "mapping": {
+        "fields": [
+          {
+            "to": "stamp_ns",
+            "from": "metadata.captureTimeNs"
+          },
+          {
+            "to": "linear_acceleration",
+            "from": "value.linearAcceleration"
+          },
+          {
+            "to": "angular_velocity",
+            "from": "value.angularVelocity"
+          }
+        ]
+      }
+    }
+  ],
+  "bootstrap": []
+}

@@ -259,6 +259,39 @@ export class SupervisorRunner {
         });
     }
 
+    async runExternalController(bundle, { config, outputUri = null, signal = null, onEvent = null,
+        packagePath = null, artifactPolicy = null, validateOnly = false } = {}) {
+        if (!config) throw new HeadlessRunnerError("USAGE", "External supervisor execution requires --config.");
+        if (!validateOnly && !outputUri) throw new HeadlessRunnerError("USAGE", "External execution requires --output.");
+        const root = await fs.mkdtemp(path.join(os.tmpdir(), "cev-external-runner-"));
+        let supervisor;
+        let admission;
+        try {
+            supervisor = this.supervisorFactory({ config: inlineSupervisorConfig(config), socket: path.join(root, "supervisor.sock"), inlineObservations: true });
+            if (packagePath) {
+                const staged = await stageRunPackage(packagePath, supervisor.config.assetAdmission.inboxDir, { signal, limits: supervisor.config.assetAdmission.limits });
+                try {
+                    const admitted = await supervisor.admitRunPackage({ clientProtocol: HEADLESS_PROTOCOL, stagingId: staged.stagingId, archiveHash: staged.archiveHash });
+                    assertResponse(admitted);
+                    admission = admitted.admission;
+                } finally { await fs.rm(staged.path, { force: true }).catch(() => {}); }
+            }
+            const bundleBytes = Buffer.from(canonicalRunBundleStringify(bundle));
+            const finalized = await supervisor.runExternalController({ bundleBytes, bundleBytesHash: admission?.bundleBytesHash,
+                assetAdmission: admission, outputUri, artifactPolicy, validateOnly }, { signal,
+                onReady: (descriptor) => onEvent?.({ kind: "cev-sim.headless.external-ready", version: 1, executionMode: "supervisor", descriptor }) });
+            if (validateOnly) return { kind: "cev-sim.headless.validation", version: 1, ok: true,
+                validationMode: "supervisor", manifestId: bundle.resolved.manifest.id, ...finalized };
+            const event = { kind: "cev-sim.headless.result", version: 1, executionMode: "supervisor",
+                result: finalized.runResult, artifacts: finalized.artifacts, outputDirectory: finalized.outputDirectory };
+            await onEvent?.(event);
+            return event;
+        } finally {
+            try { if (admission) await supervisor?.releaseAssetAdmission({ handle: admission.handle }); }
+            finally { try { await supervisor?.close(); } finally { await fs.rm(root, { recursive: true, force: true }); } }
+        }
+    }
+
     async runManaged(bundle, {
         supervisor,
         outputUri = null,

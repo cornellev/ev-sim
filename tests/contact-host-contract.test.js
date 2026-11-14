@@ -10,7 +10,7 @@ import { createDefaultScenario } from "../app/scenarios/ScenarioDocument.js";
 import { computeResolvedRunHash } from "../app/simulation/RunManifest.js";
 import { SimulationKernel } from "../app/simulation/kernel/SimulationKernel.js";
 import { computeEpisodeHash, defaultEpisodeIdentity, simulationSemanticProjection, simulationSha256 } from "../app/simulation/kernel/SimulationHashes.js";
-import { CONTACT_HOST_VERSION } from "../app/simulation/vehicles/ContactHostContract.js";
+import { assertResolvedContactHosts, CONTACT_HOST_VERSION } from "../app/simulation/vehicles/ContactHostContract.js";
 import { createVehiclePlantDefinition } from "../app/simulation/vehicles/KinematicVehiclePlant.js";
 import { isContactBicycle } from "../app/simulation/vehicles/contactBicycle.js";
 import { CONTACT_BICYCLE_MODEL, DEFAULT_DYNAMIC_BICYCLE, normalizeVehicleDynamics, normalizeVehicleManifest } from "../app/vehicles/VehicleManifest.js";
@@ -58,8 +58,7 @@ test("RZ-01 preserves all eight historical bundle and episode identities for int
         assert.equal(bundle.simulationSemanticHash, expected.simulationSemanticHash, expected.id);
         assert.equal(computeEpisodeHash(defaultEpisodeIdentity(bundle.resolved)), expected.episodeHash, expected.id);
         assert.equal(recordFor(bundle, expected.options.nested).hash, expected.vehicleHash, expected.id);
-        if (expected.options.model === "contact-bicycle-v1") assert.throws(() => verifyRunBundle(bundle), needsResolution);
-        else verifyRunBundle(bundle);
+        assert.throws(() => verifyRunBundle(bundle), /reviewed native migration/);
         assert.deepEqual(bundle, received);
     }
 });
@@ -109,7 +108,7 @@ test("RZ-01 versions contact identities and both semantic dependency maps withou
         for (const plugin of [false, true]) {
             const old = await contactHostBundle({ model: "contact-bicycle-v1", nested, plugin });
             const next = upgrade(old, nested);
-            verifyRunBundle(next);
+            verifyRunBundleIntegrity(next);
             assert.notEqual(next.resolvedHash, old.resolvedHash);
             assert.notEqual(next.simulationSemanticHash, old.simulationSemanticHash);
             assert.notEqual(computeEpisodeHash(defaultEpisodeIdentity(next.resolved)), computeEpisodeHash(defaultEpisodeIdentity(old.resolved)));
@@ -138,7 +137,8 @@ test("RZ-01 rejects unsupported or misplaced host markers in root and nested rec
             if (value !== undefined) recordFor(changed, nested).contactHost = value;
             const bundle = rehashRunBundle(changed);
             verifyRunBundleIntegrity(bundle);
-            assert.throws(() => verifyRunBundle(bundle), (error) => (
+            const plants = new Map(bundle.resolved.pluginPackages.flatMap((resource) => verifyPluginPackage(resource).document.plants.map((plant) => [plant.id, plant])));
+            assert.throws(() => assertResolvedContactHosts(bundle.resolved, plants), (error) => (
                 needsResolution(error) && error.details.path === `${nested ? "scenario." : ""}vehicles.0`
             ));
         }
@@ -146,7 +146,8 @@ test("RZ-01 rejects unsupported or misplaced host markers in root and nested rec
     for (const options of [{}, { model: "dynamic-bicycle-v1" }, { plugin: true }, { plugin: true, model: "dynamic-bicycle-v1" }, { model: CONTACT_BICYCLE_MODEL }]) {
         const bundle = await contactHostBundle(options);
         recordFor(bundle).contactHost = 2;
-        assert.throws(() => verifyRunBundle(rehashRunBundle(bundle)), needsResolution);
+        const plants = new Map((bundle.resolved.pluginPackages ?? []).flatMap((resource) => verifyPluginPackage(resource).document.plants.map((plant) => [plant.id, plant])));
+        assert.throws(() => assertResolvedContactHosts(rehashRunBundle(bundle).resolved, plants), needsResolution);
     }
 });
 
@@ -200,7 +201,7 @@ test("RZ-01 authoring import and re-resolution upgrade unsaved historical vehicl
             assert.equal(Object.hasOwn(record, "contactHost"), false);
         }
         const exported = await service.exportRunManifest(imported.id);
-        verifyRunBundle(exported);
+        verifyRunBundleIntegrity(exported);
         assert.equal((await service.resolveRunManifest(imported.id)).resolvedHash, resolved.resolvedHash);
         assert.deepEqual(await fs.readFile(vehiclePath), savedBytes);
         assert.deepEqual(bundle, original);
@@ -240,11 +241,11 @@ test("RZ-01 scenario resolution stamps nested contact plugins and keeps kinemati
     }
     await service.createScenario(scenario);
     const source = await service.getRunManifest(imported.id);
-    await service.putRunManifest(imported.id, { manifest: {
+    await service._writeRunManifest(imported.id, {
         ...source, scenario: { id: scenario.id, egoVehicleId: "big-car" },
-    } });
+    });
     const exported = await service.exportRunManifest(imported.id);
-    verifyRunBundle(exported);
+    verifyRunBundleIntegrity(exported);
     assert.equal(exported.resolved.scenario.vehicles[0].contactHost, CONTACT_HOST_VERSION);
     assert.equal(exported.resolved.vehicles.find((record) => record.actorId === "other").contactHost, CONTACT_HOST_VERSION);
     assert.equal(Object.hasOwn(exported.resolved.vehicles.find((record) => record.actorId === "ego"), "contactHost"), false);
@@ -268,8 +269,8 @@ test("RZ-01 UI-only contact package edits preserve semantic identity with the ho
     assert.equal(original.runtimeHash, uiOnly.runtimeHash);
     const first = upgrade(await contactHostBundle({ resource: original }));
     const second = upgrade(await contactHostBundle({ resource: uiOnly }));
-    verifyRunBundle(first);
-    verifyRunBundle(second);
+    verifyRunBundleIntegrity(first);
+    verifyRunBundleIntegrity(second);
     assert.notEqual(first.resolvedHash, second.resolvedHash);
     assert.equal(first.simulationSemanticHash, second.simulationSemanticHash);
 });

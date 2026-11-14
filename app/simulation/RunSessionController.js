@@ -6,6 +6,7 @@ import { getTelemetryStore } from "../telemetry/TelemetryRuntime.js";
 import { CEV_SIM_VERSION } from "../version.js";
 import { resolveRunManifest } from "./RunManifestClient.js";
 import { assertEnabledCameraRenderRuntime } from "./render/RenderSceneProviderRegistry.js";
+import { ControlOwnershipGuard } from "../autonomy/ControlOwnershipGuard.js";
 
 function clone(value) {
     return value === undefined ? undefined : structuredClone(value);
@@ -43,6 +44,7 @@ export class RunSessionController {
             degraded: false,
             assertionResults: [],
             simulation: null,
+            transport: { state: "disabled", lastError: null, diagnostics: {} },
         };
         this._launchSequence = 0;
         this._environmentHandler = null;
@@ -57,6 +59,14 @@ export class RunSessionController {
         this._loggingPolicyOverride = null;
         this._speedOverride = null;
         this._stopPromise = null;
+        this._unsubscribeTransport = null;
+        this._pendingRunId = null;
+        this._recoveryPromise = null;
+        this._recoveryGeneration = 0;
+        this._recoveryTimer = null;
+        this._recoveryWaitResolve = null;
+        this._resumeAfterReconnect = false;
+        this._reconnectAttempt = 0;
     }
 
     getSnapshot() {
@@ -83,10 +93,13 @@ export class RunSessionController {
 
     attachData(data) {
         this._unsubscribeSimulation?.();
+        this._unsubscribeTransport?.();
+        this._cancelRecovery();
         this.data = data;
         const simulation = data?.simulation?.();
         simulation?.setScenarioDiagnosticsEnabled?.(this._scenarioDiagnosticsEnabled);
         this.recording.attachSimulation(simulation);
+        this._unsubscribeTransport = data?.client?.()?.subscribeTransport?.((state) => this._handleTransportState(state)) ?? null;
         this._unsubscribeSimulation = simulation?.subscribe?.((simulationState) => {
             if (!this.snapshot.activeRunId) return;
             const assertionResults = simulationState.assertions || [];
@@ -143,14 +156,21 @@ export class RunSessionController {
                 }
                 this._unsubscribeSimulation?.();
                 this._unsubscribeSimulation = null;
+                this._unsubscribeTransport?.();
+                this._unsubscribeTransport = null;
+                this._cancelRecovery();
                 this.data = null;
             }
         };
     }
 
-    async prepare(resolved, { autoplay = false, episodePhase = "start", manifestRevision = null } = {}) {
+    async prepare(resolved, { autoplay = false, episodePhase = "start", manifestRevision = null, controlLease = null, leaseRequestedAt } = {}) {
         if (!resolved?.manifest || !resolved?.resolvedHash) throw new Error("A resolved run manifest is required.");
-        assertProtobufExecutionCapabilities(resolved);
+        if (resolved.version !== 13) throw Object.assign(new Error("Historical runs require reviewed native migration before execution."), { code: "UNSUPPORTED_CAPABILITY" });
+        const needsLease = resolved.manifest.topics?.some((topic) => topic.direction === "input" && topic.valueContract?.id === "cev.control-command" && topic.valueContract.version === 2);
+        if (needsLease && (!controlLease || autoplay)) throw new Error("Control-command@2 requires a live lease and paused preparation.");
+        assertProtobufExecutionCapabilities(resolved, { target: "browser", transport: "zenoh-browser", controlOwnership: Boolean(controlLease) });
+        if (controlLease && (resolved.manifest.controls?.authority !== "candidate" || controlLease.target?.vehicleId !== resolved.manifest.controls.targetVehicleId || ["inputs", "controls", "vehicles"].some((key) => resolved.manifest.clock.modules[key] === false))) throw new Error("Owned runs require enabled candidate controls on the leased vehicle.");
         // Reject unsupported measured providers before replacing or stopping an
         // active browser run and before loading any environment/sensor state.
         assertEnabledCameraRenderRuntime(resolved.manifest.sensorRig?.sensors, resolved.renderScene, {
@@ -159,7 +179,11 @@ export class RunSessionController {
         if (this.snapshot.activeRunId && ["running", "paused", "ready"].includes(this.snapshot.status)) {
             await this.stop({ status: "superseded" });
         }
+        if (controlLease) this._beginControlOwnership(controlLease, { requestedAt: leaseRequestedAt });
+        else { this.ownershipGuard?.close(); this.ownershipGuard = null; }
         const launchSequence = ++this._launchSequence;
+        const runId = `run-${new Date().toISOString().replace(/[-:.]/g, "")}-${globalThis.crypto.randomUUID()}`;
+        this._pendingRunId = runId;
         this._prepareEpisodePhase = episodePhase === "stop" ? "stop" : "start";
         this._rejectPendingPrepare(new Error("Run preparation was superseded by a newer request."));
         const readiness = new Promise((resolve, reject) => {
@@ -169,6 +193,7 @@ export class RunSessionController {
                 this._launchSequence += 1;
                 const error = new Error(`Timed out waiting for environment "${resolved.manifest.environment.id}" to become ready.`);
                 this._set({ status: "error", error: error.message, pendingResolved: null });
+                this.data?.client?.()?.closeRun?.({ runId }).catch?.(() => {});
                 reject(error);
             }, PREPARE_TIMEOUT_MS);
             this._pendingPrepare = { sequence: launchSequence, resolve, reject, timeout };
@@ -204,17 +229,21 @@ export class RunSessionController {
         try {
             const simulation = this.data.simulation?.();
             const clientManager = this.data.client?.();
-            const preflight = await clientManager?.preflight?.(resolved);
-            if (expectedSequence !== this._launchSequence) return null;
+            const runId = this._pendingRunId;
+            const preflight = await clientManager?.preflight?.(resolved, { runId });
+            if (expectedSequence !== this._launchSequence) { await clientManager?.closeRun?.({ runId }); return null; }
             if (preflight && preflight.ok === false) {
                 const detail = preflight.issues?.map((issue) => issue.message).join(" ") || "Run preflight failed.";
                 throw new Error(detail);
             }
             const episodePhase = this._prepareEpisodePhase === "stop" ? "stop" : "start";
             this._prepareEpisodePhase = "start";
-            await simulation?.applyRunManifest?.(resolved, { episodePhase });
-            if (expectedSequence !== this._launchSequence) return null;
-            const runId = `run-${new Date().toISOString().replace(/[-:.]/g, "").replace("Z", "Z")}-${resolved.resolvedHash.slice(0, 8)}-${expectedSequence}`;
+            if (simulation) simulation.ownershipGuard = this.ownershipGuard ?? null;
+            await simulation?.applyRunManifest?.(resolved, { episodePhase, runId });
+            if (this.ownershipGuard) this._installControlOwnership();
+            if (expectedSequence !== this._launchSequence) { await clientManager?.closeRun?.({ runId }); return null; }
+            await clientManager?.activateRoutes?.(simulation?.protobufRoutes);
+            if (expectedSequence !== this._launchSequence) { await clientManager?.closeRun?.({ runId }); return null; }
             this._set({
                 status: "ready",
                 pendingResolved: null,
@@ -228,6 +257,7 @@ export class RunSessionController {
             return snapshot;
         } catch (error) {
             if (expectedSequence !== this._launchSequence) return null;
+            await this.data?.client?.()?.closeRun?.({ runId: this._pendingRunId });
             this._set({ status: "error", error: error.message, pendingResolved: null });
             this._rejectPendingPrepare(error, expectedSequence);
             throw error;
@@ -256,6 +286,8 @@ export class RunSessionController {
 
     async play() {
         if (!this.data || !this.snapshot.activeResolved) return null;
+        if (this.ownershipGuard && !this.ownershipGuard.check()) throw new Error("A live run-bound control lease is required before resuming.");
+        if (this.snapshot.transport?.state === "reconnecting") { this._resumeAfterReconnect = true; return this.getSnapshot(); }
         await this._ensureRecording();
         this.applyRuntimeOverrides(this.snapshot.activeResolved);
         this.data.simulation?.()?.play?.();
@@ -263,7 +295,55 @@ export class RunSessionController {
         return this.getSnapshot();
     }
 
+    _beginControlOwnership(snapshot, options) {
+        this.ownershipGuard?.close();
+        this.ownershipGuard = new ControlOwnershipGuard({ onLoss: () => {
+            this._resumeAfterReconnect = false;
+            this.pause().catch(() => {});
+            const simulation = this.data?.simulation?.();
+            simulation?.inputQueue?.reset();
+            const vehicleId = this.ownershipGuard?.lease?.vehicleId || "ego";
+            const stopped = simulation?.controlRuntime?.revokeOwnership(vehicleId, { timeNs: simulation.timeNs });
+            if (stopped) simulation?.runtimeContext?.controls?.applySetpoints?.(new Map([[vehicleId, stopped]]));
+        } });
+        this.ownershipGuard.begin(snapshot, options);
+    }
+
+    updateControlOwnership(snapshot, options = {}) {
+        const guard = this.ownershipGuard;
+        if (!guard?.lease || guard.lease.leaseId !== snapshot?.leaseId) return false;
+        if (!guard.lease.runId && snapshot.runId) {
+            if (snapshot.runId !== this.snapshot.activeRunId || guard.lost || !guard.update(snapshot, options)) return false;
+            guard.attach(snapshot, { ...options, startTimeNs: this.data?.simulation?.()?.timeNs ?? 0 });
+            this._installControlOwnership();
+            return true;
+        }
+        return guard.update(snapshot, options);
+    }
+
+    rebindControlOwnership(snapshot, options = {}) {
+        if (!["ready", "paused"].includes(this.snapshot.status) || !this.ownershipGuard?.lease || this.ownershipGuard.lease.vehicleId !== snapshot.target?.vehicleId) throw new Error("Pause the owned vehicle before changing its control lease.");
+        this._beginControlOwnership(snapshot, options);
+        const simulation = this.data?.simulation?.();
+        simulation?.inputQueue?.reset();
+        simulation?.protobufRoutes?.resetControlSequences();
+        const stopped = simulation?.controlRuntime?.revokeOwnership(snapshot.target.vehicleId, { timeNs: simulation.timeNs });
+        if (stopped) {
+            simulation.runtimeContext.controls.applySetpoints(new Map([[snapshot.target.vehicleId, stopped]]));
+            simulation.controlRuntime._state(snapshot.target.vehicleId).lastSequence = -1;
+        }
+        if (simulation) simulation.ownershipGuard = this.ownershipGuard;
+        this._installControlOwnership();
+    }
+
+    _installControlOwnership() {
+        const simulation = this.data?.simulation?.();
+        if (simulation?.controlRuntime) simulation.controlRuntime.ownershipGuard = this.ownershipGuard;
+        if (simulation?.inputQueue) simulation.inputQueue.validateInput = (info) => info.valueContract?.id === "cev.control-command" ? this.ownershipGuard.validate(info.value, { applyTimeNs: simulation.timeNs }) : { ok: true };
+    }
+
     async pause() {
+        this._resumeAfterReconnect = false;
         const simulation = this.data?.simulation?.();
         const wasReady = this.snapshot.status === "ready";
         simulation?.pause?.();
@@ -319,6 +399,7 @@ export class RunSessionController {
 
     async step(count = 1) {
         if (!this.data || !this.snapshot.activeResolved) return null;
+        if (this.snapshot.transport?.state === "reconnecting") throw new Error("Cannot step while Zenoh is reconnecting.");
         await this._ensureRecording();
         await this.data.simulation?.()?.step?.(count);
         this._set({ status: "paused", assertionResults: this.data.simulation?.()?.assertionEngine?.snapshot?.() || [] });
@@ -326,6 +407,7 @@ export class RunSessionController {
     }
 
     stop(options = {}) {
+        this._cancelRecovery();
         if (this._stopPromise) return this._stopPromise;
         if (this.snapshot.runResult?.runId && this.snapshot.runResult.runId === this.snapshot.activeRunId) {
             return Promise.resolve(this.snapshot.runResult);
@@ -341,8 +423,15 @@ export class RunSessionController {
     }
 
     async _stop({ status = "stopped" } = {}) {
+        if (this._pendingPrepare) {
+            this._launchSequence++;
+            this._rejectPendingPrepare(new Error("Run preparation was stopped."));
+            this._set({ pendingResolved: null });
+        }
         const simulation = this.data?.simulation?.();
         await simulation?.whenIdle?.();
+        await this.data?.client?.()?.closeRun?.();
+        simulation?.protobufRoutes?.invalidateBindings?.();
         const canFinalize = Boolean(simulation?.resolvedRun) && simulation.lifecycleState !== "disposed";
         const kernelFinalization = canFinalize ? simulation.finalize({ status }) : null;
         const finalized = kernelFinalization
@@ -461,6 +550,60 @@ export class RunSessionController {
         await this.stop({ status: "reset" });
         const next = resolved ?? await resolveRunManifest(manifestId);
         return this.prepare(next, { autoplay: false, episodePhase: "stop", manifestRevision });
+    }
+
+    _cancelRecovery() {
+        this._recoveryGeneration++;
+        this._resumeAfterReconnect = false;
+        clearTimeout(this._recoveryTimer);
+        this._recoveryWaitResolve?.();
+        this._recoveryTimer = null;
+        this._recoveryWaitResolve = null;
+    }
+
+    _handleTransportState(transport) {
+        if (this._recoveryPromise && this._activeRecoveryGeneration === this._recoveryGeneration) {
+            this._set({ transport: { ...transport, state: "reconnecting", attempt: this._reconnectAttempt } });
+            return;
+        }
+        this._set({ transport });
+        if (transport.state !== "reconnecting" || this._stopPromise || this._pendingPrepare
+            || !this.snapshot.activeRunId || !["running", "paused", "ready"].includes(this.snapshot.status)) return;
+        const data = this.data;
+        const runId = this.snapshot.activeRunId;
+        const generation = ++this._recoveryGeneration;
+        this._activeRecoveryGeneration = generation;
+        this._resumeAfterReconnect = this.snapshot.status === "running";
+        data.simulation?.()?.pause?.();
+        if (this._resumeAfterReconnect) this._set({ status: "paused" });
+        const current = () => generation === this._recoveryGeneration && data === this.data && runId === this.snapshot.activeRunId && !this._stopPromise;
+        const recovery = Promise.resolve().then(async () => {
+            await data.simulation?.()?.whenIdle?.();
+            if (!current()) return;
+            const runtime = data.simulation?.()?.protobufRoutes;
+            if (runtime) data.client?.()?.stageGeneration?.(runtime.invalidateBindings());
+            this._reconnectAttempt = 0;
+            while (current()) {
+                const delay = [500, 1000, 2000, 4000, 5000][Math.min(this._reconnectAttempt++, 4)];
+                this._set({ transport: { ...this.snapshot.transport, state: "reconnecting", attempt: this._reconnectAttempt } });
+                await new Promise((resolve) => { this._recoveryWaitResolve = resolve; this._recoveryTimer = setTimeout(resolve, delay); });
+                this._recoveryWaitResolve = null;
+                this._recoveryTimer = null;
+                if (!current()) return;
+                try {
+                    const ready = await data.client?.()?.reconnect?.();
+                    if (!current()) return;
+                    this._set({ transport: { ...ready, state: "ready", attempt: this._reconnectAttempt } });
+                } catch (error) {
+                    if (current()) this._set({ transport: { ...this.snapshot.transport, state: "reconnecting", lastError: error.message, attempt: this._reconnectAttempt } });
+                    continue;
+                }
+                if (this._resumeAfterReconnect) await this.play();
+                return;
+            }
+        }).catch((error) => { if (current()) this._set({ status: "error", error: error.message }); })
+            .finally(() => { if (this._recoveryPromise === recovery) this._recoveryPromise = null; });
+        this._recoveryPromise = recovery;
     }
 
     async _ensureRecording() {

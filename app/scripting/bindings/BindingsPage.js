@@ -48,6 +48,7 @@ const TRIGGER_SHORT_LABELS = {
 const INPUT_SOURCE_LABELS = {
     [INPUT_SOURCES.SIGNAL]: "Signal path",
     [INPUT_SOURCES.MESSAGE]: "Trigger message",
+    [INPUT_SOURCES.MESSAGE_METADATA]: "Trigger metadata",
     [INPUT_SOURCES.CONSTANT]: "Constant",
     [INPUT_SOURCES.SIM]: "Simulation"
 };
@@ -704,7 +705,7 @@ function InputMappingRows({ binding, artifact, onPatchInput }) {
                                     <option
                                         key={source}
                                         value={source}
-                                        disabled={source === INPUT_SOURCES.MESSAGE && !isTopicTrigger}
+                                        disabled={[INPUT_SOURCES.MESSAGE, INPUT_SOURCES.MESSAGE_METADATA].includes(source) && !isTopicTrigger}
                                     >
                                         {INPUT_SOURCE_LABELS[source]}
                                     </option>
@@ -719,7 +720,7 @@ function InputMappingRows({ binding, artifact, onPatchInput }) {
                                         aria-label={`Signal path for ${port.label}`}
                                     />
                                 )}
-                                {mapping.source === INPUT_SOURCES.MESSAGE && (
+                                {[INPUT_SOURCES.MESSAGE, INPUT_SOURCES.MESSAGE_METADATA].includes(mapping.source) && (
                                     <TextInput
                                         mono
                                         value={mapping.field || ""}
@@ -805,10 +806,13 @@ function OutputMappingRows({ binding, artifact, onPatchOutput }) {
                                         />
                                         <TextInput
                                             mono
-                                            value={mapping.type || ""}
-                                            onChange={(event) => onPatchOutput(port.label, { type: event.target.value })}
-                                            placeholder="pkg/Type"
-                                            aria-label={`Message type for ${port.label}`}
+                                            value={mapping.valueContract ? `${mapping.valueContract.id}@${mapping.valueContract.version}` : mapping.type || ""}
+                                            onChange={(event) => {
+                                                const native = /^(cev\.[A-Za-z0-9_.-]+)@([1-9]\d*)$/.exec(event.target.value);
+                                                onPatchOutput(port.label, native ? { type: undefined, valueContract: { id: native[1], version: Number(native[2]) } } : { type: event.target.value, valueContract: undefined });
+                                            }}
+                                            placeholder="cev.odometry@1"
+                                            aria-label={`Topic contract for ${port.label}`}
                                         />
                                     </div>
                                 )}

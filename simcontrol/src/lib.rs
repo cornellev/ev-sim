@@ -23,6 +23,21 @@ pub struct RunConfig {
     /// Omit to use the server's most recently interacted-with connected tab.
     pub browser_id: Option<String>,
     pub autoplay: bool,
+    pub control_lease: Option<ControlLease>,
+}
+
+/// Operational ownership credentials. Debug output deliberately omits the bearer token.
+#[derive(Clone)]
+pub struct ControlLease {
+    pub id: String,
+    pub token: String,
+}
+impl fmt::Debug for ControlLease {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ControlLease")
+            .field("id", &self.id)
+            .finish_non_exhaustive()
+    }
 }
 
 impl RunConfig {
@@ -31,6 +46,7 @@ impl RunConfig {
             manifest_id: manifest_id.into(),
             browser_id: None,
             autoplay: true,
+            control_lease: None,
         }
     }
 }
@@ -256,12 +272,18 @@ impl Client {
             manifest_id: Some(&config.manifest_id),
             run_id: None,
             autoplay: Some(config.autoplay),
+            control_lease_id: config.control_lease.as_ref().map(|lease| lease.id.as_str()),
+            control_lease_token: config
+                .control_lease
+                .as_ref()
+                .map(|lease| lease.token.as_str()),
         };
         let (browser_id, run_id, _) = self.execute(&command)?;
         Ok(Run {
             client: self.clone(),
             browser_id,
             run_id,
+            control_lease: config.control_lease,
         })
     }
 
@@ -408,6 +430,7 @@ pub struct Run {
     client: Client,
     browser_id: String,
     run_id: String,
+    control_lease: Option<ControlLease>,
 }
 
 impl Run {
@@ -444,6 +467,22 @@ impl Run {
         self.command("stop")
     }
 
+    /// Install a new explicit owner while the existing run remains paused.
+    pub fn bind_control_lease(&mut self, lease: ControlLease) -> Result<Snapshot> {
+        let command = Command {
+            action: "bind-ownership",
+            browser_id: Some(&self.browser_id),
+            run_id: Some(&self.run_id),
+            manifest_id: None,
+            autoplay: None,
+            control_lease_id: Some(&lease.id),
+            control_lease_token: Some(&lease.token),
+        };
+        let (_, _, snapshot) = self.client.execute(&command)?;
+        self.control_lease = Some(lease);
+        Ok(snapshot)
+    }
+
     /// Prepare the latest saved manifest revision without autoplay, updating the run ID.
     pub fn reset(&mut self) -> Result<Snapshot> {
         self.command("reset")
@@ -456,6 +495,11 @@ impl Run {
             run_id: Some(&self.run_id),
             manifest_id: None,
             autoplay: None,
+            control_lease_id: self.control_lease.as_ref().map(|lease| lease.id.as_str()),
+            control_lease_token: self
+                .control_lease
+                .as_ref()
+                .map(|lease| lease.token.as_str()),
         };
         let (_, run_id, snapshot) = self.client.execute(&command)?;
         self.run_id = run_id;
@@ -475,6 +519,10 @@ struct Command<'a> {
     run_id: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     autoplay: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    control_lease_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    control_lease_token: Option<&'a str>,
 }
 
 fn transport_error(error: ureq::Error) -> Error {

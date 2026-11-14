@@ -41,6 +41,7 @@ import {
     PRODUCER_NAMESPACES,
     topicFromContract,
 } from "../autonomy/AutonomyContractCatalog.js";
+import { listNativeTopicDefinitions, topicFromNativeContract } from "../simulation/NativeTopicCatalog.js";
 import {
     changeRunManifestId,
     createRunManifest,
@@ -103,9 +104,12 @@ import {
 } from "./runConfigMode.js";
 import { SIMPLE_VEHICLE_OPTIONS as BUILT_IN_VEHICLE_OPTIONS, simpleCreatedManifest, validationIssueTarget } from "./simpleRunModel.js";
 import SimpleRunWorkspace from "./SimpleRunWorkspace.js";
+import ProtobufInterfacePanel from "./ProtobufInterfacePanel.js";
+import { ProtobufInterfaceAuthoringSession } from "./protobufInterfaceAuthoring.js";
 import {
     EMBEDDED_BINDINGS_BUFFER_ID,
     RAW_MANIFEST_BUFFER_ID,
+    PROTOBUF_INTERFACE_BUFFER_ID,
     advancedEditorA11yProps,
     applyReadyBuffers,
     createLaunchGate,
@@ -138,7 +142,7 @@ import {
 import { radToDeg } from "three/src/math/MathUtils.js";
 import { degToRad } from "../util/Math.js";
 
-const TABS = ["Overview", "Scenario", "Initial State", "Clock", "Controls", "Sensors", "Observation", "Scripts", "Topics", "Assertions", "Logging", "Provenance", "JSON"];
+const TABS = ["Overview", "Scenario", "Initial State", "Clock", "Controls", "Sensors", "Observation", "Scripts", "Topics", "Protobuf", "Assertions", "Logging", "Provenance", "JSON"];
 const CANDIDATE_MODEL_ROLE_OPTIONS = [
     "perception",
     "localization",
@@ -287,6 +291,11 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
     const [error, setError] = useState(null);
     const [validation, setValidation] = useState(null);
     const [runState, setRunState] = useState(() => controller.getSnapshot());
+    const protobufSessionRef = useRef(null);
+    if (!protobufSessionRef.current) protobufSessionRef.current = new ProtobufInterfaceAuthoringSession();
+    const protobufSession = protobufSessionRef.current;
+    const protobufState = useSyncExternalStore(protobufSession.subscribe, protobufSession.getSnapshot, protobufSession.getSnapshot);
+    const protobufCommitted = useRef(null);
     const sensorSessionRef = useRef(null);
     if (!sensorSessionRef.current) sensorSessionRef.current = new BrowserSensorAuthoringSession();
     const launchGateRef = useRef(null);
@@ -306,7 +315,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
     });
     const bumpSensorRegistry = () => setSensorRegistryTick((value) => value + 1);
 
-    const migrationPending = Boolean(saved && Number(saved.version ?? RUN_MANIFEST_VERSION) !== RUN_MANIFEST_VERSION);
+    const migrationPending = Boolean(saved && Number(saved.version ?? RUN_MANIFEST_VERSION) < RUN_MANIFEST_VERSION);
     const dirty = Boolean(saved && draft && (
         migrationPending
         || differenceCount(
@@ -341,9 +350,10 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
     );
 
     useEffect(() => () => {
+        protobufSession.reset();
         sensorSessionRef.current?.dispose();
         sensorSessionRef.current = null;
-    }, []);
+    }, [protobufSession]);
 
     const openValidationIssue = (issue) => {
         const target = validationIssueTarget(issue, draftRef.current);
@@ -421,6 +431,13 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
 
     const applyManifestDocument = (id, document) => {
         newRunSetupRef.current = null;
+        protobufSession.reset();
+        protobufCommitted.current = null;
+        if (document.protobuf?.interfaceHash) {
+            protobufSession.select(document.protobuf.interfaceHash).then((resource) => {
+                if (resource) protobufCommitted.current = resource;
+            }).catch(() => {});
+        }
         const normalized = normalizeRunManifest(document, authoringOptions());
         clearJsonBuffers();
         draftRef.current = normalized;
@@ -611,6 +628,11 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
 
     const applyJsonEntry = (current, entry, id) => {
         if (id === RAW_MANIFEST_BUFFER_ID) return entry.parsed;
+        if (entry.patch?.kind === "protobuf-interface") {
+            protobufCommitted.current = entry.parsed;
+            if (current.version !== 13 || current.protobuf?.mode !== "zenoh") return current;
+            return normalizeRunManifest({ ...current, protobuf: { ...current.protobuf, interfaceHash: entry.parsed.hash } }, authoringOptions());
+        }
         if (entry.patch?.kind === "embedded-bindings") {
             const next = structuredClone(current);
             const bindings = Array.isArray(entry.parsed) ? entry.parsed : [];
@@ -679,6 +701,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
     };
 
     const discardBuffer = (id) => {
+        if (id === PROTOBUF_INTERFACE_BUFFER_ID && protobufCommitted.current) protobufSession.discard(protobufCommitted.current.document);
         const next = writeJsonBuffer(buffersRef.current, id, null);
         setJsonResets((current) => ({ ...current, [id]: (current[id] ?? 0) + 1 }));
         if (planReadyFlush(next).length > 0) {
@@ -771,6 +794,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
             setValidation(local);
             throw new Error(formatValidationIssues(local.issues, { prefix: "Fix validation errors before saving" }));
         }
+        await protobufSession.persist(local.manifest.protobuf?.interfaceHash ?? protobufState.hash);
         const previousId = selectedId;
         const stored = local.manifest.id === previousId
             ? await saveRunManifest(previousId, local.manifest, saved.revision)
@@ -793,6 +817,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
 
     const validate = async () => perform(async () => {
         rejectPendingJson();
+        await protobufSession.persist(draft.protobuf?.interfaceHash ?? protobufState.hash);
         const result = await validateRunManifestOnServer(selectedId, draft);
         setValidation(result);
         if (!result.ok) throw new Error(formatValidationIssues(result.issues));
@@ -804,6 +829,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
         try {
             await perform(async () => {
                 rejectPendingJson();
+                await protobufSession.persist(draft.protobuf?.interfaceHash ?? protobufState.hash);
                 let current = saved;
                 if (dirty) current = await save({ nested: true });
                 const manifestId = current.id;
@@ -916,6 +942,41 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
         discard: () => saved && applyManifestDocument(selectedId, saved),
     });
 
+    const adoptProtobuf = (resource) => {
+        protobufCommitted.current = resource;
+        if (draftRef.current.version === 13 && draftRef.current.protobuf?.mode === "zenoh") update(["protobuf", "interfaceHash"], resource.hash);
+    };
+    const protobufPanel = draft && <ProtobufInterfacePanel session={protobufSession} state={protobufState} draft={draft}
+        blocked={busy || jsonBlocked}
+        onAdopt={adoptProtobuf}
+        onRoutes={(text) => {
+            try {
+                const resource = protobufSession.edit(text, [draftRef.current.protobuf?.interfaceHash, protobufCommitted.current?.hash]);
+                stageBuffer(PROTOBUF_INTERFACE_BUFFER_ID, { label: "Protobuf routes", text, parsed: resource, patch: { kind: "protobuf-interface" } }, { flushNow: true });
+            } catch (caught) {
+                protobufSession.set({ error: caught.message });
+                stageBuffer(PROTOBUF_INTERFACE_BUFFER_ID, { label: "Protobuf routes", text, error: caught.message });
+            }
+        }}
+        onEnable={(enabled, externalController = draft.protobuf?.externalController ?? false) => {
+            update(["protobuf"], enabled ? { mode: "zenoh", interfaceHash: protobufState.hash, externalController }
+                : { mode: "disabled", interfaceHash: null, externalController: false });
+        }}
+        onMigration={(action) => perform(async () => {
+            rejectPendingJson();
+            if (dirty) throw new Error("Save your run before previewing native migration.");
+            const epoch = protobufSession.epoch;
+            const response = await fetch(`/api/storage/run-manifests/${encodeURIComponent(selectedId)}/native-migration/${action}`, {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(action === "apply" ? { plan: protobufState.migration, expectedRevision: saved.revision } : {}),
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || "Native migration failed.");
+            if (epoch !== protobufSession.epoch) return;
+            if (action === "plan") protobufSession.set({ migration: result });
+            else applyManifestDocument(result.manifest.id, result.manifest);
+        })} />;
+
     return (
         <AuthoringModeProvider advanced>
         <main className="fixed inset-0 z-[1] overflow-hidden bg-[var(--slate-bg)] text-[var(--slate-fg)]">
@@ -987,6 +1048,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                         {mode === "simple" && (
                             <SimpleRunWorkspace
                                 draft={draft}
+                                protobufPanel={protobufPanel}
                                 blocked={jsonBlocked || busy}
                                 environments={environments}
                                 environmentsReady={environmentsReady}
@@ -1017,7 +1079,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                                     onRetryEnvironments={loadEnvironmentCatalog}
                                 />
                                 <ValidationOutcome validation={validation} error={error} runStatus={runState.status} busy={busy} />
-                                {migrationPending && <StatusMessage className="mb-4" tone="info" title={`Run manifest v${saved.version} is ready to migrate`}>Saving writes the normalized v{RUN_MANIFEST_VERSION} document. Manifests before v8 also gain missing candidate perception and localization return topics.</StatusMessage>}
+                                {migrationPending && <StatusMessage className="mb-4" tone="info" title={`Run manifest v${saved.version} is ready to migrate`}>Create and review a native migration preview before saving or running this historical manifest.</StatusMessage>}
                             </SimpleRunWorkspace>
                         )}
                         <AdvancedRunEditor hidden={mode === "simple"}>
@@ -1046,7 +1108,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                                 onRetryEnvironments={loadEnvironmentCatalog}
                             />
                             <ValidationOutcome validation={validation} error={error} runStatus={runState.status} busy={busy} />
-                            {migrationPending && <StatusMessage className="mb-4" tone="info" title={`Run manifest v${saved.version} is ready to migrate`}>Saving writes the normalized v{RUN_MANIFEST_VERSION} document. Manifests before v8 also gain missing candidate perception and localization return topics.</StatusMessage>}
+                            {migrationPending && <StatusMessage className="mb-4" tone="info" title={`Run manifest v${saved.version} is ready to migrate`}>Create and review a native migration preview before saving or running this historical manifest.</StatusMessage>}
 
                             <TabsList aria-label="Run manifest sections" className="mb-5 overflow-x-auto">
                                 {TABS.map((item) => <TabsTrigger key={item} value={item}>{item}</TabsTrigger>)}
@@ -1092,6 +1154,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                                             />
                                         )}
                                         {item === "Topics" && <Topics draft={draft} update={update} />}
+                                        {item === "Protobuf" && protobufPanel}
                                         {item === "Assertions" && <Assertions draft={draft} update={update} />}
                                         {item === "Logging" && <Logging draft={draft} update={update} />}
                                         {item === "Provenance" && <Provenance draft={draft} update={update} />}
@@ -2704,11 +2767,12 @@ function Scripts({
 }
 
 function Topics({ draft, update }) {
-    const contracts = useMemo(() => listAutonomyContracts(), []);
+    const native = draft.version === 13;
+    const contracts = useMemo(() => native ? listNativeTopicDefinitions() : listAutonomyContracts(), [native]);
     const [filter, setFilter] = useState("all");
     const addFromContract = (contractId) => {
         if (!contractId) return;
-        update(["topics"], [...draft.topics, topicFromContract(contractId)]);
+        update(["topics"], [...draft.topics, (native ? topicFromNativeContract : topicFromContract)(contractId)]);
     };
     const indexed = draft.topics.map((topic, index) => ({ topic, index }));
     const inputs = indexed.filter(({ topic }) => topic.direction === "input");
@@ -2788,6 +2852,7 @@ function Topics({ draft, update }) {
                             topic={topic}
                             index={index}
                             contracts={contracts}
+                            native={native}
                             update={update}
                             onRemove={() => update(["topics"], draft.topics.filter((_, candidate) => candidate !== index))}
                         />
@@ -2798,7 +2863,7 @@ function Topics({ draft, update }) {
     );
 }
 
-function TopicCard({ topic, index, contracts, update, onRemove }) {
+function TopicCard({ topic, index, contracts, update, onRemove, native = false }) {
     const rosType = topic.schema?.type || topic.type || "";
     const isInput = topic.direction === "input";
     return (
@@ -2818,7 +2883,7 @@ function TopicCard({ topic, index, contracts, update, onRemove }) {
                     onChange={(event) => {
                         const contractId = event.target.value;
                         if (!contractId) return;
-                        const next = topicFromContract(contractId, { id: topic.id, name: topic.name });
+                        const next = (native ? topicFromNativeContract : topicFromContract)(contractId, { id: topic.id, name: topic.name });
                         update(["topics", index], next);
                     }}
                 >
@@ -2846,7 +2911,10 @@ function TopicCard({ topic, index, contracts, update, onRemove }) {
                         <option value="output">Output (simulator)</option>
                     </select>
                 </Field>
-                <Field label="ROS type">
+                {native ? <>
+                    <Field label="Native contract"><input id={`run-focus-topic-${index}-schema`} value={topic.valueContract?.id ?? ""} onChange={(event) => update(["topics", index, "valueContract"], { id: event.target.value, version: topic.valueContract?.version ?? 1 })} /></Field>
+                    <Field label="Contract version"><input type="number" min="1" value={topic.valueContract?.version ?? 1} onChange={(event) => update(["topics", index, "valueContract", "version"], Number(event.target.value))} /></Field>
+                </> : <Field label="ROS type">
                     <input
                         id={`run-focus-topic-${index}-schema`}
                         value={rosType}
@@ -2856,7 +2924,7 @@ function TopicCard({ topic, index, contracts, update, onRemove }) {
                             schema: { ...(topic.schema || {}), type: event.target.value, version: topic.schema?.version || 1 },
                         })}
                     />
-                </Field>
+                </Field>}
                 <Field label="Producer">
                     <select value={topic.producer || "simulator"} onChange={(event) => update(["topics", index, "producer"], event.target.value)}>
                         {PRODUCER_NAMESPACES.map((namespace) => (

@@ -45,7 +45,7 @@ export function applySensorInheritance(manifest, {
     const inherited = vehicleSensors.map((vehicleSensor) => {
         const index = matchingSensorIndex(current, vehicleSensor.id, used);
         if (index >= 0) used.add(index);
-        return projectInheritedSensor(vehicleSensor, index >= 0 ? current[index] : null, actorId, registry);
+        return projectInheritedSensor(vehicleSensor, index >= 0 ? current[index] : null, actorId, registry, manifest.version === 13);
     });
     const extras = [];
     const orphans = [];
@@ -109,7 +109,7 @@ export function resetSensorsToParentVehicle(manifest, vehicleManifest, {
     const vehicleSensors = (Array.isArray(vehicleManifest.sensors) ? vehicleManifest.sensors : [])
         .map((sensor, index) => normalizeVehicleSensor(sensor, index, registry));
     const sensors = vehicleSensors.map((vehicleSensor) => (
-        projectInheritedSensor(vehicleSensor, null, actorId, registry)
+        projectInheritedSensor(vehicleSensor, null, actorId, registry, manifest.version === 13)
     ));
     return {
         manifest: {
@@ -189,7 +189,7 @@ function matchingSensorIndex(sensors, vehicleSensorId, used) {
     ));
 }
 
-function projectInheritedSensor(vehicleSensor, existing, actorId, registry) {
+function projectInheritedSensor(vehicleSensor, existing, actorId, registry, native = false) {
     const definition = registry.get(vehicleSensor.type);
     const base = existing
         ? withoutInheritanceMarker(existing)
@@ -210,6 +210,7 @@ function projectInheritedSensor(vehicleSensor, existing, actorId, registry) {
     delete source.inheritedFrom;
     if (definition?.pluginSensor) source.rateHz = vehicleSensor.config?.rateHz;
     const normalized = normalizeRunSensor(source, 0, registry);
+    if (native) delete normalized.schema;
     return { ...normalized, inheritedFrom: vehicleSensor.id };
 }
 

@@ -1,0 +1,26 @@
+{
+  "sdk": {
+    "package": "@eclipse-zenoh/zenoh-ts",
+    "version": "1.10.2"
+  },
+  "routerVersion": "1.10.2",
+  "release": "https://github.com/eclipse-zenoh/zenoh-ts/releases/tag/1.10.2",
+  "artifacts": {
+    "darwin-arm64": {
+      "name": "zenoh-ts-1.10.2-aarch64-apple-darwin-standalone.zip",
+      "sha256": "a140635995ead9454e46a442fa9508a4dd41ad029af2bbbdf7f10aa737a9efb6"
+    },
+    "linux-x64": {
+      "name": "zenoh-ts-1.10.2-x86_64-unknown-linux-gnu-standalone.zip",
+      "sha256": "cf2e56be2672092a64a674c665124e285913433076b2968d9570ef9ac1e7e628"
+    },
+    "linux-arm64": {
+      "name": "zenoh-ts-1.10.2-aarch64-unknown-linux-gnu-standalone.zip",
+      "sha256": "1e0962161ee1ff9236b007c2c48c8c33159a50ef6f3af6b3cf614101e3517eca"
+    },
+    "darwin-x64": {
+      "name": "zenoh-ts-1.10.2-x86_64-apple-darwin-standalone.zip",
+      "sha256": "43955b24116dd4e1e3db657a1d2a4bf50eeeb2743f7ce745f2cc950cebc2a25b"
+    }
+  }
+}

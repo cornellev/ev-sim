@@ -107,11 +107,16 @@ function normalizeSetting(value, path) {
     return Object.freeze(result);
 }
 
-function normalizeProduct(value, path) {
+function normalizeProduct(value, path, sensorAbi = 1) {
     const source = object(value, path);
     const kind = text(source.kind, `${path}.kind`);
     if (!PLUGIN_SENSOR_PRODUCT_KINDS.includes(kind)) throw new TypeError(`${path}.kind is unsupported.`);
     if (kind === "pointCloud") {
+        if (sensorAbi === 2) {
+            exactKeys(source, ["kind", "productId", "outputKey", "valueContract", "contractId"], path);
+            if (source.valueContract?.id !== "cev.points" || source.valueContract?.version !== 1 || Object.keys(source.valueContract).some((key) => !["id", "version"].includes(key))) throw new TypeError(`${path}.valueContract must be cev.points@1.`);
+            return Object.freeze({ kind, productId: safeKey(source.productId, `${path}.productId`), outputKey: safeKey(source.outputKey, `${path}.outputKey`), valueContract: Object.freeze({ id: "cev.points", version: 1 }), ...(source.contractId === undefined ? {} : { contractId: text(source.contractId, `${path}.contractId`) }) });
+        }
         exactKeys(source, ["kind", "productId", "outputKey", "rosType", "contractId"], path);
         if (source.rosType !== "sensor_msgs/PointCloud2") {
             throw new TypeError(`${path}.rosType must be "sensor_msgs/PointCloud2".`);
@@ -173,7 +178,7 @@ export function normalizePluginSensorDescriptor(value, pluginId, path = "plugin.
     if (!type.startsWith(`${pluginId}.`) || type.length === pluginId.length + 1) {
         throw new TypeError(`${path}.type must start with "${pluginId}.".`);
     }
-    if (source.sensorAbi !== PLUGIN_SENSOR_ABI) throw new TypeError(`${path}.sensorAbi must be ${PLUGIN_SENSOR_ABI}.`);
+    if (![1, 2].includes(source.sensorAbi)) throw new TypeError(`${path}.sensorAbi must be 1 or 2.`);
     if (source.family !== PLUGIN_SENSOR_FAMILY) throw new TypeError(`${path}.family must be "${PLUGIN_SENSOR_FAMILY}".`);
     const defaultsSource = object(source.defaults, `${path}.defaults`);
     exactKeys(defaultsSource, ["rateHz", "scanLayout"], `${path}.defaults`);
@@ -183,7 +188,7 @@ export function normalizePluginSensorDescriptor(value, pluginId, path = "plugin.
     if (!Array.isArray(source.settings ?? [])) throw new TypeError(`${path}.settings must be an array.`);
     if (!Array.isArray(source.products) || source.products.length === 0) throw new TypeError(`${path}.products must be a non-empty array.`);
     const settings = (source.settings ?? []).map((entry, index) => normalizeSetting(entry, `${path}.settings.${index}`));
-    const products = source.products.map((entry, index) => normalizeProduct(entry, `${path}.products.${index}`));
+    const products = source.products.map((entry, index) => normalizeProduct(entry, `${path}.products.${index}`, source.sensorAbi));
     if (new Set(settings.map((entry) => entry.key)).size !== settings.length) throw new TypeError(`${path}.settings contains duplicate keys.`);
     if (new Set(products.map((entry) => entry.productId)).size !== products.length) throw new TypeError(`${path}.products contains duplicate product IDs.`);
     const outputKeys = products.filter((entry) => entry.kind === "pointCloud").map((entry) => entry.outputKey);
@@ -191,7 +196,7 @@ export function normalizePluginSensorDescriptor(value, pluginId, path = "plugin.
     const observation = normalizeObservation(source.observation, products, `${path}.observation`);
     return Object.freeze({
         type,
-        sensorAbi: PLUGIN_SENSOR_ABI,
+        sensorAbi: source.sensorAbi,
         family: PLUGIN_SENSOR_FAMILY,
         stateVersion: positiveInteger(source.stateVersion, `${path}.stateVersion`),
         defaults: Object.freeze({
@@ -244,7 +249,7 @@ export function createPluginSensorTypeDefinition(descriptor, ownership) {
             outputs: Object.freeze(pointCloudProducts.map((product) => Object.freeze({
                 key: product.outputKey,
                 signal: product.productId,
-                rosType: product.rosType,
+                ...(product.valueContract ? { valueContract: product.valueContract } : { rosType: product.rosType }),
                 measured: true,
             }))),
             normalize(source = {}) {
@@ -268,11 +273,11 @@ export function createPluginSensorTypeDefinition(descriptor, ownership) {
                         ),
                         products,
                     },
-                    schema: {
+                    ...(descriptor.sensorAbi === 1 ? { schema: {
                         ...Object.fromEntries(pointCloudProducts.map((product) => [product.outputKey, product.rosType])),
                         ...(source.schema && typeof source.schema === "object" && !Array.isArray(source.schema)
                             ? clonePluginJson(source.schema, "sensor.schema") : {}),
-                    },
+                    } } : {}),
                     health: {
                         deadlineNs: Number.isSafeInteger(source.health?.deadlineNs) && source.health.deadlineNs >= 0
                             ? source.health.deadlineNs : Math.round(1e9 / descriptor.defaults.rateHz),

@@ -1,0 +1,32 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import express from "express";
+import { ControlOwnershipService } from "../server/interfaces/ControlOwnershipService.js";
+import { createControlOwnershipRouter } from "../server/routes/controlOwnershipRouter.js";
+
+test("ownership HTTP credentials stay private and reads do not renew a lease", async (t) => {
+    let now = 0;
+    const service = new ControlOwnershipService({ now: () => now, startTimer: false });
+    t.after(() => service.close());
+    const app = express(); app.use(createControlOwnershipRouter(service));
+    const server = app.listen(0, "127.0.0.1");
+    await new Promise((resolve) => server.once("listening", resolve));
+    t.after(() => new Promise((resolve) => server.close(resolve)));
+    const request = (url, method = "GET", body, token) => fetch(`http://127.0.0.1:${server.address().port}${url}`, { method, headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
+    const target = { kind: "headless", id: "test", vehicleId: "ego" };
+    assert.equal((await request("/", "POST", { target, typo: true })).status, 400);
+    assert.equal((await request("/", "POST", { target, mode: "x".repeat(9000) })).status, 413);
+    const response = await request("/", "POST", { target, mode: "autonomous" });
+    assert.equal(response.status, 201); assert.equal(response.headers.get("cache-control"), "no-store");
+    const grant = await response.json();
+    assert.equal((await request("/", "POST", { target })).status, 409);
+    assert.equal((await request(`/${grant.leaseId}/renew`, "POST", {}, "wrong")).status, 403);
+    now = 500;
+    const publicStatus = await (await request(`/${grant.leaseId}`)).json();
+    assert.equal(publicStatus.remainingMs, 250);
+    assert.equal(JSON.stringify(publicStatus).includes(grant.token), false);
+    assert.equal((await (await request(`/${grant.leaseId}/renew`, "POST", {}, grant.token)).json()).remainingMs, 750);
+    now = 1250;
+    assert.equal((await (await request(`/${grant.leaseId}`)).json()).status, "expired");
+    assert.equal((await request(`/${grant.leaseId}/renew`, "POST", {}, grant.token)).status, 409);
+});

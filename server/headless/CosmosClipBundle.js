@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { EnvironmentDocument } from "../../app/3d/editor/document/EnvironmentDocument.js";
 import { createEnvironmentCommandService } from "../../app/3d/editor/commands/EnvironmentCommandService.js";
-import { topicFromContract } from "../../app/autonomy/AutonomyContractCatalog.js";
+import { topicFromNativeContract } from "../../app/simulation/NativeTopicCatalog.js";
 import { threeToRep103Vector } from "../../app/autonomy/CoordinateFrames.js";
 import { createDefaultRunManifest } from "../../app/simulation/RunManifest.js";
 import { createRunSensor } from "../../app/simulation/sensors/SensorTypeRegistry.js";
@@ -161,7 +161,7 @@ function clipTopics() {
         "front-camera-info",
         "front-camera-depth",
         "imu",
-    ].map((contractId) => topicFromContract(contractId));
+    ].map((contractId) => topicFromNativeContract(contractId));
 }
 
 async function createCorridor(storage) {

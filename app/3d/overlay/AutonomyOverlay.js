@@ -121,7 +121,7 @@ function hideExtra(group, count) {
     }
 }
 
-function snapshotContentKey({ perception, localization, controls } = {}) {
+function snapshotContentKey({ perception, localization, controls, path } = {}) {
     return [
         perception?.captureTimeNs ?? perception?.ageNs ?? "",
         perception?.oracle?.captureTimeNs ?? "",
@@ -130,6 +130,7 @@ function snapshotContentKey({ perception, localization, controls } = {}) {
         controls?.applyTimeNs ?? controls?.captureTimeNs ?? "",
         perception?.status ?? "",
         localization?.status ?? "",
+        path?.sequenceId ?? path?.captureTimeNs ?? "",
     ].join("|");
 }
 
@@ -155,9 +156,10 @@ export class AutonomyOverlay {
         this._estimateClone = null;
         this._boxes = new THREE.Group();
         this._lanes = new THREE.Group();
+        this._path = new THREE.Group();
         this._ekf = new THREE.Group();
         this._controls = new THREE.Group();
-        this.group.add(this._boxes, this._lanes, this._ekf, this._controls);
+        this.group.add(this._boxes, this._lanes, this._ekf, this._controls, this._path);
         this._contentKey = null;
         this._controlArcGeometries = [
             createControlsPathRibbonGeometry(CONTROL_RIBBON_SEGMENTS),
@@ -177,6 +179,7 @@ export class AutonomyOverlay {
         this.layers = { ...this.layers, ...layers };
         this._boxes.visible = this.layers.oracle || this.layers.candidate;
         this._lanes.visible = this.layers.lanes;
+        this._path.visible = this.layers.candidate;
         this._ekf.visible = this.layers.ekf;
         this._controls.visible = !this._predictedPathHidden && this.layers.controls !== false;
         if (this._estimateClone) {
@@ -193,7 +196,7 @@ export class AutonomyOverlay {
 
     clear() {
         this.disposeEstimateClone();
-        for (const group of [this._boxes, this._lanes, this._ekf, this._controls]) {
+        for (const group of [this._boxes, this._lanes, this._path, this._ekf, this._controls]) {
             for (const child of [...group.children]) {
                 child.traverse(disposeObject);
                 child.removeFromParent();
@@ -214,13 +217,14 @@ export class AutonomyOverlay {
         this._syncSnapshotContent({
             perception,
             localization,
+            path: runtime?.lastPath,
             controls: controlRuntime?.getSnapshot?.() || null,
         }, vehiclePose, estimateVehicle);
     }
 
-    updateFromSnapshot({ perception, localization, controls, vehiclePose, estimateVehicle } = {}, layers = null) {
+    updateFromSnapshot({ perception, localization, controls, path, vehiclePose, estimateVehicle } = {}, layers = null) {
         if (layers) this.setLayers(layers);
-        const nextKey = snapshotContentKey({ perception, localization, controls });
+        const nextKey = snapshotContentKey({ perception, localization, controls, path });
         if (nextKey === this._contentKey) {
             if (this.layers.controls !== false && controls) {
                 this._syncControls(controls, vehiclePose);
@@ -228,12 +232,13 @@ export class AutonomyOverlay {
             return;
         }
         this._contentKey = nextKey;
-        this._syncSnapshotContent({ perception, localization, controls }, vehiclePose, estimateVehicle);
+        this._syncSnapshotContent({ perception, localization, controls, path }, vehiclePose, estimateVehicle);
     }
 
-    _syncSnapshotContent({ perception, localization, controls }, vehiclePose = null, estimateVehicle = null) {
+    _syncSnapshotContent({ perception, localization, controls, path }, vehiclePose = null, estimateVehicle = null) {
         this._clearGroup(this._boxes);
         this._clearGroup(this._lanes);
+        this._clearGroup(this._path);
         this._clearGroup(this._ekf);
         this._clearGroup(this._controls);
 
@@ -242,6 +247,7 @@ export class AutonomyOverlay {
             if (this.layers.lanes) this._syncLanes(perception?.oracle?.lanes || [], "oracle");
         }
         if (this.layers.candidate) {
+            if (path?.status === "ok" && path.points.length > 1) this._ensureLaneLine(0, path.points.map((point) => new THREE.Vector3(point.three.x, point.three.y + 0.05, point.three.z)), statusColor(path.status, "candidate"), this._path);
             this._syncBoxes(perception?.detections3d || [], "candidate");
             if (this.layers.lanes) this._syncLanes(perception?.lanes || [], "candidate");
         }
@@ -426,8 +432,8 @@ export class AutonomyOverlay {
         hideExtra(this._lanes, index);
     }
 
-    _ensureLaneLine(index, points, color) {
-        let line = this._lanes.children[index];
+    _ensureLaneLine(index, points, color, group = this._lanes) {
+        let line = group.children[index];
         if (!line || !line.isLine) {
             line = disableRaycast(new THREE.Line(
                 new THREE.BufferGeometry().setFromPoints(points),
@@ -438,7 +444,7 @@ export class AutonomyOverlay {
                     depthTest: false,
                 }),
             ));
-            this._lanes.add(line);
+            group.add(line);
         } else {
             line.visible = true;
             line.geometry.dispose();

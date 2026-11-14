@@ -19,7 +19,7 @@ import { getBuiltInVehicleManifest } from "../app/vehicles/BuiltInVehicleManifes
 const bigCar = getBuiltInVehicleManifest("big-car");
 
 function localScenario(overrides = {}) {
-    return createDefaultScenario(overrides);
+    return createDefaultScenario({ version: 1, ...overrides });
 }
 
 function manifestFor(scenario, overrides = {}) {

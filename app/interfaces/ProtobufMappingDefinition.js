@@ -54,8 +54,20 @@ export function normalizeMappingDefinition(value) {
             return result;
         });
     };
-    record(value, ["fields", "bindings", "derived"]);
+    record(value, ["fields", "bindings", "derived", "metadata", "checks"]);
     const result = { fields: fields(value.fields) };
+    if (value.metadata !== undefined) {
+        result.metadata = fields(value.metadata);
+        if (result.metadata.some((entry) => !["runId", "frameId", "captureTimeNs", "sequenceId"].includes(entry.to) || entry.each || entry.operation)) throw new Error("Inbound metadata selects runId, frameId, captureTimeNs or sequenceId scalars.");
+    }
+    if (value.checks !== undefined) {
+        if (!Array.isArray(value.checks) || value.checks.length > 64 || Object.keys(value.checks).length !== value.checks.length) throw new Error("Mapping checks must be bounded dense records.");
+        result.checks = value.checks.map((entry) => {
+            record(entry, ["from", "value", "equalsFrom"]);
+            if (Object.hasOwn(entry, "value") === Object.hasOwn(entry, "equalsFrom")) throw new Error("A mapping check selects a literal or equalsFrom.");
+            return { from: path(entry.from, true), ...(Object.hasOwn(entry, "value") ? { value: structuredClone(entry.value) } : { equalsFrom: path(entry.equalsFrom, true) }) };
+        });
+    }
     if (value.bindings !== undefined) {
         record(value.bindings, ["vehicleId", "sensorId", "rearWheelIds"]);
         result.bindings = structuredClone(value.bindings);

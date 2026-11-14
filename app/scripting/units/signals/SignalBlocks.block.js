@@ -334,6 +334,7 @@ export class TopicSnapshotBlock extends ConfiguredBlock {
     register() {
         this.state = this.config();
         this.registerOutput("message", "message");
+        this.registerOutput("metadata", "message");
         this.registerOutput("exists", "boolean");
         this.registerOutput("stale", "boolean");
         this.registerOutput("age", "float64");
@@ -347,7 +348,7 @@ export class TopicSnapshotBlock extends ConfiguredBlock {
         const signal = readSignal(this.manager, `topics.${this.state.topic}`, {
             staleAfter: this.state.staleAfter
         });
-        return signalStatusOutput(signal).set("message", signal.exists && !signal.stale ? signal.value : null);
+        return signalStatusOutput(signal).set("message", signal.exists && !signal.stale ? signal.value : null).set("metadata", signal.exists && !signal.stale ? signal.metadata : null);
     }
 }
 

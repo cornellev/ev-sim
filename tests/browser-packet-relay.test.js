@@ -133,7 +133,7 @@ test("relay advertises only UDP and refuses bindings it cannot send", async () =
 });
 
 test("admission accepts browser UDP only while the relay advertises it", async () => {
-    const registry = createSensorDefinitionRegistry([verifyPluginPackage(await pluginSensorFixtureResource())]);
+    const registry = createSensorDefinitionRegistry([verifyPluginPackage(await pluginSensorFixtureResource({ native: true }))]);
     const bundle = await createPluginPcapHeadlessBundle({ sensorTransports: fixtureUdpBindings() });
     const admit = (host) => planSensorAdmission({
         manifest: bundle.resolved.manifest,

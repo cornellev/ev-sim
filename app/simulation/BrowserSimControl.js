@@ -1,6 +1,6 @@
 export const BROWSER_SIM_HEARTBEAT_MS = 5_000;
 export const BROWSER_SIM_TIMEOUT_MS = 15_000;
-export const BROWSER_SIM_ACTIONS = ["start", "pause", "resume", "stop", "reset"];
+export const BROWSER_SIM_ACTIONS = ["start", "pause", "resume", "stop", "reset", "bind-ownership"];
 
 export function browserSimError(code, message, statusCode = 409) {
     return Object.assign(new Error(message), { code, statusCode });
@@ -14,6 +14,7 @@ export function assertBrowserSimCommand(command, snapshot) {
     if (snapshot.transitioning || snapshot.status === "preparing") {
         throw browserSimError("BUSY", "The simulator is preparing or finalizing a run.");
     }
+    if (command.action === "bind-ownership" && !["ready", "paused"].includes(snapshot.status)) throw browserSimError("CONTROL_LEASE_PAUSE", "Pause the run before changing its control owner.");
     if (command.action === "start") {
         if (snapshot.status === "running" || (snapshot.runId && ["ready", "paused"].includes(snapshot.status))) {
             throw browserSimError("RUN_ACTIVE", "Stop the current run before starting another manifest.");

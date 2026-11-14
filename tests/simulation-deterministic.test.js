@@ -119,6 +119,7 @@ test("topic input queue orders declared topics before arrival sequence", () => {
 test("manifest clock uses exact integer nanoseconds and fixed module order", async () => {
     const { engine, calls } = harness();
     const manifest = createDefaultRunManifest({
+        version: 12,
         clock: { stepNs: 20_000_000, pacing: "unbounded", speed: 4, maxSteps: 3 },
         sensorRig: { sensors: [] },
         assertions: [],
@@ -148,6 +149,7 @@ test("browser presentation hooks run only after the authoritative kernel phases"
         presentationCalls.push(["scenario-diagnostics", [...engine.lastStepPhases]]);
     };
     const manifest = createDefaultRunManifest({
+        version: 12,
         clock: { modules: { baking: true } },
         sensorRig: { sensors: [] },
         assertions: [],
@@ -297,6 +299,7 @@ test("hidden experiment diagnostics preserve authoritative playback", () => {
 test("queued controls/command is applied only at a step boundary", async () => {
     const { engine, runtime, vehicle, store } = harness();
     const manifest = createDefaultRunManifest({
+        version: 12,
         sensorRig: { sensors: [] },
         controls: {
             actuatorOverrides: {
@@ -341,6 +344,7 @@ test("queued controls/command is applied only at a step boundary", async () => {
 test("signal assertions stop a run deterministically", async () => {
     const { engine } = harness();
     const manifest = createDefaultRunManifest({
+        version: 12,
         sensorRig: { sensors: [] },
         assertions: [{
             id: "must-be-fast",
@@ -415,6 +419,7 @@ test("swept colliders clamp at first impact and publish ordered contact transiti
 
 test("manual, realtime, and unbounded pacing produce the same fixed-step state", async () => {
     const manifest = createDefaultRunManifest({
+        version: 12,
         clock: { stepNs: 20_000_000, pacing: "realtime", speed: 1, maxSteps: 5 },
         initialState: { vehicles: [{ id: "ego", type: "big-car", pose: { position: {}, rotation: {} }, linearVelocity: { x: 3, y: 0, z: 0 }, steeringAngle: 0 }], signals: {} },
         sensorRig: { sensors: [] },
@@ -465,6 +470,7 @@ test("vehicle sweeps prevent fast vehicles from tunneling through each other", a
 test("reset and replaying the same steps reconstructs the same vehicle state", async () => {
     const target = harness();
     const manifest = createDefaultRunManifest({
+        version: 12,
         initialState: { vehicles: [{ id: "ego", type: "big-car", pose: { position: {}, rotation: {} }, linearVelocity: { x: 2, y: 0, z: 0 }, steeringAngle: 0 }], signals: {} },
         sensorRig: { sensors: [] },
     });
@@ -479,6 +485,7 @@ test("reset and replaying the same steps reconstructs the same vehicle state", a
 test("browser adapter disposal is idempotent and does not trigger reset work", async () => {
     const { engine } = harness();
     const manifest = createDefaultRunManifest({
+        version: 12,
         sensorRig: { sensors: [] },
         assertions: [],
     });
@@ -495,6 +502,7 @@ test("browser adapter disposal is idempotent and does not trigger reset work", a
 test("browser adapter can clear and prepare the same run repeatedly", async () => {
     const { engine } = harness();
     const run = resolved(createDefaultRunManifest({
+        version: 12,
         clock: { maxSteps: 2 },
         sensorRig: { sensors: [] },
         assertions: [],
@@ -518,6 +526,7 @@ test("browser adapter can clear and prepare the same run repeatedly", async () =
 test("realtime advanceSimulation respects step budget and leaves accumulator debt", async () => {
     const { engine } = harness();
     const manifest = createDefaultRunManifest({
+        version: 12,
         clock: { stepNs: 20_000_000, pacing: "realtime", speed: 1, maxSteps: 20 },
         sensorRig: { sensors: [] },
         assertions: [],
@@ -889,6 +898,7 @@ test("late async advancement cannot emit state after stop invalidates its genera
 
 function quietManifest(controls = {}) {
     return createDefaultRunManifest({
+        version: 12,
         controls,
         clock: { maxSteps: 4 },
         sensorRig: { sensors: [] },

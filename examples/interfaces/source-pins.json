@@ -1,0 +1,20 @@
+{
+  "onboarding": {
+    "repository": "cornellev/auto-onboarding-fa26",
+    "baseCommit": "a2e2c39023e75774a271a0cd1b1781bd2444c7cd",
+    "localCommit": "071675cd26a285146872400fab1c97356dd07956",
+    "descriptorSha256": "c1af914ec3f659a0c31e88efdb55d39cef9081f2db463f45a30146e8f35e0f95",
+    "published": false
+  },
+  "simcontrol": {
+    "repository": "cornellev/ev-sim",
+    "localCommit": "fb1f0ef6ed54276332e137fee5ef59a96da1965e",
+    "published": false,
+    "baseCommit": "427d8c1220344a4176e27ae00f8e0f727b21d787",
+    "changeBundle": "/private/tmp/zpb08-simcontrol-change.bundle"
+  },
+  "cevInterfaces": {
+    "repository": "cornellev/cev-interfaces",
+    "commit": "4e720ae831d3a5dc5c49946f82049041ce157977"
+  }
+}

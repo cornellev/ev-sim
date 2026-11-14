@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import os
 import signal
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ from stable_baselines3.common.env_checker import check_env as sb3_check_env
 
 from cev_sim import (
     ArtifactPolicy,
+    CevSimCompatibilityError,
     CevSimConfigurationError,
     CevSimEnv,
     CevSimEnvironmentError,
@@ -319,7 +321,7 @@ def test_owned_supervisor_cleanup_is_idempotent(repository_root: Path) -> None:
 
 
 @pytest.mark.parametrize("version", [10, 11])
-def test_bundle_episode_hash_matches_frozen_javascript_vector(
+def test_historical_bundle_keeps_frozen_inspection_and_requires_migration(
     repository_root: Path, tmp_path: Path, version: int,
 ) -> None:
     import json
@@ -328,9 +330,10 @@ def test_bundle_episode_hash_matches_frozen_javascript_vector(
     vector = (json.loads((root / "legacy-bundles.v1.json").read_text())["state"] if version == 10
               else json.loads((root / "world-bound-state.v2.json").read_text()))
     filename = "legacy-state.v10.json" if version == 10 else "world-bound-state.v11.json"
-    with CevSimEnv(root / filename, output_dir=tmp_path / "legacy",
-                   launch=launch(repository_root), artifact_policy=ArtifactPolicy(profile="disabled")) as env:
-        _, info = env.reset(seed=42)
-        assert info["episode_hash"] == vector["headlessEpisodeHash"]
-        _, repeated = env.reset(seed=42)
-        assert repeated["episode_hash"] == info["episode_hash"]
+    inspected = subprocess.run(["node", str(repository_root / "bin/cev-sim.js"), "inspect", str(root / filename)], capture_output=True, text=True, check=True)
+    record = json.loads(inspected.stdout.splitlines()[0])
+    assert record["resolvedHash"] == vector["resolvedHash"]
+    assert record["simulationSemanticHash"] == vector["simulationSemanticHash"]
+    with pytest.raises(CevSimCompatibilityError, match="reviewed native migration"):
+        CevSimEnv(root / filename, output_dir=tmp_path / "legacy",
+                  launch=launch(repository_root), artifact_policy=ArtifactPolicy(profile="disabled"))

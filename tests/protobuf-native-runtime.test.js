@@ -171,6 +171,9 @@ test("inbound admission is bounded and command application keeps exact ordering"
     assert.equal(queue.drain(0).length, 0);
     const info = queue.drain(1)[0].info;
     const controls = new ControlRuntime({ manifest: resolved.manifest });
+    const boundControls = new ControlRuntime({ manifest: resolved.manifest, runId: "connection-run" });
+    assert.equal(boundControls.ingestCommand(info).code, "run-mismatch");
+    assert.equal(boundControls.ingestCommand({ ...info, value: { ...info.value, runId: "connection-run" } }).ok, true);
     assert.equal(controls.ingestCommand(info).ok, true);
     controls.step({ step: 1, timeNs: 1, dt: 0.01 });
     assert.equal(controls.getSnapshot().sequence, "9007199254740993");

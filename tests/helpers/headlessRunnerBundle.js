@@ -31,22 +31,27 @@ import path from "node:path";
 const worldBoundFixtureUrl = new URL("../fixtures/visual-layer/world-bound-state.v11.json", import.meta.url);
 const pluginSensorFixtureUrl = new URL("../fixtures/plugins/test.range-image-fixture/", import.meta.url);
 
-export async function pluginSensorFixtureResource() {
+export async function pluginSensorFixtureResource({ native = false } = {}) {
     const [document, runtime, ui] = await Promise.all([
         fs.readFile(new URL("plugin.json", pluginSensorFixtureUrl), "utf8"),
         fs.readFile(new URL("runtime/index.js", pluginSensorFixtureUrl), "utf8"),
         fs.readFile(new URL("ui/index.js", pluginSensorFixtureUrl), "utf8"),
     ]);
     const parsed = JSON.parse(document);
+    if (native) {
+        parsed.version = "2.0.0";
+        parsed.sensorTypes[0].sensorAbi = 2;
+        for (const product of parsed.sensorTypes[0].products) if (product.kind === "pointCloud") { delete product.rosType; product.valueContract = { id: "cev.points", version: 1 }; }
+    }
     const files = {
-        "plugin.json": document,
-        "runtime/index.js": runtime,
+        "plugin.json": native ? JSON.stringify(parsed) : document,
+        "runtime/index.js": native ? runtime.replaceAll("buildPointCloud2", "buildNativePoints") : runtime,
     };
     if (parsed.entry?.ui) files[parsed.entry.ui] = ui;
     return createPluginPackage(files);
 }
 
-async function resolveHermeticPortableBase() {
+async function resolveHermeticPortableBase({ native = true } = {}) {
     const fixture = JSON.parse(await fs.readFile(worldBoundFixtureUrl, "utf8"));
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "cev-headless-bundle-"));
     try {
@@ -67,7 +72,13 @@ async function resolveHermeticPortableBase() {
                 updatedAt: "2026-08-30T00:00:00.000Z",
             })),
         );
-        return await new StorageService(root).resolveRunManifest("igvc-default");
+        const storage = new StorageService(root);
+        if (native) {
+            const plan = await storage.planNativeRunMigration("igvc-default");
+            if (!plan.ok) throw new Error(JSON.stringify(plan.blocked));
+            await storage.applyNativeRunMigration("igvc-default", { plan, expectedRevision: plan.baseRevision });
+        }
+        return await storage.resolveRunManifest("igvc-default");
     } finally {
         await fs.rm(root, { recursive: true, force: true });
     }
@@ -131,6 +142,7 @@ export function createPluginRangeImageFixtureSensor(overrides = {}) {
 
 export function rehashRunBundle(bundle) {
     const next = structuredClone(bundle);
+    if (next.resolved.version === 13) for (const sensor of next.resolved.manifest.sensorRig.sensors) delete sensor.schema;
     next.resolved.backendSelections = sortBackendSelections([
         ...(next.resolved.backendSelections ?? []).filter((entry) => Number(entry.kind) !== PHYSICS_BACKEND_KIND),
         createPhysicsBackendSelection(next.resolved.world),
@@ -208,6 +220,7 @@ function sensorsWithDeclaredOutputs(sensors, topics) {
 }
 
 export async function createPortableHeadlessBundle({
+    native = true,
     sensors = [createHeadlessImu()],
     assertions = [],
     sensorTransports = null,
@@ -222,7 +235,7 @@ export async function createPortableHeadlessBundle({
     completion = { conditions: [] },
     environment = null,
 } = {}) {
-    const resolved = await resolveHermeticPortableBase();
+    const resolved = await resolveHermeticPortableBase({ native });
     if (environment) {
         const source = environment.document ? structuredClone(environment) : {
             environmentId: String(environment.environmentId),
@@ -272,7 +285,7 @@ export async function createPortableHeadlessBundle({
     resolved.scenario = {
         scenario: {
             kind: "cev-sim.scenario",
-            version: 1,
+            version: native ? 2 : 1,
             id: "headless-runner-test",
             actors: [{ id: initial.id, role: "ego", name: "Ego" }],
             routes: [{
@@ -307,7 +320,8 @@ export async function createPluginPortableHeadlessBundle(resource, options = {})
         runtimeHash: verified.resource.runtimeHash,
         capabilities: [...(verified.document.capabilities || [])],
     }];
-    const bundle = await createPortableHeadlessBundle(options);
+    const native = options.native ?? !(verified.document.sensorTypes?.some((sensor) => sensor.sensorAbi === 1) || (verified.document.topicAbi !== 2 && verified.document.capabilities.some((capability) => capability.startsWith("topics."))));
+    const bundle = await createPortableHeadlessBundle({ ...options, native });
     const sensorRegistry = createSensorDefinitionRegistry([verified]);
     bundle.resolved.manifest = normalizeRunManifest({
         ...bundle.resolved.manifest,
@@ -348,7 +362,7 @@ export async function createPluginPortableHeadlessBundle(resource, options = {})
 }
 
 export async function createPluginPcapHeadlessBundle(options = {}) {
-    const resource = options.resource ?? await pluginSensorFixtureResource();
+    const resource = options.resource ?? await pluginSensorFixtureResource({ native: true });
     return createPluginPortableHeadlessBundle(resource, {
         sensors: options.sensors ?? [createHeadlessImu(), createPluginRangeImageFixtureSensor()],
         sensorTransports: options.sensorTransports ?? {

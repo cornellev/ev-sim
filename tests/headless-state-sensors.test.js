@@ -14,6 +14,8 @@ import {
     STATE_SENSOR_BACKEND_CONFIG_HASH,
 } from "../app/simulation/sensors/StateSensorBackend.js";
 import { SeededRNG } from "../app/util/SeededRNG.js";
+import { SignalStore } from "../app/scripting/runtime/SignalStore.js";
+import { validateNativeTopicValue } from "../app/simulation/NativeTopicContracts.js";
 
 const STEP_NS = 10_000_000;
 
@@ -96,6 +98,44 @@ function managerFor(sensors, target = vehicle()) {
     });
     return { manager, target };
 }
+
+test("native state delivery preserves observations, seeded latency, dropouts and reset", () => {
+    const sensors = [imu(), gnss(), wheel()];
+    const outputKeys = ["imuTopicId", "gnssTopicId", "odometryTopicId"];
+    const contracts = ["cev.imu", "cev.gnss", "cev.odometry"];
+    const topics = sensors.map((sensor, i) => {
+        sensor.outputs = { [outputKeys[i]]: sensor.id };
+        sensor.frameId = sensor.type === "wheel-odometry" ? "odom" : sensor.id;
+        sensor.latency.fixedNs = STEP_NS * 2;
+        return { id: sensor.id, name: `/${sensor.id}`, direction: "output", valueContract: { id: contracts[i], version: 1 } };
+    });
+    const plain = managerFor(sensors).manager;
+    const packets = [];
+    const native = new HeadlessStateSensorManager({ vehicles: [vehicle()] }, { telemetry: new SignalStore() });
+    native.configureFromManifest({ sensors }, { seed: "17", stepNs: STEP_NS, backendSelection: createStateSensorBackendSelection(),
+        nativeTopics: true, topics, runId: "parity-run", calibrationHash: "calibration",
+        publicationPort: (packet) => { packets.push(packet); return { ok: true }; } });
+    for (let step = 1; step <= 8; step++) {
+        for (const manager of [plain, native]) {
+            manager.update(0.01, { step, timeNs: step * STEP_NS });
+            manager.deliver({ step, timeNs: step * STEP_NS });
+        }
+        assert.deepEqual(native.getObservationRecords(step), plain.getObservationRecords(step));
+        assert.deepEqual(native.getDeterministicState(), plain.getDeterministicState());
+    }
+    assert.equal(packets.length, 18);
+    for (const packet of packets) {
+        assert.equal(validateNativeTopicValue(packet.valueContract, packet.value).ok, true);
+        assert.equal(packet.metadata.deliveryTimeNs - packet.metadata.captureTimeNs, STEP_NS * 2);
+        assert.equal(packet.metadata.runId, "parity-run");
+        assert.equal(packet.metadata.calibrationHash, "calibration");
+    }
+    assert.equal(packets.find((packet) => packet.topicId === "imu").value.orientationAvailable, false);
+    assert.equal(packets.find((packet) => packet.topicId === "wheel").value.childFrameId, "base_link");
+    assert.ok(native.devices.every((device) => device.nativeProductBytes > 0));
+    native.resetRun();
+    assert.ok(native.devices.every((device) => device.nativeProductBytes === 0 && device.nativeProducts.size === 0));
+});
 
 test("state-sensor backend identity is canonical and protocol-shaped", () => {
     const selection = createStateSensorBackendSelection();

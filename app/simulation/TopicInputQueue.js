@@ -78,13 +78,15 @@ export class TopicInputQueue {
         };
     }
 
-    enqueue(info, applyStep, { arrivalTimeNs = null, rejectNewest = false } = {}) {
+    enqueue(info, applyStep, { arrivalTimeNs = null, rejectNewest = false, maxBytes = this.maxBytes, maxEntries = this.maxEntries } = {}) {
         if (!info?.name) return null;
+        const validation = this.validateInput?.(info);
+        if (validation?.ok === false) return { rejected: true, reason: validation.code, info: cloneInfo(info) };
         if (this.declaredInputs.size > 0 && !this.declaredInputs.has(info.name)) {
             return { rejected: true, reason: "undeclared-topic", info: cloneInfo(info) };
         }
         const bytes = estimatePayloadBytes(info?.value);
-        if (rejectNewest && (this.queue.length >= this.maxEntries || this.queuedBytes + bytes > this.maxBytes)) {
+        if (rejectNewest && (this.queue.length >= Math.min(this.maxEntries, maxEntries) || this.queuedBytes + bytes > Math.min(this.maxBytes, maxBytes))) {
             this.droppedEntries += 1;
             this.droppedBytes += bytes;
             this.overflowEvents += 1;

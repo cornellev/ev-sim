@@ -28,6 +28,9 @@
     "test:supervisor": "node --experimental-default-type=module --test tests/headless-supervisor.test.js",
     "test:cli": "node --experimental-default-type=module --test tests/headless-runner.test.js tests/headless-cli.test.js",
     "test:parity": "node --experimental-default-type=module scripts/headless-parity.mjs",
+    "test:zenoh-native": "node --experimental-default-type=module --test tests/zenoh-transport-config.test.js tests/zenoh-native-transport.test.js tests/zenoh-native-integration.test.js tests/zenoh-artifacts.test.js tests/headless-zenoh.test.js tests/zenoh-headless-integration.test.js",
+    "build:zenoh-native": "node scripts/build-zenoh-transport.mjs",
+    "benchmark:zenoh-native": "node --experimental-default-type=module scripts/zenoh-transport-probe.mjs",
     "test:soak": "node --experimental-default-type=module scripts/headless-soak.mjs",
     "test:soak:quick": "node --experimental-default-type=module scripts/headless-soak.mjs --quick",
     "benchmark:headless": "node --experimental-default-type=module scripts/headless-benchmark.mjs",
@@ -53,11 +56,13 @@
     "fixtures:plant": "node --experimental-default-type=module scripts/generate-plant-fixture.mjs",
     "fixtures:environment-editor": "node --experimental-default-type=module scripts/generate-environment-editor-fixtures.mjs",
     "test:ui": "playwright test --grep-invert @a11y",
+    "test:zenoh-browser": "node scripts/test-zenoh-browser.mjs",
     "test:a11y": "playwright test --grep @a11y"
   },
   "dependencies": {
     "@dimforge/rapier3d": "0.19.3",
     "@dimforge/rapier3d-compat": "0.19.3",
+    "@eclipse-zenoh/zenoh-ts": "1.10.2",
     "@grpc/grpc-js": "1.14.5",
     "@grpc/proto-loader": "0.8.1",
     "@jax-js/jax": "^0.1.9",

@@ -159,6 +159,7 @@ test("SimulationKernel imports and steps without browser or graphics globals", a
         const { SimulationKernel } = await import("../app/simulation/kernel/SimulationKernel.js");
         const target = createHarness();
         const manifest = createDefaultRunManifest({
+            version: 12,
             clock: {
                 stepNs: 20_000_000,
                 pacing: "unbounded",

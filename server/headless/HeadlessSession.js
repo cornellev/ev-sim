@@ -1,8 +1,10 @@
 import { createRequire } from "node:module";
 import process from "node:process";
 import { serialize } from "node:v8";
+import { randomUUID } from "node:crypto";
+import { HeadlessZenohRuntime } from "./HeadlessZenohRuntime.js";
 
-import { HeadlessEpisode, TERMINATION_REASON } from "../../app/simulation/headless/HeadlessEpisode.js";
+import { HeadlessEpisode, normalizeEpisodeSpec, TERMINATION_REASON } from "../../app/simulation/headless/HeadlessEpisode.js";
 import { createHeadlessArtifactSink, resolveArtifactPolicy } from "./HeadlessArtifactSink.js";
 import { HeadlessRunnerError } from "./HeadlessRunnerErrors.js";
 import { cloneRunBundle, verifyRunBundle } from "./RunBundle.js";
@@ -130,6 +132,8 @@ export class HeadlessSession {
         packetHub = null,
         sensorTransportHost = null,
         udpMaxQueueBytes = null,
+        zenohTransport = null,
+        zenohRuntimeFactory = (options) => new HeadlessZenohRuntime(options),
     } = {}) {
         this.episodeFactory = episodeFactory;
         this.artifactSinkFactory = artifactSinkFactory;
@@ -143,6 +147,9 @@ export class HeadlessSession {
         this.sensorTransportHost = sensorTransportHost
             ?? hostDescriptorFromConfig(this.hostConfig);
         this.udpMaxQueueBytes = udpMaxQueueBytes;
+        this.zenohTransport = zenohTransport;
+        this.zenohRuntimeFactory = zenohRuntimeFactory;
+        this.zenohRuntime = null;
         this.episode = null;
         this.bundle = null;
         this.verified = null;
@@ -159,6 +166,7 @@ export class HeadlessSession {
         return {
             nativePacketSink: this.packetHub,
             sensorTransportHost: this.sensorTransportHost,
+            ...this.zenohRuntime?.runtimeOptions(),
         };
     }
 
@@ -167,7 +175,13 @@ export class HeadlessSession {
             throw new HeadlessRunnerError("INVALID_REQUEST", "The session is already prepared.");
         }
         this.verified = verifyRunBundle(bundle);
+        if (this.verified.resolved.manifest.protobuf?.externalController) throw new HeadlessRunnerError("UNSUPPORTED_CAPABILITY", "External controllers require external-realtime execution, not policy stepping.");
         this.bundle = cloneRunBundle(bundle);
+        if (this.verified.resolved.manifest.protobuf?.mode === "zenoh") {
+            this.runId = `run-${randomUUID()}`;
+            this.zenohRuntime = this.zenohRuntimeFactory({ config: this.zenohTransport, limits: this.limits, queueBytes: () => this.health().queueBytes });
+            await this.zenohRuntime.prepare(this.verified.resolved, { runId: this.runId, episodeIdentity: normalizeEpisodeSpec(this.verified.resolved, episodeSpec) });
+        }
         this.packetHub.configure({
             bindings: this.verified.resolved.manifest.sensorTransports?.bindings ?? [],
             hostConfig: this.hostConfig,
@@ -176,7 +190,7 @@ export class HeadlessSession {
             udpMaxQueueBytes: this.udpMaxQueueBytes,
         });
         this.episode = this.episodeFactory(this._episodeOptions());
-        this.descriptor = await this.episode.prepare(this.verified.resolved, episodeSpec);
+        this.descriptor = await this.episode.prepare(this.verified.resolved, episodeSpec, { runId: this.runId });
         this.state = "prepared";
         return this.descriptor;
     }
@@ -223,6 +237,13 @@ export class HeadlessSession {
                 await this.packetHub.attachArtifactRoot(this.artifactSink.stagingDirectory);
             }
             await this.packetHub.activateGeneration();
+            if (this.zenohRuntime) {
+                await this.zenohRuntime.activate(this.episode.kernel);
+                this.episode.kernel.publishClock();
+                this.episode.kernel.transformRuntime?.publishStaticTransforms?.(0);
+                this.zenohRuntime.routes.deliver({ step: 0, timeNs: 0 });
+                this.zenohRuntime.assertHealthy();
+            }
             this.state = "ready";
             return reset;
         } catch (error) {
@@ -240,7 +261,9 @@ export class HeadlessSession {
         }
         let transition;
         try {
+            this.zenohRuntime?.assertHealthy();
             transition = this.episode.step(action);
+            this.zenohRuntime?.assertHealthy();
         } catch (error) {
             if (markResetRequiredFailure(error)) {
                 this.state = "prepared";
@@ -261,7 +284,9 @@ export class HeadlessSession {
         }
         let transition;
         try {
+            this.zenohRuntime?.assertHealthy();
             transition = await this.episode.stepAsync(action);
+            this.zenohRuntime?.assertHealthy();
         } catch (error) {
             if (markResetRequiredFailure(error)) {
                 this.state = "prepared";
@@ -288,6 +313,7 @@ export class HeadlessSession {
             throw new HeadlessRunnerError("ENVIRONMENT_NOT_FOUND", "No active episode is available to finalize.");
         }
         const interrupted = status ? status === "interrupted" : this.state !== "terminal";
+        if (this.zenohRuntime) { this.zenohRuntime.active = false; await this.zenohRuntime.drain(); }
         const finalization = this.episode.finalize({ status: interrupted ? "interrupted" : "completed" });
         const assertionsFailed = errorAssertions(finalization).length > 0;
         const scenarioPassed = finalization.scenario
@@ -298,7 +324,7 @@ export class HeadlessSession {
         let runResult = {
             kind: "cev-sim.run-result",
             version: 1,
-            runId: `run-${finalization.episodeHash.slice(0, 16)}`,
+            runId: this.runId ?? `run-${finalization.episodeHash.slice(0, 16)}`,
             manifestId: this.verified.resolved.manifest.id,
             environmentIndex: this.episode.episodeSpec.environmentIndex,
             environmentId: this.episode.episodeSpec.environmentId,
@@ -360,7 +386,7 @@ export class HeadlessSession {
                     return total + Number(device.contractPublisher.queuedBytes);
                 }
                 const queue = device.queue ?? [];
-                return total + (queue.length > 0 ? serialize(queue).byteLength : 0);
+                return total + (queue.length > 0 ? serialize(queue).byteLength : 0) + Number(device.nativeProductBytes || 0);
             } catch {
                 return total;
             }
@@ -368,6 +394,7 @@ export class HeadlessSession {
         const inputQueueBytes = Number(this.episode?.kernel?.inputQueue?.queuedBytes || 0);
         const recordingQueueBytes = Number(this.artifactSink?.recording?.queuedBytes || 0);
         const packetTransportQueueBytes = Number(this.packetHub?.queuedBytes || 0);
+        const zenohQueueBytes = Number(this.zenohRuntime?.diagnostics()?.queueBytes || 0);
         return {
             state: this.state,
             rssBytes: memory.rss,
@@ -375,7 +402,8 @@ export class HeadlessSession {
             cpuUserMicros: cpu.user,
             cpuSystemMicros: cpu.system,
             lastCompletedStep: this.episode?.kernel?.steps ?? 0,
-            queueBytes: sensorQueueBytes + inputQueueBytes + recordingQueueBytes + packetTransportQueueBytes,
+            queueBytes: sensorQueueBytes + inputQueueBytes + recordingQueueBytes + packetTransportQueueBytes + zenohQueueBytes,
+            zenohQueueBytes,
             sensorQueueBytes,
             inputQueueBytes,
             recordingQueueBytes,
@@ -384,6 +412,7 @@ export class HeadlessSession {
     }
 
     async abort() {
+        await this.zenohRuntime?.close();
         await this.packetHub?.abort?.();
         await this.artifactSink?.abort?.();
         this.artifactSink = null;

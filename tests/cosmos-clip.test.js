@@ -140,7 +140,7 @@ test("capture allocation failure releases every product", async () => {
 test("the cosmos clip bundle is a verified 121-frame analytic camera run", async () => {
     const bundle = await createCosmosClipBundle();
     const manifest = bundle.resolved.manifest;
-    assert.equal(manifest.version, 12);
+    assert.equal(manifest.version, 13);
     assert.equal(manifest.seed, COSMOS_CLIP_SEED);
     assert.equal(manifest.environment.id, COSMOS_CLIP_ENVIRONMENT_ID);
     assert.equal(manifest.clock.stepNs, COSMOS_CLIP_STEP_NS);

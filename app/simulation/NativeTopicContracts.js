@@ -35,6 +35,7 @@ const shapes = {
     "cev.transforms": record({ transforms: array(record({ parentFrameId: scalar("string"), childFrameId: scalar("string"), pose })) }),
     "cev.clock": record({ timeNs: scalar("timeNs") }),
     "cev.goal": record({ pose }),
+    "cev.path": record({ points: array(vector) }),
     "cev.diagnostics": record({ entries: array(record({ name: scalar("string"), level: scalar("uint32"), message: scalar("string"), values: array(record({ key: scalar("string"), value: scalar("string") })) })) }),
     "cev.control-command": record({ runId: scalar("string"), mode: scalar("string"), sequence: scalar("uint64"),
         captureTimeNs: scalar("timeNs"), deadlineNs: scalar("timeNs"), frameId: scalar("string"), speedMps: scalar("double"),
@@ -50,8 +51,10 @@ export const NATIVE_SENSOR_OUTPUT_CONTRACTS = Object.freeze({ imuTopicId: "cev.i
     trafficControlsTopicId: "cev.traffic-controls", diagnosticsTopicId: "cev.diagnostics" });
 
 export function getNativeTopicContract(id, version = 1) {
-    if (version !== 1 || !Object.hasOwn(shapes, id)) throw new Error(`Unavailable native topic contract ${id}@${version}.`);
-    return { id, version, shape: structuredClone(shapes[id]) };
+    if (!Object.hasOwn(shapes, id) || (version !== 1 && !(id === "cev.control-command" && version === 2))) throw new Error(`Unavailable native topic contract ${id}@${version}.`);
+    const shape = structuredClone(shapes[id]);
+    if (version === 2) shape.fields.leaseId = scalar("string");
+    return { id, version, shape };
 }
 
 export function nativeShapeAt(shape, path, label = path) {
@@ -119,6 +122,7 @@ export function validateNativeTopicValue(contract, value) {
         if (id === "cev.imu" && value.orientationAvailable && !quaternionValid(value.orientation)) throw new Error("Available IMU orientation requires a unit quaternion.");
         if (id === "cev.control-command" && (typeof value.sequence !== "string" || !["velocity", "acceleration", "stop"].includes(value.mode)
             || !value.runId || !value.frameId || (value.deadlineNs > 0 && value.deadlineNs < value.captureTimeNs))) throw new Error("Invalid native command identity, mode, or deadline.");
+        if (id === "cev.control-command" && typeof contract === "object" && contract.version === 2 && !value.leaseId) throw new Error("Native command v2 requires a lease ID.");
         if (id === "cev.points" || id === "cev.semantic-points") {
             if (value.positions.length !== value.count * 3 || value.intensities.length !== value.count
                 || (id === "cev.semantic-points" && [value.instanceIds, value.semanticIds, value.rayIndices].some((a) => a.length !== value.count))) throw new Error("Point product lengths do not match count.");
@@ -133,7 +137,7 @@ export function validateNativeTopicValue(contract, value) {
 
 export function normalizeNativeTopic(topic) {
     if (!topic || topic.type !== undefined || topic.schema !== undefined) throw new Error("Native topics require valueContract, without legacy type/schema fields.");
-    if (topic.valueContract?.version !== 1 || Object.keys(topic.valueContract).some((key) => !["id", "version"].includes(key))) throw new Error("Native topics require an exact id/version contract reference.");
+    if (!Number.isInteger(topic.valueContract?.version) || Object.keys(topic.valueContract).some((key) => !["id", "version"].includes(key))) throw new Error("Native topics require an exact id/version contract reference.");
     if (typeof topic.id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(topic.id)
         || typeof topic.name !== "string" || !topic.name || !["input", "output"].includes(topic.direction)) throw new Error("Native topics require an id, name and input/output direction.");
     if (!["simulator", "oracle", "candidate", "reference", "replay", "bypass"].includes(topic.producer)) throw new Error("Native topic producer is unavailable.");
@@ -147,8 +151,8 @@ export function normalizeNativeTopic(topic) {
 export function createNativeTopicContractResource(topics) {
     const contracts = [...new Map(topics.map((topic) => {
         const contract = getNativeTopicContract(topic.valueContract?.id, topic.valueContract?.version);
-        return [contract.id, contract];
-    })).values()].sort((a, b) => a.id.localeCompare(b.id));
+        return [`${contract.id}@${contract.version}`, contract];
+    })).values()].sort((a, b) => a.id.localeCompare(b.id) || a.version - b.version);
     const document = { kind: "cev-sim.native-topic-contracts", version: 1, contracts };
     return { document, hash: protobufFingerprint(new TextEncoder().encode(canonicalStringify(document))) };
 }

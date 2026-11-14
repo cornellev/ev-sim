@@ -1,10 +1,10 @@
 # Deterministic simulation runs
 
-Every professional simulation launch is defined by a saved `cev-sim.run-manifest` document. Version 12 remains the default writer; version 13 is explicitly opted into during ZPB-04–07. The server resolves environment, world, physics, scripts, bindings, calibration, topic contracts and the selected Protobuf interface, then computes SHA-256 definition, full resolved, and simulation-semantic hashes. A running session holds that resolved snapshot and never applies Config edits in place.
+Every professional simulation launch is defined by a saved `cev-sim.run-manifest` document. Version 13 is the only writer and production execution format since ZPB-08. Historical versions 1–12 remain available for integrity inspection and reviewed native adoption. The server resolves environment, world, physics, scripts, bindings, calibration, topic contracts and the selected Protobuf interface, then computes SHA-256 definition, full resolved, and simulation-semantic hashes. A running session holds that resolved snapshot and never applies Config edits in place.
 
 ## Native topics and mapping (ZPB-04)
 
-Opt-in v13 topics replace `type` and `schema` with an exact native reference:
+Version 13 topics replace `type` and `schema` with an exact native reference:
 
 ```json
 { "id": "imu", "name": "/imu", "direction": "output",
@@ -24,8 +24,9 @@ repeated projections, fixed pose operations, explicit calibration/vehicle
 bindings, command shapes, bootstrap scheduling and bounded next-step admission.
 Native IMU/GNSS/odometry/image/point/perception values come from the existing
 measurement pass. `SensorPublisher` publishes them at scheduled delivery without
-ROS encoding; the transport port returns synchronous acceptance. Headless
-state-topic publication remains ZPB-07.
+ROS encoding; the transport port returns synchronous acceptance. ZPB-07
+publishes the same state products from the headless capture pass without
+changing observation arrays.
 
 Native simulation identity binds native contracts and subscribed mappings,
 including frozen values and calibration/vehicle bindings. Disabled and
@@ -40,13 +41,14 @@ REST and MCP delegate to storage. Adoption archives the originals, preserves
 descriptor bytes, checks the reviewed resolved dependency hash, and compiles
 supported editable graphs into new script IDs with updated parameter/binding
 references and hash pins. The reviewed embedded binding set is frozen explicitly.
-Custom messages, unsupported graph nodes, unbound field selectors, plugins,
-scenario consumers and nonembedded library bindings block adoption pending
-their explicit consumer migration. Embedded topic/signal input consumers and
-topic outputs also block until ZPB-08. The current preview supports a small set
-of scalar/topic/field graph nodes; it never edits immutable compiled artifacts.
-No saved user runs are migrated automatically. ZPB-08 switches the default
-writer after consumer migration, and ZPB-09 removes active ROS infrastructure.
+Unknown custom messages, unavailable editable sources, and unbound field selectors
+block adoption until reviewed repairs are supplied. Adoption captures effective
+library bindings, nested script references, scenario scripts/parameters, vehicle
+locks, and exact plugin packages. It compiles children before parents and creates
+new scenario v2 and plugin ABI 2 replacements without rewriting originals.
+The manifest revision and source/dependency hashes are checked before publication.
+No saved user runs are migrated automatically. ZPB-09 removes remaining active
+ROS infrastructure; historical inspection and adoption remain isolated.
 
 ## Pinned Protobuf interfaces (ZPB-03)
 
@@ -100,12 +102,24 @@ external-controller selection, and frozen run values mapped into inputs. Host
 transport settings stay operational. Disabled and publish-only v12 projections
 retain the corresponding v11 semantic/episode identities and identity profiles.
 
-ZPB-03 admits offline snapshots and structural inspection. Browser and shared
-kernel preparation reject Zenoh mode with `UNSUPPORTED_CAPABILITY` before
-replacing an active run or preparing simulation state. ZPB-04 implements native
-mapping with an injected publication port; live transport sessions arrive in
-ZPB-05–07. Disabled mode
-continues normal execution.
+ZPB-03 admits offline snapshots and structural inspection. ZPB-05 admits browser
+Zenoh execution for explicit v13/interface@2 snapshots through the official
+browser SDK worker. Configure the host with `CEV_SIM_ZENOH_BROWSER_CONFIG` as
+documented in `docs/zenoh-protobuf-plan.md`. Preflight checks schema/mapping
+admission, required subscription routes and router declarations before starting;
+it does not require an external peer to be present. A lost connection pauses the
+run, clears queued inputs and old bindings, and reconnects the same frozen run
+ID/interface. It resumes only if it was running and no explicit Pause occurred.
+Stop, Reset and replacement cancel recovery; reconnect does not repeat once
+bootstrap values, while Reset re-arms them. Browser acceptance is
+unverified because Playwright execution was waived. Historical v12 Zenoh
+preparation remains rejected with `UNSUPPORTED_CAPABILITY`. ZPB-07 admits
+configured v13/interface@2 native headless publication and explicit
+`external-realtime` execution. Policy stepping rejects external-controller
+authority. The standalone session uses fresh run IDs, native next-step input
+admission, simulation-time watchdogs and bounded paced stepping; required
+transport failure needs reset and aborts staging. Native scenario/plugin/topic-consuming binding
+migration remains ZPB-08. Disabled mode continues normal execution.
 
 v1–v11 authoring documents migrate to v12. Received historical bundles are
 verified before authoring migration and retain their original bytes and hash

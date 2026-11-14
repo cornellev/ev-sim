@@ -476,7 +476,7 @@ test("oracle topics stay under oracle.* and do not populate active.*", () => {
     store.publishSignal = (path, value, options) => {
         published.push({ path, value, options });
     };
-    const manifest = createDefaultRunManifest();
+    const manifest = createDefaultRunManifest({ version: 12 });
     const router = new TopicContractRouter(manifest, { telemetry: store });
     const topic = manifest.topics.find((entry) => entry.id === "front-camera-depth");
     assert.equal(topic.producer, "oracle");
@@ -492,7 +492,7 @@ test("oracle topics stay under oracle.* and do not populate active.*", () => {
 });
 
 test("default v6 manifests declare perception sync group; v5 migration keeps oracle products off", () => {
-    const defaults = createDefaultRunManifest();
+    const defaults = createDefaultRunManifest({ version: 12 });
     assert.equal(defaults.version, 12);
     const camera = defaults.sensorRig.sensors.find((sensor) => sensor.id === "front-camera");
     assert.equal(camera.calibration.products.depth, true);
@@ -504,6 +504,7 @@ test("default v6 manifests declare perception sync group; v5 migration keeps ora
 
     const migrated = normalizeRunManifest({
         ...createDefaultRunManifest({
+        version: 12,
             sensorRig: {
                 sensors: [
                     {
@@ -550,6 +551,7 @@ test("default v6 manifests declare perception sync group; v5 migration keeps ora
 test("enabling an oracle product restores output topic ids and catalog topics", () => {
     const migrated = normalizeRunManifest({
         ...createDefaultRunManifest({
+        version: 12,
             sensorRig: {
                 sensors: [
                     {

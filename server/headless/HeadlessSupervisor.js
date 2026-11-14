@@ -311,6 +311,7 @@ export class HeadlessSupervisor {
         this.batches = new Map();
         this._creatingBatches = new Set();
         this._managedOperations = new Set();
+        this._externalControllers = new Set();
         this.workers = new Set();
         this.reservedWorkers = 0;
         this.startedAt = Date.now();
@@ -361,6 +362,7 @@ export class HeadlessSupervisor {
             transports: ["unix", "tcp-insecure", "grpc+unix+shared-memory-v1"],
             diagnosticJson: Buffer.from(canonicalStringify({
                 gpuRenderer: this.rendererPool.diagnostics(),
+                zenohTransport: { configured: Boolean(this.config.zenohTransport), controllerMode: this.config.controllerMode },
                 gpuProbe,
                 pbrProbe,
                 packetTransports: (() => {
@@ -831,13 +833,31 @@ export class HeadlessSupervisor {
      * resource enforcement with policy batches.
      */
     async runManagedExperiment(request = {}, { signal = null, onStarted = null, onHealth = null } = {}) {
-        const operation = this._runManagedExperiment(request, { signal, onStarted, onHealth });
+        const operation = this._runIsolatedEnvironment(request, { signal, onStarted, onHealth });
         this._managedOperations.add(operation);
         try { return await operation; }
         finally { this._managedOperations.delete(operation); }
     }
 
-    async _runManagedExperiment(request = {}, { signal = null, onStarted = null, onHealth = null } = {}) {
+    async runExternalController(request = {}, options = {}) {
+        const controller = new AbortController();
+        this._externalControllers.add(controller);
+        const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
+        const operation = this._runIsolatedEnvironment(request, { ...options, signal, mode: "external-realtime" });
+        this._managedOperations.add(operation);
+        try { return await operation; }
+        finally { this._managedOperations.delete(operation); this._externalControllers.delete(controller); }
+    }
+
+    prepareExternalController(request = {}, options = {}) {
+        let resolveReady, rejectReady;
+        const ready = new Promise((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
+        const completion = this.runExternalController({ ...request, startPaused: true }, { ...options, onReady: (descriptor, controls) => resolveReady({ descriptor, ...controls, completion }) });
+        completion.catch(rejectReady);
+        return ready;
+    }
+
+    async _runIsolatedEnvironment(request = {}, { signal = null, onStarted = null, onHealth = null, onReady = null, mode = "managed-experiment" } = {}) {
         if (this.shuttingDown) throw supervisorError("INTERNAL", "Supervisor is shutting down.");
         if (this.activeEnvironmentCount + this.reservedWorkers + 1 > this.config.maxWorkers) {
             throw supervisorError("RESOURCE_LIMIT", `Creating a managed environment exceeds supervisor capacity ${this.config.maxWorkers}.`);
@@ -913,6 +933,8 @@ export class HeadlessSupervisor {
                         resourceFailure = supervisorError("RESOURCE_LIMIT", "Managed environment exceeded its heap limit.", { heapBytes: health.heapBytes, limit: limits.maxHeapBytesPerEnvironment });
                     } else if (queueBytes > limits.maxQueueBytes) {
                         resourceFailure = supervisorError("RESOURCE_LIMIT", "Managed environment exceeded its aggregate queue limit.", { queueBytes, pendingIpcBytes: handle.pendingBytes || 0, limit: limits.maxQueueBytes });
+                    } else if (health.stepInFlight && Number(health.stepWallElapsedMs) > limits.stepWallTimeoutMs) {
+                        resourceFailure = supervisorError("STEP_TIMEOUT", "External environment exceeded its fixed-step timeout.");
                     }
                     if (resourceFailure) handle.terminate();
                 },
@@ -923,17 +945,53 @@ export class HeadlessSupervisor {
             environment.workers.add(worker);
             this.workers.add(worker);
             onStarted?.({ pid: worker.pid });
-            await worker.dispatch("initialize", {
-                mode: "managed-experiment",
+            const initialized = await worker.dispatch("initialize", {
+                mode,
                 ...(request.bundleBytes ? {
                     bundleBytes: request.bundleBytes,
                     bundleBytesHash: request.bundleBytesHash,
                 } : { bundle: request.bundle }),
                 metricDefinitions: request.metricDefinitions || [],
+                ...(request.controlLease ? { controlLease: request.controlLease } : {}),
                 limits,
                 ...this._packetTransportPayload(environment),
-            }, { signal });
+            }, { signal, timeoutMs: mode === "external-realtime" ? limits.stepWallTimeoutMs : 0 });
             if (resourceFailure) throw resourceFailure;
+            if (mode === "external-realtime") {
+                if (request.validateOnly) return initialized.descriptor;
+                const started = await worker.dispatch("realtime-start", {
+                    artifactPolicy: request.artifactPolicy, outputUri: request.outputUri,
+                    paused: request.startPaused === true,
+                }, { signal, timeoutMs: limits.stepWallTimeoutMs });
+                let externalCommand;
+                let externalFinishing = false;
+                await onReady?.(started.descriptor, {
+                    command: async (action, payload = {}) => {
+                        if (!["pause", "resume", "stop", "ownership"].includes(action)) throw supervisorError("INVALID_REQUEST", "Unsupported external-run command.");
+                        if (externalFinishing) throw supervisorError("INVALID_REQUEST", "External run is finalizing.");
+                        externalCommand = worker.dispatch(`realtime-${action}`, { ...payload, runId: started.descriptor.runId, ...(action === "ownership" ? { sentAtMonotonicNs: process.hrtime.bigint().toString() } : {}) }, { signal, timeoutMs: limits.stepWallTimeoutMs });
+                        return externalCommand;
+                    },
+                });
+                let timer;
+                let onAbort;
+                try {
+                    const completed = worker.waitForRealtimeCompletion();
+                    const stopped = new Promise((resolve) => {
+                        onAbort = () => resolve({ cancelled: true });
+                        signal.addEventListener("abort", onAbort, { once: true });
+                        if (signal.aborted) onAbort();
+                    });
+                    const outcome = await Promise.race([completed, stopped, new Promise((_, reject) => {
+                        timer = setTimeout(() => reject(supervisorError("RESOURCE_LIMIT", "External episode exceeded its wall timeout.")), limits.episodeWallTimeoutMs);
+                    })]);
+                    externalFinishing = true;
+                    await externalCommand;
+                    if (outcome.cancelled) await worker.dispatch("realtime-stop", { interruptedBySignal: true }, { timeoutMs: this.config.shutdownGraceMs });
+                } finally { clearTimeout(timer); signal.removeEventListener("abort", onAbort); }
+                if (resourceFailure) throw resourceFailure;
+                return (await worker.dispatch("finalize", {}, { timeoutMs: limits.stepWallTimeoutMs })).finalized;
+            }
             const response = await worker.dispatch("run-managed", {
                 artifactPolicy: request.artifactPolicy,
                 outputUri: request.outputUri,
@@ -969,6 +1027,7 @@ export class HeadlessSupervisor {
         if (this.closed) return;
         this.closed = true;
         this.shuttingDown = true;
+        for (const controller of this._externalControllers) controller.abort();
         await Promise.allSettled([...this._creatingBatches]);
         await Promise.allSettled([...this._managedOperations]);
         const ids = [...this.batches.keys()];
@@ -1130,6 +1189,7 @@ export class HeadlessSupervisor {
     _packetTransportPayload(environment = null) {
         const pcap = pcapOnlyHostConfig(this.config.packetTransports);
         const payload = {
+            zenohTransport: this.config.zenohTransport,
             sensorTransportHost: hostDescriptorFromConfig(this.config.packetTransports),
         };
         if (pcap) payload.packetTransports = pcap;

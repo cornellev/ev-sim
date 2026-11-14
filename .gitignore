@@ -64,6 +64,8 @@ tests/__pycache__
 
 # Rust browser simulation client
 /simcontrol/target/
+/native/zenoh-transport/target/
+/native/zenoh-transport/prebuilds/
 
 # Python headless adapter
 /python/.venv
@@ -104,3 +106,4 @@ tmp
 
 # Alternate development caches (CEV_SIM_NEXT_DIR)
 .next-*/
+.onboarding/

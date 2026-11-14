@@ -26,7 +26,7 @@ function resolvedSummary(resolved) {
 export function registerRunManifestTools(server, storage) {
     server.registerTool("run_manifest_plan_native_migration", {
         title: "Preview native run migration", description: "Create a reviewable native v13 migration preview. Preserve source artifacts and block unsupported paths.",
-        inputSchema: { manifestId: z.string().min(1), mappingOverrides: JsonObjectSchema.optional(), scriptPaths: JsonObjectSchema.optional() },
+        inputSchema: { manifestId: z.string().min(1), interfaceHash: z.string().regex(/^[a-f0-9]{64}$/).optional(), additionalTopics: z.array(JsonObjectSchema).max(64).optional(), mappingOverrides: JsonObjectSchema.optional(), scriptPaths: JsonObjectSchema.optional(), topicContracts: JsonObjectSchema.optional(), bindingTopics: JsonObjectSchema.optional(), pluginReplacements: JsonObjectSchema.optional() },
     }, async ({ manifestId, ...input }) => {
         try { return ok(await storage.planNativeRunMigration(manifestId, input)); } catch (error) { return fail(error); }
     });

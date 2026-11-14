@@ -222,7 +222,7 @@ function scenarioDraft({ environmentId, actorId, endpoints, bundleId, finish = "
     const finishPoint = point(endpoints.finish);
     const draft = {
         kind: "cev-sim.scenario",
-        version: 1,
+        version: 2,
         id: bundleId,
         name: bundleId,
         description: "Verified ego route generated for planner and controller testing.",
@@ -426,7 +426,7 @@ async function verifyDraft(storage, scenario) {
 }
 
 export async function createPlanningBundle({
-    sourceManifestId = "igvc-default",
+    sourceManifestId = null,
     environmentId = null,
     dataDir = null,
     roadId = null,
@@ -451,8 +451,9 @@ export async function createPlanningBundle({
         : new StorageService(ownedRoot);
     try {
         const live = dataDir ? new StorageService(dataDir) : storage;
-        const source = await live.getRunManifest(sourceManifestId);
+        const source = await (sourceManifestId ? live : storage).getRunManifest(sourceManifestId || "igvc-default");
         if (!source) throw new Error(`Run manifest "${sourceManifestId}" does not exist.`);
+        if (source.version !== 13) throw new Error("The source run requires reviewed native migration before creating a planning bundle.");
         const selectedEnvironmentId = environmentId || source.environment?.id;
         const environment = await live.getEnvironment(selectedEnvironmentId, { full: true });
         if (!environment) throw new Error(`Environment "${selectedEnvironmentId}" was not found.`);
@@ -486,7 +487,7 @@ export async function createPlanningBundle({
             if (issue) throw new Error(issue);
             const scenario = {
                 kind: "cev-sim.scenario",
-                version: 1,
+                version: 2,
                 id: bundleId,
                 name: bundleId,
                 description: "Road-free drive area generated for planner and controller testing.",

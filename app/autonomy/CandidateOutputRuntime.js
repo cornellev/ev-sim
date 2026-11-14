@@ -13,6 +13,7 @@ import {
     normalizeLegacyBoxes,
     normalizeOdometry,
     normalizeSemanticImage,
+    normalizePath,
     truthAtCaptureTime,
 } from "./AutonomyVisualizationModel.js";
 import {
@@ -52,10 +53,12 @@ export class CandidateOutputRuntime {
         this.lastGoodPerception = null;
         this.lastGoodLocalization = null;
         this.truthHistory = [];
+        this.lastPath = null;
         this._defineSignals();
     }
 
     reset() {
+        this.lastPath = null;
         this.lastPerception = emptyPerceptionSnapshot({ status: this._initialStatus(PERCEPTION_CONTRACTS) });
         this.lastLocalization = emptyLocalizationSnapshot({ status: this._initialStatus(LOCALIZATION_CONTRACTS) });
         this.lastGoodPerception = null;
@@ -83,6 +86,10 @@ export class CandidateOutputRuntime {
         const envelope = result.envelope;
         if (!topic || !envelope) return null;
         const id = topic.contractId || topic.id;
+        if (envelope.valueContract?.id === "cev.path") {
+            this.lastPath = normalizePath(envelope.value, { valueContract: envelope.valueContract, metadata: envelope.metadata, transformToMap: this._transformToMapBinder(envelope.captureTimeNs ?? applyTimeNs) });
+            return this.lastPath;
+        }
         if (PERCEPTION_CONTRACTS.has(id)) {
             return this._ingestPerception(id, envelope, { applyStep, applyTimeNs, status: VISUALIZATION_STATUS.OK });
         }
@@ -92,29 +99,34 @@ export class CandidateOutputRuntime {
         return null;
     }
 
+    _entryOptions(entry) {
+        const metadata = entry.metadata ?? {};
+        return { valueContract: metadata.valueContract, metadata };
+    }
+
     refreshOracle({ applyStep = 0, applyTimeNs = 0 } = {}) {
         if (!this.telemetry) return;
-        const detections2d = this.telemetry.read?.(oracleTopicSignalPath("oracle-detections-2d"))?.value;
-        const detections3d = this.telemetry.read?.(oracleTopicSignalPath("oracle-detections-3d"))?.value;
-        const lanes = this.telemetry.read?.(oracleTopicSignalPath("oracle-lanes"))?.value;
-        const truth = this.telemetry.read?.(oracleTopicSignalPath("truth-odometry"))?.value;
+        const detections2d = this.telemetry.read?.(oracleTopicSignalPath("oracle-detections-2d"));
+        const detections3d = this.telemetry.read?.(oracleTopicSignalPath("oracle-detections-3d"));
+        const lanes = this.telemetry.read?.(oracleTopicSignalPath("oracle-lanes"));
+        const truth = this.telemetry.read?.(oracleTopicSignalPath("truth-odometry"));
 
         const transformToMap = this._transformToMapBinder(applyTimeNs);
         const nextPerception = {
             ...this.lastPerception,
             oracle: {
-                detections2d: detections2d ? normalizeDetections2D(detections2d, { source: "oracle" }) : [],
+                detections2d: detections2d ? normalizeDetections2D(detections2d.value, { source: "oracle", ...this._entryOptions(detections2d) }) : [],
                 detections3d: detections3d
-                    ? normalizeDetections3D(detections3d, { source: "oracle", transformToMap })
+                    ? normalizeDetections3D(detections3d.value, { source: "oracle", transformToMap, ...this._entryOptions(detections3d) })
                     : [],
-                lanes: lanes ? normalizeLanes(lanes, { source: "oracle", transformToMap }) : [],
+                lanes: lanes ? normalizeLanes(lanes.value, { source: "oracle", transformToMap, ...this._entryOptions(lanes) }) : [],
             },
         };
         this.lastPerception = nextPerception;
         this._publishPerception(nextPerception, applyStep, applyTimeNs);
 
         if (truth) {
-            this._recordTruth(normalizeOdometry(truth, { source: "oracle" }));
+            this._recordTruth(normalizeOdometry(truth.value, { source: "oracle", ...this._entryOptions(truth) }));
             const alignedTruth = this._truthFor(this.lastLocalization.estimate);
             const nextLoc = {
                 ...this.lastLocalization,
@@ -198,14 +210,15 @@ export class CandidateOutputRuntime {
             oracle: this.lastPerception.oracle,
         };
         const value = envelope.value;
+        const options = { valueContract: envelope.valueContract, metadata: envelope.metadata ?? {}, source: "candidate", status, transformToMap };
         if (contractId === "perception-detections-2d") {
-            next.detections2d = normalizeDetections2D(value, { source: "candidate", status });
+            next.detections2d = normalizeDetections2D(value, options);
         } else if (contractId === "perception-detections-3d") {
-            next.detections3d = normalizeDetections3D(value, { source: "candidate", status, transformToMap });
+            next.detections3d = normalizeDetections3D(value, options);
         } else if (contractId === "perception-lanes") {
-            next.lanes = normalizeLanes(value, { source: "candidate", status, transformToMap });
+            next.lanes = normalizeLanes(value, options);
         } else if (contractId === "perception-semantic") {
-            next.semantic = normalizeSemanticImage(value, { source: "candidate", status });
+            next.semantic = normalizeSemanticImage(value, options);
         } else if (contractId === "perception-detections") {
             next.detections3d = normalizeLegacyBoxes(value, { source: "candidate", status });
         } else if (contractId === "perception-lanes-legacy") {
@@ -223,9 +236,9 @@ export class CandidateOutputRuntime {
     }
 
     _ingestLocalization(envelope, { applyStep, applyTimeNs, status }) {
-        const estimate = normalizeOdometry(envelope.value, { source: "candidate", status });
-        const truthRaw = this.telemetry?.read?.(oracleTopicSignalPath("truth-odometry"))?.value;
-        if (truthRaw) this._recordTruth(normalizeOdometry(truthRaw, { source: "oracle" }));
+        const estimate = normalizeOdometry(envelope.value, { source: "candidate", status, valueContract: envelope.valueContract, metadata: envelope.metadata ?? {} });
+        const truthRaw = this.telemetry?.read?.(oracleTopicSignalPath("truth-odometry"));
+        if (truthRaw) this._recordTruth(normalizeOdometry(truthRaw.value, { source: "oracle", ...this._entryOptions(truthRaw) }));
         const truth = this._truthFor(estimate);
         const next = {
             captureTimeNs: envelope.captureTimeNs ?? null,

@@ -20,7 +20,7 @@ async function temporaryService() {
 test("run manifest normalization supplies deterministic professional defaults", () => {
     const manifest = createDefaultRunManifest();
     assert.equal(manifest.kind, "cev-sim.run-manifest");
-    assert.equal(manifest.version, 12);
+    assert.equal(manifest.version, 13);
     assert.equal(manifest.scenario, null);
     assert.equal(manifest.clock.stepNs, 16_666_667);
     assert.equal(manifest.clock.pacing, "realtime");
@@ -187,9 +187,9 @@ test("run manifests resolve dependencies and portable bundles round-trip", async
         assert.equal(resolved.resolvedHash.length, 64);
         assert.equal(resolved.simulationSemanticHash.length, 64);
         assert.equal(resolved.environment.manifest.environmentId, "igvc");
-        assert.ok(resolved.schemas["sensor_msgs/Image"].includes("uint8[] data"));
-        assert.ok(resolved.schemas["sensor_fusion_msgs/StampedAckermannDrive"]);
-        assert.equal(resolved.autonomyCatalog.kind, "cev-sim.autonomy-contract-catalog");
+        assert.equal(resolved.schemas, undefined);
+        assert.equal(resolved.autonomyCatalog, undefined);
+        assert.ok(resolved.nativeTopicContracts.document.contracts.some((contract) => contract.id === "cev.image"));
 
         const bundle = await left.service.exportRunManifest("igvc-default");
         assert.equal(bundle.kind, RUN_BUNDLE_KIND);

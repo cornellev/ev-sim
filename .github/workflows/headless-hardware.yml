@@ -13,6 +13,63 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  zenoh-native-builds:
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/zenoh-native.yml
+
+  zenoh-hardware:
+    needs: zenoh-native-builds
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: cev-sim-gpu-x64
+            architecture: x64
+            role: x64-nvidia
+          - runner: cev-sim-jetson-arm64
+            architecture: arm64
+            role: jetson-arm64
+    runs-on: [self-hosted, "${{ matrix.runner }}"]
+    timeout-minutes: 90
+    env:
+      CARGO_HOME: ${{ runner.temp }}/cev-zenoh-cargo
+      RUSTUP_HOME: ${{ runner.temp }}/cev-zenoh-rustup
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - uses: actions/download-artifact@v4
+        with:
+          name: zenoh-linux-${{ matrix.architecture }}-${{ github.sha }}
+          path: artifacts/zenoh-build
+      - name: Install isolated pinned Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.98.0 --no-modify-path
+          echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+      - name: Build pinned Rust consumer and compatible SHM router
+        run: |
+          rustc --version
+          cargo build --locked --manifest-path native/zenoh-transport/Cargo.toml --bin consumer
+          cargo install zenohd --version 1.10.2 --locked --no-default-features --features shared-memory,zenoh/transport_tcp --root "$RUNNER_TEMP/cev-zenohd"
+      - name: Measure native publication copies and memory
+        run: >-
+          node scripts/zenoh-transport-probe.mjs
+          --addon artifacts/zenoh-build/zenoh/cev-sim-zenoh-linux-${{ matrix.architecture }}.node
+          --router "$RUNNER_TEMP/cev-zenohd/bin/zenohd"
+          --width 1920 --height 1080 --frames 120
+          --role ${{ matrix.role }}
+          --output artifacts/zenoh-${{ matrix.role }}.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zenoh-hardware-${{ matrix.role }}-${{ github.run_id }}
+          path: artifacts/zenoh-${{ matrix.role }}.json
+          if-no-files-found: error
+          retention-days: 90
+
   nvidia-x64:
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, cev-sim-gpu-x64]

@@ -11,6 +11,7 @@ import {
 import { normalizeSensorTransports, reconcileSensorTransportBindings } from "./sensors/SensorTransports.js";
 import { normalizeProtobufRunConfig } from "../interfaces/ProtobufRunBinding.js";
 import { normalizeNativeTopic, NATIVE_SENSOR_OUTPUT_CONTRACTS } from "./NativeTopicContracts.js";
+import { topicFromNativeContract, defaultNativeManifestTopics } from "./NativeTopicCatalog.js";
 import { normalizeControlSetpoint } from "../autonomy/ControlCommand.js";
 import {
     catalogMetadata,
@@ -47,7 +48,8 @@ import {
 } from "../util/plainGeometry.js";
 
 export const RUN_MANIFEST_KIND = "cev-sim.run-manifest";
-export const RUN_MANIFEST_VERSION = 12;
+export const RUN_MANIFEST_VERSION = 13;
+export const RUN_MANIFEST_V12 = 12;
 export const NATIVE_RUN_MANIFEST_VERSION = 13;
 export const RUN_MANIFEST_V11 = 11;
 export const RUN_MANIFEST_V10 = 10;
@@ -501,11 +503,12 @@ export function applyManifestOracleProduct(manifest, sensorIndex, productKey, en
     const toggle = (ORACLE_PRODUCT_TOGGLES[sensor.type] || []).find((entry) => entry.product === productKey);
     if (!toggle) return source;
     const nextSensor = applySensorOracleProduct(sensor, productKey, enabled);
+    if (source.version === 13) delete nextSensor.schema;
     sensors[sensorIndex] = nextSensor;
     const topicId = nextSensor.outputs?.[toggle.outputKey];
     let topics = Array.isArray(source.topics) ? [...source.topics] : [];
     if (enabled && topicId && !topics.some((topic) => topic.id === topicId)) {
-        topics = [...topics, topicFromContract(toggle.contractId, { id: topicId })];
+        topics = [...topics, (source.version === 13 ? topicFromNativeContract : topicFromContract)(toggle.contractId, { id: topicId })];
     }
     const syncGroups = Array.isArray(source.sensorRig?.syncGroups)
         ? source.sensorRig.syncGroups.map((group) => ({
@@ -534,6 +537,7 @@ export function applyManifestOracleProduct(manifest, sensorIndex, productKey, en
 }
 
 export function createDefaultRunManifest(overrides = {}) {
+    const native = (overrides.version ?? RUN_MANIFEST_VERSION) === NATIVE_RUN_MANIFEST_VERSION;
     const base = {
         cameraObjectMotion: LIVE_CAMERA_OBJECT_MOTION,
         kind: RUN_MANIFEST_KIND,
@@ -629,15 +633,21 @@ export function createDefaultRunManifest(overrides = {}) {
             ],
         },
         scripts: { enabled: true, artifacts: [], bindingIds: [], expectedBindingsHash: null, embeddedBindings: [] },
-        topics: defaultManifestTopics(),
+        topics: native ? defaultNativeManifestTopics() : defaultManifestTopics(),
         controls: { ...DEFAULT_CONTROLS },
-        autonomyCatalog: catalogMetadata(),
+        ...(native ? {} : { autonomyCatalog: catalogMetadata() }),
         assertions: [],
         parameters: [],
         logging: { policy: "optional", profileId: "simulation-run-full-sensors" },
         provenance: createDefaultManifestProvenance(),
     };
-    return normalizeRunManifest({ ...base, ...overrides }, { allowMissingKind: true });
+    const candidate = { ...base, ...overrides };
+    if (native) candidate.sensorRig = { ...candidate.sensorRig, sensors: candidate.sensorRig.sensors.map((sensor) => {
+        const normalized = { ...sensor };
+        delete normalized.schema;
+        return normalized;
+    }) };
+    return normalizeRunManifest(candidate, { allowMissingKind: true });
 }
 
 const PUBLISHED_OBSERVATION_PROFILE_IDS = new Set([
@@ -679,7 +689,7 @@ export function normalizeRunManifest(value, {
         RUN_MANIFEST_V9,
         RUN_MANIFEST_V10,
         RUN_MANIFEST_V11,
-        RUN_MANIFEST_VERSION,
+        RUN_MANIFEST_V12,
         NATIVE_RUN_MANIFEST_VERSION,
     ];
     if (!supported.includes(sourceVersion)) {
@@ -691,7 +701,7 @@ export function normalizeRunManifest(value, {
     if (sourceVersion < RUN_MANIFEST_V11 && source.sensorTransports !== undefined) {
         throw new Error("Sensor transport bindings require run-manifest version 11.");
     }
-    if (sourceVersion < RUN_MANIFEST_VERSION && source.protobuf !== undefined) {
+    if (sourceVersion < RUN_MANIFEST_V12 && source.protobuf !== undefined) {
         throw new Error("Protobuf interface selection requires run-manifest version 12.");
     }
     const protobuf = normalizeProtobufRunConfig(source.protobuf);
@@ -738,7 +748,7 @@ export function normalizeRunManifest(value, {
     };
     return {
         kind: RUN_MANIFEST_KIND,
-        version: native ? NATIVE_RUN_MANIFEST_VERSION : RUN_MANIFEST_VERSION,
+        version: native ? NATIVE_RUN_MANIFEST_VERSION : RUN_MANIFEST_V12,
         id: text(source.id, "untitled-run"),
         name: text(source.name, "Untitled Run"),
         description: text(source.description),
@@ -839,7 +849,7 @@ export function validateRunManifest(value, {
             const linked = topics.get(topicId);
             const native = manifest.version === NATIVE_RUN_MANIFEST_VERSION;
             const linkedType = native ? linked?.valueContract?.id : linked?.schema?.type || linked?.type;
-            const expectedType = native ? NATIVE_SENSOR_OUTPUT_CONTRACTS[key] : definition?.run?.outputs?.find((output) => output.key === key)?.rosType;
+            const expectedType = native ? definition?.run?.outputs?.find((output) => output.key === key)?.valueContract?.id ?? NATIVE_SENSOR_OUTPUT_CONTRACTS[key] : definition?.run?.outputs?.find((output) => output.key === key)?.rosType;
             if (native && topicId && !expectedType) issues.push({ path: `sensorRig.sensors.${index}.outputs.${key}`, message: "Sensor output has no admitted native contract." });
             if (topicId && linked && expectedType && linkedType !== expectedType) {
                 issues.push({ path: `sensorRig.sensors.${index}.outputs.${key}`, message: `Sensor product requires ${expectedType}, not ${linkedType}.` });

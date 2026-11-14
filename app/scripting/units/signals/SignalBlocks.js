@@ -368,6 +368,7 @@ export function TopicSnapshotUnit(props) {
             defaults={TopicSnapshotBlock.defaults}
             outputs={[
                 { label: "message", type: "message" },
+                { label: "metadata", type: "message" },
                 { label: "exists", type: "boolean" },
                 { label: "stale", type: "boolean" },
                 { label: "age", type: "float64" }
@@ -395,7 +396,7 @@ export function TopicFieldUnit(props) {
         >
             {(data, commit) => (
                 <>
-                    <TextField label="Field path" value={data.fieldPath} onChange={(fieldPath) => commit({ fieldPath })} placeholder="drive.speed" />
+                    <TextField label="Field path" value={data.fieldPath} onChange={(fieldPath) => commit({ fieldPath })} placeholder="speedMps" />
                     <SelectField label="Field type" value={typedOutput(data.type)} onChange={(type) => commit({ type })} options={SUPPORTED_TYPES} />
                     <TextField label="Fallback" value={data.fallback} onChange={(fallback) => commit({ fallback })} />
                 </>

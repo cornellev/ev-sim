@@ -46,7 +46,7 @@ test("artifact policy translation and training sampling are deterministic", () =
 });
 
 test("portable bundle verification preserves storage hashes and rejects mutations", async () => {
-    const exported = await new StorageService().exportRunManifest("igvc-default");
+    const exported = await createPortableHeadlessBundle();
     assert.equal(verifyRunBundle(exported).resolvedHash, exported.resolvedHash);
 
     const mutated = structuredClone(exported);

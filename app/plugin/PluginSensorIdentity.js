@@ -43,7 +43,9 @@ export function pluginSensorEffectiveConfigHash(record) {
         calibration: sensor.calibration,
         enabledProducts: record.products.map((product) => product.productId),
         outputs: sensor.outputs,
-        schema: sensor.schema,
+        ...(record.plugin.descriptor.sensorAbi === 2
+            ? { valueContracts: Object.fromEntries(record.products.filter((product) => product.kind === "pointCloud").map((product) => [product.outputKey, product.valueContract])) }
+            : { schema: sensor.schema }),
         latency: sensor.latency,
         noise: sensor.noise,
         observation: record.observation ? {

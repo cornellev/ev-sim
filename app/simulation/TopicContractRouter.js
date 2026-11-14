@@ -92,6 +92,7 @@ export class TopicContractRouter {
             return { ok: false, code: "output-only", message: `Topic "${info.name}" is output-only.` };
         }
         const expectedType = topicRosType(topic);
+        if (topic.valueContract && info.valueContract && (info.valueContract.id !== topic.valueContract.id || info.valueContract.version !== topic.valueContract.version)) return { ok: false, code: "contract-mismatch", message: "Native topic contract does not match the run.", topic };
         if (info.typeStr && expectedType && info.typeStr !== expectedType) {
             return { ok: false, code: "schema-mismatch", message: `Topic "${info.name}" expected ${expectedType}, received ${info.typeStr}.` };
         }
@@ -233,7 +234,7 @@ export class TopicContractRouter {
                 payload: { contractId: topic.contractId, captureTimeNs, arrivalTimeNs },
             };
         }
-        return this._writeActive(topic, { ...info, captureTimeNs }, { applyStep, applyTimeNs, arrivalTimeNs });
+        return this._writeActive(topic, { ...info, captureTimeNs }, { applyStep, applyTimeNs, arrivalTimeNs, metadata: info.metadata });
     }
 
     routeOutbound(topicIdOrName, info, metadata = {}, { publishTransport = true } = {}) {
@@ -266,6 +267,7 @@ export class TopicContractRouter {
                 replayRole: producer === "oracle" ? "derived" : "state",
                 logClass,
                 history: logClass === "heavy" ? undefined : false,
+                ...(topic.valueContract ? { metadata: { ...metadata, valueContract: topic.valueContract, topicId: topic.id } } : {}),
                 descriptorMetadata: {
                     ...(topic.valueContract ? { valueContract: topic.valueContract, topicId: topic.id } : { rosType: topicRosType(topic) }),
                     topic: topic.name,
@@ -347,7 +349,7 @@ export class TopicContractRouter {
             value,
             ...(topic.valueContract ? { topicId: topic.id, valueContract: topic.valueContract } : {}),
             topic: topic.name,
-            ...(topic.valueContract ? { metadata: { ...metadata, captureTimeNs: info.captureTimeNs, arrivalTimeNs, applyTimeNs, applyStep } } : { typeStr: info.typeStr ?? topicRosType(topic) }),
+            ...(topic.valueContract ? { metadata: { runId: this.runId, ...metadata, captureTimeNs: info.captureTimeNs ?? applyTimeNs, sequenceId: metadata?.sequenceId ?? String(sequence), arrivalTimeNs, applyTimeNs, applyStep }, sequenceId: metadata?.sequenceId ?? String(sequence) } : { typeStr: info.typeStr ?? topicRosType(topic) }),
             contractId: topic.contractId,
             producer,
             authority: topic.authority,
@@ -368,12 +370,13 @@ export class TopicContractRouter {
             category: "topics",
             replayRole: topic.direction === "input" ? "input" : (producer === "oracle" ? "derived" : "state"),
             logClass: payloadLogClass,
+            ...(topic.valueContract ? { metadata: { ...envelope.metadata, valueContract: topic.valueContract, topicId: topic.id } } : {}),
             descriptorMetadata: {
-                ...(topic.valueContract ? { valueContract: topic.valueContract, topicId: topic.id } : { rosType: envelope.typeStr }),
+                ...(topic.valueContract ? { valueContract: topic.valueContract, topicId: topic.id, frameId: metadata?.frameId ?? null } : { rosType: envelope.typeStr }),
                 topic: topic.name,
                 contractId: topic.contractId,
                 producer,
-                sequenceId: sequence,
+                sequenceId: topic.valueContract ? envelope.sequenceId : sequence,
                 captureTimeNs: envelope.captureTimeNs,
                 arrivalTimeNs,
                 applyTimeNs,
@@ -393,11 +396,12 @@ export class TopicContractRouter {
                 category: "topics",
                 replayRole: "derived",
                 logClass: payloadLogClass,
+                ...(topic.valueContract ? { metadata: { ...envelope.metadata, valueContract: topic.valueContract, topicId: topic.id } } : {}),
                 descriptorMetadata: {
                     authority: topic.authority,
                     contractId: topic.contractId,
                     topic: topic.name,
-                    sequenceId: sequence,
+                    sequenceId: topic.valueContract ? envelope.sequenceId : sequence,
                     routeDownstream: true,
                     canonicalSignalPath: metadata?.canonicalSignalPath ?? null,
                 },
@@ -419,6 +423,7 @@ export class TopicContractRouter {
         });
 
         this._notifyObservers(Object.freeze({
+            ...(topic.valueContract ? { topicId: topic.id, valueContract: topic.valueContract, metadata: envelope.metadata, captureTimeNs: envelope.captureTimeNs, sequenceId: envelope.sequenceId } : {}),
             topic: envelope.topic,
             contractId: envelope.contractId,
             producer: envelope.producer,

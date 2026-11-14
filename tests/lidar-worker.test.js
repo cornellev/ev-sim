@@ -27,6 +27,24 @@ function fixture() {
 }
 const vehicles = [{ id: "ego", position: { x: 0, y: 0, z: 0 }, rotation: {} }];
 
+test("CPU worker preparation waits for the module readiness message", async (t) => {
+    const listeners = new Map();
+    const messages = [];
+    const worker = {
+        addEventListener(name, listener) { listeners.set(name, listener); },
+        postMessage(message) { messages.push(message); queueMicrotask(() => listeners.get("message")({ data: { id: message.id, ok: true, result: {} } })); },
+        terminate() {},
+    };
+    const runtime = new BrowserCpuLidarRuntime({ workerFactory: () => worker });
+    t.after(() => runtime.dispose());
+    const data = fixture();
+    const pending = runtime.prepare(data.resolved, [data.config]);
+    assert.equal(messages.length, 0);
+    listeners.get("message")({ data: { type: "worker-ready" } });
+    await pending;
+    assert.equal(messages[0].method, "prepare");
+});
+
 async function prepare(t, options = {}) {
     const data = fixture();
     const worker = createCpuLidarTestWorker();

@@ -352,3 +352,13 @@ area now admits a route-free `freeDrive` episode under that same flag. Python
 bundles with a missing or broken route stay rejected. The observation layout
 and the `measured-state` hashes are unchanged. See
 [drive-area-plan.md](drive-area-plan.md).
+
+### 2026-11-14 — ZPB-08 native example bundles
+
+Planning and smoke bundle generators now write manifest v13 and scenario v2.
+The committed straight/curve example bundles are regenerated with native topic
+contracts; historical identity fixtures are untouched. With no explicit source
+manifest, planning uses the current built-in template and reads the requested
+environment/vehicle from the selected store. An explicitly selected historical
+run requires reviewed adoption. Planning observation layouts, reset overrides,
+vehicle dynamics, and world hashes do not change.

@@ -312,7 +312,7 @@ test("gRPC, direct runner, and CLI preserve episode hashes, trajectory hashes, a
 
 test("PLG-05 supervisor workers execute embedded range-image plugin sensors", { timeout: 30_000 }, async (t) => {
     const { root, call } = await fixture(t);
-    const resource = await pluginSensorFixtureResource();
+    const resource = await pluginSensorFixtureResource({ native: true });
     const bundle = await createPluginPortableHeadlessBundle(resource, {
         sensors: [createHeadlessImu(), createPluginRangeImageFixtureSensor()],
         triggers: [{

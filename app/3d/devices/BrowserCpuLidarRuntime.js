@@ -48,7 +48,17 @@ export class BrowserCpuLidarRuntime {
         try {
             this.worker = this.workerFactory();
             if (!this.worker) throw new Error("Module workers are unavailable.");
+            const ready = new Promise((resolve, reject) => {
+                const timer = setTimeout(() => this._fail(failure("CPU LiDAR worker startup timed out.", "CPU_LIDAR_TIMEOUT")), this.requestTimeoutMs);
+                this.boot = { resolve, reject, timer };
+            });
             const onMessage = ({ data }) => {
+                if (data.type === "worker-ready") {
+                    clearTimeout(this.boot?.timer);
+                    this.boot?.resolve();
+                    this.boot = null;
+                    return;
+                }
                 if (this.transport?.id === data.id) this._releaseTransport();
                 const request = this.pending.get(data.id);
                 if (!request) return;
@@ -62,6 +72,8 @@ export class BrowserCpuLidarRuntime {
             this.worker.addEventListener("message", onMessage);
             this.worker.addEventListener("error", onError);
             this.worker.addEventListener("messageerror", onError);
+            // Bundled module imports can finish after the worker starts receiving messages.
+            await ready;
             const result = await this._call("prepare", { resolvedRun, sensors });
             this.status = { implementation: "worker", fallbackReason: null, ...result };
         } catch (error) {
@@ -112,6 +124,9 @@ export class BrowserCpuLidarRuntime {
     }
 
     _rejectPending(error) {
+        clearTimeout(this.boot?.timer);
+        this.boot?.reject(error);
+        this.boot = null;
         for (const request of this.pending.values()) {
             clearTimeout(request.timer);
             request.reject(error);

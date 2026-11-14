@@ -8,6 +8,7 @@ import process from "node:process";
 import { runGpuPreflight } from "../server/headless/GpuPreflight.js";
 import { readSupervisorConfig } from "../server/headless/SupervisorConfig.js";
 import { evaluateVisualHostRole } from "../server/headless/VisualHostValidation.js";
+import { probeZenohNativeTransport } from "../server/sensor-transports/ZenohNativeTransport.js";
 import { parseOptions, processProvenance, run, writeReport } from "./lib/headless-release-support.mjs";
 
 async function optionalFile(file) {
@@ -103,11 +104,15 @@ async function main() {
         nonRoot: typeof process.getuid !== "function" || process.getuid() !== 0,
         gpuRequirement: !options.requireGpu || gpuPreflight.available === true,
     };
+    const zenohTransport = configuration?.zenohTransport
+        ? await probeZenohNativeTransport(configuration.zenohTransport) : null;
+    checks.zenohRequirement = !configuration?.zenohTransport || zenohTransport?.available === true;
     const report = {
         kind: "cev-sim.headless.host-validation",
         version: 1,
         createdAt: new Date().toISOString(),
         role: options.role,
+        zenohTransport,
         architecture: process.arch,
         provenance: processProvenance(),
         operatingSystem: {

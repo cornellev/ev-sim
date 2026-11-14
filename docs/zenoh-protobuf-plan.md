@@ -136,10 +136,10 @@ Accept unknown numeric proto3 enum values and ignore unknown wire fields.
 | ZPB-02 | 01 | Persistent imports and pinned GitHub updates | Implemented and verified |
 | ZPB-03 | 01, 02 | Manifest v12 and immutable resolved interface resources | Implemented and verified |
 | ZPB-04 | 03 | Native products, shared mapping/publication, opt-in v13 and reviewed migration | Implemented and verified |
-| ZPB-05 | 04 | Browser Zenoh lifecycle and file-based configuration | Planned |
-| ZPB-06 | 04 | Native Zenoh addon and shared memory | Planned |
-| ZPB-07 | 06 | Headless publication and realtime controller mode | Planned |
-| ZPB-08 | 05, 07 | Onboarding and control ownership migration | Planned |
+| ZPB-05 | 04 | Browser Zenoh lifecycle and file-based configuration | Implemented; Node router wire verified, browser acceptance unverified |
+| ZPB-06 | 04 | Native Zenoh addon and shared memory | Implemented; Linux/Jetson acceptance pending |
+| ZPB-07 | 06 | Headless publication and realtime controller mode | Implemented; Linux installed CLI and hardware evidence pending |
+| ZPB-08 | 05, 07 | Onboarding and control ownership migration | Implemented; final acceptance evidence in zpb-08-work-packages.md |
 | ZPB-09 | 08 | Orchestrator deletion and release acceptance | Planned |
 
 ### ZPB-01 — interface and loader
@@ -379,6 +379,60 @@ No visual wiring canvas. The old path may exist only while migration gates
 are incomplete and must be deleted by ZPB-09.
 Native runs bypass ROS schema registration, echo discovery and `.msg` codecs.
 
+ZPB-05 implementation uses these dependency-ordered working packages:
+
+| Working package | Implementation | Data and evidence |
+| --- | --- | --- |
+| WP1 — host configuration | `app/client/ZenohBrowserConfig.js::normalizeZenohBrowserConfig()`, `server/interfaces/ZenohBrowserConfig.js::readZenohBrowserConfig()`, `server/routes/zenohBrowserRouter.js` | Explicit host JSON@1, same-origin configuration endpoint, SDK lockfile and router archive checksums in `tests/fixtures/protobuf/zenoh-browser-compatibility.json`; Node wire pair verified, browser conformance open |
+| WP2 — worker transport | `ZenohBrowserTransport.js::{connect,publish,subscribe,unsubscribe,close}`, `ZenohBrowserWorkerRuntime.js::createZenohBrowserWorkerRuntime()`, `zenohBrowserTransport.worker.js` | Official public SDK APIs in a terminable worker, request Map, route/subscription Maps, owned FIFO payloads, inbound credit Map, one active publication |
+| WP3 — kernel wiring | `ProtobufRouteRuntime.js::invalidateBindings()`, kernel/runtime context topic lifecycle, `ControlRuntime.js` run identity | Actual kernel `TopicInputQueue`, concrete run ID, native publication port; reconnect preserves bootstrap schedule, reset re-arms it |
+| WP4 — startup | `ClientManager.js::{setup,preflight,activateRoutes,dispose}`, `RunSessionController.js::{prepare,_applyPending}` | Frozen interface admission and awaited router declarations before play; required external inputs need routes, without peer discovery; legacy setup loads lazily |
+| WP5 — recovery | `RunSessionController.js::{_handleTransportState,_cancelRecovery,pause,_stop,reset}`, simulation status overlay | Pause on loss, binding/connection generations, capped retry delays, stable resolved snapshot and run ID, explicit Pause cancels resume, Stop/detach/replacement cancel recovery |
+| WP6 — authoring state | `protobufInterfaceAuthoring.js::{parseInterfaceRoutes,uploadedProtoSource,uploadedDescriptorSource,ProtobufInterfaceAuthoringSession}`, `runConfigSession.js` | Hash-keyed immutable document cache, tracked revisions, request epoch, route/bootstrap JSON buffer, persistence before manifest Save/Validate/Launch; additive import `interfaceVersion` defaults to historical @1 |
+| WP7 — editor | `ProtobufInterfacePanel.js`, `ConfigPage.js`, `SimpleRunWorkspace.js`, `simpleRunModel.js` | Proto closure/descriptor/interface JSON uploads, explicit GitHub roots/ref, update preview/adoption, disabled repair drafts, explicit native migration preview/apply and Zenoh pin; one parent session across modes |
+| WP8 — evidence | `tests/zenoh-browser-{transport,lifecycle,router}.test.js`, `tests/protobuf-authoring.test.js`, manual `scripts/test-zenoh-browser.mjs` and focused UI specs | Node tests cover bounded ownership, startup failure, generation fences, recovery/cancellation, bootstrap lifetime and persistence; real router wire test passes through production runtime in Node workers; browser execution is waived by the user and remains unverified |
+
+Configure `CEV_SIM_ZENOH_BROWSER_CONFIG` with a bounded regular JSON file:
+
+```json
+{
+  "kind": "cev-sim.zenoh-browser-host-config",
+  "version": 1,
+  "endpoint": "ws://127.0.0.1:10000",
+  "maxOutboundEntries": 256,
+  "maxOutboundBytes": 33554432
+}
+```
+
+The endpoint is explicit ws/wss, without URL credentials, query or fragment.
+The host reads it at startup and exposes `/api/zenoh/browser-config` with
+`Cache-Control: no-store`. Missing configuration disables native Zenoh startup;
+invalid configuration fails visibly. Host limits are operational and do not
+enter run hashes. The default FIFO includes the active publication in its
+256-entry/32 MiB budget and rejects the newest overflow. Maximum payload is
+16 MiB. Worker-to-main handoff permits 16 unacknowledged samples/16 MiB.
+Connection and publication timeouts are five seconds; heartbeat interval is
+one second with a three-second watchdog; cleanup is bounded to one second.
+Reconnect delays are 0.5, 1, 2, 4, then 5 seconds, capped until canceled.
+Transport diagnostics distinguish local acceptance, sent publications,
+rejection, lost queued publications and inbound rejection; route issues remain
+visible in the session transport snapshot. Local acceptance is not actuator
+application or proof that an external peer received a payload.
+
+`@eclipse-zenoh/zenoh-ts@1.10.2` and the 1.10.2 remote-API standalone router are
+the initial pinned pair. The worker imports the unmodified SDK; Next compiles
+its WebAssembly module. Future upgrades must update the compatibility fixture,
+lockfile and repeat the real-router conformance gate. `npm run test:zenoh-browser`
+downloads/checks the router archive and drives binary isolation and reconnect
+checks plus authoring specs on Linux x64 or macOS ARM64. It is a manual gate,
+not browser evidence recorded by this implementation. The independent
+`tests/zenoh-browser-router.test.js` gate uses the same transport/worker runtime,
+the unmodified SDK with Node's experimental WebAssembly module loader and
+public WebSocket API, and `CEV_SIM_ZENOH_BROWSER_TEST_BINARY` pointing to the
+pinned standalone binary. It verifies real binary delivery, payload ownership,
+isolated keys, router restart, generation rejection and bounded worker close
+without Playwright. Node wire evidence does not replace browser acceptance.
+
 Gate: real router binary round trip, isolated concurrent run IDs, reconnect
 without stale bindings, required-route startup failure, bootstrap lifetime,
 browser backpressure, and focused Playwright authoring/lifecycle checks.
@@ -406,6 +460,22 @@ mixed local/remote consumers, and measured copy/memory behavior on Jetson.
 Do not advertise end-to-end zero copy merely because Zenoh uses SHM: JavaScript
 Protobuf encoding and GPU readback may still copy.
 
+Dependency-ordered implementation packages:
+
+| Package | Implementation | Data and completion gate |
+| --- | --- | --- |
+| 06.1 | `ZenohTransportConfig.js`: `resolveZenohTransportHostConfig()`, `validateZenohTransportAdmission()`, image wire-size visitor; optional `SupervisorConfig.js` section | Frozen host config, `routesById`/`imagePayloadBounds` maps; limits, key binding, tensor-plus-pool admission tests |
+| 06.2 | `native/zenoh-transport/{Cargo.toml,Cargo.lock,src/lib.rs}`: napi session factory, async open/SDK worker and sync publish | Mutex state, shared RAII queue budget, `VecDeque` owned packets; bytes and visible required failure |
+| 06.3 | `src/shm.rs`: SDK POSIX binary-heap provider, safe allocation/copy/reclamation | Immutable SDK `ZShm`/`ZBytes` references; retention and exhaustion tests |
+| 06.4 | Native subscribe/unsubscribe/drain/reset/close and environment cleanup | Generation fence, bounded subscription `HashMap`, one-token napi wakeup; stale callbacks and lifecycle tests |
+| 06.5 | `ZenohNativeTransport.js`, `validate-headless-host.mjs` | Synchronous publication acceptance, owned inbound buffers and diagnostics; live execution remains ZPB-07 |
+| 06.6 | Native build/loader, `scripts/lib/zenoh-artifacts.mjs`, headless builder/installer/verifier/release check | Per-architecture SHA-256/ELF/glibc/ABI records outside npm tarball; same-lock pair and tamper checks |
+| 06.7 | Rust consumer/router fixtures, live integration/probe, native/candidate/hardware workflows | Mixed consumers, crashes, 100 resets, latency/copy/RSS report; both Linux artifacts and Jetson report required |
+| 06.8 | `docs/zenoh-native-transport.md`, roadmap log and regression acceptance | Focused/Rust/full/lint/parity/Python/package checks; hardware evidence stays explicitly pending |
+
+See [native transport operations](zenoh-native-transport.md) for host policy,
+ownership, build/install and evidence commands.
+
 ### ZPB-07 — headless execution and external controls
 
 Edit `server/headless/HeadlessSession.js`, `HeadlessWorker.js`,
@@ -428,7 +498,30 @@ Gate: browser/headless publication parity, actual external-controller driving,
 stale/wrong-run/duplicate commands, pause/reset/stop, transport failure, and
 existing Gym/Python regression tests. Compare the committed action tape.
 
+Implementation packages (2026-11-13):
+
+| Package | Files and methods | Data and acceptance |
+| --- | --- | --- |
+| 07.1 | `SupervisorConfig.normalizeControllerMode`, `ProtobufRunBinding.assertProtobufExecutionCapabilities` | Explicit policy/external selection; only v13/interface-v2 native routes, ZPB-08 consumer gates retained |
+| 07.2 | `HeadlessZenohRuntime.prepare/activate/suspend/drain/close`, `ProtobufRouteRuntime.acceptInbound`, `TopicInputQueue.enqueue` | Existing compiled route maps and kernel input queue; bounded aggregate bytes/entries, sticky native failure |
+| 07.3 | `StateSensorBackend._retainNativeProduct/deliver`, `SensorPublisher.deliverNativeSensorProduct` | Sample-index product map, shared capture values and publication metadata; observation records and deterministic state unchanged |
+| 07.4 | `HeadlessSession`, `ManagedHeadlessSession`, `HeadlessEpisode.prepare` | Session-scoped routes, fresh run ID, native queue health; Gym rejects external authority |
+| 07.5 | `HeadlessExternalSession` lifecycle | Paced kernel, one pending advance, bounded waits, simulation-time freshness, fresh-ID reset; no action/reward/tensor facade |
+| 07.6 | `HeadlessWorker` realtime commands, `WorkerHandle.waitForRealtimeCompletion`, `HeadlessSupervisor._runIsolatedEnvironment` | Run-ID-fenced completion notification; responsive IPC, renderer/asset/UDP reuse and cancellation before supervisor shutdown |
+| 07.7 | `Cli.main`, `HeadlessRunner.runExternalController`, `SupervisorRunner.runExternalController`, `HeadlessArtifactSink.start`, `verify-headless-dist.mjs` | Direct/configured run and validation, frozen inputs, concrete keys, actual log/result run ID and installed native smoke |
+| 07.8 | Headless Zenoh/state tests, independent controller, `zenoh-native.yml`, CLI/supervisor/native documentation | Real router driving, regression/identity checks, Linux x64/ARM64 installed CLI and interruption gates |
+
+The manifest writer, historical characterization fixtures, existing disabled
+transport behavior and headless Protobuf/tensor contract remain unchanged.
+Managed scenario/plugin/binding consumers still require ZPB-08. Hardware
+acceptance is pending; implementation status does not accept those gates.
+
 ### ZPB-08 — onboarding and ownership migration
+
+The approved implementation sequence and current evidence are tracked in
+[`zpb-08-work-packages.md`](zpb-08-work-packages.md). The v13 writer and execution cutover are implemented after complete migration
+and real browser/installed Jetson onboarding checks. The work-package document
+records exact artifacts, run IDs, and local upstream commits.
 
 Switch the writer to v13 only after reviewed migration and native consumers
 are ready. Move configuration selectors, BindingRuntime, plugin topic/system
@@ -577,4 +670,112 @@ admission visibly. There is no final optional legacy mode.
   approved execution outside the sandbox. Live Zenoh, browser authoring/lifecycle,
   native SHM, NVIDIA and Jetson evidence are reserved for ZPB-05–09.
 
-Next fresh context: **ZPB-05**, using its browser transport/authoring gate above.
+- 2026-11-13: ZPB-05 browser transport and authoring implementation completed.
+  The SDK uses public APIs in a dedicated worker; browser native v13 runs bind
+  the actual kernel input queue and a UUID-qualified execution run ID. Frozen
+  interfaces survive reconnection; explicit Pause suppresses resume and Stop,
+  Reset, detach or replacement cancel recovery. Native runs skip orchestrator
+  discovery and schema registration. File imports explicitly create interface@2;
+  legacy/MCP import defaults retain interface@1. The shared editor persists
+  immutable pins before manifest operations and bounds cached edits to the
+  current document plus committed/pinned drafts. No historical tapes, protocol
+  bindings, default writer, or run hash algorithms were changed.
+  Final focused transport/runtime/session/authoring checks passed 42 tests.
+  The final serial JavaScript suite passed 2,806 tests with 11 skips, zero
+  failures (2,817 total). A concurrent run's existing marketplace HTTP stall
+  passed in isolation; the serial rerun completed. Lint and production build
+  passed; the existing three React-hook warnings remain. Characterization
+  parity passed all four browser/direct/CLI/gRPC/Python cases. Python passed
+  all 154 tests with the existing three SB3 warnings after its process-cleanup
+  test's transient two-second batch-startup deadline passed in isolation and
+  the full rerun completed without competing Node tests.
+  An independent real-router wire test passed on macOS ARM64 with the pinned
+  SDK/router pair through production transport/runtime logic in Node workers;
+  binary delivery, isolated keys, owned payloads, reconnect, stale generations
+  and shutdown were verified. Playwright and real-router browser execution
+  were waived by the user; browser acceptance remains unverified. Node wire
+  evidence and the compiled SDK do not substitute for the browser gate.
+
+- 2026-11-13: Implemented the eight ZPB-06 packages. The pinned Rust 1.98.0 /
+  Zenoh 1.10.2 / N-API 8 addon owns immutable native payloads, safe POSIX SHM
+  references and bounded shared queue reservations, including in-flight work.
+  Subscription wakes carry only one token; owned bytes, generation fencing,
+  serialized lifecycle, required failure events and callback-root release cover
+  reset/close. Host admission counts compiled image envelopes (including derived
+  aliases), rejects oversized encoded payloads and reserves tensor plus pool/SDK
+  metadata budgets. Required SHM applies to negotiated direct connections;
+  downstream network consumers remain supported. Optional overload rejects
+  newest frames; required overload fails visibly. The payload cap remains
+  16 MiB, with a minimum 64 KiB SHM threshold and no exhausted-pool fallback.
+  Live headless execution remains gated by ZPB-07. No hashes, Protobuf fields,
+  historical tapes, default writer or Python tensor contract changed.
+
+- 2026-11-13: ZPB-06 release tooling now verifies same-lock Linux x64/ARM64
+  ELF/glibc/ABI/SHA-256 records and installs the matching binary explicitly
+  after `--ignore-scripts`. Native binaries stay outside the 10 MiB npm ceiling.
+  Candidate and hardware workflows build/download both architectures and emit
+  native copy/latency/RSS reports. The probe checks retained frames, exhaustion,
+  100 resets, producer/consumer crashes and cleanup using the actual JavaScript
+  mapping/encoder and Rust consumers. Jetson reports require Tegra/Jetson host
+  identity; Linux reports require verified artifact metadata. GPU readback is
+  explicitly unmeasured and end-to-end zero copy is not claimed.
+
+- 2026-11-13: ZPB-06 local verification passed all 13 focused tests with real
+  native TCP/SHM processes, two Rust ownership/budget tests, all four parity
+  cases and 154 Python tests. The local macOS probe passed every lifecycle and
+  crash check. Lint passed with zero errors and the three existing React-hook
+  warnings. The final full JavaScript run passed 2,806 tests with 11 skips and
+  zero failures (2,817 total); an earlier concurrent run's CLI, supervisor and
+  marketplace recovery timeouts all passed in isolation before that rerun.
+  Headless build, release check and npm/wheel/sdist install verification passed;
+  packaging also restores the required XML parser dependency in the existing
+  allowlist. Local live tests used the same-lock SDK router fixture because the
+  installed 1.10.2 `zenohd` did not negotiate SHM. No official-router Linux,
+  Linux artifact hashes, NVIDIA or Jetson acceptance evidence is claimed.
+  Those workflow gates remain pending; this milestone is implemented but not
+  accepted for release.
+
+- 2026-11-13: ZPB-07 implements packages 07.1–07.8. Native routes now use the
+  actual headless input queue and state capture results. The standalone paced
+  session owns one kernel; Gym remains request/response and rejects external
+  authority. Pause fences subscriptions and queued inputs. Reset prepares a
+  fresh run ID. Required native failure requires reset and aborts artifact
+  staging. Host configuration and diagnostics do not change semantic identity.
+  Scenario/plugin/binding migration and writer cutover remain ZPB-08.
+
+- 2026-11-13: ZPB-07 local verification passed 2,814 JavaScript tests with 16
+  skips (2,830 total), 154 Python tests, all four browser/direct/CLI/gRPC/Python
+  parity cases, active and pinned historical characterization checks, Python
+  generated-binding verification, quick isolation/SHM soak, and npm/wheel/sdist
+  build and installed smoke verification with supported Python 3.12. The final
+  focused run passed all 36 tests. Lint passed with zero errors and the three
+  existing React-hook warnings. A separate Node controller drove the real
+  headless kernel through installed Zenoh 1.10.2 TCP, observed measured wheel
+  speed and vehicle displacement, then verified fresh-ID reset, router-loss
+  failure and absence of a committed failed result. This used the local macOS
+  development addon with SHM disabled; it is not Linux release-artifact evidence.
+  Linux direct/supervised CLI driving, SIGINT finalization, installed native
+  smoke, x64 NVIDIA and Jetson ARM64 acceptance are wired into verification and
+  workflows but remain pending execution. No historical fixture, manifest
+  writer, headless Protobuf field or Python tensor contract was changed.
+
+ZPB-05 browser acceptance remains open; Playwright execution was waived at the
+user's explicit request. ZPB-06 and ZPB-07 implementations retain their Linux
+and hardware acceptance gates. Consumer migration and the v13 writer cutover
+remain ZPB-08; orchestrator deletion remains ZPB-09.
+
+- **2026-11-14 — ZPB-08 native cutover.** Writer/execution now require v13,
+  scenario consumers use v2, and historical bundles retain integrity inspection
+  and explicit adoption. Migration captures the complete effective binding,
+  script, scenario, vehicle, and plugin closure; original content remains
+  archived. Topic ABI 2 and sensor ABI 2 preserve ABI 1 package hashes.
+  Semantic LiDAR roles remain distinct even when their sensor is absent.
+  Leases are explicit, actual-run scoped, 750 ms with 250 ms renewal; local
+  watchdogs clear controls and pause on loss. Paused owner rebinding resets
+  command@2 sequence fences only and requires explicit resume. Browser and
+  isolated installed Jetson driving pass. Full JavaScript/Python checks,
+  characterization, native parity, and quick soak pass. Exact source/artifact
+  evidence and the unpublished upstream/SDK pins are recorded in
+  [zpb-08-work-packages.md](zpb-08-work-packages.md). Automatic orchestrator
+  startup is disabled; deletion and paired platform release acceptance stay
+  ZPB-09. No release hardware/hosted gate is inferred from these local checks.

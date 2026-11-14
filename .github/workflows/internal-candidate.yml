@@ -7,7 +7,12 @@ permissions:
   contents: read
 
 jobs:
+  zenoh-native:
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/zenoh-native.yml
+
   build-candidate:
+    needs: zenoh-native
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 240
@@ -44,7 +49,12 @@ jobs:
       - run: npm run test:parity -- --output artifacts/parity-linux.json
       - run: npm run test:soak -- --output artifacts/headless-soak.json
       - run: npm run benchmark:headless -- --output artifacts/headless-benchmark.json
-      - run: npm run dist:headless -- --output artifacts/headless
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: zenoh-linux-*-${{ github.sha }}
+          path: artifacts/zenoh-builds
+          merge-multiple: true
+      - run: npm run dist:headless -- --output artifacts/headless --zenoh-artifacts artifacts/zenoh-builds/zenoh
       - run: npm run release:check -- --dist artifacts/headless
       - run: npm run dist:verify -- --dist artifacts/headless
       - name: Resolve package version

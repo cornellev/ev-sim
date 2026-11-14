@@ -462,11 +462,11 @@ test("install script stops when .env.local has an unsupported registry path", as
     });
 });
 
-test("onboarding installer options are explicit and conflict with skipping orchestrator", () => {
-    const configured = spawnSync("bash", ["-c", 'script="$1"; set -- --onboarding --orchestrator-ref abc123; source "$script"; printf "ONBOARDING=%s REF=%s\\n" "$ONBOARDING" "$ORCHESTRATOR_REF"', "bash", installScript], { encoding: "utf8" });
+test("onboarding installs the native router and permits skipping orchestrator", () => {
+    const configured = spawnSync("bash", ["-c", 'script="$1"; set -- --onboarding --no-orchestrator; source "$script"; printf "ONBOARDING=%s ORCH=%s\\n" "$ONBOARDING" "$ORCHESTRATOR_CHOICE"', "bash", installScript], { encoding: "utf8" });
     assert.equal(configured.status, 0, configured.stderr);
-    assert.match(configured.stdout, /ONBOARDING=1 REF=abc123/);
-    const conflict = spawnSync("bash", [installScript, "--onboarding", "--no-orchestrator"], { encoding: "utf8" });
+    assert.match(configured.stdout, /ONBOARDING=1 ORCH=0/);
+    const conflict = spawnSync("bash", [installScript, "--onboarding", "--orchestrator"], { encoding: "utf8" });
     assert.notEqual(conflict.status, 0);
-    assert.match(conflict.stderr, /only one|requires orchestrator/);
+    assert.match(conflict.stderr, /only one|native router/);
 });

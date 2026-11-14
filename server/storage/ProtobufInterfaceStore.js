@@ -232,7 +232,8 @@ export class ProtobufInterfaceStore {
     }
 
     async _import(input, { signal } = {}) {
-        object(input, ["sourceId", "schemaId", "source", "baseHash", "expectedRevision", "routes", "bootstrap"]);
+        object(input, ["sourceId", "schemaId", "source", "baseHash", "expectedRevision", "routes", "bootstrap", "interfaceVersion"]);
+        if (input.interfaceVersion !== undefined && ![1, 2].includes(input.interfaceVersion)) invalid("interfaceVersion must be 1 or 2.");
         identifier(input.schemaId);
         if (input.baseHash !== undefined) digest(input.baseHash);
         return this._run(input.sourceId, async () => {
@@ -242,7 +243,8 @@ export class ProtobufInterfaceStore {
             if (existing && input.baseHash !== undefined && existing.interfaceHash !== input.baseHash) revision(existing, -1);
             const base = existing ? await this._requiredDocument(existing.interfaceHash)
                 : input.baseHash ? await this._requiredDocument(input.baseHash)
-                    : { kind: "cev-sim.protobuf-interface", version: 1, schemas: [], routes: [], bootstrap: [] };
+                    : { kind: "cev-sim.protobuf-interface", version: input.interfaceVersion ?? 1, schemas: [], routes: [], bootstrap: [] };
+            if (input.interfaceVersion !== undefined && input.interfaceVersion !== base.version) invalid("The interfaceVersion must match the selected base interface.");
             const acquired = await this._acquire(input.source, input.schemaId, signal);
             if (base.schemas.some((schema) => schema.id === input.schemaId && schema.fingerprint !== acquired.schema.fingerprint)) invalid("The imported schema does not match the selected base interface.");
             const document = normalized({ ...base, schemas: [...base.schemas.filter((schema) => schema.id !== input.schemaId), acquired.schema],

@@ -534,14 +534,21 @@ export class ScenarioRuntime {
         return this.getSnapshot();
     }
 
-    applyExternalTopic(info = {}) {
+    applyExternalTopic(info = {}, { applyTimeNs = this.timeNs } = {}) {
         if (!this.active) return false;
         const topic = this.resolvedRun?.manifest?.topics?.find((entry) => entry.name === info.name || entry.id === info.name);
         const route = this.scenario.routes.find((candidate) => (
-            candidate.controller?.kind === "external-ros"
+            ["external-ros", "external-topic"].includes(candidate.controller?.kind)
             && (candidate.controller.topicId === topic?.id || candidate.controller.topicId === info.name)
         ));
         if (!route) return false;
+        if (route.controller.kind === "external-topic") {
+            if (!this.controlRuntime?.ingestCommand) throw new Error("External topic controller requires ControlRuntime.");
+            if (topic?.valueContract?.id !== "cev.control-command") throw new Error("External topic controller requires cev.control-command.");
+            if (this._controllerActive(route.controller)) return { handled: true, ...this.controlRuntime.ingestCommand({ ...info, valueContract: topic.valueContract }, { vehicleId: route.actorId, applyTimeNs }) };
+            else this.controlRuntime.submitSiSpeedSteer(route.actorId, { speedMps: 0, steeringRadRep103: 0, captureTimeNs: applyTimeNs, producer: topic.producer || "candidate" });
+            return true;
+        }
         if (!this._controllerActive(route.controller)) {
             // A matching scenario topic is still consumed while its controller
             // is inactive. Clear any prior external command so a rejected
@@ -582,7 +589,10 @@ export class ScenarioRuntime {
             const controller = route.controller ?? {};
             const active = this._controllerActive(controller);
             if (!active) {
-                this._setControllerCommand(route.actorId, 0, 0);
+                if (controller.kind === "external-topic") {
+                    const topic = this.resolvedRun.manifest.topics.find((entry) => entry.id === controller.topicId);
+                    this.controlRuntime.submitSiSpeedSteer(route.actorId, { speedMps: 0, steeringRadRep103: 0, captureTimeNs: this.timeNs, producer: topic?.producer || "candidate" });
+                } else this._setControllerCommand(route.actorId, 0, 0);
                 continue;
             }
             if (controller.kind === "route-follower") this._followRoute(route, dt);

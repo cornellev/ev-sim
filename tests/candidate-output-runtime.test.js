@@ -77,7 +77,7 @@ function detection3dPayload({ frameId, position, size = { x: 1, y: 1, z: 1 } }) 
 }
 
 test("map-frame 3D detections keep world centers when TF is applied", () => {
-    const bundle = buildCalibrationBundle(createDefaultRunManifest());
+    const bundle = buildCalibrationBundle(createDefaultRunManifest({ version: 12 }));
     const tf = new TransformRuntime(bundle, { routeOutbound() {}, getTopic() { return null; } });
     tf.publishDynamicTransforms(0, 0, [{
         telemetryId: "ego",
@@ -100,7 +100,7 @@ test("map-frame 3D detections keep world centers when TF is applied", () => {
 });
 
 test("optical-frame 3D detections compose child-most-first into map", () => {
-    const bundle = buildCalibrationBundle(createDefaultRunManifest());
+    const bundle = buildCalibrationBundle(createDefaultRunManifest({ version: 12 }));
     const tf = new TransformRuntime(bundle, { routeOutbound() {}, getTopic() { return null; } });
     tf.publishDynamicTransforms(0, 0, [{
         telemetryId: "ego",
@@ -140,7 +140,7 @@ test("normalizeOdometry exposes covariance ellipse radii", () => {
 
 test("candidate output runtime publishes visualization without activating downstream", () => {
     const store = new SignalStore({}, { sourceId: "candidate-runtime" });
-    const manifest = createDefaultRunManifest();
+    const manifest = createDefaultRunManifest({ version: 12 });
     const router = new TopicContractRouter(manifest, { telemetry: store });
     const runtime = new CandidateOutputRuntime({ telemetry: store, manifest });
     const topic = topicFromContract("perception-detections-3d");
@@ -170,7 +170,7 @@ test("candidate output runtime publishes visualization without activating downst
 
 test("stale localization ghosts last-good estimate in visualization", () => {
     const store = new SignalStore({}, { sourceId: "stale-runtime" });
-    const manifest = createDefaultRunManifest();
+    const manifest = createDefaultRunManifest({ version: 12 });
     const estimate = manifest.topics.find((entry) => entry.contractId === "localization-estimate");
     estimate.timeoutNs = 1_000;
     const router = new TopicContractRouter(manifest, { telemetry: store });

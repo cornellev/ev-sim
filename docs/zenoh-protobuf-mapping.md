@@ -1,12 +1,12 @@
 # Native Protobuf mapping
 
 ZPB-04 establishes the native local boundary. Live Zenoh browser, native SHM
-and headless controller sessions are the separate ZPB-05–07 gates. The default
-run writer remains v12 until the ZPB-08 consumer migration.
+and headless controller sessions are the separate ZPB-05–07 gates. ZPB-08 makes v13 the only writer and production execution format; historical
+documents remain inspectable and require explicit reviewed migration.
 
 ## Native documents and products
 
-Run-manifest v13 topics carry `valueContract:{id,version:1}`. They contain no
+Run-manifest v13 topics carry `valueContract:{id,version}`. They contain no
 `type` or `schema`; sensors also omit `schema`. `NativeTopicContracts.js`
 defines and validates IMU, GNSS, odometry, measured/semantic points, image,
 camera calibration, 2D/3D detections, lanes, traffic controls, transforms,
@@ -126,8 +126,10 @@ content/revision and the reviewed resolved dependency hash, archives original ma
 supported graph sources into new IDs, updates parameter/artifact/binding references
 and binding hash pins, and finally publishes the manifest revision. Binding selection
 is frozen to the reviewed embedded set, including an empty set.
-Unknown custom schemas/graphs, unbound selectors, plugins, scenario consumers and
-library bindings block adoption. Embedded topic/signal inputs and topic outputs
-also block until ZPB-08; constant/simulation inputs with simulation triggers and
-signal outputs can migrate. Existing compiled artifacts are never rewritten.
-Further consumer migrations and the default writer change belong to ZPB-08.
+Unknown custom schemas, unavailable editable graphs, and unbound selectors require
+reviewed repair. ZPB-08 captures effective library bindings and the nested
+script/scenario/vehicle/plugin closure. Embedded topic/signal inputs, metadata,
+and native topic outputs are migrated with exact contract references. Plugins
+require reviewed ABI 2 replacements and scenarios become v2. Existing compiled
+artifacts are never rewritten; children compile before their parent programs.
+ZPB-08 implements the consumer migration and default writer change.

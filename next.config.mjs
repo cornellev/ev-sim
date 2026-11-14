@@ -7,6 +7,7 @@ const { version } = require("./package.json");
 const nextConfig = {
   /* config options here */
   reactCompiler: true,
+  turbopack: { rules: { "*.wasm": { type: "wasm" } } },
   // Keep browser-test compilation independent from a developer's live server.
   distDir: process.env.CEV_SIM_NEXT_DIR || ".next",
   allowedDevOrigins: ['127.0.0.1'],

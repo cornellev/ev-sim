@@ -71,6 +71,7 @@ export default function SimpleRunWorkspace({
     comparisonLatch = null,
     onComparisonLatch = null,
     children = null,
+    protobufPanel = null,
     onUpdate,
     configureNewRun = async (manifest) => manifest,
     onOpenAdvanced,
@@ -344,6 +345,7 @@ export default function SimpleRunWorkspace({
     return (
         <div className="mx-auto max-w-3xl space-y-4 p-6 max-[900px]:p-4">
             {children}
+            {protobufPanel}
             <section className="rounded-[var(--radius)] border border-[var(--slate-border)] bg-[var(--slate-surface-1)] p-4">
                 <Field label="Name">
                     <input

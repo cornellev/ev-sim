@@ -27,7 +27,7 @@ function registerCatalogSchemas() {
 
 test("orchestrator loopback preflight rejects wrong return types and accepts valid fixtures", async () => {
     registerCatalogSchemas();
-    const manifest = createDefaultRunManifest({ sensorRig: { sensors: [] } });
+    const manifest = createDefaultRunManifest({ version: 12, sensorRig: { sensors: [] } });
     const resolved = {
         manifest,
         schemas: schemaClosureForManifest(manifest),
@@ -73,7 +73,7 @@ test("orchestrator loopback preflight rejects wrong return types and accepts val
 test("topic router routes valid team returns through producer and active paths", () => {
     registerCatalogSchemas();
     const store = new SignalStore({}, { sourceId: "loopback-router" });
-    const manifest = createDefaultRunManifest();
+    const manifest = createDefaultRunManifest({ version: 12 });
     const router = new TopicContractRouter(manifest, { telemetry: store });
     const ack = manifest.topics.find((topic) => topic.contractId === "controls-command");
     const payload = fixturePayloadForType(ack.schema.type);
@@ -90,7 +90,7 @@ test("topic router routes valid team returns through producer and active paths",
 test("perception returns preserve capture stamps without writing active paths", () => {
     registerCatalogSchemas();
     const store = new SignalStore({}, { sourceId: "perception-return" });
-    const manifest = createDefaultRunManifest();
+    const manifest = createDefaultRunManifest({ version: 12 });
     const router = new TopicContractRouter(manifest, { telemetry: store });
     const topic = manifest.topics.find((entry) => entry.contractId === "perception-detections-2d");
     const payload = fixturePayloadForType(topic.schema.type);
@@ -143,7 +143,7 @@ test("perception sync-group topics share calibration hash and encode through loo
         published.push({ path, value, options });
         return original(path, value, options);
     };
-    const manifest = createDefaultRunManifest();
+    const manifest = createDefaultRunManifest({ version: 12 });
     const bundle = buildCalibrationBundle(manifest);
     const router = new TopicContractRouter(manifest, { telemetry: store });
     const stamp = 1_000_000_000;
@@ -175,7 +175,7 @@ test("perception sync-group topics share calibration hash and encode through loo
 
 test("non-routed sensor topics retain prepared bytes instead of raw pixel payloads", () => {
     const store = new SignalStore({}, { sourceId: "prepared-sensor-route" });
-    const manifest = createDefaultRunManifest();
+    const manifest = createDefaultRunManifest({ version: 12 });
     const router = new TopicContractRouter(manifest, { telemetry: store });
     const topic = manifest.topics.find((entry) => entry.id === "front-camera-image");
     const raw = { width: 1, height: 1, data: Uint8Array.from([1, 2, 3, 4]) };
@@ -199,7 +199,7 @@ test("non-routed sensor topics retain prepared bytes instead of raw pixel payloa
 test("transform runtime publishes live TF fixtures through the contract router", () => {
     registerCatalogSchemas();
     const store = new SignalStore({}, { sourceId: "tf-loopback" });
-    const manifest = createDefaultRunManifest({ sensorRig: { sensors: [] } });
+    const manifest = createDefaultRunManifest({ version: 12, sensorRig: { sensors: [] } });
     const router = new TopicContractRouter(manifest, { telemetry: store });
     const runtime = new TransformRuntime(buildCalibrationBundle(manifest), router);
     runtime.publishStaticTransforms(0);

@@ -67,7 +67,7 @@ test("scenario documents preserve Ego invariants and require termination and ver
     const draft = createDefaultScenario();
     const validation = validateScenario(draft);
     assert.equal(draft.kind, "cev-sim.scenario");
-    assert.equal(draft.version, 1);
+    assert.equal(draft.version, 2);
     assert.equal(draft.actors[0].id, "ego");
     assert.equal(draft.actors[0].vehicleId, null);
     assert.equal(validation.ok, false);

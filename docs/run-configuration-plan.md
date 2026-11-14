@@ -500,3 +500,15 @@ silently repair sensor wiring. Intentional observation-only sensors remain valid
 CFG-06 and its open browser gates are unchanged. Node regression, lint, full
 suite, compiled-plugin, and existing parity gates apply; Playwright is waived
 for this maintenance at the user's request.
+
+2026-11-13 — ZPB-05 extends the existing shared editor session with a
+`protobuf.interface` JSON buffer and one parent-owned Protobuf authoring session.
+Simple mode and the Advanced Protobuf tab share route/bootstrap text, source
+pins, update preview and disabled repair drafts. Invalid JSON blocks Save,
+Validate and Launch; valid edits wait behind other invalid buffers. Immutable
+interface content is persisted before saving or validating its manifest pin.
+Explicit native migration keeps existing revision/dependency review gates.
+Mode selection rules and the default v12 writer are unchanged; explicit v13
+runs are retained without proposing a downgrade. Node authoring/session checks
+apply. Playwright authoring/lifecycle execution is waived at the user's request,
+so browser acceptance remains unverified.

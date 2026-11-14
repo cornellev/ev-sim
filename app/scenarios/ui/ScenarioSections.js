@@ -233,7 +233,7 @@ export function RoutesSection({ scenario, onUpdate, onAddActor, onEditRoute }) {
                                 <Field label="Initial speed (m/s)"><TextInput type="number" min="0" step="0.1" value={route.initialSpeedMps} onChange={(event) => onUpdate(["routes", index, "initialSpeedMps"], Number(event.target.value))} /></Field>
                                 <Field label="Controller">
                                     <NativeSelect value={route.controller.kind} onChange={(event) => onUpdate(["routes", index, "controller"], { ...route.controller, kind: event.target.value })}>
-                                        {CONTROLLER_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                                        {CONTROLLER_OPTIONS.filter((option) => option.value !== (scenario.version === 2 ? "external-ros" : "external-topic")).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                                     </NativeSelect>
                                 </Field>
                                 <Field label="Starts">
@@ -244,7 +244,7 @@ export function RoutesSection({ scenario, onUpdate, onAddActor, onEditRoute }) {
                                 {activation.kind === "flag" && <Field label="Activation flag"><TextInput value={activation.flag || ""} onChange={(event) => onUpdate(["routes", index, "controller", "activation", "flag"], event.target.value)} /></Field>}
                                 {["script", "script-with-route"].includes(route.controller.kind) && <Field label="Script ID"><TextInput value={route.controller.scriptId || ""} onChange={(event) => onUpdate(["routes", index, "controller", "scriptId"], event.target.value || null)} /></Field>}
                                 {["script", "script-with-route"].includes(route.controller.kind) && <><Field label="Speed output"><TextInput value={controllerOutputLabel(route.controller.outputs, "speed")} placeholder="speed" onChange={(event) => onUpdate(["routes", index, "controller", "outputs"], withControllerOutput(route.controller.outputs, "speed", event.target.value))} /></Field><Field label="Steering output"><TextInput value={controllerOutputLabel(route.controller.outputs, "steering")} placeholder="steering" onChange={(event) => onUpdate(["routes", index, "controller", "outputs"], withControllerOutput(route.controller.outputs, "steering", event.target.value))} /></Field></>}
-                                {route.controller.kind === "external-ros" && <Field label="Controls topic ID"><TextInput value={route.controller.topicId || ""} placeholder={route.actorId === "ego" ? "/controls/command" : "/actors/command"} onChange={(event) => onUpdate(["routes", index, "controller", "topicId"], event.target.value || null)} /></Field>}
+                                {["external-ros", "external-topic"].includes(route.controller.kind) && <Field label="Controls topic ID"><TextInput value={route.controller.topicId || ""} placeholder={route.actorId === "ego" ? "/controls/command" : "/actors/command"} onChange={(event) => onUpdate(["routes", index, "controller", "topicId"], event.target.value || null)} /></Field>}
                             </div>
                         </article>
                     );

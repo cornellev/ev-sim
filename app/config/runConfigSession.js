@@ -1,5 +1,6 @@
 export const RAW_MANIFEST_BUFFER_ID = "manifest-json";
 export const EMBEDDED_BINDINGS_BUFFER_ID = "scripts.embeddedBindings";
+export const PROTOBUF_INTERFACE_BUFFER_ID = "protobuf.interface";
 export const OTHER_JSON_BUFFER_MESSAGE = "Fix or discard the other invalid JSON before this change can apply.";
 
 export function sensorJsonBufferId(sensorId, path) {

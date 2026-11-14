@@ -13,6 +13,7 @@ export const SCENARIO_TABS = [
 export const CONTROLLER_OPTIONS = [
     { value: "route-follower", label: "Built-in route follower" },
     { value: "external-ros", label: "External ROS" },
+    { value: "external-topic", label: "External native topic" },
     { value: "script", label: "Script" },
     { value: "script-with-route", label: "Script with Route input" },
 ];

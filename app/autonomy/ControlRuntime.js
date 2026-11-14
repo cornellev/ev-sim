@@ -55,11 +55,13 @@ export class ControlRuntime {
     constructor(options = {}) {
         this.telemetry = options.telemetry ?? null;
         this.manifest = options.manifest ?? null;
+        this.runId = options.runId ?? this.manifest?.id;
         this.controls = options.controls ?? this.manifest?.controls ?? null;
         this.limitsByVehicle = new Map();
         this.states = new Map();
         this.pendingByVehicle = new Map();
         this.delayQueues = new Map();
+        this.ownershipGuard = options.ownershipGuard ?? null;
         this._defineSignals();
     }
 
@@ -155,10 +157,11 @@ export class ControlRuntime {
         return this._ingestNormalized(normalized, info, target, resolvedProducer);
     }
 
-    ingestCommand(info, { vehicleId = null, producer = null, applyTimeNs = 0, runId = this.manifest?.id } = {}) {
+    ingestCommand(info, { vehicleId = null, producer = null, applyTimeNs = 0, runId = this.runId ?? this.manifest?.id } = {}) {
         const target = vehicleId || this.controls?.targetVehicleId || "ego";
         const resolvedProducer = producer || info?.producer || "candidate";
-        return this._ingestNormalized(normalizeControlCommand(info?.value, { runId, frameId: this.manifest?.sensorRig?.rootFrameId ?? "base_link", applyTimeNs, producer: resolvedProducer }), info, target, resolvedProducer);
+        const ownership = this.ownershipGuard?.validate(info?.value, { applyTimeNs });
+        return this._ingestNormalized(ownership?.ok === false ? ownership : normalizeControlCommand(info?.value, { runId, frameId: this.manifest?.sensorRig?.rootFrameId ?? "base_link", applyTimeNs, producer: resolvedProducer, valueContract: info?.valueContract }), info, target, resolvedProducer);
     }
 
     _ingestNormalized(normalized, info, target, resolvedProducer) {
@@ -232,6 +235,8 @@ export class ControlRuntime {
 
     _stepVehicle(vehicleId, { step, timeNs, dt, steeringBaseline }) {
         const state = this._state(vehicleId);
+        const leased = this.ownershipGuard?.lease?.vehicleId === vehicleId;
+        if (leased && !this.ownershipGuard.check()) return this.revokeOwnership(vehicleId, { timeNs, code: "control-lease-lost" });
         const limits = this.getLimits(vehicleId);
         const authority = this.controls?.authority || "candidate";
         const pending = this.pendingByVehicle.get(vehicleId) || new Map();
@@ -260,6 +265,7 @@ export class ControlRuntime {
         }
 
         const everCommanded = state.lastSequence >= 0 || Boolean(state.selected) || Boolean(selected);
+        if (leased && (!selected || !this.ownershipGuard.validate(selected, { applyTimeNs: timeNs }).ok)) return this.revokeOwnership(vehicleId, { timeNs, code: "control-lease-command-stale" });
         const watchdogNs = Number(this.controls?.watchdogNs ?? 100_000_000);
         const heartbeatNs = selected?.captureTimeNs ?? state.lastHeartbeatNs;
         const ageNs = Number.isFinite(heartbeatNs) ? timeNs - heartbeatNs : null;
@@ -348,13 +354,14 @@ export class ControlRuntime {
             while (queue.length && queue[0].readyNs <= timeNs) {
                 released = queue.shift().command;
             }
-            delayed = released || cloneCommand(state.applied);
+            delayed = released || (leased && !state.applied.leaseId ? emptyInternalCommand() : cloneCommand(state.applied));
             state.flags.delayed = true;
         } else {
             state.flags.delayed = false;
         }
 
         const baselineRad = steeringBaseline?.get?.(vehicleId);
+        if (leased && (!delayed || (delayed.mode !== "stop" && !this.ownershipGuard.validate(delayed, { applyTimeNs: timeNs }).ok))) return this.revokeOwnership(vehicleId, { timeNs, code: "control-lease-command-stale" });
         const limited = this._applyLimits(
             state.applied,
             delayed || emptyInternalCommand({ mode: "stop" }),
@@ -392,9 +399,20 @@ export class ControlRuntime {
                 actuatorLimits: this.getLimits(vehicleId),
             } : {}),
             activeEnvelope: this.manifest?.version === 13
-                ? controlCommandValue(state.applied, { runId: this.manifest.id, applyTimeNs: timeNs })
+                ? controlCommandValue(state.applied, { runId: this.runId ?? this.manifest.id, applyTimeNs: timeNs, leaseId: this.ownershipGuard?.lease?.leaseId })
                 : toStampedAckermannEnvelope(state.applied, { applyTimeNs: timeNs }),
         };
+    }
+
+    revokeOwnership(vehicleId = this.controls?.targetVehicleId || "ego", { timeNs = 0, code = "control-lease-lost" } = {}) {
+        const state = this._state(vehicleId);
+        this.pendingByVehicle.delete(vehicleId);
+        this.delayQueues.delete(vehicleId);
+        state.requested = null; state.selected = null; state.referenceShadow = null;
+        state.applied = emptyInternalCommand({ mode: "stop", captureTimeNs: timeNs });
+        state.status = "ownership-stop"; state.statusCode = code;
+        state.flags = { timedOut: true, saturated: false, rateLimited: false, fallbackActive: false, delayed: false };
+        return { speedMps: 0, steeringRadThree: 0, accelerationMps2: 0, command: cloneCommand(state.applied), activeEnvelope: null };
     }
 
     _applyLimits(previous, desired, limits, dt, baselineRad, zeroSpeedResponse = null) {

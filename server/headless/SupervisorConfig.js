@@ -4,10 +4,16 @@ import path from "node:path";
 
 import { HeadlessRunnerError } from "./HeadlessRunnerErrors.js";
 import { resolveSensorTransportHostConfig } from "../sensor-transports/SensorTransportConfig.js";
+import { resolveZenohTransportHostConfig } from "../sensor-transports/ZenohTransportConfig.js";
 import { resolveRunPackageLimits } from "./VisualAssetPack.js";
 
 export const SUPERVISOR_CONFIG_KIND = "cev-sim.headless-supervisor-config";
 export const SUPERVISOR_CONFIG_VERSION = 1;
+
+export function normalizeControllerMode(value = "policy") {
+    if (!["policy", "external-realtime"].includes(value)) throw new HeadlessRunnerError("INVALID_REQUEST", "controllerMode must be policy or external-realtime.");
+    return value;
+}
 
 const MiB = 1024 * 1024;
 const GiB = 1024 * MiB;
@@ -302,6 +308,8 @@ export function resolveSupervisorConfig(options = {}) {
         allowRemoteTcp,
         renderer: normalizeRenderer(supplied.renderer),
         assetAdmission: normalizeAssetAdmission(supplied.assetAdmission, listener),
+        zenohTransport: resolveZenohTransportHostConfig(options.zenohTransport ?? supplied.zenohTransport),
+        controllerMode: normalizeControllerMode(options.controllerMode ?? supplied.controllerMode),
         packetTransports: packetTransports
             ? resolveSensorTransportHostConfig(packetTransports)
             : null,

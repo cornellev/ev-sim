@@ -189,7 +189,7 @@ test("new cameras default to canonical-analytic@1 and legacy absence is preserve
     assert.ok(fields.includes("render.productProfile.version"));
     assert.ok(getSensorType("camera").run.fields.filter((field) => field.path[0] === "render").every((field) => field.advanced));
 
-    const defaults = createDefaultRunManifest();
+    const defaults = createDefaultRunManifest({ version: 12 });
     const defaultCamera = defaults.sensorRig.sensors.find((sensor) => sensor.type === "camera");
     assert.deepEqual(defaultCamera.render, DEFAULT_CAMERA_RENDER_SELECTION);
     assert.equal(validateRunManifest(defaults).ok, true);
@@ -197,31 +197,31 @@ test("new cameras default to canonical-analytic@1 and legacy absence is preserve
     const legacy = normalizeRunSensor({ type: "camera", id: "legacy-camera" });
     assert.equal("render" in legacy, false);
     const roundTrip = normalizeRunManifest({
-        ...createDefaultRunManifest(),
+        ...createDefaultRunManifest({ version: 12 }),
         sensorRig: {
-            ...createDefaultRunManifest().sensorRig,
-            sensors: [legacy, ...createDefaultRunManifest().sensorRig.sensors.filter((sensor) => sensor.type !== "camera")],
+            ...createDefaultRunManifest({ version: 12 }).sensorRig,
+            sensors: [legacy, ...createDefaultRunManifest({ version: 12 }).sensorRig.sensors.filter((sensor) => sensor.type !== "camera")],
         },
     });
     assert.equal("render" in roundTrip.sensorRig.sensors.find((sensor) => sensor.id === "legacy-camera"), false);
 });
 
 test("camera authoring rejects malformed profiles, non-booleans, unknown products, and mixed enabled providers", () => {
-    const manifest = createDefaultRunManifest();
+    const manifest = createDefaultRunManifest({ version: 12 });
     const camera = manifest.sensorRig.sensors.find((sensor) => sensor.type === "camera");
     camera.calibration.products.depth = 1;
     assert.equal(validateRunManifest(manifest).ok, false);
     assert.match(validateRunManifest(manifest).issues.map((issue) => issue.message).join(" "), /boolean/);
 
-    const unknownProduct = createDefaultRunManifest();
+    const unknownProduct = createDefaultRunManifest({ version: 12 });
     unknownProduct.sensorRig.sensors.find((sensor) => sensor.type === "camera").calibration.products.normal = true;
     assert.match(validateRunManifest(unknownProduct).issues.map((issue) => issue.message).join(" "), /unknown camera product/);
 
-    const malformed = createDefaultRunManifest();
+    const malformed = createDefaultRunManifest({ version: 12 });
     malformed.sensorRig.sensors.find((sensor) => sensor.type === "camera").render = { provider: { id: "canonical-analytic", version: 1 } };
     assert.match(validateRunManifest(malformed).issues.map((issue) => issue.message).join(" "), /productProfile|expected an object/);
 
-    const mixed = createDefaultRunManifest();
+    const mixed = createDefaultRunManifest({ version: 12 });
     mixed.sensorRig.sensors.push(createRunSensor("camera", {
         id: "second-camera",
         parentId: "ego",
@@ -231,7 +231,7 @@ test("camera authoring rejects malformed profiles, non-booleans, unknown product
     }));
     assert.match(validateRunManifest(mixed).issues.map((issue) => issue.message).join(" "), /share one render provider/);
 
-    const disabledMixed = createDefaultRunManifest();
+    const disabledMixed = createDefaultRunManifest({ version: 12 });
     disabledMixed.sensorRig.sensors.push(createRunSensor("camera", {
         id: "preview-camera",
         parentId: "ego",
@@ -327,6 +327,7 @@ test("VIS-02 explicit-camera v11 identity vectors are independent of legacy and 
     const expected = JSON.parse(await fs.readFile(new URL("./fixtures/visual-layer/explicit-camera.v2.json", import.meta.url), "utf8"));
     const legacy = JSON.parse(await fs.readFile(new URL("./fixtures/visual-layer/world-bound-state.v2.json", import.meta.url), "utf8"));
     const { service } = await temporaryService(t);
+    await service._writeRunManifest("igvc-default", createDefaultRunManifest({ version: 12, cameraObjectMotion: undefined }));
     const resolved = await service.resolveRunManifest("igvc-default");
     const camera = resolved.manifest.sensorRig.sensors.find((sensor) => sensor.type === "camera");
     assert.deepEqual(camera.render, DEFAULT_CAMERA_RENDER_SELECTION);

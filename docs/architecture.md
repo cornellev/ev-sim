@@ -905,7 +905,9 @@ Browser pause/stop acknowledgements wait for active asynchronous sensor work
 to settle before reporting the clock or finalizing logs. These operational
 records do not enter manifests or simulation identity.
 
-cev-sim does not embed ROS. `app/3d/managers/ClientManager.js` creates a browser client from `app/client/Client.js`, syncs message definitions from the external orchestrator Types API, then connects to the orchestrator WebSocket.
+ZPB-08 production runs use native topic contracts and configured Zenoh/Protobuf
+transport. Automatic orchestrator startup is disabled. Historical ROS catalogs
+and codecs remain for inspection and migration until ZPB-09 deletion.
 
 Orchestrator can be found from [this repository](https://github.com/cornellev/orchestrator).
 
@@ -972,7 +974,7 @@ Native bundles bind `nativeTopicContracts` instead of ROS schema closures;
 their identities are distinct from historical bundles. Publish-only interface
 changes remain operational. Reviewed native migrations preserve originals and
 recompile supported graph sources into new artifacts at an exact revision.
-The v12 writer stays default until ZPB-08; ZPB-09 removes active ROS catalogs,
+ZPB-08 makes v13 the only writer and production execution format; ZPB-09 removes active ROS catalogs,
 codecs, builders, workers, wrappers and orchestrator infrastructure. Historical
 inspection/migration remains isolated from execution.
 

@@ -115,6 +115,7 @@ export class PluginRunSession {
         this.sensorRegistry = null;
         this.sensorFactories = new Map();
         this.plants = new Map();
+        this.topicAbis = new Map();
         this.services = Object.freeze({
             signalStore: null,
             world: null,
@@ -163,6 +164,7 @@ export class PluginRunSession {
                 throw pluginError(PLUGIN_ERROR_CODES.INTEGRITY, `Duplicate plugin package "${verified.document.id}".`);
             }
             verifiedById.set(verified.document.id, verified);
+            this.topicAbis.set(verified.document.id, verified.document.topicAbi ?? 1);
         }
         for (const selected of this.plugins) {
             const verified = verifiedById.get(selected.pluginId);
@@ -254,6 +256,9 @@ export class PluginRunSession {
         episodeOverlay = this.services.episodeOverlay,
         clock = this.services.clock,
     } = {}) {
+        if (topicRouter?.manifest?.topics?.some((topic) => topic.valueContract)) {
+            for (const plugin of this.plugins) if (plugin.capabilities.some((capability) => capability.startsWith("topics.")) && this.topicAbis.get(plugin.pluginId) !== 2) throw pluginError(PLUGIN_ERROR_CODES.UNAVAILABLE, "Native topics require plugin topicAbi 2.", { pluginId: plugin.pluginId, requiresReset: true });
+        }
         this._unbindRouter();
         this.services = Object.freeze({
             signalStore: signalStore ?? null,
@@ -438,17 +443,20 @@ export class PluginRunSession {
                     steeringRadRep103,
                 });
             },
-            publishTopic: (topicIdOrName, { value = null, typeStr = null } = {}) => {
+            publishTopic: (topicIdOrName, { value = null, typeStr = null, valueContract = null } = {}) => {
                 requireGrant(grants, "topics.publish", plugin.id);
                 this._assertActor(plugin.id);
                 const topicId = String(topicIdOrName ?? "").trim();
                 if (!topicId) throw new TypeError("Topic publications require a topic id.");
+                const topic = this._requireTopic(topicId, plugin.id);
+                if (topic.valueContract && (typeStr || valueContract?.id !== topic.valueContract.id || valueContract?.version !== topic.valueContract.version)) throw pluginError(PLUGIN_ERROR_CODES.STATE_INVALID, "Native plugin publication requires the declared valueContract.", { pluginId: plugin.id, requiresReset: true });
                 this.journal.stage({
                     kind: "topic-publish",
                     pluginId: plugin.id,
                     topicId,
                     value: clonePluginJson(value, "plugin topic value"),
                     typeStr: typeStr == null ? null : String(typeStr),
+                    ...(topic.valueContract ? { valueContract: clonePluginJson(valueContract) } : {}),
                 });
             },
             spawnOverlay: ({ id, assetId, pose } = {}) => {
@@ -521,6 +529,7 @@ export class PluginRunSession {
 
     _requireTopic(topicIdOrName, pluginId) {
         const topic = this.services.topicRouter?.getTopic?.(topicIdOrName);
+        if (topic?.valueContract && this.topicAbis.get(pluginId) !== 2) throw pluginError(PLUGIN_ERROR_CODES.UNAVAILABLE, "Native topics require plugin topicAbi 2.", { pluginId, requiresReset: true });
         if (!topic) {
             throw pluginError(
                 PLUGIN_ERROR_CODES.STATE_INVALID,
@@ -706,12 +715,13 @@ export class PluginRunSession {
         const clock = this._currentClock();
         const routed = this.services.topicRouter.routeOutbound(topic.id, {
             value: effect.value,
-            typeStr: effect.typeStr ?? expectedType,
+            ...(topic.valueContract ? { valueContract: effect.valueContract } : { typeStr: effect.typeStr ?? expectedType }),
         }, {
             producer: topic.producer || "simulator",
             captureTimeNs: clock.timeNs,
             deliveryTimeNs: clock.timeNs,
             cycle: clock.step,
+            ...(topic.valueContract ? { sequenceId: String(clock.step), actualDeliveryStep: clock.step } : {}),
         });
         if (!routed?.ok) {
             throw pluginError(

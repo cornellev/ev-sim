@@ -1,5 +1,8 @@
 import { compareUtf8 } from "../../math/compareUtf8.js";
 import { cloneJson } from "../../util/cloneJson.js";
+import { deliverNativeSensorProduct } from "./SensorPublisher.js";
+import { buildNativeImu, buildNativeGnss, buildNativeOdometry } from "./NativeSensorProducts.js";
+import { estimatePayloadBytes } from "../TopicInputQueue.js";
 import {
     buildGnssMeasurement,
     buildImuMeasurement,
@@ -146,6 +149,8 @@ class HeadlessStateSensorDevice {
         this.measurementState = null;
         this.latest = null;
         this.deliveryGeneration = 0;
+        this.nativeProducts = new Map();
+        this.nativeProductBytes = 0;
     }
 
     setEnabled(enabled) {
@@ -157,6 +162,7 @@ export class HeadlessStateSensorManager {
     constructor(vehicleSource, options = {}) {
         this.vehicleSource = vehicleSource;
         this.registry = options.registry ?? new StateSensorBackendRegistry();
+        this.telemetry = options.telemetry;
         this.devices = [];
         this.seed = "0";
         this.stepNs = 16_666_667;
@@ -164,6 +170,9 @@ export class HeadlessStateSensorManager {
     }
 
     configureFromManifest(sensorRig = {}, options = {}) {
+        this.nativeTopics = options.nativeTopics === true;
+        this.publicationOptions = options;
+        this.topics = new Map((options.topics ?? []).map((topic) => [topic.id, topic]));
         this.seed = String(options.seed ?? "0");
         this.stepNs = Math.max(1, Math.round(Number(options.stepNs) || 16_666_667));
         this.requireStateSensors = Boolean(options.requireStateSensors);
@@ -213,6 +222,8 @@ export class HeadlessStateSensorManager {
             device.latest = null;
             device.deliveryGeneration = 0;
             device.measurementState = null;
+            device.nativeProducts.clear();
+            device.nativeProductBytes = 0;
         }
         return this.getDeterministicState();
     }
@@ -265,6 +276,7 @@ export class HeadlessStateSensorManager {
                                 value: device.model.values(result.measurement).map(Number),
                                 validity: device.model.validity ? device.model.validity(result.measurement) : true,
                             });
+                            if (this.nativeTopics) this._retainNativeProduct(device, sampleIndex, result.measurement);
                         }
                     }
                 }
@@ -282,8 +294,31 @@ export class HeadlessStateSensorManager {
             for (const sample of ready) {
                 device.deliveryGeneration += 1;
                 device.latest = { ...sample, deliveryStep: clock.step, generation: device.deliveryGeneration };
+                const message = device.nativeProducts.get(sample.sampleIndex);
+                if (message) {
+                    device.nativeProducts.delete(sample.sampleIndex);
+                    device.nativeProductBytes -= estimatePayloadBytes(message);
+                    deliverNativeSensorProduct({ ...this.publicationOptions, deviceId: device.id, config: device.config,
+                        telemetry: this.telemetry, onError: (payload) => this.telemetry?.emitTelemetryEvent?.({ category: "sensors", name: "publish-failed", severity: "error", payload }) },
+                    this.topics.get(message.topicId), message, sample, clock);
+                }
             }
         }
+    }
+
+    _retainNativeProduct(device, sampleIndex, measurement) {
+        const outputs = device.config.outputs ?? {};
+        let message;
+        if (device.type === "imu" && outputs.imuTopicId) message = { topicId: outputs.imuTopicId, signal: "imu",
+            frameId: device.config.measurementFrameId || device.config.frameId, value: buildNativeImu(measurement) };
+        if (device.type === "gnss" && outputs.gnssTopicId) message = { topicId: outputs.gnssTopicId, signal: "gnss",
+            frameId: device.config.measurementFrameId || device.config.frameId,
+            value: buildNativeGnss(measurement.noFix ? { ...measurement, status: -1, latitude: 0, longitude: 0, altitude: 0, positionCovarianceType: 0 } : measurement) };
+        if (device.type === "wheel-odometry" && outputs.odometryTopicId) message = { topicId: outputs.odometryTopicId, signal: "odometry",
+            frameId: device.config.calibration.odomFrameId || "odom", value: buildNativeOdometry(measurement) };
+        if (!message) return;
+        device.nativeProducts.set(sampleIndex, message);
+        device.nativeProductBytes += estimatePayloadBytes(message);
     }
 
     getObservationRecords(step) {

@@ -12,9 +12,9 @@ export function normalizeControlSetpoint(value) {
     return result;
 }
 
-export function normalizeControlCommand(value, { runId, frameId = "base_link", applyTimeNs = 0, producer = "candidate", source = "topic" } = {}) {
+export function normalizeControlCommand(value, { runId, frameId = "base_link", applyTimeNs = 0, producer = "candidate", source = "topic", valueContract = { id: "cev.control-command", version: 1 } } = {}) {
     const invalid = (code, message) => ({ ok: false, code, message, command: null });
-    const validation = validateNativeTopicValue("cev.control-command", value);
+    const validation = validateNativeTopicValue(valueContract, value);
     if (!validation.ok) return invalid(validation.code, validation.message);
     if (typeof value.sequence !== "string") return invalid("invalid-sequence", "Native command sequence requires an exact decimal string.");
     if (runId !== undefined && value.runId !== runId) return invalid("run-mismatch", "Command belongs to another run.");
@@ -30,8 +30,8 @@ export function normalizeControlCommand(value, { runId, frameId = "base_link", a
         producer, source }) };
 }
 
-export function controlCommandValue(command, { runId = "", applyTimeNs = 0, frameId = "base_link" } = {}) {
-    return { runId, mode: command.mode === "hold" ? "velocity" : command.mode || "stop", sequence: String(command.sequence || 0),
+export function controlCommandValue(command, { runId = "", applyTimeNs = 0, frameId = "base_link", leaseId } = {}) {
+    return { runId, ...(leaseId ? { leaseId } : {}), mode: command.mode === "hold" ? "velocity" : command.mode || "stop", sequence: String(command.sequence || 0),
         captureTimeNs: command.captureTimeNs ?? applyTimeNs, deadlineNs: command.deadlineNs ?? 0,
         frameId: command.frameId || frameId, speedMps: command.speedMps || 0, accelerationMps2: command.accelerationMps2 || 0,
         jerkMps3: command.jerkMps3 || 0, steeringRad: command.steeringRadRep103 || 0, steeringRateRadps: command.steeringRateRadps || 0 };

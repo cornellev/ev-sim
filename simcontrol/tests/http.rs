@@ -328,6 +328,43 @@ fn lifecycle_stays_on_its_tab_and_reset_updates_the_run_id() {
 }
 
 #[test]
+fn owned_runs_send_credentials_privately_and_rebind_before_resume() {
+    let server = Server::new(vec![
+        complete("start", "run-1", "ready"),
+        complete("bind-ownership", "run-1", "paused"),
+        complete("resume", "run-1", "running"),
+    ]);
+    let client = Client::new(&server.url).unwrap();
+    let mut config = RunConfig::new("saved");
+    config.browser_id = Some("tab-a".into());
+    config.autoplay = false;
+    config.control_lease = Some(simcontrol::ControlLease {
+        id: "first".into(),
+        token: "private-first".into(),
+    });
+    assert!(!format!("{config:?}").contains("private-first"));
+    let mut run = client.launch(config).unwrap();
+    run.bind_control_lease(simcontrol::ControlLease {
+        id: "second".into(),
+        token: "private-second".into(),
+    })
+    .unwrap();
+    assert!(!format!("{run:?}").contains("private-second"));
+    run.resume().unwrap();
+    let requests = server.finish();
+    assert_eq!(
+        requests[0].body.as_ref().unwrap()["controlLeaseToken"],
+        "private-first"
+    );
+    for request in &requests[1..] {
+        let body = request.body.as_ref().unwrap();
+        assert_eq!(body["controlLeaseId"], "second");
+        assert_eq!(body["controlLeaseToken"], "private-second");
+        assert_eq!(body["runId"], "run-1");
+    }
+}
+
+#[test]
 fn replacement_run_and_failed_reset_leave_the_handle_unchanged() {
     let mut failed = receipt("reset", "failed", None);
     failed["error"] = json!({"code": "MANIFEST_NOT_FOUND", "message": "Missing manifest"});

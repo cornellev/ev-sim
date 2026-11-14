@@ -1,5 +1,5 @@
 import { planProtobufRouteAdmission, bindProtobufRunKeys } from "./ProtobufRunBinding.js";
-import { compileMapping, applyMapping } from "./ProtobufMapping.js";
+import { compileMapping, applyMapping, applyInboundMetadata } from "./ProtobufMapping.js";
 import { encodeMessage, decodeMessage } from "./ProtobufSchema.js";
 import { TopicInputQueue } from "../simulation/TopicInputQueue.js";
 import { normalizeControlCommand } from "../autonomy/ControlCommand.js";
@@ -93,21 +93,28 @@ export class ProtobufRouteRuntime {
         } catch (error) { this.stats.publishRejected++; return { ok: false, code: "mapping-invalid", message: error.message }; }
     }
 
-    acceptInbound(routeIdOrKey, bytes, { clock, generation = this.generation } = {}) {
+    acceptInbound(routeIdOrKey, bytes, { clock, generation = this.generation, queueLimits = {} } = {}) {
         if (this.disposed || generation !== this.generation) return { ok: false, code: "stale-generation" };
         try {
             clockValues(clock);
             const entry = this.subscribers.get(routeIdOrKey);
             if (!entry) throw new Error("Unknown subscription.");
-            const value = applyMapping(entry.compiled, { value: decodeMessage(entry.messageType, bytes), metadata: { runId: this.runId, simTimeNs: clock.timeNs, deliveryTimeNs: clock.timeNs } });
+            const input = { value: decodeMessage(entry.messageType, bytes), metadata: { runId: this.runId, simTimeNs: clock.timeNs, deliveryTimeNs: clock.timeNs } };
+            const value = applyMapping(entry.compiled, input);
+            const mappedMetadata = applyInboundMetadata(entry.compiled, input);
+            const metadata = { runId: this.runId, captureTimeNs: value.captureTimeNs ?? clock.timeNs, ...mappedMetadata };
+            if (metadata.runId !== this.runId || metadata.captureTimeNs > clock.timeNs) throw new Error("Inbound metadata has a wrong run or future capture.");
+            const lastSequence = this.inboundSequences.get(entry.route.id);
+            if (metadata.sequenceId !== undefined && lastSequence !== undefined && BigInt(metadata.sequenceId) <= lastSequence) throw new Error("Inbound sequence must increase.");
             if (entry.topicContract.valueContract.id === "cev.control-command") {
-                const check = normalizeControlCommand(value, { runId: this.runId, frameId: this.frameId, applyTimeNs: clock.timeNs });
+                const check = normalizeControlCommand(value, { runId: this.runId, frameId: this.frameId, applyTimeNs: clock.timeNs, valueContract: entry.topicContract.valueContract });
                 if (!check.ok) { this.stats.inboundRejected++; return { ...check, accepted: false }; }
             }
             const info = { name: entry.topicContract.name, topicId: entry.topicContract.id, valueContract: entry.topicContract.valueContract, value, producer: entry.topicContract.producer,
-                captureTimeNs: value.captureTimeNs ?? clock.timeNs, arrivalTimeNs: clock.timeNs, runId: this.runId };
-            const queued = this.inputQueue.enqueue(info, clock.step + 1, { arrivalTimeNs: clock.timeNs, rejectNewest: true });
+                captureTimeNs: metadata.captureTimeNs, sequence: metadata.sequenceId ?? value.sequence, frameId: metadata.frameId ?? value.frameId, metadata, arrivalTimeNs: clock.timeNs, runId: this.runId };
+            const queued = this.inputQueue.enqueue(info, clock.step + 1, { ...queueLimits, arrivalTimeNs: clock.timeNs, rejectNewest: true });
             if (!queued || queued.rejected) { this.stats.inboundRejected++; return { ok: false, accepted: false, code: queued?.reason ?? "queue-rejected" }; }
+            if (metadata.sequenceId !== undefined) this.inboundSequences.set(entry.route.id, BigInt(metadata.sequenceId));
             this.stats.inboundAccepted++;
             return { ok: true, accepted: true, applied: false, applyStep: queued.applyStep, generation: this.generation };
         } catch (error) { this.stats.inboundRejected++; return { ok: false, accepted: false, code: "inbound-invalid", message: error.message }; }
@@ -130,9 +137,22 @@ export class ProtobufRouteRuntime {
         return { ok: results.every((result) => result.ok), results };
     }
 
-    reset() {
+    invalidateBindings() {
         this.generation++;
+        this.inboundSequences = new Map();
         this.inputQueue?.reset();
+        return this.generation;
+    }
+
+    resetControlSequences() {
+        for (const entry of this.subscribers?.values() ?? []) {
+            const ref = entry.topicContract?.valueContract;
+            if (ref?.id === "cev.control-command" && ref.version === 2) this.inboundSequences.delete(entry.route.id);
+        }
+    }
+
+    reset() {
+        this.invalidateBindings();
         for (const bootstrap of this.bootstrap ?? []) bootstrap.nextTimeNs = 0;
         this.stats = { published: 0, publishRejected: 0, inboundAccepted: 0, inboundRejected: 0 };
         return this.generation;

@@ -228,7 +228,7 @@ export class TransformRuntime {
         const routed = this.topicRouter?.routeOutbound?.(contractId, {
             value: payload,
             ...(native ? {} : { typeStr: "tf2_msgs/TFMessage" }),
-        }, native ? { ...metadata, simTimeNs: metadata.deliveryTimeNs, actualDeliveryStep: metadata.cycle } : metadata);
+        }, native ? { ...metadata, simTimeNs: metadata.deliveryTimeNs, actualDeliveryStep: metadata.cycle, sequenceId: String(metadata.cycle), frameId: this.bundle?.frames?.map } : metadata);
         const topic = this.topicRouter?.getTopic?.(contractId);
         if (!native && topic && this.client?.isOpen?.()) {
             this.client.publish(topic.name, topic.schema?.type || topic.type, payload).catch?.(() => {});

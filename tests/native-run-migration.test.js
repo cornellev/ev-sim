@@ -12,8 +12,46 @@ import { createHeadlessRuntimeContext } from "../app/simulation/headless/Headles
 import { computeEpisodeHash, defaultEpisodeIdentity } from "../app/simulation/kernel/SimulationHashes.js";
 import { recompileNativeGraph } from "../server/interfaces/NativeGraphCompiler.js";
 import { createCpuLidarBackendSelection } from "../app/simulation/sensors/CpuLidarBackend.js";
+import { createDefaultScenario } from "../app/scenarios/ScenarioDocument.js";
 
-function legacy() { return createDefaultRunManifest({ id: "native-migration", sensorRig: { sensors: [] }, scripts: { enabled: false } }); }
+function legacy() { return createDefaultRunManifest({ version: 12, id: "native-migration", sensorRig: { sensors: [] }, scripts: { enabled: false } }); }
+
+test("native adoption captures nested scripts and freezes effective library bindings", () => {
+    const manifest = legacy();
+    manifest.scripts.artifacts = [{ scriptId: "parent" }];
+    const childGraph = { head: "head", outputNodeConfig: { outputs: [{ id: "output", label: "output", type: "float64" }] }, nodes: [{ uuid: "number", type: "NumberUnitClass", storedData: 3, state: {} }], connections: [{ from: "number", output: "number", to: "head", input: "output", type: "float64" }] };
+    const childArtifact = recompileNativeGraph(childGraph, "Child");
+    const parentGraph = { ...childGraph, nodes: [{ uuid: "local", type: "LocalScriptProgramBlock", state: { sourceScriptId: "child", compiledProgram: childArtifact } }], connections: [{ from: "local", output: "output", to: "head", input: "output", type: "float64" }] };
+    const scripts = [{ id: "parent", name: "Parent", sourceType: "editable", graph: parentGraph }, { id: "child", name: "Child", sourceType: "editable", graph: childGraph }];
+    const binding = { id: "global", scriptId: "parent", scope: "global", trigger: { kind: "fixed-update" }, inputs: [], outputs: [] };
+    const resolvedRun = { bindings: { entries: [binding] } };
+    const plan = planNativeRunMigration({ manifest, scripts, resolvedRun });
+    assert.equal(plan.ok, true, JSON.stringify(plan.blocked));
+    assert.deepEqual(plan.scriptPlans.map((entry) => entry.sourceId), ["child", "parent"]);
+    const adopted = applyNativeRunMigration(plan, { expectedRevision: 0, recompile: recompileNativeGraph });
+    assert.equal(adopted.scripts[1].graph.nodes[0].state.sourceScriptId, adopted.scripts[0].id);
+    assert.deepEqual(adopted.scripts[1].graph.nodes[0].state.compiledProgram, adopted.scripts[0].artifact);
+    assert.equal(adopted.manifest.scripts.embeddedBindings[0].scriptId, adopted.scripts[1].id);
+    assert.equal(binding.scriptId, "parent");
+    assert.deepEqual(parentGraph.nodes[0].state.compiledProgram, childArtifact);
+    scripts[1].graph.nodes = [{ uuid: "loop", type: "LocalScriptProgramBlock", state: { sourceScriptId: "parent" } }];
+    assert.equal(planNativeRunMigration({ manifest, scripts, resolvedRun }).ok, false);
+});
+
+test("native scenario adoption replaces its source and keeps command ownership explicit", () => {
+    const manifest = legacy();
+    const scenario = createDefaultScenario({ version: 1, id: "old-scenario", routes: [{ id: "route", actorId: "ego", controller: { kind: "external-ros", topicId: "controls-command" }, waypoints: [] }] });
+    manifest.scenario = { id: scenario.id, expectedHash: null, egoVehicleId: manifest.initialState.vehicles[0].type };
+    const plan = planNativeRunMigration({ manifest, scenario, topicContracts: { "controls-command": { id: "cev.control-command", version: 2 } } });
+    assert.equal(plan.ok, true, JSON.stringify(plan.blocked));
+    const adopted = applyNativeRunMigration(plan, { expectedRevision: 0 });
+    assert.equal(adopted.scenario.version, 2);
+    assert.equal(adopted.scenario.routes[0].controller.kind, "external-topic");
+    assert.notEqual(adopted.scenario.id, scenario.id);
+    assert.equal(adopted.manifest.scenario.id, adopted.scenario.id);
+    assert.equal(scenario.version, 1);
+    assert.equal(adopted.manifest.topics.find((topic) => topic.id === "controls-command").valueContract.version, 2);
+});
 
 test("reviewed native migration preserves originals and blocks unknown graphs and types", () => {
     const manifest = legacy();
@@ -59,7 +97,7 @@ test("native previews block unreviewed library and topic binding consumers", () 
     manifest.scripts.artifacts = [{ scriptId: "old" }];
     manifest.scripts.embeddedBindings = [{ id: "topic", scriptId: "old", trigger: { kind: "topic", topic: "/old" }, inputs: [{ source: "message", field: "header.frame_id" }], outputs: [] }];
     const topic = planNativeRunMigration({ manifest, scripts: [{ id: "old", graph: { nodes: [] } }] });
-    assert.equal(topic.ok, false); assert.ok(topic.blocked.some((issue) => /binding migration/.test(issue.message)));
+    assert.equal(topic.ok, false); assert.ok(topic.blocked.some((issue) => /binding migration/i.test(issue.message)));
 });
 
 test("native frozen vectors preserve publication-only semantics and physical motion", async () => {
@@ -93,7 +131,8 @@ test("native frozen vectors preserve publication-only semantics and physical mot
 test("v13 resolution, offline verification and reviewed storage adoption are complete", async (t) => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "cev-zpb04-")); t.after(() => rm(dir, { recursive: true, force: true }));
     const service = new StorageService(dir);
-    const stored = await service.createRunManifest(legacy());
+    const source = legacy();
+    const stored = await service._writeRunManifest(source.id, source, { expectedRevision: 0, create: true });
     const preview = await service.planNativeRunMigration(stored.id);
     assert.equal(preview.ok, true, JSON.stringify(preview.blocked));
     const resolve = service.resolveRunManifest.bind(service);
@@ -126,7 +165,7 @@ test("native CPU LiDAR delivers owned products without a ROS codec", async (t) =
     lidar.calibration.elevation = { startDeg: 0, endDeg: 1, stepDeg: 1 };
     lidar.latency.fixedNs = 0; lidar.latency.jitterNs = 0;
     lidar.noise.dropoutProbability = 0;
-    const manifest = createDefaultRunManifest({ id: "native-lidar", sensorRig: { sensors: [lidar] }, scripts: { enabled: false } });
+    const manifest = createDefaultRunManifest({ version: 12, id: "native-lidar", sensorRig: { sensors: [lidar] }, scripts: { enabled: false } });
     const plan = planNativeRunMigration({ manifest });
     assert.equal(plan.ok, true, JSON.stringify(plan.blocked));
     const native = applyNativeRunMigration(plan, { expectedRevision: 0 }).manifest;
@@ -147,4 +186,13 @@ test("native CPU LiDAR delivers owned products without a ROS codec", async (t) =
         await kernel.advanceStepAsync(); assert.deepEqual(packet.value, retained);
         assert.equal(runtime.devices.lidar.devices[0].contractPublisher.getHealthSnapshot().errors, 0);
     } finally { kernel.dispose(); }
+});
+
+test("native migration keeps semantic LiDAR roles when the sensor is omitted", () => {
+    const manifest = legacy();
+    const plan = planNativeRunMigration({ manifest });
+    assert.equal(plan.ok, true, JSON.stringify(plan.blocked));
+    const adopted = applyNativeRunMigration(plan, { expectedRevision: 0 }).manifest;
+    assert.deepEqual(adopted.topics.find((topic) => topic.id === "front-lidar-semantic").valueContract, { id: "cev.semantic-points", version: 1 });
+    assert.deepEqual(adopted.topics.find((topic) => topic.id === "front-lidar-points").valueContract, { id: "cev.points", version: 1 });
 });

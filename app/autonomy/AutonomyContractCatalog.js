@@ -777,7 +777,7 @@ function isControlsCommandTopicId(topicId) {
 export function scenarioUsesExternalRosForTopic(scenario, topic) {
     const routes = scenario?.routes || [];
     return routes.some((route) => {
-        if (route.controller?.kind !== "external-ros") return false;
+        if (!["external-ros", "external-topic"].includes(route.controller?.kind)) return false;
         const topicId = route.controller.topicId;
         if (!topicId || isControlsCommandTopicId(topicId)) return isControlsCommandTopic(topic);
         return topicId === topic?.id || topicId === topic?.name;

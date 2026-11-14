@@ -40,6 +40,8 @@ export class WorkerHandle {
         this.nextRequestId = 1;
         this.pending = null;
         this.pendingBytes = 0;
+        this.realtimeCompletion = null;
+        this.realtimeWaiter = null;
         this.health = null;
         this.exited = false;
         const heapMb = Math.max(16, Math.floor(Number(limits.maxHeapBytesPerEnvironment) / MiB));
@@ -53,11 +55,15 @@ export class WorkerHandle {
         this.pid = this.child.pid;
         this.exitPromise = new Promise((resolve) => { this._resolveExit = resolve; });
         this.child.on("message", (message) => this._message(message));
-        this.child.on("error", (error) => this._failPending(workerError(error, "WORKER_CRASHED")));
+        this.child.on("error", (error) => {
+            this._failPending(workerError(error, "WORKER_CRASHED"));
+            this._finishRealtime({ error: workerError(error, "WORKER_CRASHED") });
+        });
         this.child.on("exit", (code, signal) => {
             this.exited = true;
             const error = supervisorError("WORKER_CRASHED", `Worker ${this.pid} exited (${signal || code}).`, { pid: this.pid, code, signal });
             this._failPending(error);
+            this._finishRealtime({ error });
             this._resolveExit({ code, signal });
             this.onExit?.({ code, signal, error }, this);
         });
@@ -67,6 +73,11 @@ export class WorkerHandle {
         if (message?.health) {
             this.health = message.health;
             this.onHealth?.(message.health, this);
+        }
+        if (message?.kind === "cev-sim.worker-realtime-complete") {
+            if (message.runId !== this.realtimeRunId) return;
+            this._finishRealtime({ state: message.state, error: message.error ? workerError(message.error) : null });
+            return;
         }
         if (message?.kind === "cev-sim.renderer-request") {
             this._rendererRequest(message);
@@ -83,6 +94,7 @@ export class WorkerHandle {
         this.pendingBytes = 0;
         clearTimeout(pending.timer);
         pending.removeAbort?.();
+        if (!message.error && ["initialize", "realtime-reset"].includes(pending.command)) this.realtimeRunId = message.result?.descriptor?.runId;
         if (message.error) pending.reject(workerError(message.error));
         else pending.resolve(message.result);
     }
@@ -153,7 +165,20 @@ export class WorkerHandle {
         pending.reject(error);
     }
 
+    _finishRealtime(completion) {
+        this.realtimeCompletion ??= completion;
+        this.realtimeWaiter?.(this.realtimeCompletion);
+        this.realtimeWaiter = null;
+    }
+
+    async waitForRealtimeCompletion() {
+        const completion = this.realtimeCompletion ?? await new Promise((resolve) => { this.realtimeWaiter = resolve; });
+        if (completion.error) throw completion.error;
+        return completion;
+    }
+
     dispatch(command, payload = {}, { timeoutMs = 0, signal = null } = {}) {
+        if (command === "realtime-start") this.realtimeCompletion = null;
         if (this.exited || !this.child.connected) return Promise.reject(supervisorError("WORKER_CRASHED", `Worker ${this.pid} is unavailable.`));
         if (this.pending) return Promise.reject(supervisorError("INTERNAL", `Worker ${this.pid} already has a command in flight.`));
         if (signal?.aborted) return Promise.reject(supervisorError("WORKER_CRASHED", `Worker ${this.pid} dispatch was cancelled before it began.`, { pid: this.pid, command, cancelled: true }));
@@ -186,7 +211,7 @@ export class WorkerHandle {
                 signal.addEventListener("abort", onAbort, { once: true });
                 removeAbort = () => signal.removeEventListener("abort", onAbort);
             }
-            this.pending = { requestId, resolve, reject, timer, removeAbort };
+            this.pending = { requestId, command, resolve, reject, timer, removeAbort };
             this.pendingBytes = bytes;
             let accepted;
             try {

@@ -165,6 +165,108 @@ export class HeadlessExperimentService {
         this.lastHealthPublishAt = 0;
         this.cancelledResultIds = new Set();
         this.resumePausedJobs = false;
+        this.externalRuns = new Map();
+        this.controlOwnership = options.controlOwnership ?? null;
+    }
+
+    prepareExternalRun({ externalRunId, manifestId, controlLeaseId, controlLeaseToken } = {}) {
+        if (!/^external-[a-zA-Z0-9_-]{1,80}$/.test(externalRunId ?? "") || typeof manifestId !== "string" || !manifestId.trim()) throw new Error("An external run ID and manifest ID are required.");
+        if (!this.controlOwnership || this.closing) throw new Error("External control ownership is unavailable.");
+        const lease = this.controlOwnership.authorize(controlLeaseId, controlLeaseToken);
+        if (lease.target.kind !== "headless" || lease.target.id !== externalRunId || lease.runId) throw new Error("The unbound control lease must target this external run.");
+        if (this.externalRuns.has(externalRunId)) throw new Error("External run ID already exists.");
+        for (const [id, run] of this.externalRuns) if (this.externalRuns.size >= 16 && ["completed", "failed"].includes(run.state)) this.externalRuns.delete(id);
+        if (this.externalRuns.size >= 16) throw new Error("External run capacity is exhausted.");
+        const run = { id: externalRunId, manifestId, controlLeaseId, state: "preparing", descriptor: null, handle: null, error: null, abortController: new AbortController() };
+        this.externalRuns.set(run.id, run);
+        run.promise = this._prepareExternalRun(run, controlLeaseToken).catch((error) => { run.state = "failed"; run.error = { code: error.code || "EXTERNAL_RUN_FAILED", message: error.message }; });
+        return this.externalRunStatus(run.id);
+    }
+
+    async _prepareExternalRun(run, token) {
+        let releaseOwnership;
+        let acquired = false;
+        try {
+            acquired = await this.gpuTurn.acquire(run.id, () => this.closing || run.abortController.signal.aborted);
+            if (!acquired) throw new Error("External preparation was cancelled.");
+            const lease = this.controlOwnership.authorize(run.controlLeaseId, token);
+            const resolved = await this.storage.resolveRunManifest(run.manifestId);
+            if (resolved.version !== 13 || resolved.manifest.controls?.targetVehicleId !== lease.target.vehicleId || resolved.manifest.controls.authority !== "candidate" || !resolved.manifest.topics.some((topic) => topic.direction === "input" && topic.valueContract?.id === "cev.control-command" && topic.valueContract.version === 2)) throw new Error("Owned headless runs require native control-command@2 with candidate authority on the leased vehicle.");
+            const bundle = bundleFromResolved(resolved, nowIso(this.now));
+            const outputUri = path.join(this.artifactRoot, run.id, "run");
+            run.handle = await this.supervisor.prepareExternalController({ bundle, controlLease: lease, outputUri }, {
+                signal: run.abortController.signal,
+                onHealth: (health) => { run.health = health; },
+            });
+            run.descriptor = run.handle.descriptor;
+            const onChange = (snapshot) => {
+                if (snapshot.leaseId !== run.controlLeaseId || snapshot.runId !== run.descriptor.runId) return;
+                run.ownershipUpdates = (run.ownershipUpdates ?? Promise.resolve()).then(() => ["stopping", "completed", "failed"].includes(run.state) ? null : run.handle.command("ownership", { snapshot })).then((response) => {
+                    if (!response) return;
+                    if (response.descriptor) run.descriptor = response.descriptor;
+                    if (snapshot.status !== "active") run.state = "ownership-lost";
+                }).catch((error) => { run.error = { code: error.code || "CONTROL_LEASE_LOST", message: error.message }; });
+            };
+            this.controlOwnership.on("change", onChange);
+            releaseOwnership = () => this.controlOwnership.off("change", onChange);
+            this.controlOwnership.bindRun(run.controlLeaseId, token, { target: lease.target, runId: run.descriptor.runId, resolvedHash: resolved.resolvedHash });
+            token = null;
+            await run.ownershipUpdates;
+            if (run.error || this.controlOwnership.status(run.controlLeaseId).status !== "active") throw new Error("Control ownership ended during headless preparation.");
+            run.state = "paused";
+            const finalized = await run.handle.completion;
+            run.finalized = finalized;
+            const logArtifact = absoluteArtifacts(finalized).find((artifact) => artifact.name === "run.sflog");
+            if (logArtifact) {
+                const imported = await this.importLog(logArtifact.uri, { name: `External: ${run.manifestId}` });
+                if (imported.runId !== run.descriptor.runId || imported.resolvedHash !== run.descriptor.resolvedHash) { await this.logService.deleteLog(imported.id).catch(() => {}); throw new Error("External log identity does not match the prepared run."); }
+                run.logId = imported.id;
+            }
+            run.state = "completed";
+        } finally {
+            releaseOwnership?.();
+            if (run.handle && run.state !== "completed") { run.abortController.abort(); await run.handle.completion.catch(() => {}); }
+            if (acquired) this.gpuTurn.release(run.id);
+        }
+    }
+
+    externalRunStatus(id) {
+        const run = this.externalRuns.get(id);
+        if (!run) throw new Error("External run was not found.");
+        return { externalRunId: run.id, manifestId: run.manifestId, state: run.state, descriptor: run.descriptor, error: run.error, logId: run.logId ?? null, controlLease: this.controlOwnership.status(run.controlLeaseId) };
+    }
+
+    async commandExternalRun(id, { action, runId, controlLeaseId, controlLeaseToken } = {}) {
+        const run = this.externalRuns.get(id);
+        if (!run) throw new Error("External run was not found.");
+        const command = (run.ownershipUpdates ?? Promise.resolve()).then(() => this._commandExternalRun(id, { action, runId, controlLeaseId, controlLeaseToken }));
+        run.ownershipUpdates = command.catch(() => {});
+        return command;
+    }
+
+    async _commandExternalRun(id, { action, runId, controlLeaseId, controlLeaseToken } = {}) {
+        const run = this.externalRuns.get(id);
+        if (!run?.handle || ["completed", "failed"].includes(run.state)) throw new Error("External run is not prepared.");
+        if (runId !== run.descriptor.runId) throw new Error("External lifecycle command belongs to another run.");
+        if (!["pause", "resume", "stop", "bind-ownership"].includes(action)) throw new Error("Unsupported external-run action.");
+        if (["resume", "bind-ownership"].includes(action)) {
+            const lease = this.controlOwnership.authorize(controlLeaseId, controlLeaseToken);
+            if (lease.target.kind !== "headless" || lease.target.id !== id || lease.target.vehicleId !== this.controlOwnership.status(run.controlLeaseId).target.vehicleId) throw new Error("Control lease belongs to another external run.");
+            if (action === "bind-ownership") {
+                if (run.descriptor.state !== "paused") throw new Error("Pause the external run before changing its owner.");
+                const snapshot = this.controlOwnership.bindRun(controlLeaseId, controlLeaseToken, { target: lease.target, runId, resolvedHash: run.descriptor.resolvedHash });
+                const response = await run.handle.command("ownership", { snapshot, attach: true });
+                run.controlLeaseId = controlLeaseId;
+                run.descriptor = response.descriptor;
+                run.state = "paused"; run.error = null;
+                return this.externalRunStatus(id);
+            }
+            if (controlLeaseId !== run.controlLeaseId || lease.runId !== runId) throw new Error("Resume requires the run's current control owner.");
+        }
+        const response = await run.handle.command(action);
+        run.descriptor = response.descriptor ?? run.descriptor;
+        if (!["completed", "failed"].includes(run.state)) run.state = action === "resume" ? "running" : action === "pause" ? "paused" : "stopping";
+        return this.externalRunStatus(id);
     }
 
     async initialize() {
@@ -616,6 +718,7 @@ export class HeadlessExperimentService {
     async close() {
         if (this.closing) return;
         this.closing = true;
+        for (const run of this.externalRuns.values()) run.abortController.abort();
         const activeJob = this.activeJob;
         if (activeJob) {
             activeJob.shutdownRequested = true;
@@ -633,6 +736,7 @@ export class HeadlessExperimentService {
         }
         if (this.pumpPromise) await this.pumpPromise.catch(() => {});
         await this.supervisor.close();
+        await Promise.allSettled([...this.externalRuns.values()].map((run) => run.promise));
         await removeStagingDirectories(this.artifactRoot);
     }
 

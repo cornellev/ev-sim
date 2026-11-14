@@ -38,6 +38,7 @@ export function overrideEditTarget(path, { scenarioOwned = false, actorId = "ego
 }
 
 function advancedTabForOverride(path) {
+    if (path.startsWith("protobuf")) return "Protobuf";
     if (path.startsWith("sensorRig") || path.startsWith("sensorTransports") || path.startsWith("renderRecipe") || path === "cameraObjectMotion") return "Sensors";
     if (path.startsWith("plugins") || path.startsWith("scripts")) return "Scripts";
     if (path.startsWith("topics") || path.startsWith("schemas")) return "Topics";

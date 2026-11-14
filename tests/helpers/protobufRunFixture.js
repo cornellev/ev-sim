@@ -19,7 +19,7 @@ export function protobufRunFixture({ inbound = false } = {}) {
         bootstrap: [{ id: "spec", schemaId: "main", messageType: "run_test.Spec", value: { wheelbase_m: 1.7, coefficients: { "10": 1e-7, "2": 1 + 1e-10 } } }],
     };
     const resource = createProtobufInterfaceResource(document);
-    const manifest = createDefaultRunManifest({ id: "protobuf-run", sensorRig: { sensors: [] }, scripts: { enabled: false } });
+    const manifest = createDefaultRunManifest({ version: 12, id: "protobuf-run", sensorRig: { sensors: [] }, scripts: { enabled: false } });
     manifest.topics.push({ id: "vehicle-state", name: "/vehicle-state", direction: "output", type: "geometry_msgs/Vector3", schema: { type: "geometry_msgs/Vector3", version: 1 }, producer: "simulator", authority: "reference" });
     manifest.protobuf = { mode: "zenoh", interfaceHash: resource.hash, externalController: inbound };
     return { manifest, resource };

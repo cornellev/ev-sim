@@ -197,7 +197,8 @@ function normalizeSystem(value, pluginId, path) {
 export function assertPluginDocument(value) {
     try {
         const source = object(value, "plugin.json");
-        exactKeys(source, ["kind", "api", "id", "version", "engines", "entry", "capabilities", "units", "systems", "sensorTypes", "plants", "editor"], "plugin.json");
+        exactKeys(source, ["kind", "api", "id", "version", "engines", "entry", "capabilities", "units", "systems", "sensorTypes", "plants", "editor", "topicAbi"], "plugin.json");
+        if (source.topicAbi !== undefined && source.topicAbi !== 2) throw new Error("plugin.json.topicAbi must be 2 when present.");
         if (source.kind !== PLUGIN_DOCUMENT_KIND) throw new Error(`plugin.json.kind must be "${PLUGIN_DOCUMENT_KIND}".`);
         if (source.api !== PLUGIN_DOCUMENT_API) throw new Error(`plugin.json.api must be ${PLUGIN_DOCUMENT_API}.`);
         const id = text(source.id, "plugin.json.id");
@@ -269,6 +270,7 @@ export function assertPluginDocument(value) {
         return deepFreeze({
             kind: PLUGIN_DOCUMENT_KIND,
             api: PLUGIN_DOCUMENT_API,
+            ...(source.topicAbi === undefined ? {} : { topicAbi: source.topicAbi }),
             id,
             version,
             engines: { cevSim },

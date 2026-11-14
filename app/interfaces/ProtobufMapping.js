@@ -9,6 +9,7 @@ const quaternionShape = { fields: { ...vectorShape.fields, w: { type: "double" }
 const poseShape = { fields: { position: vectorShape, orientation: quaternionShape } };
 const metadataShape = { fields: Object.fromEntries(["simTimeNs", "captureTimeNs", "deliveryTimeNs", "captureStep", "actualDeliveryStep", "sequenceId"].map((name) => [name, { type: "uint64" }])) };
 Object.assign(metadataShape.fields, { frameId: { type: "string" }, runId: { type: "string" } });
+const inboundMetadataShape = { fields: { runId: { type: "string" }, frameId: { type: "string" }, captureTimeNs: { type: "timeNs" }, sequenceId: { type: "uint64" } }, optional: ["runId", "frameId", "captureTimeNs", "sequenceId"] };
 
 export function protobufMessageShape(type, stack = []) {
     if (!type.fields) return { type: type.values ? "enum" : type.name };
@@ -140,6 +141,18 @@ export function compileMapping(admittedRoute, { resolvedRun = {}, runId = "run" 
         return { ...compiled, to, shape };
     });
     const fields = compileFields(definition.fields, publish ? wire : native, roots);
+    if (publish && definition.metadata !== undefined) throw new Error("Metadata mappings are subscription-only.");
+    const metadataFields = compileFields(definition.metadata ?? [], inboundMetadataShape, roots);
+    const checks = (definition.checks ?? []).map((entry) => {
+        const from = compileSource(entry.from);
+        if (!from.shape.type || from.shape.type === "bytes") throw new Error("Mapping checks require scalar sources.");
+        const equalsFrom = entry.equalsFrom ? compileSource(entry.equalsFrom) : null;
+        if (equalsFrom && (!equalsFrom.shape.type || !compatible(equalsFrom.shape, from.shape))) throw new Error("Mapping check sources have incompatible types.");
+        const shape = numeric.has(from.shape.type) ? { type: /(?:int|fixed)64$/.test(from.shape.type) ? (/^(?:u|fixed)/.test(from.shape.type) ? "uint64" : "int64") : "double" } : { type: from.shape.type };
+        const result = { from, equalsFrom, shape };
+        if (Object.hasOwn(entry, "value")) { result.value = convert(entry.value, shape); assertNativeValue(shape, result.value); }
+        return result;
+    });
     if (!publish) {
         if (!native.fields && !(fields.length === 1 && fields[0].to.length === 0)) throw new Error("Native scalar inputs require a root assignment.");
         const covered = (shape, entries, prefix = "") => {
@@ -160,7 +173,8 @@ export function compileMapping(admittedRoute, { resolvedRun = {}, runId = "run" 
     }, {});
     if (publish) encodeMessage(messageType, constants(fields));
     else if (fields.some((field) => Object.hasOwn(field, "value"))) assertNativeValue(native, constants(fields), { partial: true });
-    return { routeId: route.id, publish, messageType, topicContract, nativeShape: native, sourceShape: roots.value, fields, derived, bindings, run };
+    assertNativeValue(inboundMetadataShape, constants(metadataFields), { partial: true });
+    return { routeId: route.id, publish, messageType, topicContract, nativeShape: native, sourceShape: roots.value, fields, metadataFields, checks, derived, bindings, run };
 }
 
 function write(output, parts, value) {
@@ -171,14 +185,13 @@ function write(output, parts, value) {
     return root;
 }
 
-export function applyMapping(compiled, { value, metadata = {} }) {
+function applyFields(compiled, { value, metadata = {} }, assignments) {
     if (compiled.publish) {
         if (compiled.topicContract) {
             const validation = validateNativeTopicValue(compiled.topicContract.valueContract, value);
             if (!validation.ok) throw new Error(validation.message);
         } else encodeMessage(compiled.messageType, value);
     }
-    if (compiled.publish && !compiled.topicContract && !compiled.fields.length && !compiled.derived.length) return structuredClone(value);
     const scope = { value, metadata, run: compiled.run, bindings: compiled.bindings, derived: {} };
     let nodes = PROTOBUF_LIMITS.valueNodes;
     const resolve = (source) => {
@@ -197,6 +210,13 @@ export function applyMapping(compiled, { value, metadata = {} }) {
         return result;
     };
     for (const entry of compiled.derived) scope.derived[entry.id] = execute(entry);
+    for (const check of compiled.checks ?? []) {
+        const actual = convert(resolve(check.from), check.shape);
+        const expected = check.equalsFrom ? convert(resolve(check.equalsFrom), check.shape) : check.value;
+        assertNativeValue(check.shape, actual);
+        assertNativeValue(check.shape, expected);
+        if (actual !== expected) throw new Error(`${compiled.routeId}: mapping check failed at ${check.from.root}.${check.from.parts.join(".")}.`);
+    }
     const fields = (entries) => {
         let output = {};
         for (const entry of entries) {
@@ -219,8 +239,24 @@ export function applyMapping(compiled, { value, metadata = {} }) {
         }
         return output;
     };
-    const output = fields(compiled.fields);
+    return fields(assignments);
+}
+
+export function applyMapping(compiled, input) {
+    if (compiled.publish && !compiled.topicContract && !compiled.fields.length && !compiled.derived.length && !compiled.checks?.length) {
+        encodeMessage(compiled.messageType, input.value);
+        return structuredClone(input.value);
+    }
+    const output = applyFields(compiled, input, compiled.fields);
     if (compiled.publish) encodeMessage(compiled.messageType, output);
     else assertNativeValue(compiled.nativeShape, output);
+    return output;
+}
+
+export function applyInboundMetadata(compiled, input) {
+    if (compiled.publish) throw new Error("Inbound metadata requires a subscription.");
+    if (!compiled.metadataFields?.length) return {};
+    const output = applyFields(compiled, input, compiled.metadataFields ?? []);
+    assertNativeValue(inboundMetadataShape, output);
     return output;
 }

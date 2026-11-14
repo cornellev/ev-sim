@@ -1,0 +1,56 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { ControlOwnershipService } from "../server/interfaces/ControlOwnershipService.js";
+import { HeadlessExperimentService } from "../server/headless/HeadlessExperimentService.js";
+import { externalBundle } from "./helpers/headlessZenoh.js";
+
+test("owned headless service binds the worker run, watches explicit renewals, and finalizes its shared lifecycle", async (t) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "cev-owned-service-"));
+    t.after(() => fs.rm(root, { recursive: true, force: true }));
+    const ownership = new ControlOwnershipService({ startTimer: false }); t.after(() => ownership.close());
+    const target = { kind: "headless", id: "external-test", vehicleId: "ego" };
+    const lease = ownership.acquire({ target, mode: "autonomous" });
+    const bundle = await externalBundle({ leased: true });
+    const calls = [];
+    let commandInFlight = false;
+    let finish;
+    const completion = new Promise((resolve) => { finish = resolve; });
+    const descriptor = { runId: "actual-run", resolvedHash: bundle.resolvedHash, state: "paused", step: 0, timeNs: "0" };
+    const supervisor = { async prepareExternalController(request) {
+        assert.equal(request.controlLease.runId, null);
+        assert.equal(request.outputUri, path.join(root, "headless-runs", "external-test", "run"));
+        return { descriptor, completion, async command(action, payload) {
+            assert.equal(commandInFlight, false, "ownership and lifecycle IPC must be serialized");
+            commandInFlight = true;
+            await new Promise((resolve) => setImmediate(resolve));
+            calls.push({ action, payload });
+            if (action === "resume") descriptor.state = "running";
+            if (action === "pause") descriptor.state = "paused";
+            if (action === "stop") finish({ artifacts: [], outputDirectory: root, runResult: { runId: "actual-run" } });
+            commandInFlight = false;
+            return { descriptor: { ...descriptor } };
+        } };
+    } };
+    const service = new HeadlessExperimentService({ dataDir: root, async resolveRunManifest() { return bundle.resolved; } }, {}, { supervisor, managedAdmission: {}, controlOwnership: ownership });
+    const pending = service.prepareExternalRun({ externalRunId: target.id, manifestId: "native", controlLeaseId: lease.leaseId, controlLeaseToken: lease.token });
+    assert.equal(pending.state, "preparing"); assert.equal(JSON.stringify(pending).includes(lease.token), false);
+    while (service.externalRunStatus(target.id).state === "preparing") await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(service.externalRunStatus(target.id).state, "paused");
+    assert.equal(ownership.status(lease.leaseId).runId, "actual-run");
+    assert.equal(calls[0].action, "ownership");
+    await assert.rejects(service.commandExternalRun(target.id, { action: "resume", runId: "old", controlLeaseId: lease.leaseId, controlLeaseToken: lease.token }), /another run/);
+    const resuming = service.commandExternalRun(target.id, { action: "resume", runId: "actual-run", controlLeaseId: lease.leaseId, controlLeaseToken: lease.token });
+    ownership.renew(lease.leaseId, lease.token);
+    await resuming;
+    await service.externalRuns.get(target.id).ownershipUpdates;
+    ownership.release(lease.leaseId, lease.token);
+    await service.externalRuns.get(target.id).ownershipUpdates;
+    assert.equal(service.externalRunStatus(target.id).state, "ownership-lost");
+    await service.commandExternalRun(target.id, { action: "stop", runId: "actual-run" });
+    await service.externalRuns.get(target.id).promise;
+    assert.equal(service.externalRunStatus(target.id).state, "completed");
+    assert.equal(service.gpuTurn.holder, null);
+});

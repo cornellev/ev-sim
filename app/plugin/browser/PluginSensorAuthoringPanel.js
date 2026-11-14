@@ -54,16 +54,16 @@ export function PluginSensorPointCloudOutputs({
 }) {
     const outputs = definition?.run?.outputs ?? [];
     if (outputs.length === 0) return null;
-    const compatible = (rosType) => topics.filter((topic) => (
-        !rosType || topic.schema?.type === rosType || topic.type === rosType
+    const compatible = (output) => topics.filter((topic) => (
+        topic.direction === "output" && (output.valueContract ? topic.valueContract?.id === output.valueContract.id && topic.valueContract?.version === output.valueContract.version : !output.rosType || topic.schema?.type === output.rosType || topic.type === output.rosType)
     ));
     return (
         <div className="mt-3 grid gap-3 md:grid-cols-2">
             {outputs.map((output) => {
-                const options = compatible(output.rosType);
+                const options = compatible(output);
                 const value = sensor.outputs?.[output.key] || "";
                 return (
-                    <Field key={output.key} label={`${output.key} (${output.rosType})`}>
+                    <Field key={output.key} label={`${output.key} (${output.valueContract ? `${output.valueContract.id}@${output.valueContract.version}` : output.rosType})`}>
                         <select
                             aria-label={output.key}
                             value={value}

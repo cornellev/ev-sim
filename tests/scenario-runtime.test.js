@@ -7,6 +7,7 @@ import { SignalStore } from "../app/scripting/runtime/SignalStore.js";
 import { SimulationEngine } from "../app/simulation/SimulationEngine.js";
 import { createDefaultRunManifest } from "../app/simulation/RunManifest.js";
 import { RunSessionController } from "../app/simulation/RunSessionController.js";
+import { ControlRuntime } from "../app/autonomy/ControlRuntime.js";
 
 function vector(x = 0, y = 0, z = 0) {
     return { x, y, z, set(a, b, c) { Object.assign(this, { x: a, y: b, z: c }); } };
@@ -81,6 +82,24 @@ function runtimeHarness(definition, options = {}) {
     });
     return { runtime, store, vehicles, devices };
 }
+
+test("native external scenarios use actor-scoped control validation and hold inactive actors at zero", () => {
+    const valueContract = { id: "cev.control-command", version: 1 };
+    const definition = scenario({ version: 2, routes: [route("npc", { kind: "external-topic", topicId: "npc-command", activation: { kind: "flag", flag: "go" } })] });
+    const { runtime } = runtimeHarness(definition, { vehicles: [vehicle("ego"), vehicle("npc")], topics: [{ id: "npc-command", name: "/npc", producer: "candidate", valueContract }] });
+    const controls = new ControlRuntime({ manifest: { id: "run", version: 13 }, controls: { targetVehicleId: "ego", authority: "candidate", stalePolicy: "stop", actuatorOverrides: { responseDelayNs: 0 } } });
+    runtime.setControlRuntime(controls);
+    const value = { runId: "run", mode: "velocity", sequence: "1", captureTimeNs: 0, deadlineNs: 100, frameId: "base_link", speedMps: 0.3, steeringRad: 0, accelerationMps2: 0, jerkMps3: 0, steeringRateRadps: 0 };
+    runtime.setFlag("go", true);
+    assert.equal(runtime.applyExternalTopic({ name: "/npc", value }, { applyTimeNs: 1 }).ok, true);
+    const applied = controls.step({ step: 1, timeNs: 1, dt: 0.1 });
+    assert.equal(applied.get("npc").speedMps, 0.3);
+    assert.equal(applied.get("ego").speedMps, 0);
+    assert.equal(runtime.applyExternalTopic({ name: "/npc", value: { ...value, sequence: "2" } }, { applyTimeNs: 101 }).ok, false);
+    runtime.setFlag("go", false);
+    runtime.preMotion({ step: 2, timeNs: 2, dt: 0.01 });
+    assert.equal(controls.step({ step: 2, timeNs: 2, dt: 0.1 }).get("npc").speedMps, 0);
+});
 
 test("time triggers run before motion, disturbances expire deterministically, and zones terminate after telemetry", () => {
     const definition = scenario({

@@ -16,7 +16,8 @@ import { inspectTarget } from "./Inspection.js";
 import { stringifyJsonProtocol } from "./JsonProtocol.js";
 import { createPlanningBundle } from "./PlanningBundle.js";
 import { createHeadlessSmokeBundle } from "./SmokeBundle.js";
-import { readSupervisorConfig } from "./SupervisorConfig.js";
+import { readSupervisorConfig, normalizeControllerMode } from "./SupervisorConfig.js";
+import { resolveZenohTransportHostConfig } from "../sensor-transports/ZenohTransportConfig.js";
 import { resolveSensorTransportHostConfig } from "../sensor-transports/SensorTransportConfig.js";
 import { SupervisorRunner } from "./SupervisorRunner.js";
 import { startHeadlessSupervisor } from "./SupervisorServer.js";
@@ -37,6 +38,7 @@ export const CLI_EXIT = Object.freeze({
 const VALUE_OPTIONS = new Set([
     "bundle", "episode", "output", "actions", "tape", "artifact-profile", "sflog-sample-rate",
     "socket", "tcp", "preset", "config", "package", "sensor-transport-config",
+    "controller-mode", "zenoh-transport-config",
     "manifest", "environment", "data-dir", "road", "start-node", "finish-node", "sensors", "max-steps",
     "vehicle", "finish",
 ]);
@@ -45,12 +47,12 @@ const FLAG_OPTIONS = new Set(["sflog-on-failure", "no-sflog-on-failure", "allow-
 function usage() {
     return [
         "cev-sim --version",
-        "cev-sim validate (--bundle <file | use:manifestId> | --package <file>) [--episode <file>] [--config <supervisor.json>] [--sensor-transport-config <file>]",
+        "cev-sim validate (--bundle <file | use:manifestId> | --package <file>) [--episode <file>] [--config <supervisor.json>] [--sensor-transport-config <file>] [--controller-mode policy|external-realtime] [--zenoh-transport-config <file>]",
         "cev-sim create-smoke-bundle --output <bundle.json>",
         "cev-sim create-bundle --output <bundle.json> [--manifest <id>] [--environment <id>] [--vehicle <id>] [--data-dir <dir>] [--road <edge>] [--start-node <id>] [--finish-node <id>] [--finish route|none] [--sensors state|all] [--max-steps <n>]",
         "cev-sim catalog [--data-dir <dir>]",
         "cev-sim inspect <bundle|package|output-directory|sflog>",
-        "cev-sim run (--bundle <file | use:manifestId> | --package <file>) --output <directory> [--episode <file>] [--actions <jsonl-file>] [--config <supervisor.json>] [--sensor-transport-config <file>]",
+        "cev-sim run (--bundle <file | use:manifestId> | --package <file>) --output <directory> [--episode <file>] [--actions <jsonl-file>] [--config <supervisor.json>] [--sensor-transport-config <file>] [--controller-mode policy|external-realtime] [--zenoh-transport-config <file>]",
         "cev-sim replay (--bundle <file | use:manifestId> | --package <file>) --tape <file> --output <directory> [--config <supervisor.json>] [--sensor-transport-config <file>]",
         "cev-sim supervisor (--socket <path> | --tcp <host:port>) [--preset safety|permissive] [--config <json>] [--allow-remote-tcp]",
         "cev-sim gpu-preflight --config <json>",
@@ -339,6 +341,13 @@ export async function main(argv = process.argv.slice(2), io = {}) {
         const hostConfig = options["sensor-transport-config"]
             ? await readHostConfig(options["sensor-transport-config"])
             : null;
+        if (options["zenoh-transport-config"] && options.config) throw new HeadlessRunnerError("USAGE", "--zenoh-transport-config applies to direct runs; supervisor hosts use zenohTransport in --config.");
+        const zenohTransport = options["zenoh-transport-config"]
+            ? resolveZenohTransportHostConfig(await readJson(options["zenoh-transport-config"], "Zenoh host configuration")) : null;
+        const configured = options.config ? await readSupervisorConfig(options.config) : null;
+        const controllerMode = normalizeControllerMode(options["controller-mode"] ?? configured?.controllerMode);
+        const external = controllerMode === "external-realtime";
+        if (external && (command === "replay" || options.episode || options.actions || options.tape)) throw new HeadlessRunnerError("USAGE", "external-realtime uses frozen run settings and rejects replay, --episode, --actions and --tape.");
         const packagePath = options.package || null;
         const abortController = new AbortController();
         const onSignal = () => abortController.abort();
@@ -353,16 +362,17 @@ export async function main(argv = process.argv.slice(2), io = {}) {
                 })).bundle;
             abortController.signal.throwIfAborted();
             if (command === "validate") {
-                const allowed = new Set(["bundle", "package", "episode", "config", "sensor-transport-config"]);
+                const allowed = new Set(["bundle", "package", "episode", "config", "sensor-transport-config", "controller-mode", "zenoh-transport-config"]);
                 const unsupported = Object.keys(options).find((key) => !allowed.has(key));
                 if (unsupported) throw new HeadlessRunnerError("USAGE", `validate does not accept --${unsupported}.`);
                 const episodeSpec = options.episode ? await readJson(options.episode, "episode specification") : {};
-                if (options.config) {
-                    const config = await readSupervisorConfig(options.config);
+                if (configured && external) {
+                    writeJson(stdout, await (io.supervisorRunner ?? new SupervisorRunner()).runExternalController(bundle, { config: configured, validateOnly: true, packagePath, signal: abortController.signal }));
+                } else if (configured) {
                     const supervisorValidator = io.supervisorValidator ?? validateBundleWithSupervisor;
-                    writeJson(stdout, await supervisorValidator(bundle, { config, episodeSpec, packagePath, signal: abortController.signal }));
+                    writeJson(stdout, await supervisorValidator(bundle, { config: configured, episodeSpec, packagePath, signal: abortController.signal }));
                 } else {
-                    writeJson(stdout, await runner.validate(bundle, { episodeSpec, hostConfig }));
+                    writeJson(stdout, await runner.validate(bundle, { episodeSpec, hostConfig, zenohTransport, controllerMode }));
                 }
                 return CLI_EXIT.OK;
             }
@@ -370,16 +380,21 @@ export async function main(argv = process.argv.slice(2), io = {}) {
             if (!options.output) throw new HeadlessRunnerError("USAGE", `--output is required for ${command}.`);
             let actionStream = null;
             let final;
-            if (command === "replay") {
+            if (external) {
+                final = await (configured ? (io.supervisorRunner ?? new SupervisorRunner()) : runner).runExternalController(bundle, {
+                    ...(configured ? { config: configured } : { hostConfig, zenohTransport }), packagePath,
+                    artifactPolicy: artifactPolicy(options), outputUri: options.output, signal: abortController.signal,
+                    onEvent: (event) => writeJson(stdout, event),
+                });
+            } else if (command === "replay") {
                 if (!options.tape) throw new HeadlessRunnerError("USAGE", "--tape is required for replay.");
                 if (options.actions || options.episode) {
                     throw new HeadlessRunnerError("USAGE", "replay takes actions and episode settings from its tape.");
                 }
                 const tape = await readJson(options.tape, "policy action tape");
-                const configured = options.config ? await readSupervisorConfig(options.config) : null;
                 const replayRunner = configured ? (io.supervisorRunner ?? new SupervisorRunner()) : runner;
                 final = await replayRunner.replay(bundle, tape, {
-                    ...(configured ? { config: configured } : { hostConfig }),
+                    ...(configured ? { config: configured } : { hostConfig, zenohTransport }),
                     ...(packagePath ? { packagePath } : {}),
                     artifactPolicy: artifactPolicy(options),
                     outputUri: options.output,
@@ -393,12 +408,11 @@ export async function main(argv = process.argv.slice(2), io = {}) {
                 }
                 const episodeSpec = options.episode ? await readJson(options.episode, "episode specification") : {};
                 actionStream = options.actions ? createReadStream(options.actions) : stdin;
-                const configured = options.config ? await readSupervisorConfig(options.config) : null;
                 const executionRunner = configured
                     ? (io.supervisorRunner ?? new SupervisorRunner())
                     : runner;
                 final = await executionRunner.run(bundle, {
-                    ...(configured ? { config: configured } : { hostConfig }),
+                    ...(configured ? { config: configured } : { hostConfig, zenohTransport }),
                     ...(packagePath ? { packagePath } : {}),
                     episodeSpec,
                     actions: jsonlActions(actionStream, options.actions || "stdin", abortController.signal),

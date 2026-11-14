@@ -3,10 +3,9 @@ import { ScriptManager } from "../../app/scripting/ScriptManager.js";
 import { registerBuiltInBlocks } from "../../app/scripting/registerBuiltInBlocks.js";
 import { restoreManagerFromGraph } from "../../app/scripting/GraphDocument.js";
 
-export function recompileNativeGraph(graph, name) {
-    const registry = registerBuiltInBlocks(new BlockRegistry({ allowPlugins: false }));
+export function recompileNativeGraph(graph, name, { registry = registerBuiltInBlocks(new BlockRegistry({ allowPlugins: false })), pluginSession = null } = {}) {
     const manager = restoreManagerFromGraph(graph, (type) => registry.get(type), {
-        createManager: () => new ScriptManager({ blockRegistry: registry }),
+        createManager: () => new ScriptManager({ blockRegistry: registry, pluginSession }),
         onMissingBlock: (node) => { throw new Error(`Unknown native migration graph node ${node.type}.`); },
     });
     try {

@@ -134,7 +134,7 @@ async function writeJson(filePath, value) {
     await fs.writeFile(filePath, `${JSON.stringify(value)}\n`);
 }
 
-test("CLI preserves received v10/v11 bundle bytes and frozen episode identity", async (t) => {
+test("CLI inspects unchanged v10/v11 bytes and rejects historical execution", async (t) => {
     const root = await temporaryRoot(t);
     const fixtureRoot = new URL("./fixtures/visual-layer/", import.meta.url);
     for (const [version, name, vectorFile] of [
@@ -143,6 +143,7 @@ test("CLI preserves received v10/v11 bundle bytes and frozen episode identity", 
     ]) {
         const vectors = JSON.parse(await fs.readFile(new URL(vectorFile, fixtureRoot), "utf8"));
         const expected = version === 10 ? vectors.state : vectors;
+        assert.ok(expected.headlessEpisodeHash);
         const original = await fs.readFile(new URL(name, fixtureRoot));
         const received = Buffer.concat([Buffer.from("\n"), original, Buffer.from("\n")]);
         const bundlePath = path.join(root, name);
@@ -157,9 +158,9 @@ test("CLI preserves received v10/v11 bundle bytes and frozen episode identity", 
             "--artifact-profile", "disabled"], { input: [1, 2].map((policyStep) => (
             JSON.stringify({ policyStep, action: [0, 0] })
         )).join("\n") + "\n" });
-        assert.equal(run.code, 0, run.stderr);
-        assert.equal(jsonLines(run.stdout).at(-1).result.episodeHash, expected.headlessEpisodeHash);
-        assert.deepEqual(await fs.readFile(path.join(output, "run-bundle.json")), received);
+        assert.equal(run.code, 3, run.stderr);
+        assert.match(run.stderr, /reviewed native migration/);
+        assert.deepEqual(await fs.readFile(bundlePath), received);
     }
 });
 

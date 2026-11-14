@@ -1,20 +1,22 @@
-// Maintainer transport probe: uses the same Client API as the browser.
-import assert from 'node:assert/strict';
-import { Client } from '../app/client/Client.js';
-const [url, runId, fingerprint] = process.argv.slice(2);
-let opened;
-const ready = new Promise((resolve) => { opened = resolve; });
-const client = new Client({ url, reconnect: false, autoSubscribe: false, onOpen: opened });
-const running = client.start();
+// Independent maintainer probe through the pinned official remote-API SDK.
+import assert from "node:assert/strict";
+import { Config, Session, Encoding } from "@eclipse-zenoh/zenoh-ts";
+import { loadDescriptorSet, encodeMessage, decodeMessage } from "../app/interfaces/ProtobufSchema.js";
+import { promises as fs } from "node:fs";
+const [endpoint, key, descriptorFile, requestTypeName, replyTypeName] = process.argv.slice(2);
+if (![endpoint, key, descriptorFile, requestTypeName, replyTypeName].every(Boolean)) throw new Error("Provide WS endpoint, key prefix, descriptor file, request and reply message types.");
+const schema = loadDescriptorSet(await fs.readFile(descriptorFile));
+const requestType = schema.root.lookupType(requestTypeName), replyType = schema.root.lookupType(replyTypeName);
+const session = await Session.open(new Config(endpoint, 5000));
+let subscriber, publisher, timer;
 try {
-    await Promise.race([ready, running.then(() => { throw new Error('Connection closed'); })]);
-    await client.bindProtobuf({ runId, fingerprint });
-    let replied;
-    const response = new Promise((resolve) => { replied = resolve; });
-    await client.subscribeProtobuf('reply', replied);
-    await client.publishProtobuf('note', { title: 'browser', nonce: '18446744073709551615' });
-    const value = await Promise.race([response, new Promise((_, reject) => setTimeout(() => reject(new Error('Reply timeout')), 5000))]);
+    let accept, rejectReply;
+    const reply = new Promise((resolve, reject) => { accept = resolve; rejectReply = reject; });
+    subscriber = await session.declareSubscriber(`${key}/reply`, { handler: (sample) => { try { accept(decodeMessage(replyType, sample.payload().toBytes())); } catch (error) { rejectReply(error); } } });
+    timer = setTimeout(() => rejectReply(new Error("Reply timeout")), 5000);
+    publisher = await session.declarePublisher(`${key}/note`, { encoding: Encoding.APPLICATION_PROTOBUF });
+    await publisher.put(encodeMessage(requestType, { title: "browser", nonce: "18446744073709551615" }));
+    const value = await reply;
     assert.equal(value.accepted, true);
-    await client.unsubscribeProtobuf('reply');
-    console.log('JavaScript received the Rust Protobuf response');
-} finally { await client.stop(); await running; }
+    console.log("Official JavaScript SDK received the independent Rust Protobuf response");
+} finally { clearTimeout(timer); await publisher?.undeclare(); await subscriber?.undeclare(); await session.close(); }

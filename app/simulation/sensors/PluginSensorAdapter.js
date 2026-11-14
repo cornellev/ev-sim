@@ -4,6 +4,8 @@ import { PLUGIN_ERROR_CODES, assertSynchronous, pluginError } from "../../plugin
 import { lidarCaptureDigest } from "./CpuLidarWorkerService.js";
 import { buildMeasuredRangeImage } from "./LidarProducts.js";
 import { buildPointCloud2, sensorHeader } from "./SensorMessages.js";
+import { buildNativePoints } from "./NativeSensorProducts.js";
+import { validateNativeTopicValue } from "../NativeTopicContracts.js";
 import { SensorPublisher } from "./SensorPublisher.js";
 
 export const PLUGIN_SENSOR_LIFECYCLE_METHODS = Object.freeze([
@@ -173,7 +175,7 @@ export class PluginSensorDevice {
             .map((product) => ({
                 key: product.outputKey,
                 signal: product.signal,
-                rosType: product.rosType,
+                ...(product.valueContract ? { valueContract: product.valueContract } : { rosType: product.rosType }),
             }));
         this.factory = factory;
         this.scene = scene;
@@ -192,7 +194,7 @@ export class PluginSensorDevice {
         try {
             callHook(this.instance, this.factory, this.id, "prepare", Object.freeze({
                 calibration,
-                helpers: Object.freeze({ sensorAbi: 1, family: "range-image" }),
+                helpers: Object.freeze({ sensorAbi: admission.plugin?.descriptor.sensorAbi ?? 1, family: "range-image" }),
             }));
             this.contractPublisher = new Publisher(this, this.config, {
                 ...publisherOptions,
@@ -223,13 +225,13 @@ export class PluginSensorDevice {
     _sampling(buffer, captureTimeNs) {
         const frameId = this.config.measurementFrameId || this.config.frameId;
         return Object.freeze({
-            buildPointCloud2: (source = buffer) => buildPointCloud2({
+            ...(this.admission.plugin?.descriptor.sensorAbi === 2 ? { buildNativePoints: (source = buffer) => buildNativePoints({ buffer: source, calibration: this.calibration, bufferEncoding: "metric-v2" }) } : { buildPointCloud2: (source = buffer) => buildPointCloud2({
                 buffer: source,
                 bufferEncoding: "metric-v2",
                 calibration: this.calibration,
                 timeNs: captureTimeNs,
                 frameId,
-            }),
+            }) }),
             buildObservation: (source = buffer) => {
                 if (!this.admission.observation) throw new Error("This sensor type has no declared observation mapping.");
                 return observationFromBuffer(source, this.admission.observation);
@@ -259,7 +261,12 @@ export class PluginSensorDevice {
                 const entryKeys = Object.keys(entry).sort();
                 if (entryKeys.join(",") !== "productId,value") throw new TypeError("Point-cloud messages contain only productId and value.");
                 const frameId = this.config.measurementFrameId || this.config.frameId;
-                const value = validatePointCloud(
+                let value;
+                if (product.valueContract) {
+                    const validation = validateNativeTopicValue(product.valueContract, entry.value);
+                    if (!validation.ok) throw new TypeError(validation.message);
+                    value = { positions: new Float32Array(entry.value.positions), intensities: new Float32Array(entry.value.intensities), count: entry.value.count };
+                } else value = validatePointCloud(
                     entry.value,
                     this.id,
                     product.productId,

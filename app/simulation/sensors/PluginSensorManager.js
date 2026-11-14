@@ -41,12 +41,13 @@ export class PluginSensorManager {
             throw new Error("Plugin range-image sensors require deterministic-cpu-bvh-lidar version 2.");
         }
         const messageCodec = options.messageCodec ?? this.options.messageCodec;
-        if (typeof messageCodec?.encodeTopicValue !== "function"
-            || typeof messageCodec?.registerMsgDefinition !== "function") {
+        const needsCodec = records.some((record) => record.plugin.descriptor.sensorAbi === 1);
+        if (needsCodec && (typeof messageCodec?.encodeTopicValue !== "function"
+            || typeof messageCodec?.registerMsgDefinition !== "function")) {
             throw new Error("Plugin point-cloud sensors require a message-codec adapter.");
         }
         for (const [type, definition] of Object.entries(options.schemas ?? {})) {
-            messageCodec.registerMsgDefinition(type, definition);
+            if (needsCodec) messageCodec.registerMsgDefinition(type, definition);
         }
         const pluginSession = options.pluginSession;
         if (!pluginSession) throw new Error("Plugin sensor execution requires its prepared plugin session.");
@@ -73,13 +74,14 @@ export class PluginSensorManager {
                     Publisher: options.Publisher,
                     transformRuntime: options.transformRuntime,
                     publisherOptions: {
+                        nativeTopics: record.plugin.descriptor.sensorAbi === 2,
                         seed: this.seed,
                         topics: options.topics,
                         topicRouter: options.topicRouter,
                         calibrationHash: options.calibrationHash,
                         stepNs: options.stepNs,
                         runtimeData,
-                        encodeTopicValue: messageCodec.encodeTopicValue,
+                        encodeTopicValue: messageCodec?.encodeTopicValue,
                         nativePacketSink: options.nativePacketSink,
                         nowNs: options.nowNs ?? (() => 0),
                     },

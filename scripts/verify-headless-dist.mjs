@@ -24,6 +24,8 @@ import {
 } from "../tests/helpers/headlessRunnerBundle.js";
 import { pluginFixtureResource } from "../tests/helpers/pluginFixtures.js";
 import { fixturePcapHostConfig } from "../tests/helpers/sensorTransportFixtures.js";
+import { installZenohArtifact, verifyZenohReleaseArtifacts } from "./lib/zenoh-artifacts.mjs";
+import { runZenohCliSmoke } from "../tests/helpers/headlessZenohSmoke.js";
 
 async function checked(command, args, options = {}) {
     const result = await run(command, args, options);
@@ -99,7 +101,7 @@ async function verifyChecksums(dist, manifest) {
     }
 }
 
-async function verifyNpm(root, tarball) {
+async function verifyNpm(root, tarball, dist, manifest) {
     const project = path.join(root, "npm");
     await fs.mkdir(project, { recursive: true });
     await fs.writeFile(path.join(project, "package.json"), '{"name":"cev-sim-install-check","private":true}\n');
@@ -111,6 +113,14 @@ async function verifyNpm(root, tarball) {
         "--cache", path.join(root, "npm-cache"),
         tarball,
     ], { cwd: project });
+    const nativeArtifact = await installZenohArtifact(dist, manifest, path.join(project, "node_modules/cev-sim"));
+    if (nativeArtifact) await checked(process.execPath, ["--input-type=module", "-e",
+        "const m = await import('./node_modules/cev-sim/native/zenoh-transport/index.js'); await m.loadNativeBinding();"], { cwd: project });
+    if (nativeArtifact) {
+        const root = path.join(project, "zenoh-smoke"); await fs.mkdir(root);
+        await runZenohCliSmoke({ executable: path.join(project, "node_modules/.bin/cev-sim"),
+            addon: path.join(project, "node_modules/cev-sim/native/zenoh-transport/prebuilds", nativeArtifact.file), root, supervised: true });
+    }
     const installedPackage = JSON.parse(
         await fs.readFile(path.join(project, "node_modules/cev-sim/package.json"), "utf8"),
     );
@@ -341,12 +351,13 @@ async function main() {
         RELEASE_MANIFEST_KIND,
     );
     await verifyChecksums(dist, manifest);
+    await verifyZenohReleaseArtifacts(dist, manifest);
     const npmName = manifest.artifacts.find((entry) => entry.file.endsWith(".tgz"))?.file;
     const pythonNames = manifest.artifacts.filter((entry) => entry.file.endsWith(".whl") || entry.file.endsWith(".tar.gz"));
     if (!npmName || pythonNames.length !== 2) throw new Error("Distribution is missing npm, wheel, or sdist artifacts.");
     const root = await temporaryRoot("cev-headless-install-");
     try {
-        await verifyNpm(root, path.join(dist, npmName));
+        await verifyNpm(root, path.join(dist, npmName), dist, manifest);
         for (const [index, artifact] of pythonNames.entries()) {
             await verifyPython(root, path.join(dist, artifact.file), index, manifest.packages.python);
         }

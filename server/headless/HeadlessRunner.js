@@ -7,6 +7,8 @@ import { simulationSha256 } from "../../app/simulation/kernel/SimulationHashes.j
 import { createHeadlessArtifactSink } from "./HeadlessArtifactSink.js";
 import { HeadlessRunnerError } from "./HeadlessRunnerErrors.js";
 import { defaultHeadlessProvenance, HeadlessSession } from "./HeadlessSession.js";
+import { HeadlessExternalSession } from "./HeadlessExternalSession.js";
+import { normalizeControllerMode } from "./SupervisorConfig.js";
 
 export const POLICY_ACTION_TAPE_KIND = "cev-sim.headless.policy-action-tape";
 export const POLICY_ACTION_TAPE_VERSION = 1;
@@ -78,6 +80,8 @@ export class HeadlessRunner {
         provenanceProvider = defaultHeadlessProvenance,
         sessionFactory = (options) => new HeadlessSession(options),
         hostConfig = null,
+        zenohTransport = null,
+        externalSessionFactory = (options) => new HeadlessExternalSession(options),
         limits = null,
         authorizePackage = null,
         subscribePolicy = null,
@@ -89,6 +93,8 @@ export class HeadlessRunner {
         this.authorizePackage = authorizePackage;
         this.subscribePolicy = subscribePolicy;
         this.hostConfig = hostConfig;
+        this.zenohTransport = zenohTransport;
+        this.externalSessionFactory = externalSessionFactory;
         this.limits = limits;
         this.episodeFactory = episodeFactory ?? ((options = {}) => new HeadlessEpisode({
             pluginModuleSource: this.pluginModuleSource,
@@ -108,11 +114,15 @@ export class HeadlessRunner {
             provenanceProvider: this.provenanceProvider,
             hostConfig: overrides.hostConfig ?? this.hostConfig,
             limits: overrides.limits ?? this.limits,
+            zenohTransport: overrides.zenohTransport ?? this.zenohTransport,
         });
     }
 
-    async validate(bundle, { episodeSpec = {}, hostConfig = this.hostConfig, limits = this.limits } = {}) {
-        const session = this._session({ hostConfig, limits });
+    async validate(bundle, { episodeSpec = {}, hostConfig = this.hostConfig, limits = this.limits, zenohTransport = this.zenohTransport, controllerMode = "policy" } = {}) {
+        normalizeControllerMode(controllerMode);
+        const session = controllerMode === "external-realtime"
+            ? this._externalSession({ hostConfig, limits, zenohTransport })
+            : this._session({ hostConfig, limits, zenohTransport });
         try {
             const descriptor = await session.prepare(bundle, episodeSpec);
             const verified = session.verified;
@@ -130,6 +140,33 @@ export class HeadlessRunner {
         }
     }
 
+    _externalSession(options = {}) {
+        return this.externalSessionFactory({ artifactSinkFactory: this.artifactSinkFactory,
+            provenanceProvider: this.provenanceProvider, hostConfig: this.hostConfig, limits: this.limits,
+            zenohTransport: this.zenohTransport, ...options });
+    }
+
+    async runExternalController(bundle, { artifactPolicy = null, outputUri = null, onEvent = null, signal = null,
+        hostConfig = this.hostConfig, limits = this.limits, zenohTransport = this.zenohTransport } = {}) {
+        const session = this._externalSession({ hostConfig, limits, zenohTransport });
+        const onAbort = () => session.stop({ interruptedBySignal: true });
+        try {
+            await session.prepare(bundle);
+            signal?.throwIfAborted();
+            const descriptor = await session.start({ artifactPolicy, outputUri });
+            signal?.addEventListener("abort", onAbort, { once: true });
+            if (signal?.aborted) await onAbort();
+            await onEvent?.({ kind: "cev-sim.headless.external-ready", version: 1, descriptor });
+            const completed = await session.waitForCompletion();
+            if (completed.error) throw completed.error;
+            const finalized = await session.finalize();
+            const event = { kind: "cev-sim.headless.result", version: 1, result: finalized.runResult,
+                artifacts: finalized.artifacts, outputDirectory: finalized.outputDirectory };
+            await onEvent?.(event);
+            return event;
+        } finally { signal?.removeEventListener("abort", onAbort); await session.close(); }
+    }
+
     async run(bundle, {
         episodeSpec = {},
         actions = [],
@@ -140,9 +177,10 @@ export class HeadlessRunner {
         expect = null,
         actionTapeHash = null,
         hostConfig = this.hostConfig,
+        zenohTransport = this.zenohTransport,
         limits = this.limits,
     } = {}) {
-        const session = this._session({ hostConfig, limits });
+        const session = this._session({ hostConfig, limits, zenohTransport });
         let iterator = null;
         const emit = async (event) => {
             if (onEvent) await onEvent(event);

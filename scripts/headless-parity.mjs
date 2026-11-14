@@ -286,6 +286,11 @@ function cpuLidarHits(episode) {
     if (!device) return null;
     const published = episode.runtime.signalStore.read(`devices.${device.id}.semanticPointCloud`, { clone: true });
     if (!published.exists) return [];
+    const native = published.value;
+    if (native?.positions instanceof Float32Array) {
+        if (![native.instanceIds, native.semanticIds, native.rayIndices].every((values) => values?.length === native.count)) throw new Error("CPU LiDAR native semantic arrays do not match count.");
+        return Array.from({ length: native.count }, (_, hitIndex) => ({ hitIndex, rayIndex: native.rayIndices[hitIndex], semanticId: native.semanticIds[hitIndex], instanceId: native.instanceIds[hitIndex] }));
+    }
     const cloud = decodeTopicValue(published.value)?.value;
     if (!cloud || cloud.point_step !== 28) throw new Error("CPU LiDAR semantic evidence is not a metric-v2 PointCloud2 value.");
     const offsets = Object.fromEntries(cloud.fields.map((field) => [field.name, Number(field.offset)]));
