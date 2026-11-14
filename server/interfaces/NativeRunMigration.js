@@ -113,6 +113,7 @@ export function planNativeRunMigration({ manifest, interfaceResource = null, tar
             document.version = 2;
             for (const route of document.routes ?? []) if (route.controller?.kind === "external-ros") {
                 route.controller.kind = "external-topic";
+                if (["ackdrive", "/ackdrive"].includes(route.controller.topicId)) route.controller.topicId = "controls-command";
                 const topic = candidate.topics.find((topic) => topic.id === route.controller.topicId || topic.name === route.controller.topicId);
                 if (topic?.valueContract?.id !== "cev.control-command") blocked.push({ path: `scenario.routes.${route.id}`, message: "External scenario commands require a declared native control-command topic." });
             }
@@ -207,7 +208,7 @@ export function planNativeRunMigration({ manifest, interfaceResource = null, tar
         scenarioPlan.document = normalizeScenario(scenarioPlan.document);
         scenarioPlan.document.id = `${scenario.id}-native-${hash(stripScenarioMetadata(scenarioPlan.document)).slice(0, 12)}`;
         candidate.scenario.id = scenarioPlan.document.id;
-        candidate.scenario.expectedHash = hash(stripScenarioMetadata(scenarioPlan.document));
+        candidate.scenario.expectedHash = computeResolvedRunHash(stripScenarioMetadata(scenarioPlan.document));
     }
     if (candidate.scripts) {
         candidate.scripts.bindingSource = "embedded";

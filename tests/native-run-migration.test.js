@@ -15,7 +15,7 @@ import { createHeadlessRuntimeContext } from "../app/simulation/headless/Headles
 import { computeEpisodeHash, defaultEpisodeIdentity } from "../app/simulation/kernel/SimulationHashes.js";
 import { recompileNativeGraph } from "../server/interfaces/NativeGraphCompiler.js";
 import { createCpuLidarBackendSelection } from "../app/simulation/sensors/CpuLidarBackend.js";
-import { createDefaultScenario } from "../app/scenarios/ScenarioDocument.js";
+import { createDefaultScenario, normalizeScenario, stripScenarioMetadata } from "../app/scenarios/ScenarioDocument.js";
 
 function legacy() { return createDefaultRunManifest({ version: 12, id: "native-migration", sensorRig: { sensors: [] }, scripts: { enabled: false } }); }
 
@@ -43,15 +43,18 @@ test("native adoption captures nested scripts and freezes effective library bind
 
 test("native scenario adoption replaces its source and keeps command ownership explicit", () => {
     const manifest = legacy();
-    const scenario = createDefaultScenario({ version: 1, id: "old-scenario", routes: [{ id: "route", actorId: "ego", controller: { kind: "external-ros", topicId: "controls-command" }, waypoints: [] }] });
+    const scenario = createDefaultScenario({ version: 1, id: "old-scenario", routes: [{ id: "route", actorId: "ego", controller: { kind: "external-ros", topicId: "ackdrive" }, waypoints: [] }] });
+    scenario.routes[0].initialSpeedMps = 1.123456789012345;
     manifest.scenario = { id: scenario.id, expectedHash: null, egoVehicleId: manifest.initialState.vehicles[0].type };
     const plan = planNativeRunMigration({ manifest, scenario, topicContracts: { "controls-command": { id: "cev.control-command", version: 2 } } });
     assert.equal(plan.ok, true, JSON.stringify(plan.blocked));
     const adopted = applyNativeRunMigration(plan, { expectedRevision: 0 });
     assert.equal(adopted.scenario.version, 2);
     assert.equal(adopted.scenario.routes[0].controller.kind, "external-topic");
+    assert.equal(adopted.scenario.routes[0].controller.topicId, "controls-command");
     assert.notEqual(adopted.scenario.id, scenario.id);
     assert.equal(adopted.manifest.scenario.id, adopted.scenario.id);
+    assert.equal(adopted.manifest.scenario.expectedHash, computeResolvedRunHash(stripScenarioMetadata(normalizeScenario(adopted.scenario))));
     assert.equal(scenario.version, 1);
     assert.equal(adopted.manifest.topics.find((topic) => topic.id === "controls-command").valueContract.version, 2);
 });

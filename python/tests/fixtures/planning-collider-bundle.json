@@ -5,8 +5,9 @@
   "simulationSemanticHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "manifest": {
     "kind": "cev-sim.run-manifest",
-    "version": 11,
+    "version": 13,
     "id": "planning-colliders",
+    "protobuf": {"mode": "disabled", "interfaceHash": null, "externalController": false},
     "controls": {"targetVehicleId": "ego"},
     "clock": {"stepNs": 16666667, "maxSteps": null},
     "sensorRig": {"sensors": []},
@@ -25,14 +26,20 @@
   },
   "resolved": {
     "kind": "cev-sim.run-manifest",
-    "version": 11,
+    "version": 13,
+    "nativeTopicContracts": {
+      "document": {"kind": "cev-sim.native-topic-contracts", "version": 1, "contracts": []},
+      "hash": "9bfdfc00db52220539b86e07dbcdfb1ecb44ccc1bd7d0091b02abbed0b6b692e"
+    },
+    "dependencyHashes": {"nativeTopicContracts": "9bfdfc00db52220539b86e07dbcdfb1ecb44ccc1bd7d0091b02abbed0b6b692e"},
     "identityProfile": {"id": "world-bound", "version": 2},
     "resolvedHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "simulationSemanticHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "manifest": {
       "kind": "cev-sim.run-manifest",
-      "version": 11,
+      "version": 13,
       "id": "planning-colliders",
+      "protobuf": {"mode": "disabled", "interfaceHash": null, "externalController": false},
       "controls": {"targetVehicleId": "ego"},
       "clock": {"stepNs": 16666667, "maxSteps": null},
       "sensorRig": {"sensors": []},
@@ -51,6 +58,8 @@
     },
     "scenario": {
       "scenario": {
+        "kind": "cev-sim.scenario",
+        "version": 2,
         "routes": [{
           "actorId": "ego",
           "waypoints": [

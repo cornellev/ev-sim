@@ -2315,6 +2315,7 @@ export class StorageService {
             }
             definitionManifest = manifest;
             manifest = clearSensorInheritanceMarkers(applied.manifest);
+            if (historical) manifest = contracts.normalizeRunManifest(manifest, { sensorRegistry });
         }
         const vehicleIds = new Set(manifest.initialState.vehicles.map((entry) => entry.id));
         for (const sensor of manifest.sensorRig.sensors) {

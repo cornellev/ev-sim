@@ -8,7 +8,7 @@ import { StorageService } from "../server/storage/StorageService.js";
 import { pluginFixtureResource } from "./helpers/pluginFixtures.js";
 import { verifyPluginPackage } from "../app/plugin/PluginPackage.js";
 import { createDefaultVehicleManifest, normalizeVehicleManifest } from "../app/vehicles/VehicleManifest.js";
-import { createSensorDefinitionRegistry } from "../server/interfaces/historical/SensorTypes.js";
+import { createRunSensor, createSensorDefinitionRegistry } from "../server/interfaces/historical/SensorTypes.js";
 import { createPluginRangeImageFixtureSensor } from "./helpers/headlessRunnerBundle.js";
 import { verifyRunBundleIntegrity } from "../server/headless/RunBundleInspection.js";
 
@@ -26,7 +26,7 @@ test("reviewed native adoption creates a vehicle and sensor package closure with
     const registry = createSensorDefinitionRegistry([verified]);
     const sensor = createPluginRangeImageFixtureSensor();
     const vehicle = await storage.createVehicleManifest(normalizeVehicleManifest({ ...createDefaultVehicleManifest({ id: "old-plugin-car", sensors: [] }), sensors: [sensor], pluginLocks: [{ pluginId: verified.document.id, version: verified.document.version, packageHash: old.packageHash, runtimeHash: old.runtimeHash, sensorTypes: [sensor.type] }] }, { sensorRegistry: registry }));
-    const manifest = createDefaultRunManifest({ version: 12, id: "closure", sensorRig: { sensors: [] }, scripts: { enabled: false }, initialState: { vehicles: [{ id: "ego", type: vehicle.id }], signals: {} }, plugins: { enabled: true, artifacts: [{ pluginId: verified.document.id, expectedHash: old.packageHash, capabilities: verified.document.capabilities }] } });
+    const manifest = createDefaultRunManifest({ version: 12, id: "closure", sensorRig: { inheritance: { mode: "vehicle" }, sensors: [createRunSensor(sensor.type, { id: sensor.id, calibration: sensor.config }, 0, registry)] }, scripts: { enabled: false }, initialState: { vehicles: [{ id: "ego", type: vehicle.id }], signals: {} }, plugins: { enabled: true, artifacts: [{ pluginId: verified.document.id, expectedHash: old.packageHash, capabilities: verified.document.capabilities }] } });
     const stored = await storage._writeRunManifest(manifest.id, manifest, { expectedRevision: 0, create: true });
     const original = structuredClone(await storage.getVehicleManifest(vehicle.id));
     const plan = await storage.planNativeRunMigration(stored.id, { pluginReplacements: { [old.packageHash]: replacement.packageHash } });

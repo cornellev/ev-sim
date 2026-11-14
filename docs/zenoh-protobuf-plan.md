@@ -577,6 +577,15 @@ admission visibly. There is no final optional legacy mode.
 
 ## Progress and decision log
 
+- 2026-11-14: Native adoption maintenance uses the resolver's canonical numeric
+  hash for scenario pins, remaps historical `ackdrive` route references to
+  `controls-command`, and restores historical sensor schemas after vehicle
+  inheritance during inspection. Original archives and historical identity
+  fixtures remain unchanged; native scenario and inherited plugin-sensor
+  migration regressions cover these paths. Lint passes; full JavaScript
+  verification passes 2,817 tests with 16 skips, and Python passes 155 tests.
+  Integration verification runs outside the filesystem/socket sandbox.
+
 - 2026-11-12: Revised ZPB-04–09 at user direction to retire local ROS artifacts.
   Native contracts@1/interface@2/v13 form the new boundary. Default authoring
   cutover remains ZPB-08; exact historical resources remain inspectable.
