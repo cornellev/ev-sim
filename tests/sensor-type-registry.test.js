@@ -32,9 +32,8 @@ test("built-in sensor definitions own defaults, fields, outputs, and determinism
         productProfile: { id: "measured-rgba-analytic-oracle", version: 1 },
     });
     assert.equal(camera.calibration.encoding, "rgba8");
-    assert.equal(camera.schema.imageTopicId, "sensor_msgs/Image");
-    assert.equal(camera.schema.cameraInfoTopicId, "sensor_msgs/CameraInfo");
-    assert.equal(camera.schema.depthTopicId, "sensor_msgs/Image");
+    assert.equal(camera.schema, undefined);
+    assert.deepEqual(getSensorType("camera").run.outputs[0].valueContract, { id: "cev.image", version: 1 });
     assert.equal(camera.calibration.products.depth, false);
     assert.equal(camera.calibration.distortionModel, "plumb_bob");
     assert.equal(camera.calibration.distortion.length, 5);
@@ -114,10 +113,9 @@ test("an isolated third sensor type drives normalization and runtime factories w
         run: {
             defaultRateHz: 20,
             fields: [{ label: "Range", path: ["calibration", "range"], control: "number" }],
-            outputs: [{ key: "detectionsTopicId", signal: "detections", rosType: "example_msgs/Detections" }],
+            outputs: [{ key: "detectionsTopicId", signal: "detections", valueContract: { id: "cev.detections-3d", version: 1 } }],
             normalize: (source) => ({
                 calibration: { range: Number(source.calibration?.range ?? 100) },
-                schema: { detectionsTopicId: "example_msgs/Detections" },
                 determinism: { comparison: "numeric-tolerance", crossDeviceByteEquality: true },
             }),
             validate: (sensor) => sensor.calibration.range > 0 ? [] : [{ path: "calibration.range", message: "Range must be positive." }],
@@ -150,7 +148,7 @@ test("an isolated third sensor type drives normalization and runtime factories w
 
     const signals = getDeviceTelemetrySignals({
         constructor: { name: "RadarDevice" },
-        config: { type: "radar", schema: { detectionsTopicId: "custom/Detections" } },
+        config: { type: "radar" },
     }, definitions);
     assert.deepEqual(signals.map((signal) => signal.suffix), [
         "enabled",
@@ -176,7 +174,7 @@ test("an isolated third sensor type drives normalization and runtime factories w
         "errors",
         "detections",
     ]);
-    assert.equal(signals.at(-1).metadata.rosType, "custom/Detections");
+    assert.deepEqual(signals.at(-1).metadata.valueContract, { id: "cev.detections-3d", version: 1 });
 });
 
 test("lidar2d is one sensor-plane beam", () => {

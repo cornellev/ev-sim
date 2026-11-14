@@ -3,7 +3,7 @@ import * as THREE from "three";
 
 import Device from "./Device.js";
 import { SensorPublisher } from "./SensorPublisher.js";
-import { buildNavSatFixMessage } from "./SensorMessages.js";
+
 import {
     buildGnssMeasurement,
     captureVehicleSnapshot,
@@ -68,7 +68,7 @@ export class ManifestGnss extends Device {
 
         const frameId = this.config.measurementFrameId || this.config.frameId;
         const fix = measurement.noFix
-            ? (this.contractPublisher.nativeTopics ? buildNativeGnss : buildNavSatFixMessage)({
+            ? (buildNativeGnss)({
                 timeNs: captureTimeNs,
                 frameId,
                 status: -1,
@@ -79,7 +79,7 @@ export class ManifestGnss extends Device {
                 positionCovariance: measurement.positionCovariance,
                 positionCovarianceType: 0,
             })
-            : (this.contractPublisher.nativeTopics ? buildNativeGnss : buildNavSatFixMessage)({
+            : (buildNativeGnss)({
                 timeNs: captureTimeNs,
                 frameId,
                 status: measurement.status,

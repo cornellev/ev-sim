@@ -3,7 +3,7 @@ import { gaussianSample } from "../../autonomy/LocalizationMeasurements.js";
 import { cloneJson } from "../../util/cloneJson.js";
 import { analyticGpuCameraPose } from "./AnalyticGpuCameraPose.js";
 import { SensorPublisher } from "./SensorPublisher.js";
-import { buildCameraInfo, buildImageMessage, buildDetection2DArray, buildDetection3DArray } from "./SensorMessages.js";
+
 import { compareUtf8 } from "../world/WorldDescription.js";
 import { assertGpuSensorBackendSelection } from "./GpuSensorBackend.js";
 import { buildLidarCapture } from "./LidarProducts.js";
@@ -231,7 +231,7 @@ class HeadlessGpuSensorDevice {
                 topicId: this.config.outputs.imageTopicId,
                 signal: "image",
                 frameId,
-                value: (this.contractPublisher.nativeTopics ? buildNativeImage : buildImageMessage)({
+                value: (buildNativeImage)({
                     data: pixels,
                     width: calibration.width,
                     height: calibration.height,
@@ -246,7 +246,7 @@ class HeadlessGpuSensorDevice {
                 topicId: this.config.outputs.cameraInfoTopicId,
                 signal: "cameraInfo",
                 frameId,
-                value: (this.contractPublisher.nativeTopics ? buildNativeCameraInfo : buildCameraInfo)({ ...calibration, timeNs: context.captureTimeNs, frameId }),
+                value: (buildNativeCameraInfo)({ ...calibration, timeNs: context.captureTimeNs, frameId }),
             });
         }
         const result = {
@@ -355,7 +355,7 @@ class HeadlessGpuSensorDevice {
                     topicId: outputs.imageTopicId,
                     signal: "image",
                     frameId,
-                    value: (this.contractPublisher.nativeTopics ? buildNativeImage : buildImageMessage)({
+                    value: (buildNativeImage)({
                         data: rgba,
                         width,
                         height,
@@ -370,7 +370,7 @@ class HeadlessGpuSensorDevice {
                     topicId: outputs.cameraInfoTopicId,
                     signal: "cameraInfo",
                     frameId,
-                    value: (this.contractPublisher.nativeTopics ? buildNativeCameraInfo : buildCameraInfo)({ ...calibration, timeNs: context.captureTimeNs, frameId }),
+                    value: (buildNativeCameraInfo)({ ...calibration, timeNs: context.captureTimeNs, frameId }),
                 });
             }
             if (depthRequired && outputs.depthTopicId) {
@@ -378,7 +378,7 @@ class HeadlessGpuSensorDevice {
                     topicId: outputs.depthTopicId,
                     signal: "depth",
                     frameId,
-                    value: (this.contractPublisher.nativeTopics ? buildNativeImage : buildImageMessage)({
+                    value: (buildNativeImage)({
                         data: depth,
                         width,
                         height,
@@ -470,7 +470,7 @@ class HeadlessGpuSensorDevice {
                 topicId,
                 signal,
                 frameId,
-                value: (this.contractPublisher.nativeTopics ? buildNativeImage : buildImageMessage)({ data, width, height, timeNs: context.captureTimeNs, frameId, encoding }),
+                value: (buildNativeImage)({ data, width, height, timeNs: context.captureTimeNs, frameId, encoding }),
             });
         };
         addImage(outputs.imageTopicId, "image", rgba, this.config.calibration.encoding || "rgba8");
@@ -479,7 +479,7 @@ class HeadlessGpuSensorDevice {
                 topicId: outputs.cameraInfoTopicId,
                 signal: "cameraInfo",
                 frameId,
-                value: (this.contractPublisher.nativeTopics ? buildNativeCameraInfo : buildCameraInfo)({ ...this.config.calibration, timeNs: context.captureTimeNs, frameId }),
+                value: (buildNativeCameraInfo)({ ...this.config.calibration, timeNs: context.captureTimeNs, frameId }),
             });
         }
         addImage(outputs.depthTopicId, "depth", captured.depth, "32FC1");
@@ -556,7 +556,6 @@ export class HeadlessGpuSensorManager {
     constructor(vehicleSource, options = {}) {
         this.vehicleSource = vehicleSource;
         this.telemetry = options.telemetry ?? null;
-        this.messageCodec = options.messageCodec ?? null;
         this.visualCapture = options.visualCapture ?? null;
         this.rendererClient = options.rendererClient ?? null;
         this.devices = [];
@@ -597,11 +596,11 @@ export class HeadlessGpuSensorManager {
         return [
             ...(products.detections2d === true && outputs.detections2dTopicId ? [{
                 topicId: outputs.detections2dTopicId, signal: "detections2d", frameId,
-                value: (device.contractPublisher.nativeTopics ? buildNativeDetections2D : buildDetection2DArray)({ detections, timeNs: context.captureTimeNs, frameId }),
+                value: (buildNativeDetections2D)({ detections, timeNs: context.captureTimeNs, frameId }),
             }] : []),
             ...(products.detections3d === true && outputs.detections3dTopicId ? [{
                 topicId: outputs.detections3dTopicId, signal: "detections3d", frameId,
-                value: (device.contractPublisher.nativeTopics ? buildNativeDetections : buildDetection3DArray)({ detections, timeNs: context.captureTimeNs, frameId: this.transformRuntime?.frames?.map || "map" }),
+                value: (buildNativeDetections)({ detections, timeNs: context.captureTimeNs, frameId: this.transformRuntime?.frames?.map || "map" }),
             }] : []),
         ];
     }
@@ -621,15 +620,6 @@ export class HeadlessGpuSensorManager {
         if (configs.length === 0 || options.enabled === false) return this.devices;
         assertGpuSensorBackendSelection(options.backendSelection);
         if (!this.rendererClient) throw new Error("GPU sensor backend requires a supervisor renderer client.");
-        const messageCodec = options.messageCodec ?? this.messageCodec;
-        if (!options.nativeTopics && (typeof messageCodec?.encodeTopicValue !== "function")) {
-            throw new Error("GPU sensors require a headless message-codec adapter.");
-        }
-        if (!options.nativeTopics && typeof messageCodec?.registerMsgDefinition === "function") {
-            for (const [type, definition] of Object.entries(options.schemas ?? {})) {
-                messageCodec?.registerMsgDefinition?.(type, definition);
-            }
-        }
         const visualCapture = options.visualCapture ?? this.visualCapture;
         const requiredVisualMethods = [
             "createOwnedCaptureScene",
@@ -703,8 +693,6 @@ export class HeadlessGpuSensorManager {
                 runtimeData: this.runtimeData,
                 perceptionObservations: options.perceptionObservations,
                 sensorOccupancy: options.sensorOccupancy,
-                encodeTopicValue: messageCodec?.encodeTopicValue,
-                nativeTopics: options.nativeTopics,
                 runId: options.runId,
                 publicationPort: options.publicationPort,
                 nowNs: () => 0,

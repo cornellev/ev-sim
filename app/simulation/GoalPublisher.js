@@ -3,10 +3,8 @@ import {
     threeEulerToRep103,
     threeToRep103Vector,
 } from "../autonomy/CoordinateFrames.js";
-import { topicSignalPath } from "../scripting/runtime/SignalPaths.js";
 
 export const GOAL_TOPIC = "/goal";
-export const GOAL_MESSAGE_TYPE = "geometry_msgs/Pose";
 
 const IDENTITY_ORIENTATION = Object.freeze({ x: 0, y: 0, z: 0, w: 1 });
 
@@ -33,46 +31,27 @@ export class GoalPublisher {
     constructor(options = {}) {
         this.topicRouter = options.topicRouter ?? null;
         this.telemetry = options.telemetry ?? null;
-        this.client = options.client ?? null;
         this.resolvedRun = options.resolvedRun ?? null;
     }
 
     publish(timeNs = 0) {
         const pose = scenarioGoalPose(this.resolvedRun);
         if (!pose) return null;
-        const native = this.resolvedRun?.version === 13;
-        const goalTopic = native ? this.resolvedRun.manifest.topics.find((topic) => topic.valueContract?.id === "cev.goal" && topic.direction === "output") : null;
+        const goalTopic = this.resolvedRun.manifest.topics.find((topic) => topic.valueContract?.id === "cev.goal" && topic.direction === "output");
         const declared = this.topicRouter?.getTopic?.(goalTopic?.id ?? GOAL_TOPIC) ?? null;
-        const value = native ? { pose } : pose;
-        if (declared && (native || declared.name === GOAL_TOPIC)) {
+        const value = { pose };
+        if (declared) {
             if (!isPoseGoalOutput(declared)) return null;
             this.topicRouter.routeOutbound(declared.id || declared.name, {
                 value,
-                ...(native ? { valueContract: declared.valueContract } : { typeStr: GOAL_MESSAGE_TYPE }),
+                ...({ valueContract: declared.valueContract }),
             }, {
                 captureTimeNs: timeNs,
-                ...(native ? { simTimeNs: timeNs, frameId: this.resolvedRun.calibration?.frames?.map ?? "map", sequenceId: "0", actualDeliveryStep: 0 } : {}),
+                ...({ simTimeNs: timeNs, frameId: this.resolvedRun.calibration?.frames?.map ?? "map", sequenceId: "0", actualDeliveryStep: 0 }),
                 deliveryTimeNs: timeNs,
                 cycle: 0,
                 logClass: "standard",
             });
-        } else if (!native) {
-            this.telemetry?.publishSignal?.(topicSignalPath(GOAL_TOPIC), value, {
-                timeUs: Math.round(Number(timeNs) / 1000),
-                cycle: 0,
-                source: "oracle",
-                type: "json",
-                category: "topics",
-                replayRole: "derived",
-                logClass: "standard",
-                descriptorMetadata: {
-                    rosType: GOAL_MESSAGE_TYPE,
-                    topic: GOAL_TOPIC,
-                },
-            });
-        }
-        if (!native && this.client?.isOpen?.()) {
-            this.client.publish(GOAL_TOPIC, GOAL_MESSAGE_TYPE, pose).catch?.(() => {});
         }
         return pose;
     }
@@ -99,6 +78,5 @@ function orientationFromArrival(route, position) {
 }
 
 function isPoseGoalOutput(topic) {
-    const type = topic?.schema?.type || topic?.type;
-    return topic?.direction === "output" && (type === GOAL_MESSAGE_TYPE || topic?.valueContract?.id === "cev.goal");
+    return topic?.direction === "output" && topic?.valueContract?.id === "cev.goal";
 }

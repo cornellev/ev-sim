@@ -58,7 +58,7 @@ function getConfiguredSignalPaths(manifest) {
  * Executes manifest bindings against the shared signal store.
  *
  * Triggers:
- * - topic: ROS topic updates bridged from the ClientManager
+ * - topic: native topic updates applied by the simulation kernel
  * - fixed-update: called from SimulationEngine._fixedStep via update(dt)
  * - signal-update: watched store path changed (checked after ticks and topic writes)
  * - timer: wall-clock setInterval, independent of the simulation loop
@@ -532,7 +532,6 @@ export class BindingRuntime {
         this._attachedClients.add(clientManager);
         this._clientManager = clientManager;
 
-        clientManager.onUpdate((info) => this._onTopicUpdate(info));
     }
 
     setTopicRouter(topicRouter = null, topics = []) {
@@ -545,11 +544,7 @@ export class BindingRuntime {
         if (!topic) {
             throw new Error(`Cannot publish "${mapping.topic}" because it is not declared in the run manifest.`);
         }
-        const expectedType = topic.schema?.type || topic.type;
-        if (topic.valueContract && (mapping.type || mapping.valueContract?.id !== topic.valueContract.id || mapping.valueContract?.version !== topic.valueContract.version)) throw new Error(`Cannot publish "${mapping.topic}" with a different native contract.`);
-        if (mapping.type && expectedType && mapping.type !== expectedType) {
-            throw new Error(`Cannot publish "${mapping.topic}" as ${mapping.type}; manifest expects ${expectedType}.`);
-        }
+        if (!topic.valueContract || mapping.type || mapping.valueContract?.id !== topic.valueContract.id || mapping.valueContract?.version !== topic.valueContract.version) throw new Error(`Cannot publish "${mapping.topic}" with a different native contract.`);
         if (topic.direction !== "output") {
             throw new Error(`Cannot publish "${mapping.topic}" because manifest direction is ${topic.direction}.`);
         }
@@ -583,14 +578,13 @@ export class BindingRuntime {
             replayRole: "input",
             logClass: "standard",
             metadata: {
-                ...(info.valueContract ? { ...info.metadata, topicId: info.topicId, valueContract: info.valueContract } : {}),
-                typeStr: info.typeStr ?? null,
+                ...({ ...info.metadata, topicId: info.topicId, valueContract: info.valueContract }),
                 count: info.count ?? null,
                 routerSequence: info.routerSequence ?? null,
                 contractId: info.contractId ?? null,
             },
             descriptorMetadata: {
-                ...(info.valueContract ? { topicId: info.topicId, valueContract: info.valueContract, ...info.metadata } : { rosType: info.typeStr ?? null, schema: info.schema ?? null }),
+                ...({ topicId: info.topicId, valueContract: info.valueContract, ...info.metadata }),
                 contractId: info.contractId ?? null,
             },
         });
@@ -922,20 +916,10 @@ export class BindingRuntime {
                 this._validateTopicSink(mapping);
             }
             const topic = this._runTopics.get(mapping.topic);
-            if (topic?.valueContract) {
-                const simulation = this.signalStore.read(SIGNAL_PATHS.SIMULATION)?.value ?? {};
-                const timeNs = Math.round((simulation.time ?? 0) * 1e9);
-                const result = this._topicRouter?.routeOutbound(topic.id, { value }, { producer: topic.producer, captureTimeNs: timeNs, deliveryTimeNs: timeNs, cycle: simulation.step ?? 0 });
-                if (!result?.ok) throw new Error(`Cannot publish "${mapping.topic}": ${result?.message ?? result?.code ?? "native router unavailable"}.`);
-                return;
-            }
-
-            const client = this._clientManager?.get?.();
-            if (!client) {
-                throw new Error(`Cannot publish "${mapping.topic}" because no ROS client is connected.`);
-            }
-
-            client.publish(mapping.topic, mapping.type, value);
+            const simulation = this.signalStore.read(SIGNAL_PATHS.SIMULATION)?.value ?? {};
+            const timeNs = Math.round((simulation.time ?? 0) * 1e9);
+            const result = this._topicRouter?.routeOutbound(topic?.id, { value }, { producer: topic?.producer, captureTimeNs: timeNs, deliveryTimeNs: timeNs, cycle: simulation.step ?? 0 });
+            if (!result?.ok) throw new Error(`Cannot publish "${mapping.topic}": ${result?.message ?? result?.code ?? "native router unavailable"}.`);
         });
     }
 }

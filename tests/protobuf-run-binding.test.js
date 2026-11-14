@@ -1,14 +1,15 @@
+import { planHistoricalProtobufRouteAdmission } from "../server/interfaces/historical/ProtobufBinding.js";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { listRegisteredSchemaTypes, parseMsgDefinition } from "../app/client/TopicCodec.js";
+import { parseMsgDefinition } from "../server/interfaces/historical/MsgShape.js";
 import {
     assertProtobufInterfaceResource, bindProtobufRunKeys, createProtobufInterfaceResource,
-    normalizeProtobufRunConfig, planProtobufRouteAdmission,
+    normalizeProtobufRunConfig,
 } from "../app/interfaces/ProtobufRunBinding.js";
 import { protobufRunFixture } from "./helpers/protobufRunFixture.js";
 
 function admit(manifest, resource, options = {}) {
-    return planProtobufRouteAdmission({ manifest, interfaceResource: resource, ...options });
+    return planHistoricalProtobufRouteAdmission({ manifest, interfaceResource: resource, ...options });
 }
 
 test("protobuf run selection is explicit and rejects operational fields", () => {
@@ -28,11 +29,9 @@ test("route admission uses isolated schema roots and native scalar topic values"
     const resource = createProtobufInterfaceResource(document);
     manifest.protobuf.interfaceHash = resource.hash;
     const before = structuredClone({ manifest, resource });
-    const registered = listRegisteredSchemaTypes();
     const plan = admit(manifest, resource);
     assert.equal(plan.routes.length, 2);
     assert.equal(plan.schemas.get("main").root.lookupType("run_test.State").fields.speed_mps.type, "double");
-    assert.deepEqual(listRegisteredSchemaTypes(), registered);
     assert.deepEqual({ manifest, resource }, before);
     assert.deepEqual(parseMsgDefinition("test/Outer", "uint8[] bytes\nInner child\nuint32 LIMIT=3"), [
         { name: "bytes", typeName: "uint8", isArray: true, arrayLen: null },

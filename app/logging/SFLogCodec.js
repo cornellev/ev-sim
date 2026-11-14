@@ -1,3 +1,6 @@
+import protobuf from "protobufjs";
+import { validateNativeTopicValue } from "../simulation/NativeTopicContracts.js";
+
 export const SFLOG_VERSION = 1;
 
 export const RECORD_TAGS = Object.freeze({
@@ -51,10 +54,14 @@ function normalizeType(type) {
     return "json";
 }
 
-function jsonStringify(value) {
+function jsonStringify(value, retainArrays = false) {
     return JSON.stringify(value, (_key, item) => {
         if (typeof item === "bigint") return { __sflogBigInt: item.toString() };
         if (ArrayBuffer.isView(item)) {
+            if (retainArrays) {
+                const bytes = new Uint8Array(item.buffer, item.byteOffset, item.byteLength);
+                return { __sflogTypedArray: item.constructor.name, base64: protobuf.util.base64.encode(bytes, 0, bytes.length) };
+            }
             // Never expand typed arrays into JSON number lists — that can turn one
             // Image/PointCloud into tens of megabytes of temporary text.
             return {
@@ -73,6 +80,14 @@ function jsonStringify(value) {
 function jsonParse(value) {
     return JSON.parse(value, (_key, item) => {
         if (item?.__sflogBigInt) return BigInt(item.__sflogBigInt);
+        if (item?.__sflogTypedArray && typeof item.base64 === "string") {
+            const ctor = TYPED_ARRAY_CONSTRUCTORS.get(item.__sflogTypedArray);
+            if (!ctor || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(item.base64)) throw new Error("Invalid SFLog native typed array.");
+            const bytes = new Uint8Array(protobuf.util.base64.length(item.base64));
+            protobuf.util.base64.decode(item.base64, bytes, 0);
+            if (bytes.byteLength % ctor.BYTES_PER_ELEMENT) throw new Error("Misaligned SFLog native typed array.");
+            return new ctor(bytes.buffer);
+        }
         if (item?.__sflogTypedArray && Array.isArray(item.values)) {
             const ctor = TYPED_ARRAY_CONSTRUCTORS.get(item.__sflogTypedArray);
             return typeof ctor === "function" ? new ctor(item.values) : item.values;
@@ -271,7 +286,7 @@ export class ByteReader {
     }
 }
 
-export function encodeSignalValue(typeName, value) {
+export function encodeSignalValue(typeName, value, { retainArrays = false } = {}) {
     const type = normalizeType(typeName);
     const writer = new ByteWriter(64);
     switch (type) {
@@ -324,7 +339,7 @@ export function encodeSignalValue(typeName, value) {
             for (const item of value || []) writer.uint8(item ? 1 : 0);
             break;
         default:
-            writer.bytes(textEncoder.encode(jsonStringify(value ?? null)));
+            writer.bytes(textEncoder.encode(jsonStringify(value ?? null, retainArrays)));
     }
     return writer.finish();
 }
@@ -477,9 +492,14 @@ export class SFLogBatchEncoder {
         const timeUs = Math.max(0, Math.round(message.timeUs ?? message.entry.timeUs ?? 0));
         this._range(timeUs);
         const type = this.schemas.get(id)?.type || normalizeType(descriptor.type);
+        const nativeContract = descriptor.metadata?.valueContract;
+        if (nativeContract) {
+            const validation = validateNativeTopicValue(nativeContract, message.entry.value);
+            if (!validation.ok) throw new Error(`Invalid SFLog native product: ${validation.message}`);
+        }
         const encodedValue = message.encodedValue instanceof Uint8Array
             ? message.encodedValue
-            : encodeSignalValue(type, message.entry.value);
+            : encodeSignalValue(type, nativeContract ? { __sflogNativeProduct: 1, value: message.entry.value, metadata: { ...descriptor.metadata, ...message.entry.metadata } } : message.entry.value, { retainArrays: Boolean(nativeContract) });
         this._pushRecord({
             kind: "update",
             id,
@@ -723,13 +743,15 @@ export function decodeRecordStream(bytes, initialSchemas = new Map(), options = 
                 if (!schema) throw new Error(`SFLog update references unknown schema ${id}.`);
                 observedSchemaIds.add(id);
                 if (includeDecoded(includeUpdates, true, schema)) {
+                    const decoded = decodeSignalValue(schema.type, reader.sizedBytes());
+                    const native = decoded?.__sflogNativeProduct === 1;
                     updates.push({
                         id,
                         path: schema.path,
-                        descriptor: schema,
+                        descriptor: native ? { ...schema, metadata: { ...schema.metadata, ...decoded.metadata } } : schema,
                         timeUs,
                         cycle,
-                        value: decodeSignalValue(schema.type, reader.sizedBytes()),
+                        value: native ? decoded.value : decoded,
                     });
                 } else {
                     reader.skipSizedBytes();

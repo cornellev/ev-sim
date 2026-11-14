@@ -18,9 +18,9 @@ export async function externalBundle({ maxSteps = 24, sensors = true, leased = f
     if (leased) manifest.topics.find((topic) => topic.id === "controls-command").valueContract.version = 2;
     manifest.clock.maxSteps = maxSteps;
     manifest.sensorRig.sensors = sensors ? [createHeadlessImu({ frameId: "imu", outputs: { imuTopicId: "imu" } }),
-        createHeadlessImu({ id: "wheel", type: "wheel-odometry", frameId: "odom", outputs: { odometryTopicId: "wheel-odometry" },
+        createHeadlessImu({ id: "wheel", type: "wheel-odometry", frameId: "wheel_link", outputs: { odometryTopicId: "wheel-odometry" },
             calibration: { wheelRadius: 0.15, ticksPerRevolution: 1024, trackWidth: 1.2, slipFactor: 0,
-                poseNoise: { x: 0, y: 0, z: 0 }, twistNoise: { x: 0, y: 0, z: 0 }, childFrameId: "base_link" } })] : [];
+                poseNoise: { x: 0, y: 0, z: 0 }, twistNoise: { x: 0, y: 0, z: 0 }, odomFrameId: "odom", childFrameId: "base_link" } })] : [];
     if (sensors) bundle.resolved.backendSelections.push(createStateSensorBackendSelection());
     const resource = createProtobufInterfaceResource({ kind: "cev-sim.protobuf-interface", version: 2,
         schemas: [{ id: "main", fingerprint: controllerSchema.fingerprint, descriptorBase64: controllerSchema.descriptorBase64 }], bootstrap: [],

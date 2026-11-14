@@ -68,7 +68,7 @@ class _Reader:
     def _take(self, size: int) -> bytes:
         if size < 0 or self.offset + size > len(self.data):
             raise ClipError("Unexpected end of SFLog data.")
-        chunk = self.data[self.offset:self.offset + size]
+        chunk = self.data[self.offset : self.offset + size]
         self.offset += size
         return chunk
 
@@ -141,17 +141,24 @@ def _decode_records(payload: bytes, schemas: dict[int, Schema]) -> list[Update]:
                 if schema is None:
                     raise ClipError(f"SFLog update references unknown schema {schema_id}.")
                 message = None
-                if schema.type_name == "bytes":
-                    message = decode_camera_payload(raw)
-                updates.append(Update(
-                    path=schema.path,
-                    type_name=schema.type_name,
-                    time_us=time_us,
-                    cycle=cycle,
-                    payload=raw,
-                    metadata=schema.metadata,
-                    message=message,
-                ))
+                metadata = schema.metadata
+                if schema.type_name == "json":
+                    value = json.loads(raw)
+                    if isinstance(value, dict) and value.get("__sflogNativeProduct") == 1:
+                        metadata = {**metadata, **value["metadata"]}
+                        value = value["value"]
+                    message = decode_camera_payload(value, metadata)
+                updates.append(
+                    Update(
+                        path=schema.path,
+                        type_name=schema.type_name,
+                        time_us=time_us,
+                        cycle=cycle,
+                        payload=raw,
+                        metadata=metadata,
+                        message=message,
+                    )
+                )
             continue
         if tag == 0x03:
             reader.varuint()
@@ -193,7 +200,7 @@ def read_sflog(path: Path) -> list[Update]:
     index_offset = struct.unpack_from("<Q", data, len(data) - 12)[0]
     if index_offset < header_end or index_offset > len(data) - 16:
         raise ClipError(f"{path} has an invalid SFLog index locator.")
-    if data[index_offset:index_offset + 4] != b"INDX":
+    if data[index_offset : index_offset + 4] != b"INDX":
         raise ClipError(f"{path} index magic is not INDX.")
     index_count = struct.unpack_from("<I", data, index_offset + 4)[0]
     index_bytes = 8 + index_count * 25
@@ -205,10 +212,12 @@ def read_sflog(path: Path) -> list[Update]:
     cursor = header_end
     chunk_index = 0
     while cursor < index_offset:
-        if data[cursor:cursor + 4] != b"CHNK":
+        if data[cursor : cursor + 4] != b"CHNK":
             raise ClipError(f"{path} has a gap before chunk {chunk_index}.")
         start_us, end_us, uncompressed_length, compressed_length, crc, reserved = struct.unpack_from(
-            "<QQIIII", data, cursor + 4,
+            "<QQIIII",
+            data,
+            cursor + 4,
         )
         if reserved != 0:
             raise ClipError(f"{path} chunk {chunk_index} has a non-zero reserved field.")
@@ -221,7 +230,7 @@ def read_sflog(path: Path) -> list[Update]:
         if recorded_offset != cursor or recorded_start != start_us or recorded_end != end_us:
             raise ClipError(f"{path} index entry {chunk_index} does not match its chunk.")
         payload_offset = cursor + 36
-        compressed = data[payload_offset:payload_offset + compressed_length]
+        compressed = data[payload_offset : payload_offset + compressed_length]
         if len(compressed) != compressed_length:
             raise ClipError(f"{path} chunk {chunk_index} is truncated.")
         try:

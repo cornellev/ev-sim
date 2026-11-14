@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { IconChevronDown } from "@tabler/icons-react";
-import { decodeTopicValue } from "../../client/Client.js";
+import { validateNativeTopicValue } from "../../simulation/NativeTopicContracts.js";
 import { getTelemetryStore } from "../../telemetry/TelemetryRuntime.js";
 import { listPerceptionLabels } from "../../autonomy/PerceptionLabelCatalog.js";
 import { oracleTopicSignalPath } from "../../scripting/runtime/SignalPaths.js";
@@ -37,26 +37,9 @@ const PRODUCT_MODES = [
     { id: "semantic", label: "Semantic" },
 ];
 
-function asImageMessage(value) {
-    if (!value || typeof value !== "object" || ArrayBuffer.isView(value)) return null;
-    const width = Number(value.width);
-    const height = Number(value.height);
-    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
-    if (value.data == null) return null;
-    return value;
-}
-
-function decodeImageBytes(entry) {
-    if (!entry) return null;
-    const value = entry.value ?? entry;
-    if (!value || entry.exists === false) return null;
-    const direct = asImageMessage(value);
-    if (direct) return direct;
-    if (value instanceof Uint8Array || ArrayBuffer.isView(value)) {
-        const decoded = decodeTopicValue(value);
-        return asImageMessage(decoded?.value);
-    }
-    return null;
+function nativeImage(entry) {
+    if (!entry?.exists || !validateNativeTopicValue({ id: "cev.image", version: 1 }, entry.value).ok) return null;
+    return { ...entry.value, captureTimeNs: entry.metadata?.captureTimeNs ?? entry.descriptor?.metadata?.captureTimeNs ?? entry.timeUs * 1000 };
 }
 
 function isCameraProductPath(path) {
@@ -66,7 +49,7 @@ function isCameraProductPath(path) {
 
 function readFirstImage(store, paths) {
     for (const path of paths) {
-        const image = decodeImageBytes(store.read(path));
+        const image = nativeImage(store.read(path));
         if (image) return image;
     }
     return null;
@@ -74,8 +57,7 @@ function readFirstImage(store, paths) {
 
 function imageStampKey(image) {
     if (!image) return "";
-    const stamp = image.header?.stamp;
-    return `${image.width}x${image.height}:${image.encoding || ""}:${stamp?.sec ?? ""}:${stamp?.nanosec ?? ""}`;
+    return `${image.width}x${image.height}:${image.pixelFormat}:${image.captureTimeNs}`;
 }
 
 function toUint8(data, expectedLength) {
@@ -95,7 +77,7 @@ function toUint8(data, expectedLength) {
 
 function paintRgb(ctx, image, width, height) {
     const data = image.data;
-    const encoding = String(image.encoding || "rgba8").toLowerCase();
+    const encoding = String(image.pixelFormat || "rgba8").toLowerCase();
     const imageData = ctx.createImageData(width, height);
     const out = imageData.data;
     const src = toUint8(data, encoding.includes("rgba") ? out.length : width * height * 3);
@@ -271,7 +253,8 @@ function paintProduct(canvas, store, mode, cache) {
     } else {
         ctx.fillStyle = "#94a3b8";
         ctx.font = "14px system-ui, sans-serif";
-        ctx.fillText("Waiting for camera product…", 16, 28);
+        const historical = PANEL_PATHS.some((path) => store.descriptor?.(path)?.metadata?.rosType || store.read(path)?.value instanceof Uint8Array);
+        ctx.fillText(historical ? "Historical ROS payload preview unavailable" : "Waiting for camera product…", 16, 28);
         if (cache) {
             cache.stamp = stamp;
             cache.pixels = null;

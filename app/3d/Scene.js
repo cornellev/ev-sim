@@ -437,30 +437,6 @@ async function setupVehicles(scene, data, camera) {
     }));
 
 
-    disposers.push(data.client().onUpdate(info => {
-        // if (info.name == "/angle") {
-        //     // is between -1 and 1
-        //     const angle = parseFloat(info.value);
-        //     car.steeringAngle = -angle * (30 / 180) * Math.PI; // max steering angle of 30 degrees
-        // } else if (info.name == "/forward") {
-        //     // boolean
-        //     const forward = info.value;
-        //     car.velocity.x = forward ? 5 : 0; // move forward at 5 units/sec when true, stop when false
-        // }
-        // console.log(info)
-
-        if (info.name === "/controls/command") {
-            if (data.simulation()?.resolvedRun) return;
-            const value = info.value || {};
-            const mode = String(value.mode || "velocity");
-            const speed = mode === "stop" ? 0 : Number(value.speed || 0);
-            const angle = mode === "stop" ? 0 : Number(value.steering_angle || 0);
-            const target = clampPlaygroundSteerTarget(angle, steerKinematics().maxSteeringAngle);
-            if (target != null) playgroundSteer.targetRad = target;
-            applyManualDrive(car, { speedMps: speed });
-        }
-    }));
-
     let camFollowing = false;
     let following = null;
     const releaseCameraFollow = () => {

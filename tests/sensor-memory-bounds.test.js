@@ -3,31 +3,8 @@ import test from "node:test";
 
 import { TopicInputQueue } from "../app/simulation/TopicInputQueue.js";
 import { SensorPublisher } from "../app/3d/devices/SensorPublisher.js";
-import {
-    encodePublishedTopicAsync,
-    encodePoolHasCapacity,
-    encodePoolStats,
-    resetEncodePoolForTests,
-} from "../app/3d/devices/SensorEncodePool.js";
-import { buildEncodedPublishPacket, Client, registerMsgDefinition } from "../app/client/Client.js";
-
-function registerImageSchema() {
-    registerMsgDefinition("builtin_interfaces/Time", "int32 sec\nuint32 nanosec\n");
-    registerMsgDefinition("std_msgs/Header", "builtin_interfaces/Time stamp\nstring frame_id\n");
-    registerMsgDefinition("sensor_msgs/Image", "std_msgs/Header header\nuint32 height\nuint32 width\nstring encoding\nuint8 is_bigendian\nuint32 step\nuint8[] data\n");
-}
-
-function makeImage(bytes = 4096) {
-    return {
-        header: { stamp: { sec: 0, nanosec: 0 }, frame_id: "cam" },
-        height: 16,
-        width: 16,
-        encoding: "rgba8",
-        is_bigendian: 0,
-        step: 64,
-        data: new Uint8Array(bytes),
-    };
-}
+import { buildNativeImage } from "../app/simulation/sensors/NativeSensorProducts.js";
+function makeImage(bytes = 4096) { return buildNativeImage({ data: new Uint8Array(bytes), width: bytes / 4, height: 1 }); }
 
 test("TopicInputQueue bounds entries and bytes while simulation is paused", () => {
     const queue = new TopicInputQueue(
@@ -48,8 +25,6 @@ test("TopicInputQueue bounds entries and bytes while simulation is paused", () =
 });
 
 test("SensorPublisher enforces frame and byte queue ceilings then clears refs after deliver", () => {
-    registerImageSchema();
-    resetEncodePoolForTests({ workerCount: 0, maxPendingJobs: 1 });
     const published = [];
     const fakeDevice = {
         telemetryId: "cam",
@@ -87,7 +62,7 @@ test("SensorPublisher enforces frame and byte queue ceilings then clears refs af
         outputs: {},
     }, {
         seed: "cap",
-        topics: [{ id: "image", name: "/image", type: "sensor_msgs/Image", schema: { type: "sensor_msgs/Image" } }],
+        topics: [{ id: "image", name: "/image", direction: "output", valueContract: { id: "cev.image", version: 1 } }],
     });
     for (let step = 1; step <= 30; step += 1) {
         publisher.update({ step, timeNs: step * 33_333_333 });
@@ -102,317 +77,15 @@ test("SensorPublisher enforces frame and byte queue ceilings then clears refs af
     assert.equal(publisher.queue.length, 0);
 });
 
-test("encode pool rejects work beyond pending job/byte ceilings", () => {
-    const pool = resetEncodePoolForTests({
-        workerCount: 0,
-        maxPendingJobs: 1,
-        maxPendingBytes: 1024,
-    });
-    assert.equal(encodePoolHasCapacity(2048), true); // sync path has capacity when no workers
-    assert.ok(encodePoolStats().pendingJobs <= 1);
-    pool.dispose();
-});
-
-test("Client rejects publishes when WebSocket bufferedAmount exceeds ceiling", async () => {
-    const client = new Client({
-        url: "ws://localhost:9",
-        reconnect: false,
-        maxBufferedAmount: 1024,
-    });
-    client.ws = {
-        readyState: 1,
-        bufferedAmount: 900,
-        send() { throw new Error("should not send"); },
-    };
-    client._ready = Promise.resolve();
-    client._connected = true;
-    Object.defineProperty(client, "isOpen", { value: () => true });
-    await assert.rejects(
-        () => client.publishEncoded("/sensors/image", new Uint8Array(200)),
-        /websocket-backpressure/,
-    );
-    assert.ok(client.backpressureEvents >= 1);
-});
-
-test("prepared publishes share the packet-backed encoded value without a second packet allocation", async () => {
-    const encoded = Uint8Array.from([10, 20, 30, 40]);
-    const prepared = buildEncodedPublishPacket("/camera", encoded);
-    assert.equal(prepared.encoded.buffer, prepared.packet.buffer);
-    assert.deepEqual([...prepared.encoded], [...encoded]);
-    let sent = null;
-    const client = new Client({ url: "ws://localhost:9", reconnect: false });
-    client._assertSendBudget = () => {};
-    client._send = async (packet) => { sent = packet; };
-    await client.publishPrepared(prepared.packet);
-    assert.equal(sent, prepared.packet);
-});
-
-test("zero-latency encoding can transfer ownership of the original heavy buffer", async () => {
-    const OriginalWorker = globalThis.Worker;
-    class TransferWorker {
-        postMessage(message, transfers = []) {
-            const cloned = structuredClone(message, { transfer: transfers });
-            if (cloned.init) return;
-            const packet = Uint8Array.from([1, 0, 42]);
-            queueMicrotask(() => this.onmessage?.({
-                data: { id: cloned.id, ok: true, packet, valueOffset: 2 },
-            }));
-        }
-
-        terminate() {}
-    }
-    globalThis.Worker = TransferWorker;
-    try {
-        resetEncodePoolForTests({ workerCount: 1 });
-        const image = makeImage(4096);
-        const encoded = encodePublishedTopicAsync("/image", "sensor_msgs/Image", image, {
-            transferOwnership: true,
-        });
-        assert.equal(image.data.buffer.byteLength, 0);
-        const prepared = await encoded;
-        assert.equal(prepared.encoded.buffer, prepared.packet.buffer);
-        assert.deepEqual([...prepared.encoded], [42]);
-    } finally {
-        resetEncodePoolForTests({ workerCount: 0 }).dispose();
-        if (OriginalWorker === undefined) delete globalThis.Worker;
-        else globalThis.Worker = OriginalWorker;
-    }
-});
-
-test("zero-latency heavy frames await prepared worker encoding before same-step delivery", async () => {
-    registerImageSchema();
-    let resolveEncode;
-    const prepared = buildEncodedPublishPacket("/image", Uint8Array.from([1, 2, 3]));
-    let encodeOptions = null;
-    const encodingPool = {
-        isHeavySensorValue: () => true,
-        estimateEncodeBytes: (value) => value.data.byteLength,
-        encodePoolHasCapacity: () => true,
-        encodePublishedTopicAsync: (topic, type, value, options) => new Promise((resolve) => {
-            encodeOptions = options;
-            resolveEncode = resolve;
-        }),
-        cancelEncodeOwner: () => ({ cancelled: 0, generation: 1 }),
-        bumpEncodeOwnerGeneration: () => 0,
-    };
-    const published = [];
-    const client = {
-        isOpen: () => true,
-        publishPrepared(packet) {
-            published.push(packet);
-            return Promise.resolve();
-        },
-    };
-    const device = {
-        telemetryId: "cam",
-        captureAt: () => [{ topicId: "image", signal: "image", value: makeImage(4096) }],
-        getParent: () => ({
-            getParent: () => ({
-                bindings: () => ({ signalStore: { publishSignal() {}, emitTelemetryEvent() {} } }),
-                client: () => ({ get: () => client }),
-                simulation: () => ({ timeNs: 0, steps: 0, pause() {} }),
-            }),
-        }),
-    };
-    const publisher = new SensorPublisher(device, {
-        id: "cam",
-        rateHz: 60,
-        phaseNs: 0,
-        latency: { fixedNs: 0, jitterNs: 0 },
-        maxQueueFrames: 2,
-        health: {},
-        calibration: { products: {} },
-        outputs: {},
-    }, {
-        seed: "zero-latency",
-        encodingPool,
-        topics: [{
-            id: "image",
-            name: "/image",
-            type: "sensor_msgs/Image",
-            schema: { type: "sensor_msgs/Image" },
-            routeDownstream: false,
-        }],
-    });
-    let completed = false;
-    const update = publisher.updateAsync({ step: 1, timeNs: 16_666_667 }).then(() => { completed = true; });
-    await Promise.resolve();
-    assert.equal(completed, false);
-    assert.equal(encodeOptions.transferOwnership, true);
-    resolveEncode(prepared);
-    await update;
+test("native frame release clears payload references and reset releases observations", () => {
+    let releases = 0;
+    const publisher = new SensorPublisher({ telemetryId: "cam", releaseObservation() { releases++; } }, { id: "cam", rateHz: 60, latency: { fixedNs: 0, jitterNs: 0 }, outputs: {} }, { topics: [{ id: "image", name: "/image", direction: "output", valueContract: { id: "cev.image", version: 1 } }], runtimeData: { bindings: () => ({ signalStore: { publishSignal() {} } }) } });
+    const frame = publisher.enqueue([{ topicId: "image", signal: "image", value: makeImage() }], 0, 0, { next: () => 0 }, { step: 1, stepNs: 16_666_667, timeNs: 16_666_667 });
     publisher.deliver({ step: 1, timeNs: 16_666_667 });
-    assert.equal(published.length, 1);
-    assert.equal(published[0], prepared.packet);
-    publisher.dispose();
-});
-
-test("zero-latency encode worker loss is an infrastructure failure", async () => {
-    const device = {
-        telemetryId: "cam",
-        captureAt: () => [{ topicId: "image", signal: "image", value: makeImage(4096) }],
-        getParent: () => null,
-    };
-    const publisher = new SensorPublisher(device, {
-        id: "cam",
-        rateHz: 60,
-        phaseNs: 0,
-        latency: { fixedNs: 0, jitterNs: 0 },
-        maxQueueFrames: 2,
-        health: {},
-        calibration: { products: {} },
-        outputs: {},
-    }, {
-        seed: "worker-loss",
-        encodingPool: {
-            isHeavySensorValue: () => true,
-            estimateEncodeBytes: () => 4096,
-            encodePoolHasCapacity: () => true,
-            encodePublishedTopicAsync: () => Promise.reject(new Error("encode worker lost")),
-            cancelEncodeOwner: () => ({ cancelled: 0, generation: 1 }),
-            bumpEncodeOwnerGeneration: () => 0,
-        },
-        topics: [{ id: "image", name: "/image", type: "sensor_msgs/Image", schema: { type: "sensor_msgs/Image" } }],
-    });
-    await assert.rejects(
-        publisher.updateAsync({ step: 1, timeNs: 16_666_667 }),
-        (error) => error.infrastructureFailure === true && error.code === "SENSOR_ENCODE_FAILED",
-    );
-    publisher.dispose();
-});
-
-test("sync delivery ignores a heavy encode that finishes after the frame is released", async () => {
-    registerImageSchema();
-    let resolveEncode;
-    const encodingPool = {
-        isHeavySensorValue: () => true,
-        estimateEncodeBytes: () => 4096,
-        encodePoolHasCapacity: () => true,
-        encodePublishedTopicAsync: () => new Promise((resolve) => {
-            resolveEncode = resolve;
-        }),
-        cancelEncodeOwner: () => ({ cancelled: 0, generation: 1 }),
-        bumpEncodeOwnerGeneration: () => 0,
-    };
-    const device = {
-        telemetryId: "cam",
-        captureAt: () => [{ topicId: "image", signal: "image", value: makeImage(4096) }],
-        getParent: () => null,
-    };
-    const publisher = new SensorPublisher(device, {
-        id: "cam",
-        rateHz: 60,
-        phaseNs: 0,
-        latency: { fixedNs: 0, jitterNs: 0 },
-        maxQueueFrames: 2,
-        health: {},
-        calibration: { products: {} },
-        outputs: {},
-    }, {
-        seed: "late-encode",
-        encodingPool,
-        topics: [{ id: "image", name: "/image", type: "sensor_msgs/Image", schema: { type: "sensor_msgs/Image" } }],
-    });
-    publisher.update({ step: 1, timeNs: 16_666_667 });
-    const frame = publisher.queue[0];
-    const pending = frame.encodePromise;
-    publisher.deliver({ step: 1, timeNs: 16_666_667 });
-    assert.equal(frame.encodeCancelled, true);
-    assert.equal(frame.encodedByTopic, null);
-    resolveEncode(buildEncodedPublishPacket("/image", Uint8Array.from([9])));
-    await pending;
-    publisher.dispose();
-});
-
-function makePublisher(client, pause) {
-    const fakeDevice = {
-        telemetryId: "cam",
-        getParent() {
-            return {
-                getParent: () => ({
-                    bindings: () => ({
-                        signalStore: { publishSignal() {}, emitTelemetryEvent() {} },
-                    }),
-                    client: () => ({ get: () => client }),
-                    simulation: () => ({ timeNs: 0, steps: 0, pause }),
-                }),
-            };
-        },
-    };
-    return new SensorPublisher(fakeDevice, {
-        id: "cam",
-        rateHz: 10,
-        phaseNs: 0,
-        latency: {},
-        maxQueueFrames: 2,
-        health: {},
-        calibration: { products: {} },
-        outputs: {},
-    }, {
-        seed: "pause",
-        topics: [{
-            id: "image",
-            name: "/sensors/front_camera/image_raw",
-            type: "sensor_msgs/Image",
-            schema: { type: "sensor_msgs/Image" },
-            required: true,
-        }],
-    });
-}
-
-test("sensor publisher keeps running when ROS is down or backpressured", async () => {
-    registerImageSchema();
-    let pauses = 0;
-    const pause = () => { pauses += 1; };
-    const disconnected = makePublisher({ isOpen: () => false }, pause);
-    disconnected._event("publish-failed", "warning", { reason: "encode timeout" });
-    disconnected._event("required-topic-unavailable", "warning", { reason: "orchestrator-disconnected" });
-    disconnected._event("publish-failed", "error", { reason: "unknown-topic" });
-    disconnected._deliverMessage({
-        topicId: "image",
-        signal: "image",
-        value: makeImage(256),
-        frameId: "cam",
-    }, {
-        sampleIndex: 0,
-        captureTimeNs: 0,
-        scheduledDeliveryTimeNs: 0,
-        deliveryTimeNs: 0,
-        captureStep: 0,
-        scheduledDeliveryStep: 0,
-        sequence: 1,
-        syncGroupKey: "",
-        encodedByTopic: new Map(),
-    }, { step: 1, timeNs: 0 });
-    assert.equal(pauses, 0);
-
-    const backpressured = makePublisher({
-        isOpen: () => true,
-        publishEncoded() {
-            return Promise.reject(new Error("websocket-backpressure"));
-        },
-    }, pause);
-    backpressured._deliverMessage({
-        topicId: "image",
-        signal: "image",
-        value: makeImage(256),
-        frameId: "cam",
-    }, {
-        sampleIndex: 1,
-        captureTimeNs: 0,
-        scheduledDeliveryTimeNs: 0,
-        deliveryTimeNs: 0,
-        captureStep: 0,
-        scheduledDeliveryStep: 0,
-        sequence: 2,
-        syncGroupKey: "",
-        encodedByTopic: new Map(),
-    }, { step: 2, timeNs: 0 });
-    await Promise.resolve();
-    assert.equal(pauses, 0);
-
-    disconnected._event("capture-failed", "error", { reason: "gpu" });
-    assert.equal(pauses, 1);
-    disconnected._event("frame-invalid", "error", { reason: "missing-frame" });
-    assert.equal(pauses, 2);
+    assert.equal(frame.messages, null);
+    assert.equal(publisher.queuedBytes, 0);
+    publisher.queue.push({ observation: { value: new Float32Array(1) } });
+    publisher.reset();
+    assert.equal(releases, 1);
+    assert.equal(publisher.queue.length, 0);
 });

@@ -237,6 +237,7 @@ const pluginRangeImageRunFields = Object.freeze([
 ]);
 
 export function createPluginSensorTypeDefinition(descriptor, ownership) {
+    if (descriptor.sensorAbi !== 2) throw new Error("Native sensor authoring requires sensorAbi 2; use reviewed native adoption.");
     const pointCloudProducts = descriptor.products.filter((product) => product.kind === "pointCloud");
     return Object.freeze({
         id: descriptor.type,
@@ -249,7 +250,7 @@ export function createPluginSensorTypeDefinition(descriptor, ownership) {
             outputs: Object.freeze(pointCloudProducts.map((product) => Object.freeze({
                 key: product.outputKey,
                 signal: product.productId,
-                ...(product.valueContract ? { valueContract: product.valueContract } : { rosType: product.rosType }),
+                valueContract: product.valueContract,
                 measured: true,
             }))),
             normalize(source = {}) {
@@ -273,11 +274,6 @@ export function createPluginSensorTypeDefinition(descriptor, ownership) {
                         ),
                         products,
                     },
-                    ...(descriptor.sensorAbi === 1 ? { schema: {
-                        ...Object.fromEntries(pointCloudProducts.map((product) => [product.outputKey, product.rosType])),
-                        ...(source.schema && typeof source.schema === "object" && !Array.isArray(source.schema)
-                            ? clonePluginJson(source.schema, "sensor.schema") : {}),
-                    } } : {}),
                     health: {
                         deadlineNs: Number.isSafeInteger(source.health?.deadlineNs) && source.health.deadlineNs >= 0
                             ? source.health.deadlineNs : Math.round(1e9 / descriptor.defaults.rateHz),

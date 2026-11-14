@@ -5,16 +5,12 @@ import { comparePluginText } from "./PluginSelection.js";
 
 export const PLUGIN_TOPIC_QUEUE_LIMIT = 1024;
 
-const HEAVY_TOPIC_TYPE = /PointCloud|Image|CompressedImage|LaserScan/i;
-
 export function isPluginControlTopic(topic) {
     return topic?.valueContract?.id === "cev.control-command" || topic?.stage === "controls" || topic?.contractId === "controls-command";
 }
 
 export function isPluginHeavyTopic(topic, value) {
     if (["cev.points", "cev.semantic-points", "cev.image"].includes(topic?.valueContract?.id)) return true;
-    const type = String(topic?.schema?.type || topic?.type || "");
-    if (HEAVY_TOPIC_TYPE.test(type)) return true;
     return value !== undefined && isHeavyValue(value);
 }
 
@@ -122,7 +118,6 @@ export class PluginTopicRuntime {
                 sequence: envelope.sequence,
                 applyTimeNs: envelope.applyTimeNs,
                 applyStep: envelope.applyStep,
-                typeStr: envelope.typeStr ?? null,
                 value: envelope.value,
             }, "plugin topic envelope")));
         }

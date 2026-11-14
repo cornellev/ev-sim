@@ -1,3 +1,4 @@
+import { NATIVE_SENSOR_OUTPUT_CONTRACTS } from "../NativeTopicContracts.js";
 import {
     defaultCameraRenderSelection,
     normalizeCameraRenderSelection,
@@ -221,9 +222,7 @@ const cameraRunFields = [
     { label: "cy", path: ["calibration", "intrinsics", "cy"], control: "number", advanced: true },
     { label: "Distortion model", path: ["calibration", "distortionModel"], control: "text", advanced: true },
     { label: "Image topic ID", path: ["outputs", "imageTopicId"], control: "text", advanced: true },
-    { label: "Image ROS schema", path: ["schema", "imageTopicId"], control: "text", advanced: true },
     { label: "CameraInfo topic ID", path: ["outputs", "cameraInfoTopicId"], control: "text", advanced: true },
-    { label: "CameraInfo ROS schema", path: ["schema", "cameraInfoTopicId"], control: "text", advanced: true },
     { label: "Depth topic ID", path: ["outputs", "depthTopicId"], control: "text", advanced: true },
     { label: "Semantic topic ID", path: ["outputs", "semanticTopicId"], control: "text", advanced: true },
     { label: "Instance topic ID", path: ["outputs", "instanceTopicId"], control: "text", advanced: true },
@@ -246,7 +245,6 @@ const lidarRunFields = [
     { label: "Elevation start (deg)", path: ["calibration", "elevation", "startDeg"], control: "number" },
     { label: "Elevation end (deg)", path: ["calibration", "elevation", "endDeg"], control: "number" },
     { label: "PointCloud topic ID", path: ["outputs", "pointCloudTopicId"], control: "text", advanced: true },
-    { label: "PointCloud ROS schema", path: ["schema", "pointCloudTopicId"], control: "text", advanced: true },
     { label: "Semantic PointCloud topic ID", path: ["outputs", "semanticPointCloudTopicId"], control: "text", advanced: true },
     { label: "Diagnostics topic ID", path: ["outputs", "diagnosticsTopicId"], control: "text", advanced: true },
     { label: "Azimuth step (deg)", path: ["calibration", "azimuth", "stepDeg"], control: "number", min: 0.01, advanced: true },
@@ -369,13 +367,6 @@ function validateCameraCalibration(sensor) {
     } else {
         issues.push({ path: "calibration.distortionModel", message: "Only none and plumb_bob distortion are supported." });
     }
-    const outputs = object(sensor.outputs);
-    const oracleKeys = ["depthTopicId", "semanticTopicId", "instanceTopicId", "detections2dTopicId", "detections3dTopicId", "lanesTopicId", "trafficControlsTopicId"];
-    for (const key of oracleKeys) {
-        if (outputs[key] && sensor.schema?.[key] && !String(sensor.schema[key]).startsWith("sensor_msgs/") && !String(sensor.schema[key]).startsWith("vision_msgs/") && !String(sensor.schema[key]).startsWith("sensor_fusion_msgs/") && !String(sensor.schema[key]).startsWith("diagnostic_msgs/")) {
-            issues.push({ path: `schema.${key}`, message: `Unsupported schema for oracle camera product "${key}".` });
-        }
-    }
     return issues;
 }
 
@@ -414,12 +405,6 @@ function scanningLidarRunParts(source, elevation) {
                 diagnostics: products.diagnostics !== false,
             },
             labelCatalogVersion: positiveInteger(calibrationSource.labelCatalogVersion, 1),
-        },
-        schema: {
-            pointCloudTopicId: "sensor_msgs/PointCloud2",
-            semanticPointCloudTopicId: "sensor_msgs/PointCloud2",
-            diagnosticsTopicId: "diagnostic_msgs/DiagnosticArray",
-            ...object(source.schema),
         },
         health: {
             deadlineNs: nonNegativeInteger(source.health?.deadlineNs, Math.round(1e9 / 10)),
@@ -460,16 +445,16 @@ registerSensorType({
         defaultRateHz: 30,
         fields: cameraRunFields,
         outputs: [
-            { key: "imageTopicId", signal: "image", rosType: "sensor_msgs/Image", measured: true },
-            { key: "cameraInfoTopicId", signal: "cameraInfo", rosType: "sensor_msgs/CameraInfo", measured: true },
-            { key: "depthTopicId", signal: "depth", rosType: "sensor_msgs/Image", oracle: true },
-            { key: "semanticTopicId", signal: "semantic", rosType: "sensor_msgs/Image", oracle: true },
-            { key: "instanceTopicId", signal: "instance", rosType: "sensor_msgs/Image", oracle: true },
-            { key: "detections2dTopicId", signal: "detections2d", rosType: "vision_msgs/Detection2DArray", oracle: true },
-            { key: "detections3dTopicId", signal: "detections3d", rosType: "vision_msgs/Detection3DArray", oracle: true },
-            { key: "lanesTopicId", signal: "lanes", rosType: "sensor_fusion_msgs/StampedLanes", oracle: true },
-            { key: "trafficControlsTopicId", signal: "trafficControls", rosType: "sensor_fusion_msgs/TrafficControlStates", oracle: true },
-            { key: "diagnosticsTopicId", signal: "diagnostics", rosType: "diagnostic_msgs/DiagnosticArray", measured: true },
+            { key: "imageTopicId", signal: "image", valueContract: { id: NATIVE_SENSOR_OUTPUT_CONTRACTS["imageTopicId"], version: 1 }, measured: true },
+            { key: "cameraInfoTopicId", signal: "cameraInfo", valueContract: { id: NATIVE_SENSOR_OUTPUT_CONTRACTS["cameraInfoTopicId"], version: 1 }, measured: true },
+            { key: "depthTopicId", signal: "depth", valueContract: { id: NATIVE_SENSOR_OUTPUT_CONTRACTS["depthTopicId"], version: 1 }, oracle: true },
+            { key: "semanticTopicId", signal: "semantic", valueContract: { id: NATIVE_SENSOR_OUTPUT_CONTRACTS["semanticTopicId"], version: 1 }, oracle: true },
+            { key: "instanceTopicId", signal: "instance", valueContract: { id: NATIVE_SENSOR_OUTPUT_CONTRACTS["instanceTopicId"], version: 1 }, oracle: true },
+            { key: "detections2dTopicId", signal: "detections2d", valueContract: { id: NATIVE_SENSOR_OUTPUT_CONTRACTS["detections2dTopicId"], version: 1 }, oracle: true },
+            { key: "detections3dTopicId", signal: "detections3d", valueContract: { id: NATIVE_SENSOR_OUTPUT_CONTRACTS["detections3dTopicId"], version: 1 }, oracle: true },
+            { key: "lanesTopicId", signal: "lanes", valueContract: { id: NATIVE_SENSOR_OUTPUT_CONTRACTS["lanesTopicId"], version: 1 }, oracle: true },
+            { key: "trafficControlsTopicId", signal: "trafficControls", valueContract: { id: NATIVE_SENSOR_OUTPUT_CONTRACTS["trafficControlsTopicId"], version: 1 }, oracle: true },
+            { key: "diagnosticsTopicId", signal: "diagnostics", valueContract: { id: NATIVE_SENSOR_OUTPUT_CONTRACTS["diagnosticsTopicId"], version: 1 }, measured: true },
         ],
         normalize(source) {
             const calibrationSource = object(source.calibration);
@@ -504,19 +489,6 @@ registerSensorType({
                         diagnostics: products.diagnostics !== false,
                     },
                     labelCatalogVersion: positiveInteger(calibrationSource.labelCatalogVersion, 1),
-                },
-                schema: {
-                    imageTopicId: "sensor_msgs/Image",
-                    cameraInfoTopicId: "sensor_msgs/CameraInfo",
-                    depthTopicId: "sensor_msgs/Image",
-                    semanticTopicId: "sensor_msgs/Image",
-                    instanceTopicId: "sensor_msgs/Image",
-                    detections2dTopicId: "vision_msgs/Detection2DArray",
-                    detections3dTopicId: "vision_msgs/Detection3DArray",
-                    lanesTopicId: "sensor_fusion_msgs/StampedLanes",
-                    trafficControlsTopicId: "sensor_fusion_msgs/TrafficControlStates",
-                    diagnosticsTopicId: "diagnostic_msgs/DiagnosticArray",
-                    ...object(source.schema),
                 },
                 health: {
                     deadlineNs: nonNegativeInteger(source.health?.deadlineNs, Math.round(1e9 / 30)),
@@ -556,9 +528,9 @@ registerSensorType({
         defaultRateHz: 10,
         fields: lidarRunFields,
         outputs: [
-            { key: "pointCloudTopicId", signal: "pointCloud", rosType: "sensor_msgs/PointCloud2", measured: true },
-            { key: "semanticPointCloudTopicId", signal: "semanticPointCloud", rosType: "sensor_msgs/PointCloud2", oracle: true },
-            { key: "diagnosticsTopicId", signal: "diagnostics", rosType: "diagnostic_msgs/DiagnosticArray", measured: true },
+            { key: "pointCloudTopicId", signal: "pointCloud", valueContract: { id: NATIVE_SENSOR_OUTPUT_CONTRACTS["pointCloudTopicId"], version: 1 }, measured: true },
+            { key: "semanticPointCloudTopicId", signal: "semanticPointCloud", valueContract: { id: NATIVE_SENSOR_OUTPUT_CONTRACTS["semanticPointCloudTopicId"], version: 1 }, oracle: true },
+            { key: "diagnosticsTopicId", signal: "diagnostics", valueContract: { id: NATIVE_SENSOR_OUTPUT_CONTRACTS["diagnosticsTopicId"], version: 1 }, measured: true },
         ],
         normalize(source) {
             const calibrationSource = object(source.calibration);
@@ -596,9 +568,9 @@ registerSensorType({
         defaultRateHz: 10,
         fields: lidar2dRunFields,
         outputs: [
-            { key: "pointCloudTopicId", signal: "pointCloud", rosType: "sensor_msgs/PointCloud2", measured: true },
-            { key: "semanticPointCloudTopicId", signal: "semanticPointCloud", rosType: "sensor_msgs/PointCloud2", oracle: true },
-            { key: "diagnosticsTopicId", signal: "diagnostics", rosType: "diagnostic_msgs/DiagnosticArray", measured: true },
+            { key: "pointCloudTopicId", signal: "pointCloud", valueContract: { id: NATIVE_SENSOR_OUTPUT_CONTRACTS["pointCloudTopicId"], version: 1 }, measured: true },
+            { key: "semanticPointCloudTopicId", signal: "semanticPointCloud", valueContract: { id: NATIVE_SENSOR_OUTPUT_CONTRACTS["semanticPointCloudTopicId"], version: 1 }, oracle: true },
+            { key: "diagnosticsTopicId", signal: "diagnostics", valueContract: { id: NATIVE_SENSOR_OUTPUT_CONTRACTS["diagnosticsTopicId"], version: 1 }, measured: true },
         ],
         normalize: (source) => scanningLidarRunParts(source, { ...PLANAR_LIDAR_ELEVATION }),
         validate: validatePlanarLidarCalibration,
@@ -626,7 +598,7 @@ registerSensorType({
     run: {
         defaultRateHz: 100,
         fields: imuRunFields,
-        outputs: [{ key: "imuTopicId", signal: "imu", rosType: "sensor_msgs/Imu" }],
+        outputs: [{ key: "imuTopicId", signal: "imu", valueContract: { id: NATIVE_SENSOR_OUTPUT_CONTRACTS["imuTopicId"], version: 1 } }],
         normalize(source) {
             const calibration = object(source.calibration);
             return {
@@ -647,7 +619,6 @@ registerSensorType({
                     noise: object(calibration.noise),
                     ...calibration,
                 },
-                schema: { imuTopicId: "sensor_msgs/Imu", ...object(source.schema) },
                 determinism: { comparison: "numeric-tolerance", crossDeviceByteEquality: true },
             };
         },
@@ -669,7 +640,7 @@ registerSensorType({
     run: {
         defaultRateHz: 10,
         fields: gnssRunFields,
-        outputs: [{ key: "gnssTopicId", signal: "gnss", rosType: "sensor_msgs/NavSatFix" }],
+        outputs: [{ key: "gnssTopicId", signal: "gnss", valueContract: { id: NATIVE_SENSOR_OUTPUT_CONTRACTS["gnssTopicId"], version: 1 } }],
         normalize(source) {
             const calibration = object(source.calibration);
             return {
@@ -689,7 +660,6 @@ registerSensorType({
                     },
                     ...calibration,
                 },
-                schema: { gnssTopicId: "sensor_msgs/NavSatFix", ...object(source.schema) },
                 determinism: { comparison: "numeric-tolerance", crossDeviceByteEquality: true },
             };
         },
@@ -719,7 +689,7 @@ registerSensorType({
     run: {
         defaultRateHz: 50,
         fields: wheelOdometryRunFields,
-        outputs: [{ key: "odometryTopicId", signal: "odometry", rosType: "nav_msgs/Odometry" }],
+        outputs: [{ key: "odometryTopicId", signal: "odometry", valueContract: { id: NATIVE_SENSOR_OUTPUT_CONTRACTS["odometryTopicId"], version: 1 } }],
         normalize(source) {
             const calibration = object(source.calibration);
             return {
@@ -734,7 +704,6 @@ registerSensorType({
                     twistNoise: axisCalibration(calibration.twistNoise, 0.02),
                     ...calibration,
                 },
-                schema: { odometryTopicId: "nav_msgs/Odometry", ...object(source.schema) },
                 determinism: { comparison: "numeric-tolerance", crossDeviceByteEquality: true },
             };
         },
@@ -765,7 +734,6 @@ export function normalizeRunSensor(value = {}, index = 0, registry = sensorTypeR
     const id = text(source.id, `sensor-${index + 1}`);
     const specific = definition?.run.normalize(source) || {
         calibration: cloneObject(source.calibration),
-        schema: cloneObject(source.schema),
         determinism: cloneObject(source.determinism),
     };
     const isCamera = type === "camera";
@@ -815,7 +783,6 @@ export function normalizeRunSensor(value = {}, index = 0, registry = sensorTypeR
             pointDropoutProbability: Math.min(1, Math.max(0, finite(source.noise?.pointDropoutProbability, 0))),
         },
         outputs: cloneObject(source.outputs),
-        schema: specific.schema,
         health: specific.health || {
             deadlineNs: nonNegativeInteger(source.health?.deadlineNs, Math.round(1e9 / Math.max(0.001, finite(source.rateHz, definition?.run.defaultRateHz ?? 10)))),
             observationalOracle: source.health?.observationalOracle !== false,

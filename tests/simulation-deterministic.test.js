@@ -119,7 +119,7 @@ test("topic input queue orders declared topics before arrival sequence", () => {
 test("manifest clock uses exact integer nanoseconds and fixed module order", async () => {
     const { engine, calls } = harness();
     const manifest = createDefaultRunManifest({
-        version: 12,
+        version: 13,
         clock: { stepNs: 20_000_000, pacing: "unbounded", speed: 4, maxSteps: 3 },
         sensorRig: { sensors: [] },
         assertions: [],
@@ -149,7 +149,7 @@ test("browser presentation hooks run only after the authoritative kernel phases"
         presentationCalls.push(["scenario-diagnostics", [...engine.lastStepPhases]]);
     };
     const manifest = createDefaultRunManifest({
-        version: 12,
+        version: 13,
         clock: { modules: { baking: true } },
         sensorRig: { sensors: [] },
         assertions: [],
@@ -299,7 +299,7 @@ test("hidden experiment diagnostics preserve authoritative playback", () => {
 test("queued controls/command is applied only at a step boundary", async () => {
     const { engine, runtime, vehicle, store } = harness();
     const manifest = createDefaultRunManifest({
-        version: 12,
+        version: 13,
         sensorRig: { sensors: [] },
         controls: {
             actuatorOverrides: {
@@ -314,17 +314,17 @@ test("queued controls/command is applied only at a step boundary", async () => {
     await engine.applyRunManifest(resolved(manifest));
     runtime.scheduler({
         name: "/controls/command",
-        typeStr: "sensor_fusion_msgs/StampedAckermannDrive",
+        valueContract: { id: "cev.control-command", version: 1 },
         value: {
-            header: { stamp: { sec: 0, nanosec: 0 }, frame_id: "base_link" },
-            sequence: 1,
+            runId: manifest.id, frameId: "base_link", captureTimeNs: 0,
+            sequence: "1",
             mode: "velocity",
-            deadline_ns: 0,
-            steering_angle: 0.0872665,
-            steering_angle_velocity: 0,
-            speed: 4.4704,
-            acceleration: 0,
-            jerk: 0,
+            deadlineNs: 0,
+            steeringRad: 0.0872665,
+            steeringRateRadps: 0,
+            speedMps: 4.4704,
+            accelerationMps2: 0,
+            jerkMps3: 0,
         },
     });
     assert.equal(vehicle.velocity.x, 0);
@@ -335,7 +335,7 @@ test("queued controls/command is applied only at a step boundary", async () => {
     assert.equal(applied.name, "input-applied");
     assert.equal(applied.payload.step, 1);
     // Legacy /ackdrive is not accepted at runtime.
-    runtime.scheduler({ name: "/ackdrive", value: { speed: 10, steering_angle: 5 } });
+    runtime.scheduler({ name: "/ackdrive", value: { speed: 10, steeringRad: 5 } });
     const before = vehicle.velocity.x;
     engine.step();
     assert.equal(vehicle.velocity.x, before);
@@ -344,7 +344,7 @@ test("queued controls/command is applied only at a step boundary", async () => {
 test("signal assertions stop a run deterministically", async () => {
     const { engine } = harness();
     const manifest = createDefaultRunManifest({
-        version: 12,
+        version: 13,
         sensorRig: { sensors: [] },
         assertions: [{
             id: "must-be-fast",
@@ -419,7 +419,7 @@ test("swept colliders clamp at first impact and publish ordered contact transiti
 
 test("manual, realtime, and unbounded pacing produce the same fixed-step state", async () => {
     const manifest = createDefaultRunManifest({
-        version: 12,
+        version: 13,
         clock: { stepNs: 20_000_000, pacing: "realtime", speed: 1, maxSteps: 5 },
         initialState: { vehicles: [{ id: "ego", type: "big-car", pose: { position: {}, rotation: {} }, linearVelocity: { x: 3, y: 0, z: 0 }, steeringAngle: 0 }], signals: {} },
         sensorRig: { sensors: [] },
@@ -470,7 +470,7 @@ test("vehicle sweeps prevent fast vehicles from tunneling through each other", a
 test("reset and replaying the same steps reconstructs the same vehicle state", async () => {
     const target = harness();
     const manifest = createDefaultRunManifest({
-        version: 12,
+        version: 13,
         initialState: { vehicles: [{ id: "ego", type: "big-car", pose: { position: {}, rotation: {} }, linearVelocity: { x: 2, y: 0, z: 0 }, steeringAngle: 0 }], signals: {} },
         sensorRig: { sensors: [] },
     });
@@ -485,7 +485,7 @@ test("reset and replaying the same steps reconstructs the same vehicle state", a
 test("browser adapter disposal is idempotent and does not trigger reset work", async () => {
     const { engine } = harness();
     const manifest = createDefaultRunManifest({
-        version: 12,
+        version: 13,
         sensorRig: { sensors: [] },
         assertions: [],
     });
@@ -502,7 +502,7 @@ test("browser adapter disposal is idempotent and does not trigger reset work", a
 test("browser adapter can clear and prepare the same run repeatedly", async () => {
     const { engine } = harness();
     const run = resolved(createDefaultRunManifest({
-        version: 12,
+        version: 13,
         clock: { maxSteps: 2 },
         sensorRig: { sensors: [] },
         assertions: [],
@@ -526,7 +526,7 @@ test("browser adapter can clear and prepare the same run repeatedly", async () =
 test("realtime advanceSimulation respects step budget and leaves accumulator debt", async () => {
     const { engine } = harness();
     const manifest = createDefaultRunManifest({
-        version: 12,
+        version: 13,
         clock: { stepNs: 20_000_000, pacing: "realtime", speed: 1, maxSteps: 20 },
         sensorRig: { sensors: [] },
         assertions: [],
@@ -898,7 +898,7 @@ test("late async advancement cannot emit state after stop invalidates its genera
 
 function quietManifest(controls = {}) {
     return createDefaultRunManifest({
-        version: 12,
+        version: 13,
         controls,
         clock: { maxSteps: 4 },
         sensorRig: { sensors: [] },

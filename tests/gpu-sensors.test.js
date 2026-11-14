@@ -22,7 +22,6 @@ import {
 } from "../app/simulation/lidar/LidarGeometry.js";
 import { CpuLidarScene } from "../app/simulation/sensors/CpuLidarScene.js";
 import { HeadlessGpuSensorManager } from "../app/simulation/sensors/HeadlessGpuSensorManager.js";
-import { loadHeadlessMessageCodec } from "../app/simulation/sensors/HeadlessMessageCodec.js";
 import { loadHeadlessVisualCaptureCodec } from "../app/simulation/sensors/HeadlessVisualCaptureCodec.js";
 import { createGpuSensorBackendV2Selection } from "../app/simulation/sensors/GpuSensorBackend.js";
 import { StorageService } from "../server/storage/StorageService.js";
@@ -820,7 +819,6 @@ test("VIS-15a routes PBR cameras and analytic LiDAR separately, then commits the
     }] };
     const manager = new HeadlessGpuSensorManager(vehicles, {
         rendererClient,
-        messageCodec: await loadHeadlessMessageCodec(),
         visualCapture: await loadHeadlessVisualCaptureCodec(),
     });
     await manager.configureFromManifest({ sensors: [camera, lidar] }, {
@@ -850,8 +848,8 @@ test("VIS-15a routes PBR cameras and analytic LiDAR separately, then commits the
     const lidarQueue = manager.devices.find((device) => device.id === lidar.id).contractPublisher.queue;
     assert.equal(cameraQueue.length, 1);
     assert.equal(lidarQueue.length, 1);
-    assert.deepEqual(cameraQueue[0].messages.map((entry) => entry.value.encoding), [
-        "rgba8", undefined, "32FC1", "16UC1", "32SC1",
+    assert.deepEqual(cameraQueue[0].messages.map((entry) => entry.value.pixelFormat), [
+        "rgba8", undefined, "depth-f32-le", "semantic-u16-le", "instance-u32-le",
     ]);
     assert.equal(cameraQueue[0].observation.dtype, "uint8");
     assert.equal(cameraQueue[0].observation.shape.join(","), "1,2,4");

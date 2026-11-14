@@ -40,3 +40,78 @@ export function topicFromNativeContract(id, overrides = {}) {
 }
 
 export function defaultNativeManifestTopics() { return defaultIds.map((id) => topicFromNativeContract(id)); }
+
+export function isControlsCommandTopic(topic) { return topic?.valueContract?.id === "cev.control-command"; }
+
+export const PRODUCER_NAMESPACES = Object.freeze([
+    "simulator",
+    "candidate",
+    "reference",
+    "oracle",
+    "replay",
+    "bypass",
+]);
+
+export const AUTHORITY_MODES = Object.freeze([
+    "candidate",
+    "reference",
+    "oracle",
+    "replay",
+    "bypass",
+]);
+
+export const CONTRACT_STAGES = Object.freeze([
+    "platform",
+    "perception",
+    "localization",
+    "controls",
+]);
+
+export const IMPLEMENTATION_MODES = Object.freeze(["live", "catalog-only", "stub"]);
+
+export function validateManifestTopicAuthority(manifest) {
+    const issues = [];
+    const byContract = new Map();
+    for (const [index, topic] of (manifest.topics || []).entries()) {
+        const key = topic.contractId || topic.id;
+        if (!byContract.has(key)) byContract.set(key, []);
+        byContract.get(key).push({ index, topic });
+    }
+    for (const [contractKey, entries] of byContract) {
+        const authorities = new Set(entries.map((entry) => entry.topic.authority).filter(Boolean));
+        if (authorities.size > 1) {
+            for (const { index } of entries) {
+                issues.push({
+                    path: `topics.${index}.authority`,
+                    message: `Conflicting authority modes for contract "${contractKey}".`,
+                });
+            }
+        }
+    }
+    const names = new Map();
+    for (const [index, topic] of (manifest.topics || []).entries()) {
+        if (names.has(topic.name)) {
+            issues.push({ path: `topics.${index}.name`, message: `Duplicate topic name "${topic.name}".` });
+        }
+        names.set(topic.name, index);
+    }
+    return issues;
+}
+
+function isControlsCommandTopicId(topicId) {
+    return topicId === "controls-command"
+        || topicId === "/controls/command"
+        || topicId === "ackdrive"
+        || topicId === "/ackdrive"
+        || topicId === "ackdrive-legacy";
+}
+
+export function scenarioUsesExternalTopic(scenario, topic) {
+    const routes = scenario?.routes || [];
+    return routes.some((route) => {
+        if (!["external-ros", "external-topic"].includes(route.controller?.kind)) return false;
+        const topicId = route.controller.topicId;
+        if (!topicId || isControlsCommandTopicId(topicId)) return isControlsCommandTopic(topic);
+        return topicId === topic?.id || topicId === topic?.name;
+    });
+}

@@ -12,7 +12,7 @@ import {
 import { verifyPluginPackage } from "../../app/plugin/PluginPackage.js";
 import { VISUAL_ASSET_UPLOAD_OPERATIONS, hashVisualAssetUse, normalizeVisualAssetUse } from "../../app/simulation/visual/VisualLayer.js";
 import { createWorldResource } from "../../app/simulation/world/WorldDescription.js";
-import { verifyRunPackageArchive } from "../headless/VisualAssetPack.js";
+import { inspectRunPackageArchive as verifyRunPackageArchive } from "../headless/RunBundleInspection.js";
 import {
     PORTABLE_PLUGIN_MAX_JSON_BYTES,
     parsePortablePluginFile,

@@ -7,7 +7,6 @@ import {
     STATE_SENSOR_BACKEND_KIND,
     STATE_SENSOR_TYPES,
 } from "./StateSensorBackend.js";
-import { loadHeadlessMessageCodec } from "./HeadlessMessageCodec.js";
 import { loadHeadlessVisualCaptureCodec } from "./HeadlessVisualCaptureCodec.js";
 import { PluginSensorManager } from "./PluginSensorManager.js";
 import { isScanningLidarType } from "./SensorTypeRegistry.js";
@@ -40,11 +39,6 @@ export class HeadlessSensorManager {
         const pluginRecords = (options.sensorAdmission?.sensors ?? [])
             .filter((entry) => entry.kind === "plugin-range-image");
         const pluginTypes = new Set(pluginRecords.map((entry) => entry.sensor.type));
-        const needsMessageCodec = !options.nativeTopics && enabled.some((sensor) => sensor.type === "camera" || isScanningLidarType(sensor.type)
-            || pluginTypes.has(sensor.type));
-        const messageCodec = needsMessageCodec
-            ? (options.messageCodec ?? this.options.messageCodec ?? await loadHeadlessMessageCodec())
-            : (options.messageCodec ?? this.options.messageCodec ?? null);
         const unsupported = enabled.filter((sensor) => (
             !STATE_SENSOR_TYPES.includes(sensor.type) && sensor.type !== "camera" && !isScanningLidarType(sensor.type)
                 && !pluginTypes.has(sensor.type)
@@ -93,12 +87,10 @@ export class HeadlessSensorManager {
         const gpuLidar = lidarSelections.length === 0 ? lidarSensors : [];
         await this.lidar.configureFromManifest(rigWith(lidarSelections.length > 0 ? lidarSensors : []), {
             ...options,
-            messageCodec,
             backendSelection: lidarSelections[0],
         });
         await this.plugin.configure(options.sensorAdmission, {
             ...options,
-            messageCodec,
             backendSelection: lidarSelections[0],
             pluginSession: options.pluginSession,
         });
@@ -110,8 +102,7 @@ export class HeadlessSensorManager {
             this.gpu = new HeadlessGpuSensorManager(this.vehicleSource, this.options);
             await this.gpu.configureFromManifest(rigWith([...cameraSensors, ...gpuLidar]), {
                 ...options,
-                messageCodec,
-                visualCapture,
+                    visualCapture,
                 backendSelection: gpuSelections[0],
             });
         }

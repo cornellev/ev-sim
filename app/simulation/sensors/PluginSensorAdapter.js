@@ -3,7 +3,6 @@ import { clonePluginJson } from "../../plugin/PluginJson.js";
 import { PLUGIN_ERROR_CODES, assertSynchronous, pluginError } from "../../plugin/PluginErrors.js";
 import { lidarCaptureDigest } from "./CpuLidarWorkerService.js";
 import { buildMeasuredRangeImage } from "./LidarProducts.js";
-import { buildPointCloud2, sensorHeader } from "./SensorMessages.js";
 import { buildNativePoints } from "./NativeSensorProducts.js";
 import { validateNativeTopicValue } from "../NativeTopicContracts.js";
 import { SensorPublisher } from "./SensorPublisher.js";
@@ -88,37 +87,6 @@ function rngFacade(rng) {
     });
 }
 
-const POINT_CLOUD_FIELDS = Object.freeze([
-    { name: "x", offset: 0, datatype: 7, count: 1 },
-    { name: "y", offset: 4, datatype: 7, count: 1 },
-    { name: "z", offset: 8, datatype: 7, count: 1 },
-    { name: "intensity", offset: 12, datatype: 7, count: 1 },
-]);
-
-function validatePointCloud(value, sensorId, productId, captureTimeNs, frameId) {
-    const expectedHeader = sensorHeader(captureTimeNs, frameId);
-    if (!value || typeof value !== "object" || Array.isArray(value)
-        || value.height !== 1 || !Number.isSafeInteger(value.width) || value.width < 0
-        || value.point_step !== 16 || value.row_step !== value.width * value.point_step
-        || value.is_bigendian !== false || value.is_dense !== true
-        || JSON.stringify(value.header) !== JSON.stringify(expectedHeader)
-        || JSON.stringify(value.fields) !== JSON.stringify(POINT_CLOUD_FIELDS)
-        || !(value.data instanceof Uint8Array) || value.data.byteLength !== value.row_step) {
-        throw new TypeError(`Plugin sensor "${sensorId}" product "${productId}" returned an invalid PointCloud2 value.`);
-    }
-    return {
-        header: expectedHeader,
-        height: 1,
-        width: value.width,
-        fields: POINT_CLOUD_FIELDS.map((field) => ({ ...field })),
-        is_bigendian: false,
-        point_step: 16,
-        row_step: value.row_step,
-        data: new Uint8Array(value.data),
-        is_dense: true,
-    };
-}
-
 function validateObservation(value, descriptor, layout, sensorId) {
     if (!descriptor) {
         if (value != null) throw new TypeError(`Packet-only plugin sensor "${sensorId}" returned an undeclared observation.`);
@@ -164,6 +132,7 @@ export class PluginSensorDevice {
         publisherOptions = {},
         transformRuntime = null,
     } = {}) {
+        if (admission.plugin?.descriptor.sensorAbi !== 2) throw new Error("Plugin sensor execution requires sensorAbi 2; use reviewed native adoption.");
         this.id = admission.sensor.id;
         this.name = this.id;
         this.telemetryId = this.id;
@@ -175,7 +144,7 @@ export class PluginSensorDevice {
             .map((product) => ({
                 key: product.outputKey,
                 signal: product.signal,
-                ...(product.valueContract ? { valueContract: product.valueContract } : { rosType: product.rosType }),
+                valueContract: product.valueContract,
             }));
         this.factory = factory;
         this.scene = scene;
@@ -194,7 +163,7 @@ export class PluginSensorDevice {
         try {
             callHook(this.instance, this.factory, this.id, "prepare", Object.freeze({
                 calibration,
-                helpers: Object.freeze({ sensorAbi: admission.plugin?.descriptor.sensorAbi ?? 1, family: "range-image" }),
+                helpers: Object.freeze({ sensorAbi: 2, family: "range-image" }),
             }));
             this.contractPublisher = new Publisher(this, this.config, {
                 ...publisherOptions,
@@ -222,16 +191,9 @@ export class PluginSensorDevice {
         this.enabled = Boolean(enabled);
     }
 
-    _sampling(buffer, captureTimeNs) {
-        const frameId = this.config.measurementFrameId || this.config.frameId;
+    _sampling(buffer) {
         return Object.freeze({
-            ...(this.admission.plugin?.descriptor.sensorAbi === 2 ? { buildNativePoints: (source = buffer) => buildNativePoints({ buffer: source, calibration: this.calibration, bufferEncoding: "metric-v2" }) } : { buildPointCloud2: (source = buffer) => buildPointCloud2({
-                buffer: source,
-                bufferEncoding: "metric-v2",
-                calibration: this.calibration,
-                timeNs: captureTimeNs,
-                frameId,
-            }) }),
+            buildNativePoints: (source = buffer) => buildNativePoints({ buffer: source, calibration: this.calibration, bufferEncoding: "metric-v2" }),
             buildObservation: (source = buffer) => {
                 if (!this.admission.observation) throw new Error("This sensor type has no declared observation mapping.");
                 return observationFromBuffer(source, this.admission.observation);
@@ -261,18 +223,9 @@ export class PluginSensorDevice {
                 const entryKeys = Object.keys(entry).sort();
                 if (entryKeys.join(",") !== "productId,value") throw new TypeError("Point-cloud messages contain only productId and value.");
                 const frameId = this.config.measurementFrameId || this.config.frameId;
-                let value;
-                if (product.valueContract) {
-                    const validation = validateNativeTopicValue(product.valueContract, entry.value);
-                    if (!validation.ok) throw new TypeError(validation.message);
-                    value = { positions: new Float32Array(entry.value.positions), intensities: new Float32Array(entry.value.intensities), count: entry.value.count };
-                } else value = validatePointCloud(
-                    entry.value,
-                    this.id,
-                    product.productId,
-                    context.captureTimeNs,
-                    frameId,
-                );
+                const validation = validateNativeTopicValue(product.valueContract, entry.value);
+                if (!validation.ok) throw new TypeError(validation.message);
+                const value = { positions: new Float32Array(entry.value.positions), intensities: new Float32Array(entry.value.intensities), count: entry.value.count };
                 pointCloudCounts.set(product.productId, (pointCloudCounts.get(product.productId) ?? 0) + 1);
                 messages.push({
                     topicId: product.topicId,

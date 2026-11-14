@@ -5,7 +5,6 @@ import { ControlRuntime } from "../../autonomy/ControlRuntime.js";
 import { getBuiltInVehicleManifest } from "../../vehicles/BuiltInVehicleManifests.js";
 import { AssertionEngine } from "../AssertionEngine.js";
 import { GoalPublisher } from "../GoalPublisher.js";
-import { createPlanningCostmapPublisher } from "../PlanningCostmapPublisher.js";
 import { createLocalizationTruthPublisher } from "../LocalizationTruthPublisher.js";
 import { TopicContractRouter } from "../TopicContractRouter.js";
 import { TopicInputQueue } from "../TopicInputQueue.js";
@@ -86,7 +85,6 @@ export class SimulationKernel {
         this.inputQueue = new TopicInputQueue();
         this.topicRouter = null;
         this.goalPublisher = null;
-        this.planningCostmapPublisher = null;
         this.localizationTruthPublisher = null;
         this.assertionEngine = new AssertionEngine([], this.telemetry);
         this.scenarioRuntime = runtimeContext.scenarios ?? null;
@@ -261,7 +259,6 @@ export class SimulationKernel {
         this.assertionEngine.reset();
         this.topicRouter?.reset?.();
         this.transformRuntime?.reset?.();
-        this.planningCostmapPublisher?.reset();
         this.localizationTruthPublisher?.reset?.();
         this.candidateOutputRuntime?.reset?.();
         this.controlRuntime?.reset?.();
@@ -430,7 +427,7 @@ export class SimulationKernel {
                 || computeSimulationSemanticHash(this.resolvedRun);
             this.resolvedRun.simulationSemanticHash = this.simulationSemanticHash;
             const manifest = this.resolvedRun.manifest;
-            this.runId = manifest.version === 13 ? (runId ?? manifest.id) : manifest.id;
+            this.runId = runId ?? manifest.id;
             await this.context.environment.prepare(
                 this.resolvedRun.environment,
                 this.resolvedRun,
@@ -449,21 +446,16 @@ export class SimulationKernel {
 
             this.inputQueue = new TopicInputQueue(manifest.topics);
             this.context.topics.configure?.(this.resolvedRun, { runId: this.runId, inputQueue: this.inputQueue });
-            this.planningCostmapPublisher?.dispose();
-            this.planningCostmapPublisher = createPlanningCostmapPublisher(this.resolvedRun, this.context);
             this.topicRouter = new TopicContractRouter(manifest, { telemetry: this.telemetry, publicationPort: this.context.topics.publicationPort?.(), runId: this.runId });
             this.localizationTruthPublisher = createLocalizationTruthPublisher(manifest, this.topicRouter);
             this.localizationTruthPublisher.stepNs = manifest.clock.stepNs;
             this.goalPublisher = new GoalPublisher({
                 topicRouter: this.topicRouter,
                 telemetry: this.telemetry,
-                client: this.context.topics.client(),
                 resolvedRun: this.resolvedRun,
             });
             this.transformRuntime = this.resolvedRun.calibration
-                ? new TransformRuntime(this.resolvedRun.calibration, this.topicRouter, {
-                    client: this.context.topics.client(),
-                })
+                ? new TransformRuntime(this.resolvedRun.calibration, this.topicRouter)
                 : null;
             this.candidateOutputRuntime = new CandidateOutputRuntime({
                 telemetry: this.telemetry,
@@ -525,7 +517,6 @@ export class SimulationKernel {
             this.context.scripts.setTopicScheduler((info) => this.queueTopicInput(info));
             this.context.scripts.setTopicRouter(this.topicRouter, manifest.topics);
             await this.context.devices.configureFromManifest(manifest.sensorRig, {
-                nativeTopics: manifest.version === 13,
                 runId: this.runId,
                 seed: manifest.seed,
                 topics: manifest.topics,
@@ -711,7 +702,6 @@ export class SimulationKernel {
                 this.transformRuntime.publishDynamicTransforms(this.timeNs, this.steps, vehicles);
                 this.localizationTruthPublisher?.publish(this.timeNs, this.steps, vehicles);
             }
-            this.planningCostmapPublisher?.publish(this.timeNs, vehicles);
         });
 
         const sensorUpdate = phase("sensors", () => {
@@ -821,8 +811,7 @@ export class SimulationKernel {
             const isControlsCommand = controlTopic?.valueContract?.id === "cev.control-command" || controlTopic?.contractId === "controls-command"
                 || entry.info.name === "/controls/command";
             if (!handledByScenario && isControlsCommand && this.controlRuntime) {
-                const ingest = this.resolvedRun.version === 13 ? "ingestCommand" : "ingestStampedCommand";
-                const controlResult = this.controlRuntime[ingest](entry.info, {
+                const controlResult = this.controlRuntime.ingestCommand(entry.info, {
                     runId: this.runId || this.resolvedRun.manifest.id,
                     vehicleId: this.resolvedRun?.manifest?.controls?.targetVehicleId || "ego",
                     producer: controlTopic?.producer || "candidate",
@@ -832,7 +821,7 @@ export class SimulationKernel {
             }
             accepted.push({
                 topic: entry.info.name,
-                type: entry.info.typeStr ?? null,
+                type: null,
                 producer: entry.info.producer ?? controlTopic?.producer ?? null,
                 value: entry.info.value,
             });
@@ -941,12 +930,7 @@ export class SimulationKernel {
 
     publishClock() {
         if (!this.telemetry) return;
-        const stamp = {
-            sec: Math.floor(this.timeNs / 1e9),
-            nanosec: this.timeNs % 1e9,
-        };
-        const native = this.resolvedRun?.version === 13;
-        this.telemetry.publishSignal("simulation.clock", native ? { timeNs: this.timeNs } : stamp, {
+        this.telemetry.publishSignal("simulation.clock", { timeNs: this.timeNs }, {
             timeUs: Math.round(this.timeNs / 1000),
             cycle: this.steps,
             source: "simulation",
@@ -956,8 +940,8 @@ export class SimulationKernel {
             const topic = this.resolvedRun.manifest.topics.find((candidate) => candidate.id === "clock");
             if (topic) {
                 this.topicRouter?.routeOutbound?.("clock", {
-                    value: native ? { timeNs: this.timeNs } : { clock: stamp },
-                    typeStr: topic.schema?.type || topic.type,
+                    value: { timeNs: this.timeNs },
+                    valueContract: topic.valueContract,
                 }, {
                     producer: "simulator",
                     simTimeNs: this.timeNs,
@@ -1109,8 +1093,6 @@ export class SimulationKernel {
         this.telemetry?.resetRunState?.({ preservePaths: [] });
         this.topicRouter = null;
         this.goalPublisher = null;
-        this.planningCostmapPublisher?.dispose();
-        this.planningCostmapPublisher = null;
         this.localizationTruthPublisher = null;
         this.candidateOutputRuntime = null;
         this.controlRuntime = null;

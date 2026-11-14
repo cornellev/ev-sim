@@ -10,7 +10,6 @@ import {
     normalizeDetections2D,
     normalizeDetections3D,
     normalizeLanes,
-    normalizeLegacyBoxes,
     normalizeOdometry,
     normalizeSemanticImage,
     normalizePath,
@@ -25,8 +24,6 @@ const PERCEPTION_CONTRACTS = new Set([
     "perception-detections-3d",
     "perception-lanes",
     "perception-semantic",
-    "perception-detections",
-    "perception-lanes-legacy",
 ]);
 
 const LOCALIZATION_CONTRACTS = new Set([
@@ -115,17 +112,17 @@ export class CandidateOutputRuntime {
         const nextPerception = {
             ...this.lastPerception,
             oracle: {
-                detections2d: detections2d ? normalizeDetections2D(detections2d.value, { source: "oracle", ...this._entryOptions(detections2d) }) : [],
-                detections3d: detections3d
+                detections2d: detections2d?.exists ? normalizeDetections2D(detections2d.value, { source: "oracle", ...this._entryOptions(detections2d) }) : [],
+                detections3d: detections3d?.exists
                     ? normalizeDetections3D(detections3d.value, { source: "oracle", transformToMap, ...this._entryOptions(detections3d) })
                     : [],
-                lanes: lanes ? normalizeLanes(lanes.value, { source: "oracle", transformToMap, ...this._entryOptions(lanes) }) : [],
+                lanes: lanes?.exists ? normalizeLanes(lanes.value, { source: "oracle", transformToMap, ...this._entryOptions(lanes) }) : [],
             },
         };
         this.lastPerception = nextPerception;
         this._publishPerception(nextPerception, applyStep, applyTimeNs);
 
-        if (truth) {
+        if (truth?.exists) {
             this._recordTruth(normalizeOdometry(truth.value, { source: "oracle", ...this._entryOptions(truth) }));
             const alignedTruth = this._truthFor(this.lastLocalization.estimate);
             const nextLoc = {
@@ -219,10 +216,6 @@ export class CandidateOutputRuntime {
             next.lanes = normalizeLanes(value, options);
         } else if (contractId === "perception-semantic") {
             next.semantic = normalizeSemanticImage(value, options);
-        } else if (contractId === "perception-detections") {
-            next.detections3d = normalizeLegacyBoxes(value, { source: "candidate", status });
-        } else if (contractId === "perception-lanes-legacy") {
-            next.lanes = normalizeLanes({ lanes: value.lanes }, { source: "candidate", status });
         }
         this.lastPerception = next;
         this.lastGoodPerception = structuredClone({
@@ -238,7 +231,7 @@ export class CandidateOutputRuntime {
     _ingestLocalization(envelope, { applyStep, applyTimeNs, status }) {
         const estimate = normalizeOdometry(envelope.value, { source: "candidate", status, valueContract: envelope.valueContract, metadata: envelope.metadata ?? {} });
         const truthRaw = this.telemetry?.read?.(oracleTopicSignalPath("truth-odometry"));
-        if (truthRaw) this._recordTruth(normalizeOdometry(truthRaw.value, { source: "oracle", ...this._entryOptions(truthRaw) }));
+        if (truthRaw?.exists) this._recordTruth(normalizeOdometry(truthRaw.value, { source: "oracle", ...this._entryOptions(truthRaw) }));
         const truth = this._truthFor(estimate);
         const next = {
             captureTimeNs: envelope.captureTimeNs ?? null,

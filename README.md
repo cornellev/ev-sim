@@ -11,7 +11,7 @@
 **ev-sim** is Cornell Electric Vehicles' autonomous-driving simulation platform, built for reproducible development and testing across interactive and headless workloads.
 - Deterministic simulation: a shared fixed-step kernel powers browser and headless execution with seeded resets, reproducible state, and trajectory hashing.
 - Parallel autonomy/RL: isolated headless environments run through a gRPC supervisor with Python Gymnasium / Stable-Baselines3 integration and shared-memory sensor transport.
-- Vehicle & sensor simulation: LiDAR, camera, IMU/GNSS/odometry, physics, telemetry, binary logging/replay, scenario authoring, and ROS-oriented integration.
+- Vehicle & sensor simulation: LiDAR, camera, IMU/GNSS/odometry, physics, telemetry, binary logging/replay, scenario authoring, and native Zenoh/Protobuf integration.
 
 > [!NOTE]
 > This is **Alpha** (`0.2.0`). The API is not stable, and the documentation is
@@ -202,7 +202,7 @@ The package contract is in [Plugin API](docs/plugin-api.md).
 - [Jetson headless deployment](docs/jetson-headless.md)
 - [Plugin API](docs/plugin-api.md)
 - [Telemetry, logging, replay, and analysis](docs/telemetry-logging.md)
-- [ROS integration](docs/ros-integration.md)
+- [Zenoh / Protobuf integration](docs/protobuf-routing.md)
 - [MCP Server](docs/mcp.md)
 - [Assets](docs/assets.md)
 - [Troubleshooting](docs/troubleshooting.md)

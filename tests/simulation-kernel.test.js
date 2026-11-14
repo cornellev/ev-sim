@@ -159,7 +159,7 @@ test("SimulationKernel imports and steps without browser or graphics globals", a
         const { SimulationKernel } = await import("../app/simulation/kernel/SimulationKernel.js");
         const target = createHarness();
         const manifest = createDefaultRunManifest({
-            version: 12,
+            version: 13,
             clock: {
                 stepNs: 20_000_000,
                 pacing: "unbounded",
@@ -174,17 +174,17 @@ test("SimulationKernel imports and steps without browser or graphics globals", a
 
         target.scripts.scheduler({
             name: "/controls/command",
-            typeStr: "sensor_fusion_msgs/StampedAckermannDrive",
+            valueContract: { id: "cev.control-command", version: 1 },
             value: {
-                header: { stamp: { sec: 0, nanosec: 0 }, frame_id: "base_link" },
-                sequence: 1,
+                runId: manifest.id, frameId: "base_link", captureTimeNs: 0,
+                sequence: "1",
                 mode: "velocity",
-                deadline_ns: 0,
-                steering_angle: 0,
-                steering_angle_velocity: 0,
-                speed: 1,
-                acceleration: 0,
-                jerk: 0,
+                deadlineNs: 0,
+                steeringRad: 0,
+                steeringRateRadps: 0,
+                speedMps: 1,
+                accelerationMps2: 0,
+                jerkMps3: 0,
             },
         });
         kernel.step(1);

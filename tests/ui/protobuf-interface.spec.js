@@ -11,7 +11,7 @@ async function openConfig(page) {
 async function mode(page, value) {
     await page.getByRole("button", { name: "Open workspace switcher" }).first().evaluate((button) => button.click());
     const dialog = page.getByRole("dialog", { name: "Workspaces" }); await dialog.getByRole("button", { name: "Settings", exact: true }).click();
-    await dialog.getByRole("group", { name: "Run configuration view" }).getByRole("button", { name: value }).click();
+    await dialog.getByRole("radiogroup", { name: "Run configuration view" }).getByRole("radio", { name: value }).click();
     await dialog.getByRole("button", { name: "Close workspaces" }).click();
 }
 test("schema file import, route errors and mode switches preserve one shared editor", async ({ page }) => {
@@ -33,8 +33,8 @@ test("schema file import, route errors and mode switches preserve one shared edi
     await expect(page.getByLabel("Routes and bootstrap JSON").filter({ visible: true })).toHaveValue('{"routes":[],"bootstrap":[]}');
 });
 
-test("interface JSON import works at a narrow width with keyboard access", async ({ page }) => {
-    test.setTimeout(90000); await page.setViewportSize({ width: 390, height: 844 }); await openConfig(page);
+test("interface JSON import works at a narrow desktop width with keyboard access", async ({ page }) => {
+    test.setTimeout(90000); await page.setViewportSize({ width: 1024, height: 844 }); await openConfig(page);
     const panel = page.getByRole("region", { name: "Protobuf interface" }).filter({ visible: true });
     await panel.getByLabel("Import format").selectOption("interface");
     await panel.getByLabel("Interface JSON file").setInputFiles({ name: "interface.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(bundle.resolved.protobufInterface.document)) });

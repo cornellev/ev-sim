@@ -9,16 +9,14 @@ import { fileURLToPath } from "node:url";
 import { runPython } from "./helpers/pythonExecutable.js";
 
 import { rep103ToThreeVector } from "../app/autonomy/CoordinateFrames.js";
-import { encodeTopicValue, registerMsgDefinition } from "../app/client/TopicCodec.js";
 import { measuredStateProfileRef, routeSafetyProfileRef } from "../app/simulation/headless/ProfileRegistry.js";
 import { SFLogBatchEncoder } from "../app/logging/SFLogCodec.js";
 import { normalizeEpisodeSpec } from "../app/simulation/headless/HeadlessEpisode.js";
 import { resolveFixedStepSensorSchedule } from "../app/simulation/sensors/FixedStepSensorSchedule.js";
 import { createGpuSensorBackendSelection } from "../app/simulation/sensors/GpuSensorBackend.js";
 import { HeadlessGpuSensorManager } from "../app/simulation/sensors/HeadlessGpuSensorManager.js";
-import { loadHeadlessMessageCodec } from "../app/simulation/sensors/HeadlessMessageCodec.js";
 import { loadHeadlessVisualCaptureCodec } from "../app/simulation/sensors/HeadlessVisualCaptureCodec.js";
-import { buildCameraInfo, buildImageMessage } from "../app/simulation/sensors/SensorMessages.js";
+import { buildNativeCameraInfo as buildCameraInfo, buildNativeImage as buildImageMessage } from "../app/simulation/sensors/NativeSensorProducts.js";
 import { createRunSensor } from "../app/simulation/sensors/SensorTypeRegistry.js";
 import { LogService } from "../server/logging/LogService.js";
 import { canonicalRunBundleStringify } from "../server/headless/RunBundle.js";
@@ -274,7 +272,6 @@ async function analyticManager(rendererClient, camera = analyticCamera()) {
         }],
     }, {
         rendererClient,
-        messageCodec: await loadHeadlessMessageCodec(),
         visualCapture: await loadHeadlessVisualCaptureCodec(),
     });
     await manager.configureFromManifest({ sensors: [camera] }, {
@@ -321,10 +318,10 @@ test("analytic publication pairs RGB, CameraInfo, and depth and keeps observatio
     assert.equal(queued.length, 1);
     assert.deepEqual(queued[0].messages.map((entry) => entry.signal), ["image", "cameraInfo", "depth"]);
     const [image, info, depth] = queued[0].messages.map((entry) => entry.value);
-    assert.equal(image.encoding, "rgba8");
-    assert.equal(depth.encoding, "32FC1");
-    assert.deepEqual(image.header.stamp, depth.header.stamp);
-    assert.deepEqual(image.header.stamp, info.header.stamp);
+    assert.equal(image.pixelFormat, "rgba8");
+    assert.equal(depth.pixelFormat, "depth-f32-le");
+    assert.equal(queued[0].captureTimeNs, COSMOS_CLIP_CAPTURE_INTERVAL_NS);
+    assert.equal(info.header, undefined);
     assert.deepEqual(Array.from(depth.data), Array.from(new Uint8Array(Float32Array.from([0, 4, 1, 2]).buffer)));
     assert.equal(queued[0].observation.dtype, "uint8");
     assert.deepEqual(queued[0].observation.shape, [2, 2, 4]);
@@ -387,13 +384,6 @@ function pythonClip(script, args) {
 }
 
 test("Python decodes retained RGB, depth, and CameraInfo SFLog messages", async (context) => {
-    registerMsgDefinition("builtin_interfaces/Time", "int32 sec\nuint32 nanosec\n");
-    registerMsgDefinition("std_msgs/Header", "builtin_interfaces/Time stamp\nstring frame_id\n");
-    registerMsgDefinition("sensor_msgs/Image", "std_msgs/Header header\nuint32 height\nuint32 width\nstring encoding\nuint8 is_bigendian\nuint32 step\nuint8[] data\n");
-    registerMsgDefinition(
-        "sensor_msgs/CameraInfo",
-        "std_msgs/Header header\nuint32 height\nuint32 width\nstring distortion_model\nfloat64[] d\nfloat64[9] k\nfloat64[9] r\nfloat64[12] p\nuint32 binning_x\nuint32 binning_y\n",
-    );
     const directory = await mkdtemp(path.join(os.tmpdir(), "cosmos-clip-sflog-"));
     context.after(() => rm(directory, { recursive: true, force: true }));
     const service = new LogService(directory);
@@ -401,23 +391,23 @@ test("Python decodes retained RGB, depth, and CameraInfo SFLog messages", async 
     const encoder = new SFLogBatchEncoder();
     const stamps = [33_333_333, 66_666_666];
     stamps.forEach((stamp, index) => {
-        const rgb = encodeTopicValue("sensor_msgs/Image", buildImageMessage({
+        const rgb = buildImageMessage({
             data: new Uint8Array(16).fill(index + 1),
             width: 2,
             height: 2,
             timeNs: stamp,
             frameId: "front_camera_optical_frame",
             encoding: "rgba8",
-        }));
-        const depth = encodeTopicValue("sensor_msgs/Image", buildImageMessage({
+        });
+        const depth = buildImageMessage({
             data: Float32Array.from([1.5 + index, 0, 2, 3]),
             width: 2,
             height: 2,
             timeNs: stamp,
             frameId: "front_camera_optical_frame",
             encoding: "32FC1",
-        }));
-        const info = encodeTopicValue("sensor_msgs/CameraInfo", buildCameraInfo({
+        });
+        const info = buildCameraInfo({
             width: 1280,
             height: 720,
             timeNs: stamp,
@@ -425,10 +415,11 @@ test("Python decodes retained RGB, depth, and CameraInfo SFLog messages", async 
             distortionModel: "none",
             distortion: [0, 0, 0, 0, 0],
             intrinsics: { fx: COSMOS_CLIP_FOCAL_PX, fy: COSMOS_CLIP_FOCAL_PX, cx: 639.5, cy: 359.5 },
-        }));
+        });
         const metadata = {
-            captureTimeNs: stamps[0],
-            sequenceId: 0,
+            captureTimeNs: stamp,
+            sequenceId: index,
+            frameId: "front_camera_optical_frame",
             captureStep: 3,
         };
         for (const [signal, encoded] of [["image", rgb], ["depth", depth], ["cameraInfo", info]]) {
@@ -436,16 +427,15 @@ test("Python decodes retained RGB, depth, and CameraInfo SFLog messages", async 
                 path: `devices.front-camera.${signal}`,
                 timeUs: Math.round(stamp / 1000),
                 cycle: 3 * (index + 1),
-                encodedValue: encoded,
-                entry: { type: "bytes", value: encoded },
+                entry: { type: "json", value: encoded },
                 descriptor: {
                     path: `devices.front-camera.${signal}`,
-                    type: "bytes",
+                    type: "json",
                     source: "sensors",
                     category: "devices",
                     replayRole: "derived",
                     logClass: "heavy",
-                    metadata,
+                    metadata: { ...metadata, valueContract: { id: signal === "cameraInfo" ? "cev.camera-info" : "cev.image", version: 1 } },
                 },
             });
         }
@@ -485,7 +475,7 @@ print(json.dumps([{
     assert.equal(depths[0].depth0, 1.5);
     assert.equal(depths[1].depth0, 2.5);
     assert.ok(infos.every((update) => update.fx === COSMOS_CLIP_FOCAL_PX));
-    assert.ok(updates.every((update) => update.captureTimeNs === stamps[0] && update.sequenceId === 0 && update.captureStep === 3));
+    assert.ok(updates.every((update) => update.captureTimeNs === update.stampNs && update.sequenceId === stamps.indexOf(update.stampNs) && update.captureStep === 3));
 });
 
 function ffmpegAvailable() {

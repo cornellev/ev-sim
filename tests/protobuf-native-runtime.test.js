@@ -183,13 +183,21 @@ test("inbound admission is bounded and command application keeps exact ordering"
     assert.ok(estimatePayloadBytes({ nested: { first: new Uint8Array(900_000), second: new Uint8Array(900_000) } }) > 1_800_000);
 });
 
-test("native point products match legacy measured points in a single RNG pass", () => {
+test("native points and policy observations share a single RNG pass", () => {
     const buffer = new Float32Array([5, 0.5, 1, 1, 7, 0.2, 1, 2]);
+    const original = buffer.slice();
     const config = { calibration: { range: 20, azimuth: { startDeg: 0, endDeg: 2, stepDeg: 1 }, elevation: { startDeg: 0, endDeg: 1, stepDeg: 1 }, products: { pointCloud: true } },
         noise: { model: "gaussian", bias: 0.1, standardDeviation: 0.1, pointDropoutProbability: 0.2 }, outputs: { pointCloudTopicId: "points" }, frameId: "lidar" };
-    const capture = (nativeTopics) => buildLidarCapture({ buffer, config, captureTimeNs: 0, rng: new SeededRNG("same"), publisher: { nativeTopics }, includeObservation: true });
-    const legacy = capture(false), native = capture(true), view = new DataView(legacy.messages[0].value.data.buffer);
-    assert.deepEqual(native.observation, legacy.observation);
-    for (let index = 0; index < native.messages[0].value.count; index++) for (let axis = 0; axis < 3; axis++) assert.equal(native.messages[0].value.positions[index * 3 + axis], view.getFloat32(index * 16 + axis * 4, true));
+    const withObservationRng = new SeededRNG("same"), pointsOnlyRng = new SeededRNG("same");
+    const measured = buildLidarCapture({ buffer, config, captureTimeNs: 0, rng: withObservationRng, includeObservation: true });
+    const pointsOnly = buildLidarCapture({ buffer, config, captureTimeNs: 0, rng: pointsOnlyRng });
+    assert.deepEqual(measured.messages, pointsOnly.messages);
+    assert.equal(withObservationRng.next(), pointsOnlyRng.next());
+    assert.deepEqual(buffer, original);
+    assert.deepEqual(measured.observation.shape, [1, 2, 2]);
+    assert.equal(measured.observation.value[1], 0.5);
+    const points = measured.messages[0].value;
+    assert.ok(Math.abs(Math.hypot(...points.positions.slice(0, 3)) - measured.observation.value[0]) < 1e-6);
+    assert.equal(validateNativeTopicValue("cev.points", points).ok, true);
     assert.equal(validateNativeTopicValue("cev.points", buildNativePoints({ buffer, calibration: config.calibration })).ok, true);
 });

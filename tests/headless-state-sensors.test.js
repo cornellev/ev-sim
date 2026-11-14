@@ -110,6 +110,7 @@ test("native state delivery preserves observations, seeded latency, dropouts and
         return { id: sensor.id, name: `/${sensor.id}`, direction: "output", valueContract: { id: contracts[i], version: 1 } };
     });
     const plain = managerFor(sensors).manager;
+    plain.topics = new Map(topics.map((topic) => [topic.id, topic]));
     const packets = [];
     const native = new HeadlessStateSensorManager({ vehicles: [vehicle()] }, { telemetry: new SignalStore() });
     native.configureFromManifest({ sensors }, { seed: "17", stepNs: STEP_NS, backendSelection: createStateSensorBackendSelection(),

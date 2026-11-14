@@ -14,7 +14,9 @@ import { assertResolvedContactHosts, CONTACT_HOST_VERSION } from "../app/simulat
 import { createVehiclePlantDefinition } from "../app/simulation/vehicles/KinematicVehiclePlant.js";
 import { isContactBicycle } from "../app/simulation/vehicles/contactBicycle.js";
 import { CONTACT_BICYCLE_MODEL, DEFAULT_DYNAMIC_BICYCLE, normalizeVehicleDynamics, normalizeVehicleManifest } from "../app/vehicles/VehicleManifest.js";
-import { verifyRunBundle, verifyRunBundleBytes, verifyRunBundleIntegrity } from "../server/headless/RunBundle.js";
+import { verifyRunBundle } from "../server/headless/RunBundle.js";
+import { verifyRunBundleBytes } from "../server/headless/RunBundleInspection.js";
+import { verifyRunBundleIntegrity } from "../server/headless/RunBundleInspection.js";
 import { StorageService } from "../server/storage/StorageService.js";
 import { contactHostBundle } from "./helpers/contactHostBundle.js";
 import { rehashRunBundle } from "./helpers/headlessRunnerBundle.js";

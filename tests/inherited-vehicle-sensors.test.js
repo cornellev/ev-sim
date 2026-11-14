@@ -187,9 +187,11 @@ test("run sensor devices use the sensor id as their name", async () => {
     const { PluginSensorDevice } = await import("../app/simulation/sensors/PluginSensorAdapter.js");
     const helios = new PluginSensorDevice({
         sensor: { id: "helios", type: "vendor.robosense.helios32.lidar", calibration: {} },
+        plugin: { descriptor: { sensorAbi: 2 } },
         products: [],
     }, {
         factory: {
+            descriptor: { sensorAbi: 2 },
             pluginId: "helios",
             packageHash: "hash",
             type: "vendor.robosense.helios32.lidar",

@@ -5,8 +5,8 @@ import { SensorPublisher } from "../app/simulation/sensors/SensorPublisher.js";
 import { SignalStore } from "../app/scripting/runtime/SignalStore.js";
 import { TopicContractRouter } from "../app/simulation/TopicContractRouter.js";
 
-const topic = { id: "output", name: "/test", type: "test/Message", direction: "output" };
-const message = { topicId: topic.id, signal: "measurement", value: { count: 1 } };
+const topic = { id: "output", name: "/test", valueContract: { id: "cev.points", version: 1 }, direction: "output" };
+const message = { topicId: topic.id, signal: "measurement", value: { positions: new Float32Array([1, 2, 3]), intensities: new Float32Array([0.5]), count: 1 } };
 const packet = { productId: "points", streamId: "main", packetIndex: 0, offsetNs: 0, payload: new Uint8Array([1]) };
 const clock = { step: 1, timeNs: 10_000_000 };
 
@@ -16,8 +16,7 @@ test("native delivery publishes once after local acceptance and bypasses ROS enc
     const publicationPort = (envelope) => { accepted.push(envelope); return { ok: true }; };
     const router = new TopicContractRouter({ topics: [topic] }, { telemetry: store, publicationPort });
     const output = new SensorPublisher({ telemetryId: "native" }, { id: "native", rateHz: 100, latency: { fixedNs: 0, jitterNs: 0 }, outputs: {} }, {
-        nativeTopics: true, topics: [topic], runtimeData: { bindings: () => ({ signalStore: store }) }, topicRouter: router, publicationPort,
-        encodeTopicValue: () => { throw new Error("ROS encoder called"); },
+ topics: [topic], runtimeData: { bindings: () => ({ signalStore: store }) }, topicRouter: router, publicationPort,
     });
     const value = { positions: new Float32Array([1, 2, 3]), intensities: new Float32Array([0.5]), count: 1 };
     output.queue.push({ sampleIndex: 0, captureTimeNs: 0, captureStep: 0, deliveryTimeNs: 0, scheduledDeliveryTimeNs: 0, sequence: 0,
@@ -37,7 +36,7 @@ function publisher(options = {}, data = null) {
     const store = new SignalStore();
     return new SensorPublisher({ telemetryId: "sensor" }, { id: "sensor", rateHz: 100 }, {
         runtimeData: data ?? { bindings: () => ({ signalStore: store }) }, topics: [topic],
-        encodeTopicValue: () => new Uint8Array([1]), ...options,
+        ...options,
     });
 }
 
@@ -49,14 +48,13 @@ function deliver(output, frame = {}) {
     return output.health;
 }
 
-test("processed and published differ for mapping, encoding, sink and route failures; partial data survives", () => {
+test("processed and published differ for mapping, contract, sink and route failures; partial data survives", () => {
     const success = publisher();
     assert.equal(deliver(success).publishedFrames, 1);
     const failed = [
         publisher({ topics: [] }),
-        publisher({ topics: [{ ...topic, type: undefined }] }),
-        publisher({ encodeTopicValue: () => { throw new Error("encode failed"); } }),
-        publisher({ encodeTopicValue: () => undefined }),
+        publisher({ topics: [{ ...topic, valueContract: undefined }] }),
+        publisher({ publicationPort: () => ({ ok: false }) }),
         publisher({}, { bindings: () => ({}) }),
         publisher({ topicRouter: { routeOutbound: () => ({ ok: false }) } }),
         publisher({}, { bindings: () => ({ signalStore: { publishSignal: () => false } }) }),
@@ -74,14 +72,14 @@ test("processed and published differ for mapping, encoding, sink and route failu
     assert.equal(deliver(publisher(), { messages: [{ ...message, signal: undefined }] }).publishedFrames, 0);
 });
 
-test("observation-only and encode-failed frames are processed, strict failures never publish, reset clears counters", () => {
+test("observation-only and rejected frames are processed, strict failures never publish, reset clears counters", () => {
     const output = publisher();
     deliver(output, { messages: [], observation: { points: [1] } });
     assert.equal(output.health.processedFrames, 1);
     assert.equal(output.health.publishedFrames, 0);
-    deliver(output, { encodeFailed: true });
+    deliver(output, { messages: [{ ...message, value: {} }] });
     assert.equal(output.health.processedFrames, 2);
-    assert.equal(output.health.deliveredFrames, 1);
+    assert.equal(output.health.deliveredFrames, 2);
     const state = output.getDeterministicState();
     assert.equal(Object.hasOwn(state.health, "processedFrames"), false);
     assert.equal(Object.hasOwn(state.health, "publishedFrames"), false);
@@ -104,17 +102,8 @@ test("native frames require valid local products, and remote transport errors do
     assert.throws(() => deliver(failedTransport, { messages: [], nativePackets: [packet] }), /transport failed/);
     assert.equal(failedTransport.health.publishedFrames, 1);
     assert.equal(deliver(publisher({ nativePacketSink: { enqueueBatch: () => true } }, { bindings: () => ({}) }), { messages: [], nativePackets: [packet] }).publishedFrames, 0);
-    const store = new SignalStore();
-    for (const publishEncoded of [() => Promise.reject(new Error("disconnected")), () => { throw new Error("disconnected"); }]) {
-        const output = publisher({}, { bindings: () => ({ signalStore: store }), client: () => ({ get: () => ({ isOpen: () => true, publishEncoded }) }) });
-        assert.equal(deliver(output).publishedFrames, 1);
-        await Promise.resolve();
-        assert.equal(output.health.publishedFrames, 1);
-    }
     let remoteSent = false;
-    const remoteOnly = publisher({}, { bindings: () => ({}), client: () => ({ get: () => ({
-        isOpen: () => true, publishEncoded: () => { remoteSent = true; return Promise.resolve(); },
-    }) }) });
+    const remoteOnly = publisher({ publicationPort: () => { remoteSent = true; return { ok: true }; } }, { bindings: () => ({}) });
     assert.equal(deliver(remoteOnly).publishedFrames, 0);
-    assert.equal(remoteSent, true);
+    assert.equal(remoteSent, false);
 });

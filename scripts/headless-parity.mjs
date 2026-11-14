@@ -5,7 +5,6 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
-import { decodeTopicValue } from "../app/client/Client.js";
 import { HeadlessEpisode } from "../app/simulation/headless/HeadlessEpisode.js";
 import { createHeadlessRuntimeContext } from "../app/simulation/headless/HeadlessRuntimeContext.js";
 import { SimulationKernel } from "../app/simulation/kernel/SimulationKernel.js";
@@ -287,24 +286,8 @@ function cpuLidarHits(episode) {
     const published = episode.runtime.signalStore.read(`devices.${device.id}.semanticPointCloud`, { clone: true });
     if (!published.exists) return [];
     const native = published.value;
-    if (native?.positions instanceof Float32Array) {
-        if (![native.instanceIds, native.semanticIds, native.rayIndices].every((values) => values?.length === native.count)) throw new Error("CPU LiDAR native semantic arrays do not match count.");
-        return Array.from({ length: native.count }, (_, hitIndex) => ({ hitIndex, rayIndex: native.rayIndices[hitIndex], semanticId: native.semanticIds[hitIndex], instanceId: native.instanceIds[hitIndex] }));
-    }
-    const cloud = decodeTopicValue(published.value)?.value;
-    if (!cloud || cloud.point_step !== 28) throw new Error("CPU LiDAR semantic evidence is not a metric-v2 PointCloud2 value.");
-    const offsets = Object.fromEntries(cloud.fields.map((field) => [field.name, Number(field.offset)]));
-    const bytes = Buffer.from(cloud.data.buffer, cloud.data.byteOffset, cloud.data.byteLength);
-    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    return Array.from({ length: Number(cloud.width) * Number(cloud.height) }, (_, hitIndex) => {
-        const offset = hitIndex * Number(cloud.point_step);
-        return {
-            hitIndex,
-            rayIndex: view.getUint32(offset + offsets.ray_index, true),
-            semanticId: view.getUint16(offset + offsets.semantic_id, true),
-            instanceId: view.getUint32(offset + offsets.instance_id, true),
-        };
-    });
+    if (!(native?.positions instanceof Float32Array) || ![native.instanceIds, native.semanticIds, native.rayIndices].every((values) => values?.length === native.count)) throw new Error("CPU LiDAR native semantic arrays do not match count.");
+    return Array.from({ length: native.count }, (_, hitIndex) => ({ hitIndex, rayIndex: native.rayIndices[hitIndex], semanticId: native.semanticIds[hitIndex], instanceId: native.instanceIds[hitIndex] }));
 }
 
 function browserKernelProxy(engine, kernel) {

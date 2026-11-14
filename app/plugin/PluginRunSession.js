@@ -99,8 +99,10 @@ export class PluginRunSession {
         logger = () => {},
         authorizePackage = null,
         subscribePolicy = null,
+        createSensorTypeDefinition,
     } = {}) {
         this.moduleSource = moduleSource;
+        this.createSensorTypeDefinition = createSensorTypeDefinition;
         this.plugins = normalizeResolvedPlugins(plugins);
         this.availableCapabilities = Object.freeze([...availableCapabilities].sort(comparePluginText));
         this.simulatorVersion = simulatorVersion;
@@ -184,6 +186,7 @@ export class PluginRunSession {
         this.host = new PluginHost({
             blockRegistry: baseRegistry,
             sensorRegistry: baseSensorRegistry,
+            createSensorTypeDefinition: this.createSensorTypeDefinition,
             simulatorVersion: this.simulatorVersion,
             availableCapabilities: this.availableCapabilities,
             logger: this.logger,
@@ -443,20 +446,21 @@ export class PluginRunSession {
                     steeringRadRep103,
                 });
             },
-            publishTopic: (topicIdOrName, { value = null, typeStr = null, valueContract = null } = {}) => {
+            publishTopic: (topicIdOrName, envelope = {}) => {
                 requireGrant(grants, "topics.publish", plugin.id);
                 this._assertActor(plugin.id);
+                if (Object.keys(envelope).some((key) => !["value", "valueContract"].includes(key))) throw new TypeError("Topic publications accept value and valueContract only.");
+                const { value = null, valueContract = null } = envelope;
                 const topicId = String(topicIdOrName ?? "").trim();
                 if (!topicId) throw new TypeError("Topic publications require a topic id.");
                 const topic = this._requireTopic(topicId, plugin.id);
-                if (topic.valueContract && (typeStr || valueContract?.id !== topic.valueContract.id || valueContract?.version !== topic.valueContract.version)) throw pluginError(PLUGIN_ERROR_CODES.STATE_INVALID, "Native plugin publication requires the declared valueContract.", { pluginId: plugin.id, requiresReset: true });
+                if (!topic.valueContract || valueContract?.id !== topic.valueContract.id || valueContract?.version !== topic.valueContract.version) throw pluginError(PLUGIN_ERROR_CODES.STATE_INVALID, "Native plugin publication requires the declared valueContract.", { pluginId: plugin.id, requiresReset: true });
                 this.journal.stage({
                     kind: "topic-publish",
                     pluginId: plugin.id,
                     topicId,
                     value: clonePluginJson(value, "plugin topic value"),
-                    typeStr: typeStr == null ? null : String(typeStr),
-                    ...(topic.valueContract ? { valueContract: clonePluginJson(valueContract) } : {}),
+                    valueContract: clonePluginJson(valueContract),
                 });
             },
             spawnOverlay: ({ id, assetId, pose } = {}) => {
@@ -697,11 +701,10 @@ export class PluginRunSession {
                 { pluginId: effect.pluginId, requiresReset: true },
             );
         }
-        const expectedType = topic.schema?.type || topic.type;
-        if (effect.typeStr && expectedType && effect.typeStr !== expectedType) {
+        if (!topic.valueContract || effect.valueContract?.id !== topic.valueContract.id || effect.valueContract?.version !== topic.valueContract.version) {
             throw pluginError(
                 PLUGIN_ERROR_CODES.STATE_INVALID,
-                `Plugin topic "${topic.name}" expected ${expectedType}, received ${effect.typeStr}.`,
+                `Plugin topic "${topic.name}" requires its declared native valueContract.`,
                 { pluginId: effect.pluginId, requiresReset: true },
             );
         }
@@ -715,13 +718,13 @@ export class PluginRunSession {
         const clock = this._currentClock();
         const routed = this.services.topicRouter.routeOutbound(topic.id, {
             value: effect.value,
-            ...(topic.valueContract ? { valueContract: effect.valueContract } : { typeStr: effect.typeStr ?? expectedType }),
+            valueContract: effect.valueContract,
         }, {
             producer: topic.producer || "simulator",
             captureTimeNs: clock.timeNs,
             deliveryTimeNs: clock.timeNs,
             cycle: clock.step,
-            ...(topic.valueContract ? { sequenceId: String(clock.step), actualDeliveryStep: clock.step } : {}),
+            sequenceId: String(clock.step), actualDeliveryStep: clock.step,
         });
         if (!routed?.ok) {
             throw pluginError(

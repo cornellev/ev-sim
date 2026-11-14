@@ -29,7 +29,7 @@ export async function uploadedDescriptorSource(file) {
 
 // One session belongs to ConfigPage, so mode switches keep drafts and fence old requests.
 export class ProtobufInterfaceAuthoringSession {
-    constructor({ fetchImpl = globalThis.fetch } = {}) {
+    constructor({ fetchImpl = (...args) => globalThis.fetch(...args) } = {}) {
         this.fetch = fetchImpl;
         this.listeners = new Set();
         this.cache = new Map();

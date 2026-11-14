@@ -37,7 +37,6 @@ export function createHeadlessRuntimeContext(options = {}) {
     const devices = options.devices ?? new HeadlessSensorManager(() => vehicles, {
         telemetry: signalStore,
         rendererClient: options.rendererClient,
-        messageCodec: options.messageCodec,
     });
     let renderRuntime = null;
     const data = {

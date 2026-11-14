@@ -1,8 +1,8 @@
 import { proposeSensorWiring } from "../simulation/sensors/SensorWiring.js";
 import {
     isControlsCommandTopic,
-    scenarioUsesExternalRosForTopic,
-} from "../autonomy/AutonomyContractCatalog.js";
+    scenarioUsesExternalTopic,
+} from "../simulation/NativeTopicCatalog.js";
 import {
     CONTROL_AUTHORITY_MODES,
     RUN_LOGGING_POLICIES,
@@ -129,11 +129,11 @@ function missingExternalTopic(manifest, scenario, source) {
             "missing-external-topic",
             source.routePath ? `${source.routePath}.topicId` : "routes",
             "scenario",
-            "The ego external-ros controller has no topic id. This preset does not set one.",
+            "The ego external-topic controller has no topic id. This preset does not set one.",
         );
     }
     const topics = Array.isArray(manifest?.topics) ? manifest.topics : [];
-    if (!topics.some((topic) => scenarioUsesExternalRosForTopic(scenario, topic))) {
+    if (!topics.some((topic) => scenarioUsesExternalTopic(scenario, topic))) {
         return issue(
             "missing-external-topic",
             "topics",
@@ -170,7 +170,7 @@ function profileIssues(profileId, manifest, scenario, source) {
             `The ego ${source.kind} controller runs in the simulator and does not consume candidate command input. This preset does not change that controller.`,
         ));
     }
-    if (profileId === "external" && source.kind === "external-ros") {
+    if (profileId === "external" && source.kind === "external-topic") {
         const topicIssue = missingExternalTopic(manifest, scenario, source);
         if (topicIssue) issues.push(topicIssue);
     }
@@ -191,7 +191,7 @@ function profileIssues(profileId, manifest, scenario, source) {
 function authorityFor(profileId, source) {
     if (source.withhold) return null;
     if (profileId === "standard") return "reference";
-    return source.kind === "external-ros" ? "reference" : "candidate";
+    return source.kind === "external-topic" ? "reference" : "candidate";
 }
 
 // Full manifest normalization rewrites sensors and topics; the preset only touches these leaves.
@@ -263,7 +263,7 @@ export function previewProfile(manifest, profileId, context = {}) {
 
 function matchesExternal(manifest, source) {
     if (source.withhold) return false;
-    const remote = source.kind === "external-ros";
+    const remote = source.kind === "external-topic";
     const direct = source.kind === "direct-command";
     if (!remote && !direct) return false;
     const authority = remote ? "reference" : "candidate";

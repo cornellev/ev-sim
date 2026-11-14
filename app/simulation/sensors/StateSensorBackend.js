@@ -170,7 +170,6 @@ export class HeadlessStateSensorManager {
     }
 
     configureFromManifest(sensorRig = {}, options = {}) {
-        this.nativeTopics = options.nativeTopics === true;
         this.publicationOptions = options;
         this.topics = new Map((options.topics ?? []).map((topic) => [topic.id, topic]));
         this.seed = String(options.seed ?? "0");
@@ -276,7 +275,7 @@ export class HeadlessStateSensorManager {
                                 value: device.model.values(result.measurement).map(Number),
                                 validity: device.model.validity ? device.model.validity(result.measurement) : true,
                             });
-                            if (this.nativeTopics) this._retainNativeProduct(device, sampleIndex, result.measurement);
+                            this._retainNativeProduct(device, sampleIndex, result.measurement);
                         }
                     }
                 }

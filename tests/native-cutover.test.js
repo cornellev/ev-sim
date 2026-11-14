@@ -1,3 +1,4 @@
+import { createDefaultRunManifest as createHistoricalManifest } from "../server/interfaces/historical/RunContracts.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -9,7 +10,8 @@ import { createRunSensor } from "../app/simulation/sensors/SensorTypeRegistry.js
 import { proposeSensorWiring } from "../app/simulation/sensors/SensorWiring.js";
 import { RunSessionController } from "../app/simulation/RunSessionController.js";
 import { HeadlessExternalSession } from "../server/headless/HeadlessExternalSession.js";
-import { verifyRunBundle, verifyRunBundleIntegrity } from "../server/headless/RunBundle.js";
+import { verifyRunBundle } from "../server/headless/RunBundle.js";
+import { verifyRunBundleIntegrity } from "../server/headless/RunBundleInspection.js";
 import { StorageService } from "../server/storage/StorageService.js";
 import { createPlanningBundle } from "../server/headless/PlanningBundle.js";
 import { createPortableHeadlessBundle } from "./helpers/headlessRunnerBundle.js";
@@ -22,11 +24,11 @@ test("native defaults write v13/scenario v2 and historical imports require revie
     const storage = new StorageService(root);
     const bundle = await createPortableHeadlessBundle({ native: false });
     verifyRunBundleIntegrity(bundle);
-    assert.throws(() => verifyRunBundle(bundle), /reviewed native migration/);
-    await assert.rejects(storage.createRunManifest(bundle.manifest), /reviewed native migration/);
+    assert.throws(() => verifyRunBundle(bundle), /reviewed native (migration|adoption)/);
+    await assert.rejects(storage.createRunManifest(bundle.manifest), /reviewed native (migration|adoption)/);
     const imported = await storage.importRunBundle(bundle);
-    await assert.rejects(storage.putRunManifest(imported.id, { manifest: imported }), /reviewed native migration/);
-    await assert.rejects(storage.duplicateRunManifest(imported.id), /reviewed native migration/);
+    await assert.rejects(storage.putRunManifest(imported.id, { manifest: imported }), /reviewed native (migration|adoption)/);
+    await assert.rejects(storage.duplicateRunManifest(imported.id), /reviewed native (migration|adoption)/);
     const plan = await storage.planNativeRunMigration(imported.id);
     assert.equal(plan.ok, true, JSON.stringify(plan.blocked));
     await storage.applyNativeRunMigration(imported.id, { plan, expectedRevision: plan.baseRevision });
@@ -36,6 +38,7 @@ test("native defaults write v13/scenario v2 and historical imports require revie
 test("sensor wiring removes registry schemas even when outputs are already assigned", () => {
     const manifest = createDefaultRunManifest();
     manifest.sensorRig.sensors.push(createRunSensor("imu", { id: "new-imu", outputs: { imuTopicId: "imu" } }));
+    manifest.sensorRig.sensors.at(-1).schema = { imuTopicId: "sensor_msgs/Imu" };
     const proposed = proposeSensorWiring(manifest).manifest;
     assert.equal(proposed.sensorRig.sensors.at(-1).schema, undefined);
     assert.ok(manifest.sensorRig.sensors.at(-1).schema);
@@ -45,10 +48,10 @@ test("new planning bundles use a native template and explicit historical templat
     const root = await mkdtemp(path.join(os.tmpdir(), "cev-native-planning-"));
     t.after(() => rm(root, { recursive: true, force: true }));
     const storage = new StorageService(root);
-    await storage._writeRunManifest("igvc-default", createDefaultRunManifest({ version: 12 }));
+    await storage._writeRunManifest("igvc-default", createHistoricalManifest({ version: 12 }));
     const bundle = await createPlanningBundle({ dataDir: root, finish: "none" });
     assert.equal(bundle.resolved.version, 13);
-    await assert.rejects(createPlanningBundle({ dataDir: root, sourceManifestId: "igvc-default" }), /reviewed native migration/);
+    await assert.rejects(createPlanningBundle({ dataDir: root, sourceManifestId: "igvc-default" }), /reviewed native (migration|adoption)/);
 });
 
 test("ownership loss pauses browser and headless execution before optional control ports", () => {

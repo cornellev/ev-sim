@@ -1,0 +1,816 @@
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
+
+import { PERCEPTION_LABEL_CATALOG_VERSION } from "../../../app/autonomy/PerceptionLabelCatalog.js";
+
+export const AUTONOMY_CATALOG_KIND = "cev-sim.autonomy-contract-catalog";
+export const AUTONOMY_CATALOG_VERSION = 6;
+
+export { PERCEPTION_LABEL_CATALOG_VERSION };
+
+export const PRODUCER_NAMESPACES = Object.freeze([
+    "simulator",
+    "candidate",
+    "reference",
+    "oracle",
+    "replay",
+    "bypass",
+]);
+
+export const AUTHORITY_MODES = Object.freeze([
+    "candidate",
+    "reference",
+    "oracle",
+    "replay",
+    "bypass",
+]);
+
+export const CONTRACT_STAGES = Object.freeze([
+    "platform",
+    "perception",
+    "localization",
+    "controls",
+]);
+
+export const IMPLEMENTATION_MODES = Object.freeze(["live", "catalog-only", "stub"]);
+
+/** Canonical ROS .msg text keyed by package/Message. Single source of truth for resolve + client sync. */
+export const ROS_SCHEMA_DEFINITIONS = Object.freeze({
+    "builtin_interfaces/Time": "int32 sec\nuint32 nanosec\n",
+    "std_msgs/Header": "builtin_interfaces/Time stamp\nstring frame_id\n",
+    "geometry_msgs/Point32": "float32 x\nfloat32 y\nfloat32 z\n",
+    "geometry_msgs/Point": "float64 x\nfloat64 y\nfloat64 z\n",
+    "geometry_msgs/Quaternion": "float64 x\nfloat64 y\nfloat64 z\nfloat64 w\n",
+    "geometry_msgs/Vector3": "float64 x\nfloat64 y\nfloat64 z\n",
+    "geometry_msgs/Pose": "geometry_msgs/Point position\ngeometry_msgs/Quaternion orientation\n",
+    "geometry_msgs/PoseWithCovariance": "geometry_msgs/Pose pose\nfloat64[36] covariance\n",
+    "geometry_msgs/Twist": "geometry_msgs/Vector3 linear\ngeometry_msgs/Vector3 angular\n",
+    "geometry_msgs/TwistWithCovariance": "geometry_msgs/Twist twist\nfloat64[36] covariance\n",
+    "geometry_msgs/Transform": "geometry_msgs/Vector3 translation\ngeometry_msgs/Quaternion rotation\n",
+    "geometry_msgs/TransformStamped": "std_msgs/Header header\nstring child_frame_id\ngeometry_msgs/Transform transform\n",
+    "sensor_msgs/Image": "std_msgs/Header header\nuint32 height\nuint32 width\nstring encoding\nuint8 is_bigendian\nuint32 step\nuint8[] data\n",
+    "sensor_msgs/CameraInfo": "std_msgs/Header header\nuint32 height\nuint32 width\nstring distortion_model\nfloat64[] d\nfloat64[9] k\nfloat64[9] r\nfloat64[12] p\nuint32 binning_x\nuint32 binning_y\n",
+    "sensor_msgs/PointField": "uint8 INT8=1\nuint8 UINT8=2\nuint8 INT16=3\nuint8 UINT16=4\nuint8 INT32=5\nuint8 UINT32=6\nuint8 FLOAT32=7\nuint8 FLOAT64=8\nstring name\nuint32 offset\nuint8 datatype\nuint32 count\n",
+    "sensor_msgs/PointCloud2": "std_msgs/Header header\nuint32 height\nuint32 width\nsensor_msgs/PointField[] fields\nbool is_bigendian\nuint32 point_step\nuint32 row_step\nuint8[] data\nbool is_dense\n",
+    "sensor_msgs/Imu": "std_msgs/Header header\ngeometry_msgs/Quaternion orientation\nfloat64[9] orientation_covariance\ngeometry_msgs/Vector3 angular_velocity\nfloat64[9] angular_velocity_covariance\ngeometry_msgs/Vector3 linear_acceleration\nfloat64[9] linear_acceleration_covariance\n",
+    "sensor_msgs/NavSatFix": "std_msgs/Header header\nsensor_msgs/NavSatStatus status\nfloat64 latitude\nfloat64 longitude\nfloat64 altitude\nfloat64[9] position_covariance\nuint8 COVARIANCE_TYPE_UNKNOWN=0\nuint8 COVARIANCE_TYPE_APPROXIMATED=1\nuint8 COVARIANCE_TYPE_DIAGONAL_KNOWN=2\nuint8 COVARIANCE_TYPE_KNOWN=3\nuint8 position_covariance_type\n",
+    "sensor_msgs/NavSatStatus": "int8 STATUS_NO_FIX=-1\nint8 STATUS_FIX=0\nint8 STATUS_SBAS_FIX=1\nint8 STATUS_GBAS_FIX=2\nuint16 SERVICE_GPS=1\nuint16 SERVICE_GLONASS=2\nuint16 SERVICE_COMPASS=4\nuint16 SERVICE_GALILEO=8\nint8 status\nuint16 service\n",
+    "nav_msgs/Odometry": "std_msgs/Header header\nstring child_frame_id\ngeometry_msgs/PoseWithCovariance pose\ngeometry_msgs/TwistWithCovariance twist\n",
+    "tf2_msgs/TFMessage": "geometry_msgs/TransformStamped[] transforms\n",
+    "rosgraph_msgs/Clock": "builtin_interfaces/Time clock\n",
+    "sensor_fusion_msgs/StampedAckermannDrive": "std_msgs/Header header\nuint32 sequence\nstring mode\nfloat64 deadline_ns\nfloat64 steering_angle\nfloat64 steering_angle_velocity\nfloat64 speed\nfloat64 acceleration\nfloat64 jerk\n",
+    "sensor_fusion_msgs/Box": "int32 id\ngeometry_msgs/Point32 center\ngeometry_msgs/Point32 size\ngeometry_msgs/Point32 rotation\n",
+    "sensor_fusion_msgs/Boxes": "sensor_fusion_msgs/Box[] boxes\n",
+    "sensor_fusion_msgs/LaneBounds": "geometry_msgs/Point32[] points\n",
+    "sensor_fusion_msgs/Lanes": "sensor_fusion_msgs/LaneBounds[] lanes\n",
+    "sensor_fusion_msgs/CarPosition": "geometry_msgs/Point32 position\ngeometry_msgs/Point32 rotation\n",
+    "sensor_fusion_msgs/StampedLanes": "std_msgs/Header header\nuint32 sequence\nstring sync_group_key\nstring calibration_hash\nsensor_fusion_msgs/LaneBounds[] lanes\n",
+    "sensor_fusion_msgs/TrafficControlState": "int32 instance_id\nstring class_id\nstring kind\nstring state\ngeometry_msgs/Point32 position\nfloat64 visibility\nfloat64 occlusion\n",
+    "sensor_fusion_msgs/TrafficControlStates": "std_msgs/Header header\nuint32 sequence\nstring sync_group_key\nstring calibration_hash\nsensor_fusion_msgs/TrafficControlState[] controls\n",
+    "vision_msgs/Point2D": "float64 x\nfloat64 y\n",
+    "vision_msgs/Pose2D": "vision_msgs/Point2D position\nfloat64 theta\n",
+    "vision_msgs/ObjectHypothesis": "string class_id\nfloat64 score\n",
+    "vision_msgs/ObjectHypothesisWithPose": "vision_msgs/ObjectHypothesis hypothesis\ngeometry_msgs/PoseWithCovariance pose\n",
+    "vision_msgs/BoundingBox2D": "vision_msgs/Pose2D center\nfloat64 size_x\nfloat64 size_y\n",
+    "vision_msgs/BoundingBox3D": "geometry_msgs/Pose center\ngeometry_msgs/Vector3 size\n",
+    "vision_msgs/Detection2D": "std_msgs/Header header\nvision_msgs/ObjectHypothesisWithPose[] results\nvision_msgs/BoundingBox2D bbox\nstring id\nfloat64 visibility\nfloat64 occlusion\n",
+    "vision_msgs/Detection2DArray": "std_msgs/Header header\nvision_msgs/Detection2D[] detections\n",
+    "vision_msgs/Detection3D": "std_msgs/Header header\nvision_msgs/ObjectHypothesisWithPose[] results\nvision_msgs/BoundingBox3D bbox\nstring id\nfloat64 visibility\nfloat64 occlusion\n",
+    "vision_msgs/Detection3DArray": "std_msgs/Header header\nvision_msgs/Detection3D[] detections\n",
+    "diagnostic_msgs/KeyValue": "string key\nstring value\n",
+    "diagnostic_msgs/DiagnosticStatus": "byte OK=0\nbyte WARN=1\nbyte ERROR=2\nbyte STALE=3\nbyte level\nstring name\nstring message\nstring hardware_id\ndiagnostic_msgs/KeyValue[] values\n",
+    "diagnostic_msgs/DiagnosticArray": "std_msgs/Header header\ndiagnostic_msgs/DiagnosticStatus[] status\n",
+});
+
+const CONTRACT_DEFINITIONS = Object.freeze([
+    {
+        id: "clock",
+        stage: "platform",
+        direction: "output",
+        defaultName: "/clock",
+        schema: { type: "rosgraph_msgs/Clock", version: 1 },
+        required: true,
+        implementation: "live",
+        defaultProducer: "simulator",
+        defaultAuthority: "reference",
+    },
+    {
+        id: "tf",
+        stage: "platform",
+        direction: "output",
+        defaultName: "/tf",
+        schema: { type: "tf2_msgs/TFMessage", version: 1 },
+        required: false,
+        implementation: "live",
+        defaultProducer: "simulator",
+        defaultAuthority: "reference",
+        framePolicy: "map→odom→base_link→sensor",
+        timestampPolicy: "capture",
+    },
+    {
+        id: "tf-static",
+        stage: "platform",
+        direction: "output",
+        defaultName: "/tf_static",
+        schema: { type: "tf2_msgs/TFMessage", version: 1 },
+        required: false,
+        implementation: "live",
+        defaultProducer: "simulator",
+        defaultAuthority: "reference",
+    },
+    {
+        id: "front-camera-image",
+        stage: "perception",
+        direction: "output",
+        defaultName: "/sensors/front_camera/image_raw",
+        schema: { type: "sensor_msgs/Image", version: 1 },
+        required: true,
+        implementation: "live",
+        defaultProducer: "simulator",
+        defaultAuthority: "reference",
+        timestampPolicy: "capture",
+    },
+    {
+        id: "front-camera-info",
+        stage: "perception",
+        direction: "output",
+        defaultName: "/sensors/front_camera/camera_info",
+        schema: { type: "sensor_msgs/CameraInfo", version: 1 },
+        required: true,
+        implementation: "live",
+        defaultProducer: "simulator",
+        defaultAuthority: "reference",
+    },
+    {
+        id: "front-lidar-points",
+        stage: "perception",
+        direction: "output",
+        defaultName: "/sensors/front_lidar/points",
+        schema: { type: "sensor_msgs/PointCloud2", version: 1 },
+        required: true,
+        implementation: "live",
+        defaultProducer: "simulator",
+        defaultAuthority: "reference",
+    },
+    {
+        id: "front-camera-depth",
+        stage: "perception",
+        direction: "output",
+        defaultName: "/oracle/front_camera/depth",
+        schema: { type: "sensor_msgs/Image", version: 1 },
+        required: false,
+        implementation: "live",
+        defaultProducer: "oracle",
+        defaultAuthority: "oracle",
+        timestampPolicy: "capture",
+        units: "meters-32FC1",
+    },
+    {
+        id: "front-camera-semantic",
+        stage: "perception",
+        direction: "output",
+        defaultName: "/oracle/front_camera/semantic",
+        schema: { type: "sensor_msgs/Image", version: 1 },
+        required: false,
+        implementation: "live",
+        defaultProducer: "oracle",
+        defaultAuthority: "oracle",
+        timestampPolicy: "capture",
+        units: "class-id-16UC1",
+    },
+    {
+        id: "front-camera-instance",
+        stage: "perception",
+        direction: "output",
+        defaultName: "/oracle/front_camera/instance",
+        schema: { type: "sensor_msgs/Image", version: 1 },
+        required: false,
+        implementation: "live",
+        defaultProducer: "oracle",
+        defaultAuthority: "oracle",
+        timestampPolicy: "capture",
+        units: "instance-id-32SC1",
+    },
+    {
+        id: "front-lidar-semantic",
+        stage: "perception",
+        direction: "output",
+        defaultName: "/oracle/front_lidar/points_semantic",
+        schema: { type: "sensor_msgs/PointCloud2", version: 1 },
+        required: false,
+        implementation: "live",
+        defaultProducer: "oracle",
+        defaultAuthority: "oracle",
+        timestampPolicy: "capture",
+    },
+    {
+        id: "oracle-detections-2d",
+        stage: "perception",
+        direction: "output",
+        defaultName: "/oracle/perception/detections_2d",
+        schema: { type: "vision_msgs/Detection2DArray", version: 1 },
+        required: false,
+        implementation: "live",
+        defaultProducer: "oracle",
+        defaultAuthority: "oracle",
+        timestampPolicy: "capture",
+    },
+    {
+        id: "oracle-detections-3d",
+        stage: "perception",
+        direction: "output",
+        defaultName: "/oracle/perception/detections_3d",
+        schema: { type: "vision_msgs/Detection3DArray", version: 1 },
+        required: false,
+        implementation: "live",
+        defaultProducer: "oracle",
+        defaultAuthority: "oracle",
+        timestampPolicy: "capture",
+    },
+    {
+        id: "oracle-lanes",
+        stage: "perception",
+        direction: "output",
+        defaultName: "/oracle/perception/lanes",
+        schema: { type: "sensor_fusion_msgs/StampedLanes", version: 1 },
+        required: false,
+        implementation: "live",
+        defaultProducer: "oracle",
+        defaultAuthority: "oracle",
+        timestampPolicy: "capture",
+    },
+    {
+        id: "oracle-traffic-controls",
+        stage: "perception",
+        direction: "output",
+        defaultName: "/oracle/perception/traffic_controls",
+        schema: { type: "sensor_fusion_msgs/TrafficControlStates", version: 1 },
+        required: false,
+        implementation: "live",
+        defaultProducer: "oracle",
+        defaultAuthority: "oracle",
+        timestampPolicy: "capture",
+    },
+    {
+        id: "front-camera-diagnostics",
+        stage: "perception",
+        direction: "output",
+        defaultName: "/diagnostics/front_camera",
+        schema: { type: "diagnostic_msgs/DiagnosticArray", version: 1 },
+        required: false,
+        implementation: "live",
+        defaultProducer: "simulator",
+        defaultAuthority: "reference",
+        timestampPolicy: "delivery",
+    },
+    {
+        id: "front-lidar-diagnostics",
+        stage: "perception",
+        direction: "output",
+        defaultName: "/diagnostics/front_lidar",
+        schema: { type: "diagnostic_msgs/DiagnosticArray", version: 1 },
+        required: false,
+        implementation: "live",
+        defaultProducer: "simulator",
+        defaultAuthority: "reference",
+        timestampPolicy: "delivery",
+    },
+    {
+        id: "imu",
+        stage: "localization",
+        direction: "output",
+        defaultName: "/sensors/imu/data",
+        schema: { type: "sensor_msgs/Imu", version: 1 },
+        units: "SI",
+        required: false,
+        implementation: "live",
+        defaultProducer: "simulator",
+        defaultAuthority: "reference",
+        timestampPolicy: "capture",
+    },
+    {
+        id: "gnss",
+        stage: "localization",
+        direction: "output",
+        defaultName: "/sensors/gnss/fix",
+        schema: { type: "sensor_msgs/NavSatFix", version: 1 },
+        required: false,
+        implementation: "live",
+        defaultProducer: "simulator",
+        defaultAuthority: "reference",
+        timestampPolicy: "capture",
+    },
+    {
+        id: "wheel-odometry",
+        stage: "localization",
+        direction: "output",
+        defaultName: "/sensors/wheel/odometry",
+        schema: { type: "nav_msgs/Odometry", version: 1 },
+        required: false,
+        implementation: "live",
+        defaultProducer: "simulator",
+        defaultAuthority: "reference",
+        timestampPolicy: "capture",
+    },
+    {
+        id: "truth-odometry",
+        stage: "localization",
+        direction: "output",
+        defaultName: "/oracle/vehicle/odometry",
+        schema: { type: "nav_msgs/Odometry", version: 1 },
+        required: false,
+        implementation: "live",
+        defaultProducer: "oracle",
+        defaultAuthority: "oracle",
+        timestampPolicy: "capture",
+    },
+    {
+        id: "vehicle-truth",
+        stage: "localization",
+        direction: "output",
+        defaultName: "/oracle/vehicle/state",
+        schema: { type: "sensor_fusion_msgs/CarPosition", version: 1 },
+        required: false,
+        implementation: "catalog-only",
+        defaultProducer: "oracle",
+        defaultAuthority: "oracle",
+    },
+    {
+        id: "perception-detections-2d",
+        stage: "perception",
+        direction: "input",
+        defaultName: "/perception/detections_2d",
+        schema: { type: "vision_msgs/Detection2DArray", version: 1 },
+        required: false,
+        implementation: "live",
+        defaultProducer: "candidate",
+        defaultAuthority: "candidate",
+        defaultRouteDownstream: false,
+        timeoutNs: 200_000_000,
+        validityNs: 500_000_000,
+        timestampPolicy: "capture",
+    },
+    {
+        id: "perception-detections-3d",
+        stage: "perception",
+        direction: "input",
+        defaultName: "/perception/detections_3d",
+        schema: { type: "vision_msgs/Detection3DArray", version: 1 },
+        required: false,
+        implementation: "live",
+        defaultProducer: "candidate",
+        defaultAuthority: "candidate",
+        defaultRouteDownstream: false,
+        timeoutNs: 200_000_000,
+        validityNs: 500_000_000,
+        timestampPolicy: "capture",
+    },
+    {
+        id: "perception-lanes",
+        stage: "perception",
+        direction: "input",
+        defaultName: "/perception/lanes",
+        schema: { type: "sensor_fusion_msgs/StampedLanes", version: 1 },
+        required: false,
+        implementation: "live",
+        defaultProducer: "candidate",
+        defaultAuthority: "candidate",
+        defaultRouteDownstream: false,
+        timeoutNs: 200_000_000,
+        validityNs: 500_000_000,
+        timestampPolicy: "capture",
+    },
+    {
+        id: "perception-semantic",
+        stage: "perception",
+        direction: "input",
+        defaultName: "/perception/semantic",
+        schema: { type: "sensor_msgs/Image", version: 1 },
+        required: false,
+        implementation: "live",
+        defaultProducer: "candidate",
+        defaultAuthority: "candidate",
+        defaultRouteDownstream: false,
+        units: "class-id-16UC1",
+        timeoutNs: 200_000_000,
+        validityNs: 500_000_000,
+        timestampPolicy: "capture",
+    },
+    {
+        id: "perception-detections",
+        stage: "perception",
+        direction: "input",
+        defaultName: "/perception/detections",
+        schema: { type: "sensor_fusion_msgs/Boxes", version: 1 },
+        required: false,
+        implementation: "catalog-only",
+        defaultProducer: "candidate",
+        defaultAuthority: "candidate",
+        defaultRouteDownstream: false,
+        timeoutNs: 200_000_000,
+        validityNs: 500_000_000,
+    },
+    {
+        id: "perception-lanes-legacy",
+        stage: "perception",
+        direction: "input",
+        defaultName: "/perception/lanes_legacy",
+        schema: { type: "sensor_fusion_msgs/Lanes", version: 1 },
+        required: false,
+        implementation: "catalog-only",
+        defaultProducer: "candidate",
+        defaultAuthority: "candidate",
+        defaultRouteDownstream: false,
+        timeoutNs: 200_000_000,
+    },
+    {
+        id: "localization-estimate",
+        stage: "localization",
+        direction: "input",
+        defaultName: "/localization/odometry",
+        schema: { type: "nav_msgs/Odometry", version: 1 },
+        units: "SI",
+        required: false,
+        implementation: "live",
+        defaultProducer: "candidate",
+        defaultAuthority: "candidate",
+        defaultRouteDownstream: false,
+        timeoutNs: 100_000_000,
+        validityNs: 500_000_000,
+        timestampPolicy: "capture",
+    },
+    {
+        id: "controls-command",
+        stage: "controls",
+        direction: "input",
+        defaultName: "/controls/command",
+        schema: { type: "sensor_fusion_msgs/StampedAckermannDrive", version: 1 },
+        units: "SI",
+        required: true,
+        implementation: "live",
+        defaultProducer: "candidate",
+        defaultAuthority: "candidate",
+        defaultRouteDownstream: true,
+        timeoutNs: 100_000_000,
+        validityNs: 200_000_000,
+        timestampPolicy: "capture",
+    },
+]);
+
+const contractsById = new Map(CONTRACT_DEFINITIONS.map((entry) => [entry.id, Object.freeze({ ...entry })]));
+
+export function listAutonomyContracts() {
+    return CONTRACT_DEFINITIONS.map((entry) => ({ ...entry }));
+}
+
+export function getAutonomyContract(contractId) {
+    return contractsById.get(String(contractId || "").trim()) ?? null;
+}
+
+export function catalogSchemas() {
+    return { ...ROS_SCHEMA_DEFINITIONS };
+}
+
+function parseFieldTypes(definition) {
+    const types = [];
+    for (const rawLine of definition.split(/\r?\n/)) {
+        const line = rawLine.split("#", 1)[0].trim();
+        if (!line || line.includes("=")) continue;
+        const parts = line.split(/\s+/);
+        if (parts.length < 2) continue;
+        const token = parts[0];
+        const arrayMatch = /^([A-Za-z0-9_/]+)(\[(\d*)\])?$/.exec(token);
+        if (!arrayMatch) continue;
+        let typeName = arrayMatch[1];
+        if (!typeName.includes("/") && !["string", "bool", "byte", "char", "float32", "float64", "int8", "uint8", "int16", "uint16", "int32", "uint32", "int64", "uint64"].includes(typeName.toLowerCase())) {
+            const pkg = definition.includes("/") ? null : null;
+            void pkg;
+        }
+        if (!typeName.includes("/") && !/^(string|bool|byte|char|float32|float64|int8|uint8|int16|uint16|int32|uint32|int64|uint64)$/i.test(typeName)) {
+            continue;
+        }
+        types.push(typeName);
+    }
+    return types;
+}
+
+function resolvePackage(typeName, rootPackage) {
+    if (typeName.includes("/")) return typeName;
+    const primitive = typeName.toLowerCase();
+    if (["string", "bool", "byte", "char", "float32", "float64", "int8", "uint8", "int16", "uint16", "int32", "uint32", "int64", "uint64"].includes(primitive)) {
+        return typeName;
+    }
+    return rootPackage ? `${rootPackage}/${typeName}` : typeName;
+}
+
+export function schemaClosureForTypes(types = []) {
+    const schemas = { ...ROS_SCHEMA_DEFINITIONS };
+    const queue = [...new Set(types.filter(Boolean))];
+    const seen = new Set();
+    while (queue.length > 0) {
+        const typeName = queue.shift();
+        if (seen.has(typeName)) continue;
+        seen.add(typeName);
+        const definition = schemas[typeName];
+        if (!definition) continue;
+        const packageName = typeName.includes("/") ? typeName.split("/")[0] : null;
+        for (const rawField of definition.split(/\r?\n/)) {
+            const line = rawField.split("#", 1)[0].trim();
+            if (!line || line.includes("=")) continue;
+            const parts = line.split(/\s+/);
+            if (parts.length < 2) continue;
+            const m = /^([A-Za-z0-9_/]+)(\[(\d*)\])?$/.exec(parts[0]);
+            if (!m) continue;
+            let dep = m[1];
+            if (!dep.includes("/")) {
+                const lower = dep.toLowerCase();
+                if (["string", "bool", "byte", "char", "float32", "float64", "int8", "uint8", "int16", "uint16", "int32", "uint32", "int64", "uint64"].includes(lower)) continue;
+                dep = packageName ? `${packageName}/${dep}` : dep;
+            }
+            if (!schemas[dep] && ROS_SCHEMA_DEFINITIONS[dep]) schemas[dep] = ROS_SCHEMA_DEFINITIONS[dep];
+            if (schemas[dep] && !seen.has(dep)) queue.push(dep);
+        }
+    }
+    return schemas;
+}
+
+export function schemaClosureForManifest(manifest) {
+    const types = (manifest?.topics || []).map((entry) => entry.schema?.type || entry.type).filter(Boolean);
+    for (const sensor of manifest?.sensorRig?.sensors || []) {
+        for (const rosType of Object.values(sensor.schema || {})) types.push(rosType);
+    }
+    return schemaClosureForTypes(types);
+}
+
+export function catalogMetadata() {
+    return {
+        kind: AUTONOMY_CATALOG_KIND,
+        version: AUTONOMY_CATALOG_VERSION,
+        hash: catalogHash(),
+        contractCount: CONTRACT_DEFINITIONS.length,
+    };
+}
+
+export function catalogHash() {
+    const contractPayload = CONTRACT_DEFINITIONS.map((contract) => ({
+        id: contract.id,
+        stage: contract.stage,
+        direction: contract.direction,
+        defaultName: contract.defaultName,
+        schema: contract.schema,
+        required: contract.required,
+        implementation: contract.implementation,
+        defaultProducer: contract.defaultProducer,
+        defaultAuthority: contract.defaultAuthority,
+        defaultRouteDownstream: contract.defaultRouteDownstream ?? null,
+        timeoutNs: contract.timeoutNs ?? null,
+        validityNs: contract.validityNs ?? null,
+        framePolicy: contract.framePolicy ?? null,
+        timestampPolicy: contract.timestampPolicy ?? null,
+        units: contract.units ?? null,
+        fallback: contract.fallback ?? null,
+    })).sort((left, right) => left.id.localeCompare(right.id));
+    const payload = JSON.stringify({
+        kind: AUTONOMY_CATALOG_KIND,
+        version: AUTONOMY_CATALOG_VERSION,
+        contracts: contractPayload,
+        schemas: Object.keys(ROS_SCHEMA_DEFINITIONS).sort(),
+    });
+    return bytesToHex(sha256(new TextEncoder().encode(payload)));
+}
+
+export const DEFAULT_CANDIDATE_RETURN_CONTRACT_IDS = Object.freeze([
+    "perception-detections-2d",
+    "perception-detections-3d",
+    "perception-lanes",
+    "perception-semantic",
+    "localization-estimate",
+]);
+
+export function defaultManifestTopics() {
+    const liveDefaults = [
+        ["clock", {}],
+        ["tf", {}],
+        ["tf-static", {}],
+        ["front-camera-image", {}],
+        ["front-camera-info", {}],
+        ["front-lidar-points", {}],
+        ["front-camera-depth", {}],
+        ["front-camera-semantic", {}],
+        ["front-camera-instance", {}],
+        ["front-lidar-semantic", {}],
+        ["oracle-detections-2d", {}],
+        ["oracle-detections-3d", {}],
+        ["oracle-lanes", {}],
+        ["oracle-traffic-controls", {}],
+        ["front-camera-diagnostics", {}],
+        ["front-lidar-diagnostics", {}],
+        ["imu", {}],
+        ["gnss", {}],
+        ["wheel-odometry", {}],
+        ["truth-odometry", {}],
+        ...DEFAULT_CANDIDATE_RETURN_CONTRACT_IDS.map((contractId) => [contractId, {}]),
+        ["controls-command", {}],
+    ];
+    return liveDefaults.map(([contractId, overrides]) => topicFromContract(contractId, overrides));
+}
+
+/** Append missing observational candidate return contracts without duplicating existing ids or wire names. */
+export function ensureCandidateReturnTopics(topics = []) {
+    const next = Array.isArray(topics) ? [...topics] : [];
+    for (const contractId of DEFAULT_CANDIDATE_RETURN_CONTRACT_IDS) {
+        const contract = getAutonomyContract(contractId);
+        if (!contract) continue;
+        const exists = next.some((entry) => (
+            entry.contractId === contractId
+            || entry.id === contractId
+            || entry.name === contract.defaultName
+        ));
+        if (!exists) next.push(topicFromContract(contractId));
+    }
+    return next;
+}
+
+export function topicFromContract(contractId, overrides = {}) {
+    const contract = getAutonomyContract(contractId);
+    if (!contract) throw new Error(`Unknown autonomy contract "${contractId}".`);
+    const producer = overrides.producer || contract.defaultProducer;
+    const authority = overrides.authority || contract.defaultAuthority;
+    const routeDownstream = overrides.routeDownstream ?? contract.defaultRouteDownstream ?? (contract.direction === "input" && contract.stage === "controls");
+    return {
+        id: overrides.id || contract.id,
+        contractId: contract.id,
+        name: overrides.name || contract.defaultName,
+        direction: contract.direction,
+        type: contract.schema.type,
+        schema: { ...contract.schema },
+        required: overrides.required ?? contract.required,
+        producer,
+        authority,
+        routeDownstream: Boolean(routeDownstream),
+        timeoutNs: overrides.timeoutNs ?? contract.timeoutNs ?? null,
+        validityNs: overrides.validityNs ?? contract.validityNs ?? null,
+        fallback: overrides.fallback ?? contract.fallback ?? null,
+        units: contract.units ?? null,
+        stage: contract.stage,
+        implementation: contract.implementation,
+    };
+}
+
+export function migrateLegacyTopic(source = {}, index = 0) {
+    const name = String(source.name || "").trim();
+    const type = String(source.type || source.schema?.type || "").trim();
+    let contractId = String(source.contractId || "").trim();
+    // One-time migration: arbitrary /ackdrive and ackdrive-legacy → stamped SI controls-command.
+    const isLegacyAckdrive = contractId === "ackdrive-legacy"
+        || name === "/ackdrive"
+        || type === "sensor_fusion_msgs/AckermannDrive"
+        || (source.id === "ackdrive" && !contractId);
+    if (isLegacyAckdrive) {
+        contractId = "controls-command";
+    }
+    if (!contractId) {
+        const match = CONTRACT_DEFINITIONS.find((entry) => entry.defaultName === name && (entry.schema.type === type || !type));
+        contractId = match?.id || "";
+    }
+    // Legacy unstamped /perception/lanes → stamped contract when type matches StampedLanes or is absent.
+    if (contractId === "perception-lanes" && type === "sensor_fusion_msgs/Lanes") {
+        contractId = "perception-lanes-legacy";
+    }
+    if (!contractId && name === "/perception/lanes" && type === "sensor_fusion_msgs/Lanes") {
+        contractId = "perception-lanes-legacy";
+    }
+    const contract = contractId ? getAutonomyContract(contractId) : null;
+    const direction = ["input", "output"].includes(source.direction) ? source.direction : (contract?.direction || "output");
+    const defaultProducer = direction === "input" ? "candidate" : "simulator";
+    const defaultRouteDownstream = contract?.defaultRouteDownstream
+        ?? (direction === "input" && contract?.stage === "controls");
+    const migratedName = isLegacyAckdrive
+        ? (contract?.defaultName || "/controls/command")
+        : (name || contract?.defaultName || `/topic-${index + 1}`);
+    const migratedId = isLegacyAckdrive && (source.id === "ackdrive" || !source.id)
+        ? "controls-command"
+        : String(source.id || `topic-${index + 1}`).trim();
+    const rosType = isLegacyAckdrive
+        ? (contract?.schema.type || "sensor_fusion_msgs/StampedAckermannDrive")
+        : (type || contract?.schema.type || "std_msgs/String");
+    return {
+        id: migratedId,
+        contractId: contractId || null,
+        name: migratedName,
+        direction,
+        type: rosType,
+        schema: {
+            type: rosType,
+            version: Number(source.schema?.version ?? contract?.schema.version ?? 1),
+        },
+        required: source.required == null
+            ? (contract?.required === true)
+            : Boolean(source.required),
+        producer: PRODUCER_NAMESPACES.includes(source.producer) ? source.producer : (contract?.defaultProducer || defaultProducer),
+        authority: AUTHORITY_MODES.includes(source.authority) ? source.authority : (contract?.defaultAuthority || (direction === "input" ? "candidate" : "reference")),
+        routeDownstream: source.routeDownstream === undefined ? Boolean(defaultRouteDownstream) : Boolean(source.routeDownstream),
+        timeoutNs: source.timeoutNs ?? contract?.timeoutNs ?? null,
+        validityNs: source.validityNs ?? contract?.validityNs ?? null,
+        fallback: isLegacyAckdrive ? null : (source.fallback ?? contract?.fallback ?? null),
+        units: contract?.units ?? source.units ?? null,
+        stage: contract?.stage ?? null,
+        implementation: contract?.implementation ?? null,
+    };
+}
+
+export function validateTopicAgainstCatalog(topic, index = 0) {
+    const issues = [];
+    const path = (suffix) => `topics.${index}.${suffix}`;
+    if (!topic.id) issues.push({ path: path("id"), message: "A stable id is required." });
+    if (!topic.name) issues.push({ path: path("name"), message: "Topic wire name is required." });
+    if (!["input", "output"].includes(topic.direction)) {
+        issues.push({ path: path("direction"), message: "Direction must be input or output." });
+    }
+    if (!topic.schema?.type && !topic.type) {
+        issues.push({ path: path("schema.type"), message: "ROS schema type is required." });
+    }
+    const rosType = topic.schema?.type || topic.type;
+    if (rosType && !ROS_SCHEMA_DEFINITIONS[rosType]) {
+        issues.push({ path: path("schema.type"), message: `Unknown ROS type "${rosType}" in autonomy catalog.` });
+    }
+    if (topic.contractId) {
+        const contract = getAutonomyContract(topic.contractId);
+        if (!contract) {
+            issues.push({ path: path("contractId"), message: `Unknown contract id "${topic.contractId}".` });
+        } else {
+            if (contract.direction !== topic.direction) {
+                issues.push({ path: path("direction"), message: `Contract "${topic.contractId}" expects direction "${contract.direction}".` });
+            }
+            if (contract.schema.type !== rosType) {
+                issues.push({ path: path("schema.type"), message: `Contract "${topic.contractId}" requires type "${contract.schema.type}".` });
+            }
+        }
+    }
+    if (topic.producer && !PRODUCER_NAMESPACES.includes(topic.producer)) {
+        issues.push({ path: path("producer"), message: `Invalid producer namespace "${topic.producer}".` });
+    }
+    if (topic.authority && !AUTHORITY_MODES.includes(topic.authority)) {
+        issues.push({ path: path("authority"), message: `Invalid authority mode "${topic.authority}".` });
+    }
+    if (topic.fallback?.contractId && !getAutonomyContract(topic.fallback.contractId)) {
+        issues.push({ path: path("fallback.contractId"), message: `Unknown fallback contract "${topic.fallback.contractId}".` });
+    }
+    return issues;
+}
+
+export function isControlsCommandTopic(topic) {
+    return topic?.valueContract?.id === "cev.control-command"
+        || topic?.contractId === "controls-command"
+        || topic?.name === "/controls/command"
+        || topic?.id === "controls-command";
+}
+
+function isControlsCommandTopicId(topicId) {
+    return topicId === "controls-command"
+        || topicId === "/controls/command"
+        || topicId === "ackdrive"
+        || topicId === "/ackdrive"
+        || topicId === "ackdrive-legacy";
+}
+
+export function scenarioUsesExternalRosForTopic(scenario, topic) {
+    const routes = scenario?.routes || [];
+    return routes.some((route) => {
+        if (!["external-ros", "external-topic"].includes(route.controller?.kind)) return false;
+        const topicId = route.controller.topicId;
+        if (!topicId || isControlsCommandTopicId(topicId)) return isControlsCommandTopic(topic);
+        return topicId === topic?.id || topicId === topic?.name;
+    });
+}
+
+export function validateManifestTopicAuthority(manifest) {
+    const issues = [];
+    const byContract = new Map();
+    for (const [index, topic] of (manifest.topics || []).entries()) {
+        const key = topic.contractId || topic.id;
+        if (!byContract.has(key)) byContract.set(key, []);
+        byContract.get(key).push({ index, topic });
+    }
+    for (const [contractKey, entries] of byContract) {
+        const authorities = new Set(entries.map((entry) => entry.topic.authority).filter(Boolean));
+        if (authorities.size > 1) {
+            for (const { index } of entries) {
+                issues.push({
+                    path: `topics.${index}.authority`,
+                    message: `Conflicting authority modes for contract "${contractKey}".`,
+                });
+            }
+        }
+    }
+    const names = new Map();
+    for (const [index, topic] of (manifest.topics || []).entries()) {
+        if (names.has(topic.name)) {
+            issues.push({ path: `topics.${index}.name`, message: `Duplicate topic name "${topic.name}".` });
+        }
+        names.set(topic.name, index);
+    }
+    return issues;
+}
+
+/** Minimal schema-valid fixture payloads for loopback encode/decode tests. */

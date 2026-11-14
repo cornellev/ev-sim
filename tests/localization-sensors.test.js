@@ -16,18 +16,13 @@ import {
     saturateVector,
     wheelTravelFromBicycle,
 } from "../app/autonomy/LocalizationMeasurements.js";
-import {
-    buildImuMessage,
-    buildNavSatFixMessage,
-    buildOdometryMessage,
-} from "../app/3d/devices/SensorMessages.js";
+import { buildNativeOdometry } from "../app/simulation/sensors/NativeSensorProducts.js";
+import { createDefaultRunManifest as createNativeRunManifest } from "../app/simulation/RunManifest.js";
 import { normalizeRunSensor } from "../app/3d/devices/SensorTypeRegistry.js";
 import { createLocalizationTruthPublisher } from "../app/simulation/LocalizationTruthPublisher.js";
 import { TopicContractRouter } from "../app/simulation/TopicContractRouter.js";
 import { SignalStore } from "../app/scripting/runtime/SignalStore.js";
-import { createDefaultRunManifest, normalizeRunManifest } from "../app/simulation/RunManifest.js";
-import { catalogSchemas } from "../app/autonomy/AutonomyContractCatalog.js";
-import { registerMsgDefinition } from "../app/client/Client.js";
+import { createDefaultRunManifest, normalizeRunManifest } from "../server/interfaces/historical/RunContracts.js";
 
 function mockVehicle(overrides = {}) {
     return {
@@ -492,29 +487,23 @@ test("measurement reset reproduces identical streams for the same seed", () => {
 });
 
 test("oracle truth publisher stays isolated from measured sensors", () => {
-    for (const [type, definition] of Object.entries(catalogSchemas())) {
-        registerMsgDefinition(type, definition);
-    }
     const store = new SignalStore({}, { sourceId: "truth-test" });
-    const manifest = createDefaultRunManifest({ version: 12 });
+    const manifest = createNativeRunManifest();
     const router = new TopicContractRouter(manifest, { telemetry: store });
     const publisher = createLocalizationTruthPublisher(manifest, router);
     const vehicle = mockVehicle({ velocity: { x: 1.5, y: 0, z: 0 } });
     publisher.publish(16_666_667, 1, [vehicle]);
     const oracle = store.read("oracle.topics.truth-odometry")?.value;
-    assert.ok(oracle?.twist?.twist?.linear?.x > 0);
+    assert.ok(oracle?.linearVelocity?.x > 0);
     assert.ok(!store.read("topics./sensors/imu/data")?.value);
 });
 
 test("localization estimate loopback routes through candidate namespace", () => {
-    for (const [type, definition] of Object.entries(catalogSchemas())) {
-        registerMsgDefinition(type, definition);
-    }
     const store = new SignalStore({}, { sourceId: "ekf-loopback" });
-    const manifest = createDefaultRunManifest({ version: 12 });
+    const manifest = createNativeRunManifest();
     const router = new TopicContractRouter(manifest, { telemetry: store });
     const topic = manifest.topics.find((entry) => entry.contractId === "localization-estimate");
-    const payload = buildOdometryMessage({
+    const payload = buildNativeOdometry({
         timeNs: 16_666_667,
         frameId: "odom",
         childFrameId: "base_link",
@@ -523,11 +512,11 @@ test("localization estimate loopback routes through candidate namespace", () => 
     });
     const routed = router.routeInbound({
         name: topic.name,
-        typeStr: topic.schema.type,
+        valueContract: topic.valueContract,
         value: payload,
     }, { applyStep: 1, applyTimeNs: 16_666_667, arrivalTimeNs: 16_666_667 });
     assert.equal(routed.ok, true);
-    assert.equal(store.read("candidate.topics.localization-estimate")?.value?.pose?.pose?.position?.x, 1);
+    assert.equal(store.read("candidate.topics.localization-estimate")?.value?.pose?.position?.x, 1);
 });
 
 test("default manifest v6 includes localization sensors without migrating v4 runs", () => {

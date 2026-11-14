@@ -101,7 +101,7 @@ export async function interruptStaleExperimentResults(entries = [], options = {}
 /**
  * Runs a persisted experiment queue through the authoritative browser
  * simulation. Cases are intentionally sequential: the shared simulation,
- * telemetry, logging, and ROS resources are reset by RunSessionController
+ * telemetry, logging, and transport resources are reset by RunSessionController
  * between resolved runs.
  */
 export class ExperimentRunController {

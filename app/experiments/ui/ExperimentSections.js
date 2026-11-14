@@ -479,7 +479,7 @@ export function RunSection({
                             </button>
                         ))}
                     </div>
-                    {snapshot?.realtimeWarning && <small>Effective {effectiveSpeed}× while external ROS is active</small>}
+                    {snapshot?.realtimeWarning && <small>Effective {effectiveSpeed}× while external control is active</small>}
                 </div>
                 <Switch
                     label="Disable logs for this run"
@@ -490,7 +490,7 @@ export function RunSection({
                 />
             </section>
             <div className={styles.resultPicker}><Field label="Experiment result"><NativeSelect value={result?.id || ""} onChange={(event) => onSelectResult(event.target.value)}><option value="">Current / new result</option>{results.map((entry) => <option key={entry.id} value={entry.id}>{entry.id} · {entry.status}</option>)}</NativeSelect></Field><span data-status={status}>{status}</span></div>
-            {controllerOwnsResult && snapshot?.realtimeWarning && <div className={styles.runtimeWarning}><IconAlertTriangle size={15} /><p>External ROS requires realtime pacing. Effective speed is {effectiveSpeed}×{runSpeed !== effectiveSpeed ? ` (selected ${runSpeed}× ignored)` : ""}. Determinism depends on the timing and contents of external commands.</p></div>}
+            {controllerOwnsResult && snapshot?.realtimeWarning && <div className={styles.runtimeWarning}><IconAlertTriangle size={15} /><p>External control requires realtime pacing. Effective speed is {effectiveSpeed}×{runSpeed !== effectiveSpeed ? ` (selected ${runSpeed}× ignored)` : ""}. Determinism depends on the timing and contents of external commands.</p></div>}
             {diagnosticsEnabled && <section className={styles.diagnosticsPanel}><header><div><span>OPERATOR VIEW</span><h3>Scenario diagnostics</h3></div><p>Render-only layer 31 · excluded from physics, sensors, and LiDAR</p></header><div ref={diagnosticsViewportRef} className={styles.diagnosticsViewport}><span>Preparing the mounted 3D scene…</span></div></section>}
             <section className={styles.monitorPanel}>
                 <div className={styles.progressHeader}><div><span>Queue progress</span><strong>{complete} / {cases.length}</strong></div><p>{Math.round(progress)}%</p></div>

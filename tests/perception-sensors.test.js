@@ -12,11 +12,13 @@ import {
 } from "../app/autonomy/PerceptionTruthIndex.js";
 import { buildCalibrationBundle } from "../app/autonomy/CalibrationBundle.js";
 import {
-    buildCameraInfo,
-    buildImageMessage,
-    buildPointCloud2,
-    buildSemanticPointCloud2,
-} from "../app/3d/devices/SensorMessages.js";
+    buildNativeCameraInfo as buildCameraInfo,
+    buildNativeImage as buildImageMessage,
+    buildNativePoints as buildPointCloud2,
+    buildNativePoints,
+} from "../app/simulation/sensors/NativeSensorProducts.js";
+const buildSemanticPointCloud2 = (options) => buildNativePoints({ ...options, semantic: true });
+import { createDefaultRunManifest as createNativeRunManifest } from "../app/simulation/RunManifest.js";
 import { SensorPublisher } from "../app/3d/devices/SensorPublisher.js";
 import { ManifestCamera } from "../app/3d/devices/ManifestCamera.js";
 import {
@@ -25,11 +27,8 @@ import {
     warpBrownConrady,
 } from "../app/3d/perception/CameraRenderProducts.js";
 import { SeededRNG } from "../app/util/SeededRNG.js";
-import {
-    createDefaultRunManifest,
-    normalizeRunManifest,
-    applyManifestOracleProduct,
-} from "../app/simulation/RunManifest.js";
+import { applyManifestOracleProduct } from "../app/simulation/RunManifest.js";
+import { createDefaultRunManifest, normalizeRunManifest } from "../server/interfaces/historical/RunContracts.js";
 import { TopicContractRouter } from "../app/simulation/TopicContractRouter.js";
 import { SignalStore } from "../app/scripting/runtime/SignalStore.js";
 
@@ -66,11 +65,11 @@ test("camera info prefers explicit intrinsics and reports plumb_bob distortion",
         distortion: [0.1, -0.05, 0.001, -0.002, 0.01],
         intrinsics: { fx: 200, fy: 210, cx: 159.5, cy: 89.5 },
     });
-    assert.equal(info.distortion_model, "plumb_bob");
-    assert.equal(info.k[0], 200);
-    assert.equal(info.k[4], 210);
-    assert.equal(info.k[2], 159.5);
-    assert.equal(info.d.length, 5);
+    assert.equal(info.distortionModel, "plumb_bob");
+    assert.equal(info.intrinsic[0], 200);
+    assert.equal(info.intrinsic[4], 210);
+    assert.equal(info.intrinsic[2], 159.5);
+    assert.equal(info.distortion.length, 5);
 });
 
 test("image builders enforce encoding byte sizes", () => {
@@ -82,7 +81,7 @@ test("image builders enforce encoding byte sizes", () => {
         frameId: "cam",
         encoding: "rgba8",
     });
-    assert.equal(rgba.step, 8);
+    assert.equal(rgba.strideBytes, 8);
     const depth = buildImageMessage({
         data: new Float32Array([1, 2, 3, 4]),
         width: 2,
@@ -91,8 +90,8 @@ test("image builders enforce encoding byte sizes", () => {
         frameId: "cam",
         encoding: "32FC1",
     });
-    assert.equal(depth.encoding, "32FC1");
-    assert.equal(depth.step, 8);
+    assert.equal(depth.pixelFormat, "depth-f32-le");
+    assert.equal(depth.strideBytes, 8);
     assert.throws(() => buildImageMessage({
         data: new Uint8Array(3),
         width: 2,
@@ -172,30 +171,14 @@ test("known LiDAR range maps into REP-103 sensor-frame coordinates", () => {
         timeNs: 2e9,
         frameId: "front_lidar_frame",
     });
-    assert.equal(measured.width, 1);
-    assert.deepEqual(measured.fields.map((field) => field.name), ["x", "y", "z", "intensity"]);
-    const view = new DataView(measured.data.buffer);
+    assert.equal(measured.count, 1);
     const expected = lidarDirectionRep103(0, 0);
-    assert.ok(Math.abs(view.getFloat32(0, true) - expected.x * range) < 1e-5);
-    assert.ok(Math.abs(view.getFloat32(4, true) - expected.y * range) < 1e-5);
-    assert.ok(Math.abs(view.getFloat32(8, true) - expected.z * range) < 1e-5);
-
-    const semantic = buildSemanticPointCloud2({
-        buffer,
-        bufferEncoding: "metric-v2",
-        calibration,
-        timeNs: 2e9,
-        frameId: "front_lidar_frame",
-    });
-    assert.deepEqual(
-        semantic.fields.map((field) => field.name),
-        ["x", "y", "z", "cos_incidence", "instance_id", "semantic_id", "ray_index"],
-    );
-    const semanticView = new DataView(semantic.data.buffer);
-    assert.equal(semanticView.getUint32(16, true), 42);
-    assert.equal(semanticView.getUint16(20, true), PERCEPTION_CLASS_IDS.vehicle);
-    assert.equal(semanticView.getUint32(24, true), 0);
-    assert.ok(!measured.fields.some((field) => field.name.includes("semantic") || field.name.includes("instance")));
+    for (const [index, axis] of ["x", "y", "z"].entries()) assert.ok(Math.abs(measured.positions[index] - expected[axis] * range) < 1e-5);
+    const semantic = buildNativePoints({ buffer, bufferEncoding: "metric-v2", calibration, semantic: true });
+    assert.equal(semantic.instanceIds[0], 42);
+    assert.equal(semantic.semanticIds[0], PERCEPTION_CLASS_IDS.vehicle);
+    assert.equal(semantic.rayIndices[0], 0);
+    assert.equal(measured.semanticIds, undefined);
 });
 
 test("seeded range noise and point dropout are reproducible and measured-only", () => {
@@ -220,8 +203,8 @@ test("seeded range noise and point dropout are reproducible and measured-only", 
             shouldDrop: () => rng.next() < 0.5,
         });
     };
-    assert.deepEqual(Array.from(build("seed-a").data), Array.from(build("seed-a").data));
-    assert.notDeepEqual(Array.from(build("seed-a").data), Array.from(build("seed-b").data));
+    assert.deepEqual(Array.from(build("seed-a").positions), Array.from(build("seed-a").positions));
+    assert.notDeepEqual(Array.from(build("seed-a").positions), Array.from(build("seed-b").positions));
     const oracle = buildSemanticPointCloud2({
         buffer,
         bufferEncoding: "metric-v2",
@@ -229,7 +212,7 @@ test("seeded range noise and point dropout are reproducible and measured-only", 
         timeNs: 0,
         frameId: "lidar",
     });
-    assert.equal(oracle.width, 2);
+    assert.equal(oracle.count, 2);
 });
 
 test("coherent camera frame dropout empties the whole publisher capture", () => {
@@ -461,11 +444,11 @@ test("oracle 3D detections stamp map and only include in-view objects", () => {
 
     const det3d = messages.find((entry) => entry.signal === "detections3d");
     assert.equal(det3d.frameId, "map");
-    assert.equal(det3d.value.header.frame_id, "map");
+    assert.equal(det3d.value.header, undefined);
     assert.equal(det3d.value.detections.length, 1);
-    assert.equal(det3d.value.detections[0].bbox.center.position.x, 8);
+    assert.equal(det3d.value.detections[0].pose.position.x, 8);
     const lanes = messages.find((entry) => entry.signal === "lanes");
-    assert.equal(lanes.value.header.frame_id, "map");
+    assert.equal(lanes.frameId, "map");
     const det2d = messages.find((entry) => entry.signal === "detections2d");
     assert.equal(det2d.frameId, "front_camera_optical_frame");
 });
@@ -476,11 +459,11 @@ test("oracle topics stay under oracle.* and do not populate active.*", () => {
     store.publishSignal = (path, value, options) => {
         published.push({ path, value, options });
     };
-    const manifest = createDefaultRunManifest({ version: 12 });
+    const manifest = createNativeRunManifest();
     const router = new TopicContractRouter(manifest, { telemetry: store });
     const topic = manifest.topics.find((entry) => entry.id === "front-camera-depth");
     assert.equal(topic.producer, "oracle");
-    router.routeOutbound(topic.id, { value: { encoding: "32FC1" }, typeStr: topic.schema.type }, {
+    router.routeOutbound(topic.id, { value: buildImageMessage({ data: new Float32Array(1), width: 1, height: 1, encoding: "32FC1" }), valueContract: topic.valueContract }, {
         producer: "oracle",
         observationalOracle: true,
         captureTimeNs: 1e9,

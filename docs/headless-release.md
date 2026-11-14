@@ -5,6 +5,13 @@ performance and soak reports, hardware validation, and installable internal
 artifacts. It does not publish to npm or PyPI and does not change simulation
 semantics or versioned contracts.
 
+## ZPB-09 local acceptance
+
+ZPB-09 removes the old runtime transport. The user approved local macOS acceptance
+and deferred formal release, hosted, Jetson, and Linux SHM evidence. See
+[ZPB-09 work packages](zpb-09-work-packages.md). Existing candidate artifact
+verification and hardware release requirements below remain unchanged.
+
 ## Developer gates
 
 Run focused gates before the full repository checks:

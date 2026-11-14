@@ -5,6 +5,7 @@ import {
 } from "../../app/plugin/PluginSensorAuthoring.js";
 import { computeResolvedRunHash } from "../../app/simulation/RunManifest.js";
 import { createSensorDefinitionRegistry } from "../../app/simulation/sensors/SensorTypeRegistry.js";
+import { createSensorDefinitionRegistry as createHistoricalSensorRegistry } from "../interfaces/historical/SensorTypes.js";
 import {
     VEHICLE_BUNDLE_KIND,
     VEHICLE_BUNDLE_VERSION,
@@ -92,7 +93,9 @@ export function verifyVehicleBundle(bundle = {}) {
     const verifiedPluginPackages = [...verifiedById.values()].sort((left, right) => (
         comparePluginText(left.document.id, right.document.id)
     ));
-    const sensorRegistry = createSensorDefinitionRegistry(verifiedPluginPackages);
+    const registryFactory = verifiedPluginPackages.some((packed) => packed.document.sensorTypes?.some((type) => type.sensorAbi === 1))
+        ? createHistoricalSensorRegistry : createSensorDefinitionRegistry;
+    const sensorRegistry = registryFactory(verifiedPluginPackages);
     const manifest = normalizeVehicleManifest(bundle.manifest, { sensorRegistry });
     const validation = validateVehicleManifest(manifest, { sensorRegistry });
     if (!validation.ok) throw vehicleValidationError(validation.issues);

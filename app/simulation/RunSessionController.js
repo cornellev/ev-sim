@@ -389,7 +389,7 @@ export class RunSessionController {
         if (!simulation) return;
         const requiresRealtime = Boolean(
             resolved?.manifest?.clock?.pacing === "realtime"
-            && resolved?.scenario?.scenario?.routes?.some((route) => route.controller?.kind === "external-ros"),
+            && resolved?.scenario?.scenario?.routes?.some((route) => route.controller?.kind === "external-topic"),
         );
         const speed = requiresRealtime
             ? 1
@@ -621,7 +621,6 @@ export class RunSessionController {
         const provenance = {
             appVersion: process.env.NEXT_PUBLIC_APP_VERSION || CEV_SIM_VERSION,
             gitHash: process.env.NEXT_PUBLIC_GIT_HASH || null,
-            orchestratorCatalogHash: this.data?.client?.()?.catalogHash || null,
             userAgent: typeof navigator !== "undefined" ? navigator.userAgent : null,
             platform: typeof navigator !== "undefined" ? navigator.platform : null,
             webglVendor: debugInfo ? gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL) : null,

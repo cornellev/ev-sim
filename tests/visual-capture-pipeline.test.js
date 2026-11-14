@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import * as THREE from "three";
 
-import { buildCameraInfo } from "../app/3d/devices/SensorMessages.js";
+import { buildNativeCameraInfo as buildCameraInfo } from "../app/simulation/sensors/NativeSensorProducts.js";
 import { CameraRenderProducts } from "../app/3d/perception/CameraRenderProducts.js";
 import {
     applyProjectionToThreeCamera,
@@ -87,7 +87,7 @@ test("corrected Three projection and CameraInfo agree with independent pixel vec
         timeNs: 17,
         frameId: "camera_optical_frame",
     });
-    assert.deepEqual(info.k, [500, 0, 300.25, 0, 520, 210.75, 0, 0, 1]);
+    assert.deepEqual(info.intrinsic, [500, 0, 300.25, 0, 520, 210.75, 0, 0, 1]);
 });
 
 test("world projection covers translated/rotated camera poses and REP-103 snapshots", () => {

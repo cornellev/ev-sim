@@ -114,7 +114,6 @@ export class HeadlessCpuLidarSensorManager {
     constructor(vehicleSource, options = {}) {
         this.vehicleSource = vehicleSource;
         this.telemetry = options.telemetry ?? null;
-        this.messageCodec = options.messageCodec ?? null;
         this.devices = [];
         this.scene = null;
         this.transformRuntime = null;
@@ -145,14 +144,6 @@ export class HeadlessCpuLidarSensorManager {
         assertCpuLidarBackendSelection(options.backendSelection);
         this.seed = String(options.seed ?? "0");
         this.transformRuntime = options.transformRuntime ?? null;
-        const messageCodec = options.messageCodec ?? this.messageCodec;
-        if (!options.nativeTopics && (typeof messageCodec?.encodeTopicValue !== "function"
-            || typeof messageCodec?.registerMsgDefinition !== "function")) {
-            throw new Error("CPU LiDAR requires a headless message-codec adapter.");
-        }
-        for (const [type, definition] of Object.entries(options.schemas ?? {})) {
-            messageCodec?.registerMsgDefinition?.(type, definition);
-        }
         const { CpuLidarScene, lidarSensorWorldPose } = await import("./CpuLidarScene.js");
         this.scene = new CpuLidarScene(options.lidarGeometry);
         this.vehicleBoxes = options.vehicleBoxes || {};
@@ -174,8 +165,6 @@ export class HeadlessCpuLidarSensorManager {
                 runtimeData: this.runtimeData,
                 perceptionObservations: options.perceptionObservations,
                 sensorOccupancy: options.sensorOccupancy,
-                encodeTopicValue: messageCodec?.encodeTopicValue,
-                nativeTopics: options.nativeTopics,
                 runId: options.runId,
                 publicationPort: options.publicationPort,
                 // Capture timing is diagnostic only and must not perturb deterministic state.

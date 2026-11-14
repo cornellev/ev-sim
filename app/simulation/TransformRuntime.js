@@ -1,6 +1,4 @@
 import {
-    buildTFMessage,
-    buildTransformStamped,
     eulerToQuaternion,
     quaternionMultiply,
     rep103EulerToThree,
@@ -8,7 +6,6 @@ import {
     threePoseToRep103,
     threeToRep103Vector,
 } from "../autonomy/CoordinateFrames.js";
-import { staticTransformMessages } from "../autonomy/CalibrationBundle.js";
 
 function rep103PoseFromVehicle(vehicle) {
     const position = vehicle?.position || vehicle?.getPosition?.();
@@ -32,7 +29,6 @@ export class TransformRuntime {
     constructor(calibrationBundle, topicRouter, options = {}) {
         this.bundle = calibrationBundle;
         this.topicRouter = topicRouter;
-        this.client = options.client ?? null;
         this.frames = calibrationBundle?.frames || {};
         this.staticPublished = false;
         this._tree = buildFrameTree(calibrationBundle);
@@ -61,9 +57,8 @@ export class TransformRuntime {
     }
 
     publishStaticTransforms(timeNs = 0) {
-        const native = this.topicRouter?.getTopic?.("tf-static")?.valueContract;
-        const payload = native ? { transforms: this.bundle.staticTransforms.map((entry) => ({ parentFrameId: entry.parentFrameId, childFrameId: entry.childFrameId,
-            pose: { position: { ...entry.translation }, orientation: { ...entry.rotation } } })) } : buildTFMessage(staticTransformMessages(this.bundle, timeNs));
+        const payload = { transforms: this.bundle.staticTransforms.map((entry) => ({ parentFrameId: entry.parentFrameId, childFrameId: entry.childFrameId,
+            pose: { position: { ...entry.translation }, orientation: { ...entry.rotation } } })) };
         this._routeOutbound("tf-static", payload, { captureTimeNs: timeNs, deliveryTimeNs: timeNs, cycle: 0 });
         this.staticPublished = true;
         return payload;
@@ -74,23 +69,6 @@ export class TransformRuntime {
             || vehicles[0]
             || null;
         const basePose = rep103PoseFromVehicle(vehicle);
-        const native = this.topicRouter?.getTopic?.("tf")?.valueContract;
-        const transforms = native ? null : [
-            buildTransformStamped({
-                timeNs,
-                parentFrameId: this.frames.map,
-                childFrameId: this.frames.odom,
-                translation: { x: 0, y: 0, z: 0 },
-                rotation: { x: 0, y: 0, z: 0, w: 1 },
-            }),
-            buildTransformStamped({
-                timeNs,
-                parentFrameId: this.frames.odom,
-                childFrameId: this.frames.baseLink,
-                translation: basePose.position,
-                euler: basePose.rotation,
-            }),
-        ];
         this._history.push({
             timeNs,
             step,
@@ -103,10 +81,10 @@ export class TransformRuntime {
         if (this._history.length > this._historyLimit) {
             this._history.splice(0, this._history.length - this._historyLimit);
         }
-        const payload = native ? { transforms: [
+        const payload = { transforms: [
             { parentFrameId: this.frames.map, childFrameId: this.frames.odom, pose: { position: { x: 0, y: 0, z: 0 }, orientation: { x: 0, y: 0, z: 0, w: 1 } } },
             { parentFrameId: this.frames.odom, childFrameId: this.frames.baseLink, pose: { position: basePose.position, orientation: eulerToQuaternion(basePose.rotation) } },
-        ] } : buildTFMessage(transforms);
+        ] };
         this._routeOutbound("tf", payload, { captureTimeNs: timeNs, deliveryTimeNs: timeNs, cycle: step });
         return payload;
     }
@@ -224,15 +202,9 @@ export class TransformRuntime {
     }
 
     _routeOutbound(contractId, payload, metadata) {
-        const native = this.topicRouter?.getTopic?.(contractId)?.valueContract;
         const routed = this.topicRouter?.routeOutbound?.(contractId, {
             value: payload,
-            ...(native ? {} : { typeStr: "tf2_msgs/TFMessage" }),
-        }, native ? { ...metadata, simTimeNs: metadata.deliveryTimeNs, actualDeliveryStep: metadata.cycle, sequenceId: String(metadata.cycle), frameId: this.bundle?.frames?.map } : metadata);
-        const topic = this.topicRouter?.getTopic?.(contractId);
-        if (!native && topic && this.client?.isOpen?.()) {
-            this.client.publish(topic.name, topic.schema?.type || topic.type, payload).catch?.(() => {});
-        }
+        }, { ...metadata, simTimeNs: metadata.deliveryTimeNs, actualDeliveryStep: metadata.cycle, sequenceId: String(metadata.cycle), frameId: this.bundle?.frames?.map });
         return routed;
     }
 }

@@ -109,7 +109,7 @@ test("run recording options include immutable manifest attachment and provenance
     assert.equal(options.runId, "run-test");
     assert.equal(options.resolvedHash, "resolved");
     assert.equal(options.timeBase, "simulation");
-    assert.equal(options.provenance.orchestratorCatalogHash, "catalog");
+    assert.equal(options.provenance.orchestratorCatalogHash, undefined);
     assert.equal(options.haltSimulationOnError, true);
     assert.ok(options.attachments.some((attachment) => attachment.name === "run-manifest.json"));
 
@@ -281,7 +281,7 @@ test("stopping a superseded run skips finalize when the kernel was not prepared"
     assert.equal(controller.snapshot.status, "superseded");
 });
 
-test("external-ros realtime cases force 1x regardless of speed override", () => {
+test("external-topic realtime cases force 1x regardless of speed override", () => {
     const speeds = [];
     const controller = controllerFor("disabled", async () => {});
     controller.data = {
@@ -300,7 +300,7 @@ test("external-ros realtime cases force 1x regardless of speed override", () => 
         },
         scenario: {
             scenario: {
-                routes: [{ controller: { kind: "external-ros", topicId: "/controls/command" } }],
+                routes: [{ controller: { kind: "external-topic", topicId: "/controls/command" } }],
             },
         },
     };

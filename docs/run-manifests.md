@@ -200,11 +200,11 @@ to start a saved manifest, pause/resume, stop, reset, and inspect status in an
 already-open page. Omitted browser IDs select the most recently interacted-with
 connected page. The API holds the exact server-resolved snapshot and returns
 browser acknowledgements with integer simulation time; sensor traffic keeps
-using the existing orchestrator connection.
+using the admitted native Zenoh/Protobuf routes.
 
 ## Portable bundles
 
-`cev-sim.run-bundle` version 1 includes the authoring manifest and its resolved environment, normalized `world: { description, hash }`, sorted backend selections, exact compiled script artifacts and bindings, ROS schemas, autonomy catalog metadata, contract endpoints, dependency hashes, full `resolvedHash`, and `simulationSemanticHash`. `dependencyHashes.world` repeats the canonical world SHA-256. Runs with an enabled `lidar3d` or `lidar2d` sensor additionally contain `lidarGeometry: { description, hash }` and `dependencyHashes.lidarGeometry`; runs with enabled cameras additionally contain `renderScene: { description, hash }` and `dependencyHashes.renderScene`. The initial scene provider is `canonical-analytic@1`, with stable material, semantic, instance, and dynamic-node IDs. Bundles without those sensors omit the corresponding conditional resources. Import verifies old and new bundles in the exact form received; old LiDAR/camera bundles must be re-resolved when their portable resources are unavailable. The additive fields do not change the v1 bundle schema. Manifest v10 adds sidecar-facing candidate-model provenance only. `resolvedHash` identifies normalized resolved content including provenance; exact byte integrity uses `bundleBytesHash`. `simulationSemanticHash` uses the world hash—not the authored environment hash—as environment identity, and projects out logging, `manifest.provenance`, artifact/resource policy, wall pacing, presentation-only settings, and the v10→v9 semantic shape before feeding `episodeHash`. Existing dependencies are reused only when hashes match; conflicting resources receive an eight-character hash suffix and all references are remapped.
+Historical pre-v13 `cev-sim.run-bundle` version 1 includes the authoring manifest and its resolved environment, normalized `world: { description, hash }`, sorted backend selections, exact compiled script artifacts and bindings, ROS schemas, autonomy catalog metadata, contract endpoints, dependency hashes, full `resolvedHash`, and `simulationSemanticHash`. `dependencyHashes.world` repeats the canonical world SHA-256. Runs with an enabled `lidar3d` or `lidar2d` sensor additionally contain `lidarGeometry: { description, hash }` and `dependencyHashes.lidarGeometry`; runs with enabled cameras additionally contain `renderScene: { description, hash }` and `dependencyHashes.renderScene`. The initial scene provider is `canonical-analytic@1`, with stable material, semantic, instance, and dynamic-node IDs. Bundles without those sensors omit the corresponding conditional resources. Import verifies old and new bundles in the exact form received; old LiDAR/camera bundles must be re-resolved when their portable resources are unavailable. The additive fields do not change the v1 bundle schema. Manifest v10 adds sidecar-facing candidate-model provenance only. `resolvedHash` identifies normalized resolved content including provenance; exact byte integrity uses `bundleBytesHash`. `simulationSemanticHash` uses the world hash—not the authored environment hash—as environment identity, and projects out logging, `manifest.provenance`, artifact/resource policy, wall pacing, presentation-only settings, and the v10→v9 semantic shape before feeding `episodeHash`. Existing dependencies are reused only when hashes match; conflicting resources receive an eight-character hash suffix and all references are remapped.
 
 Effective plugin selections add sorted `resolved.plugins`, exact portable
 `resolved.pluginPackages`, and `dependencyHashes.plugins`. Bundle verification
@@ -529,7 +529,7 @@ Simulation time is `stepIndex * stepNs`, using integer nanoseconds. Realtime spe
 
 ## Frames, calibration, and synchronization
 
-Manifest version 12 stores sensor extrinsics in REP-103 (`+X` forward, `+Y` left, `+Z` up) relative to `base_link`. v1–v11 authoring documents normalize to v12, retaining v10 provenance and supplying an empty `provenance.candidateModels` list for older inputs; saved `/ackdrive` topics rewrite to `/controls/command`. Cameras declare a mount frame (`*_link`) and an optical measurement frame (`*_optical_frame`, `+Z` forward, `+X` right, `+Y` down). LiDAR mount and measurement frames are identical. Localization sensors use mount/measurement frames (`imu_link`, `gnss_link`, `wheel_odom_link`). Scene/vehicle coordinates remain internal Three.js coordinates; conversion happens only at the ROS/TF boundary.
+Historical manifest version 12 stores sensor extrinsics in REP-103 (`+X` forward, `+Y` left, `+Z` up) relative to `base_link`. v1–v11 authoring documents normalize to v12, retaining v10 provenance and supplying an empty `provenance.candidateModels` list for older inputs; saved `/ackdrive` topics rewrite to `/controls/command`. Cameras declare a mount frame (`*_link`) and an optical measurement frame (`*_optical_frame`, `+Z` forward, `+X` right, `+Y` down). LiDAR mount and measurement frames are identical. Localization sensors use mount/measurement frames (`imu_link`, `gnss_link`, `wheel_odom_link`). Current v13 sensors use the same REP-103 extrinsics. Scene/vehicle coordinates remain internal Three.js coordinates; native builders convert at the measurement/transform boundary. Older manifests require explicit reviewed adoption before execution.
 
 `sensorRig` also declares canonical `map`, `odom`, and `base_link` frame ids, the owning vehicle id, and optional synchronization groups keyed by declared topic ids. Default manifests include `perception-primary` (camera + LiDAR measured and optional oracle products) and `localization-primary` (IMU, GNSS, wheel odometry). Sensors in the same group captured on the same simulation step share a synchronization key in telemetry metadata.
 
@@ -537,7 +537,7 @@ Manifest version 12 stores sensor extrinsics in REP-103 (`+X` forward, `+Y` left
 
 Resolution builds a deterministic `cev-sim.calibration-bundle` artifact (sorted frames, static transforms, intrinsics/distortion, product selection, scan geometry, label-catalog version, schedules/deadlines, and output topic ids). Its SHA-256 hash is included in `resolvedHash`, portable run bundles, and SFLog attachments as `calibration.json`. The full provenance source remains `run-manifest.json`.
 
-Manifest sensors schedule captures on integer steps. Message headers contain capture simulation time; latency changes delivery time only. Encoded ROS bytes are shared by transport and SFLog telemetry. Sensor random streams derive from the global seed, sensor ID, and sample index. Wall-clock capture/encode/transport timings are diagnostics only and never change scheduling or payloads.
+Manifest sensors schedule captures on integer steps. Native envelope metadata contains capture simulation time; latency changes delivery time only. Native values feed local telemetry, SFLog recording, and admitted Protobuf mappings. Sensor random streams derive from the global seed, sensor ID, and sample index. Wall-clock capture/encode/transport timings are diagnostics only and never change scheduling or payloads.
 
 Camera `calibration.products` and LiDAR `calibration.products` gate expensive oracle render products. Frame dropout drops the entire capture bundle coherently; LiDAR point dropout applies only to the measured cloud.
 
@@ -576,7 +576,7 @@ use **Sensors → Review sensor wiring**: review created/reused contract topics,
 select ambiguous bindings, and apply one draft update. Existing bindings stay
 unchanged; cancellation and stale draft/vehicle/catalog detection prevent
 application. Save/Launch do not repair wiring. Sensor bindings must name output
-topics with the product's ROS type. Observation-only sensors remain valid.
+topics with the product's exact native value contract. Observation-only sensors remain valid.
 IMU/odometry processing without a topic does not publish; LiDAR only captures
 requested products/observations, with one shared noise pass. Diagnostic
 `outputStatus` distinguishes `capture-only` and `no-requested-product` when no
@@ -631,7 +631,7 @@ The CPU LiDAR backend is kind `CPU_LIDAR`, capability
 `488de17bbf8ecf635c18841cd64a9638e011a94a8d9fbb93e4a53943f38bd96d`.
 Exactly one locked selection is required when `lidar3d` or `lidar2d` is enabled and is
 forbidden when it is unused. Point clouds retain the existing metric-v2
-Float32 and PointCloud2 schemas; they route through telemetry/topics/SFLog and
+Float32 measurements in native packed point products; they route through telemetry/topics/SFLog and
 are not added to the measured-state policy observation.
 
 Plugin range-image sensors select the same kind/capability at version `2`,
@@ -725,7 +725,7 @@ failure, then success; termination on the same transition as a semantic bound
 wins over truncation. Policy limits map to `MAX_EPISODE_STEPS`, while scenario
 duration and manifest simulation bounds map to `MAX_SIMULATION_TIME`.
 
-Topic contracts are edited in the Config **Topics** tab (catalog picker, producer, authority, route-downstream, timeout, fallback) or normalized from legacy JSON. Perception and localization candidate returns default to observational (`routeDownstream: false`). Controls default to `/controls/command` with `routeDownstream: true`. See [Autonomy interface contracts](./autonomy-interface-contracts.md) for namespace and preflight rules. Preparation fails before the run reaches `ready` when preflight detects schema mismatches or missing orchestrator returns that the run actually consumes. Local reference controllers (scenario route follower or script) do not need `/controls/command` advertised.
+Topic contracts are edited in the Config **Topics** tab (catalog picker, producer, authority, route-downstream, timeout, fallback) in native v13 manifests. Perception and localization candidate returns default to observational (`routeDownstream: false`). Controls default to `/controls/command` with `routeDownstream: true`. See [Autonomy interface contracts](./autonomy-interface-contracts.md) for namespace and preflight rules. Preparation fails before the run reaches `ready` when preflight detects native-contract/mapping mismatches, missing required routes, or unavailable transport capabilities. Local reference controllers (scenario route follower or script) do not need `/controls/command` advertised.
 
 Logging writes a native SFLog (see [SFLog](sflog.md)). Policies are:
 
@@ -804,7 +804,7 @@ execution.
 
 Managed cases require
 `controls.authority: "reference"` and route-follower, script, or
-script-with-route controllers. Candidate authority, external ROS controllers,
+script-with-route controllers. Candidate authority, external-topic controllers,
 unknown sensor products, incompatible backend selections, unavailable renderer
 capabilities, unavailable LiDAR geometry, and suites without a provable semantic
 bound are rejected atomically. Supported cases may use no sensors, the

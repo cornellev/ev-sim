@@ -1,11 +1,10 @@
+import { createDefaultRunManifest as createNativeRunManifest } from "../../app/simulation/RunManifest.js";
 import { createHash } from "node:crypto";
 
 import { SignalStore } from "../../app/scripting/runtime/SignalStore.js";
 import { SimulationEngine } from "../../app/simulation/SimulationEngine.js";
-import {
-    canonicalStringify,
-    createDefaultRunManifest,
-} from "../../app/simulation/RunManifest.js";
+import { canonicalStringify } from "../../app/simulation/RunManifest.js";
+import { createDefaultRunManifest } from "../../server/interfaces/historical/RunContracts.js";
 
 function sha256(value) {
     return createHash("sha256").update(
@@ -125,13 +124,18 @@ function resolvedRun(manifest) {
     };
 }
 
-function queueActions(runtime, actions) {
+function queueActions(runtime, actions, runId) {
     for (const action of actions) {
         runtime.scheduler({
             name: action.topic,
-            typeStr: action.type,
+            valueContract: { id: "cev.control-command", version: 1 },
             producer: action.producer,
-            value: structuredClone(action.value),
+            value: {
+                runId, frameId: action.value.header.frame_id, mode: action.value.mode,
+                sequence: String(action.value.sequence), captureTimeNs: action.value.header.stamp.sec * 1e9 + action.value.header.stamp.nanosec,
+                deadlineNs: action.value.deadline_ns, speedMps: action.value.speed, steeringRad: action.value.steering_angle,
+                steeringRateRadps: action.value.steering_angle_velocity, accelerationMps2: action.value.acceleration, jerkMps3: action.value.jerk,
+            },
         });
     }
 }
@@ -143,7 +147,7 @@ function controlSnapshot(engine) {
     return {
         status: snapshot.status ?? null,
         statusCode: snapshot.statusCode ?? null,
-        sequence: snapshot.sequence ?? null,
+        sequence: snapshot.sequence == null ? null : Number(snapshot.sequence),
         mode: snapshot.mode ?? null,
         applied: snapshot.applied ? {
             speedMps: finite(snapshot.applied.speedMps),
@@ -206,7 +210,7 @@ function executeTape(context, tape) {
     const snapshots = [];
     const maxSteps = context.engine.maxSteps ?? tape.manifestOverrides.clock.maxSteps;
     for (let step = 1; step <= maxSteps; step += 1) {
-        queueActions(context.runtime, actionsByStep.get(step) ?? []);
+        queueActions(context.runtime, actionsByStep.get(step) ?? [], context.engine.kernel.runId);
         const callStart = context.calls.length;
         const eventStart = context.store.events().length;
         context.engine.step(1);
@@ -247,15 +251,17 @@ export async function generateHeadlessCharacterization(tape) {
     manifest.version = 10;
     delete manifest.protobuf;
     const resolved = resolvedRun(manifest);
+    // The recorded identities stay historical; only the execution input uses native controls.
+    const execution = { ...resolved, version: 13, manifest: createNativeRunManifest({ ...tape.manifestOverrides, cameraObjectMotion: undefined }) };
     const context = createHarness();
-    await context.engine.applyRunManifest(resolved);
+    await context.engine.applyRunManifest(execution);
     const snapshots = executeTape(context, tape);
 
     context.engine.reset();
     const resetSnapshots = executeTape(context, tape);
 
     const freshContext = createHarness();
-    await freshContext.engine.applyRunManifest(resolved);
+    await freshContext.engine.applyRunManifest(execution);
     const freshSnapshots = executeTape(freshContext, tape);
 
     const trajectorySha256 = trajectoryHash(resolved.resolvedHash, snapshots);

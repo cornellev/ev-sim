@@ -1,9 +1,8 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 
-import { PERCEPTION_LABEL_CATALOG_VERSION } from "./AutonomyContractCatalog.js";
+import { PERCEPTION_LABEL_CATALOG_VERSION } from "./PerceptionLabelCatalog.js";
 import {
-    buildTransformStamped,
     cameraLinkToOpticalRotation,
     composeRep103Poses,
     eulerToQuaternion,
@@ -161,16 +160,6 @@ export function buildCalibrationBundle(manifest, options = {}) {
 export function calibrationBundleHash(bundle) {
     const { hash, ...rest } = bundle || {};
     return bytesToHex(sha256(new TextEncoder().encode(canonicalStringify(rest))));
-}
-
-export function staticTransformMessages(bundle, timeNs = 0) {
-    return (bundle?.staticTransforms || []).map((entry) => buildTransformStamped({
-        timeNs,
-        parentFrameId: entry.parentFrameId,
-        childFrameId: entry.childFrameId,
-        translation: entry.translation,
-        rotation: entry.rotation,
-    }));
 }
 
 export function resolveMeasurementToRoot(bundle, sensorId) {

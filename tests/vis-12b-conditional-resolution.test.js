@@ -31,12 +31,9 @@ import { normalizeVisualLayer } from "../app/simulation/visual/VisualLayer.js";
 import { createWorldResource } from "../app/simulation/world/WorldDescription.js";
 import { HeadlessSession } from "../server/headless/HeadlessSession.js";
 import { inspectRunBundle, inspectTarget } from "../server/headless/Inspection.js";
-import {
-    canonicalRunBundleStringify,
-    verifyRunBundle,
-    verifyRunBundleBytes,
-    verifyRunBundleIntegrity,
-} from "../server/headless/RunBundle.js";
+import { canonicalRunBundleStringify, verifyRunBundle } from "../server/headless/RunBundle.js";
+import { verifyRunBundleBytes } from "../server/headless/RunBundleInspection.js";
+import { verifyRunBundleIntegrity } from "../server/headless/RunBundleInspection.js";
 import { SupervisorRunner } from "../server/headless/SupervisorRunner.js";
 import { HeadlessSupervisor } from "../server/headless/HeadlessSupervisor.js";
 import { StorageService } from "../server/storage/StorageService.js";

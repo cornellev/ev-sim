@@ -36,11 +36,13 @@ test("BlockRegistry isolates snapshots, ownership, collisions, and sealing", () 
     assert.throws(() => source.register("Other", Later), (error) => error.code === "REGISTRY_SEALED");
 });
 
-test("built-in registration includes compatibility types and default registry rejects plugins", () => {
+test("built-in registration excludes ROS units and default registry rejects plugins", () => {
     const registry = registerBuiltInBlocks(new BlockRegistry());
-    for (const type of ["ROSInputBlock", "ROSOutputBlock", "CompiledProgramUnitBlock", "LocalScriptProgramBlock"]) {
+    for (const type of ["CompiledProgramUnitBlock", "LocalScriptProgramBlock"]) {
         assert.ok(registry.get(type), type);
     }
+    assert.equal(registry.get("ROSInputBlock"), null);
+    assert.equal(registry.get("ROSOutputBlock"), null);
     class PluginBlock {}
     assert.throws(() => defaultBlockRegistry.register("acme.example.Nope", PluginBlock, ownership), (error) => error.code === "REGISTRY_PLUGIN_FORBIDDEN");
 });

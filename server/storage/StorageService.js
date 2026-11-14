@@ -1,3 +1,4 @@
+import { inspectRunPackageArchive as verifyRunPackageArchive } from "../headless/RunBundleInspection.js";
 import { createReadStream, promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -68,13 +69,8 @@ import {
     normalizeRunManifest,
     validateRunManifest,
 } from "../../app/simulation/RunManifest.js";
-import {
-    catalogMetadata,
-    schemaClosureForManifest,
-} from "../../app/autonomy/AutonomyContractCatalog.js";
 import { buildCalibrationBundle } from "../../app/autonomy/CalibrationBundle.js";
 import { createNativeTopicContractResource } from "../../app/simulation/NativeTopicContracts.js";
-import { planNativeRunMigration, validateNativeRunMigration, applyNativeRunMigration } from "../../app/interfaces/NativeRunMigration.js";
 import { bindNativeProductContext } from "../../app/interfaces/NativeProductTransforms.js";
 import { normalizeMappingDefinition } from "../../app/interfaces/ProtobufMappingDefinition.js";
 import { recompileNativeGraph } from "../interfaces/NativeGraphCompiler.js";
@@ -117,7 +113,6 @@ import {
     RUN_PACKAGE_EXPORT_OPERATIONS,
     RUN_PACKAGE_IMPORT_OPERATIONS,
     sortUsesForPublish,
-    verifyRunPackageArchive,
 } from "../headless/VisualAssetPack.js";
 import { Semaphore, createMutex } from "./visual-assets/semaphore.js";
 import { fsyncDir, maybeFault, writeExclusiveFile } from "./visual-assets/atomicFs.js";
@@ -1946,7 +1941,7 @@ export class StorageService {
             }
             verifiedPackages.push(verified);
         }
-        return createSensorDefinitionRegistry(verifiedPackages);
+        return manifest?.version < 13 ? (await import("../interfaces/historical/SensorTypes.js")).createSensorDefinitionRegistry(verifiedPackages) : createSensorDefinitionRegistry(verifiedPackages);
     }
 
     async _validateRunManifestWithPluginSensors(source) {
@@ -1974,9 +1969,11 @@ export class StorageService {
     }
 
     async planNativeRunMigration(manifestId, input = {}) {
+        const { planNativeRunMigration } = await import("../interfaces/NativeRunMigration.js");
         const source = await this.getRunManifest(manifestId);
         if (!source) throw new Error(`Run manifest "${manifestId}" does not exist.`);
-        const manifest = normalizeRunManifest(source);
+        const { normalizeRunManifest: normalizeHistoricalRunManifest } = await import("../interfaces/historical/RunContracts.js");
+        const manifest = normalizeHistoricalRunManifest(source);
         const interfaceResource = manifest.protobuf.mode === "zenoh"
             ? createProtobufInterfaceResource(await this.getProtobufInterface(manifest.protobuf.interfaceHash), manifest.protobuf.interfaceHash) : null;
         const resolvedRun = await this.resolveRunManifest(manifestId);
@@ -2003,7 +2000,10 @@ export class StorageService {
         return planNativeRunMigration({ manifest: source, interfaceResource, targetInterfaceResource, additionalTopics: input.additionalTopics, scenario, vehicles, scripts: [...scripts.values()], resolvedRun, mappingOverrides: input.mappingOverrides, scriptPaths: input.scriptPaths, topicContracts: input.topicContracts, bindingTopics: input.bindingTopics, pluginReplacements });
     }
 
-    validateNativeRunMigration(plan) { return validateNativeRunMigration(plan); }
+    async validateNativeRunMigration(plan) {
+        const { validateNativeRunMigration } = await import("../interfaces/NativeRunMigration.js");
+        return validateNativeRunMigration(plan);
+    }
 
     async nativeRunContext(manifestId, selection) {
         const resolved = await this.resolveRunManifest(manifestId);
@@ -2013,6 +2013,7 @@ export class StorageService {
     }
 
     async applyNativeRunMigration(manifestId, { plan, expectedRevision } = {}) {
+        const { applyNativeRunMigration } = await import("../interfaces/NativeRunMigration.js");
         const current = await this.getRunManifest(manifestId);
         if (!current || current.id !== plan?.original?.manifest?.id || canonicalStringify(current) !== canonicalStringify(plan.original.manifest)) throw new Error("Native migration source changed; create a new preview.");
         for (const source of plan.original.scripts) {
@@ -2044,7 +2045,7 @@ export class StorageService {
         for (const vehicle of adopted.vehicles) {
             const bundle = await this.exportVehicleBundle(vehicle.sourceId);
             const source = plan.original.vehicles.find((source) => source.id === vehicle.sourceId);
-            const registry = createSensorDefinitionRegistry((plan.request.resolvedRun.pluginPackages ?? []).map((resource) => verifyPluginPackage(resource)));
+            const registry = (await import("../interfaces/historical/SensorTypes.js")).createSensorDefinitionRegistry((plan.request.resolvedRun.pluginPackages ?? []).map((resource) => verifyPluginPackage(resource)));
             if (canonicalStringify(bundle.manifest) !== canonicalStringify(normalizeVehicleManifest(source, { sensorRegistry: registry }))) throw new Error(`Vehicle ${vehicle.sourceId} changed after native migration planning.`);
             const existing = await this.getVehicleManifest(vehicle.document.id);
             if (existing) {
@@ -2176,7 +2177,10 @@ export class StorageService {
     async resolveRunManifest(manifestId, input = null) {
         const source = input?.manifest ?? (input?.kind ? input : null) ?? await this.getRunManifest(manifestId);
         if (!source) throw new Error(`Run manifest "${manifestId}" does not exist.`);
-        const validation = validateRunManifest(source, { allowUnknownSensors: true });
+        const historical = Number(source.version) < 13;
+        const contracts = historical ? await import("../interfaces/historical/RunContracts.js") : { validateRunManifest, normalizeRunManifest };
+        const routeAdmission = historical ? (await import("../interfaces/historical/ProtobufBinding.js")).planHistoricalProtobufRouteAdmission : planProtobufRouteAdmission;
+        const validation = contracts.validateRunManifest(source, { allowUnknownSensors: true });
         if (!validation.ok) throw validationError(validation.issues);
         const pluginPackages = [];
         const verifiedPluginPackages = [];
@@ -2202,7 +2206,7 @@ export class StorageService {
                 capabilities: [...lock.capabilities],
             });
         }
-        const sensorRegistry = createSensorDefinitionRegistry(verifiedPluginPackages);
+        const sensorRegistry = historical ? (await import("../interfaces/historical/SensorTypes.js")).createSensorDefinitionRegistry(verifiedPluginPackages) : createSensorDefinitionRegistry(verifiedPluginPackages);
         const resolutionOptions = input?.kind ? {} : objectValues(input);
         const runParameterValues = objectValues(
             resolutionOptions.manifestParameterValues ?? resolutionOptions.parameterValues,
@@ -2214,7 +2218,7 @@ export class StorageService {
             runParameters.values,
             "run manifest",
         );
-        const parameterizedValidation = validateRunManifest(manifest, { sensorRegistry });
+        const parameterizedValidation = contracts.validateRunManifest(manifest, { sensorRegistry });
         if (!parameterizedValidation.ok) throw validationError(parameterizedValidation.issues);
         assertScalarParameterValuesPreserved(
             parameterizedValidation.manifest,
@@ -2260,7 +2264,7 @@ export class StorageService {
                 environmentSnapshot: authoredEnvironment
                     ? { id: manifest.environment.id, manifest: authoredEnvironment } : null,
             });
-            manifest = normalizeRunManifest({
+            manifest = contracts.normalizeRunManifest({
                 ...manifest,
                 scenario: {
                     ...selectedScenario,
@@ -2319,7 +2323,8 @@ export class StorageService {
                 throw new Error(`Sensor "${sensor.id}" references unknown run vehicle "${sensor.parentId}".`);
             }
         }
-        const sensorAdmission = planSensorAdmission({ manifest, sensorRegistry });
+        const sensorAdmissionPlanner = manifest.version < 13 ? (await import("../interfaces/historical/SensorAdmission.js")).planSensorAdmission : planSensorAdmission;
+        const sensorAdmission = sensorAdmissionPlanner({ manifest, sensorRegistry });
         const pluginSensors = createPluginSensorsResource(sensorAdmission);
         assertVehiclePluginLocksMatchRun({
             vehicles: resolvedVehicles,
@@ -2412,6 +2417,9 @@ export class StorageService {
         }
 
         const pluginSession = new PluginRunSession({
+            createSensorTypeDefinition: manifest.version < 13
+                ? (await import("../interfaces/historical/PluginSensorType.js")).createPluginSensorTypeDefinition
+                : undefined,
             moduleSource: resolvedPlugins.length > 0
                 ? new NodePluginModuleSource({
                     pluginStore: this.plugins,
@@ -2496,7 +2504,7 @@ export class StorageService {
                 scenario: resolvedScenario?.parameters ?? { values: {}, bindings: [] },
             },
             ...(manifest.version === 13 ? { nativeTopicContracts: createNativeTopicContractResource(manifest.topics) }
-                : { schemas: schemaClosureForManifest(manifest), autonomyCatalog: catalogMetadata() }),
+                : { schemas: contracts.schemaClosureForManifest(manifest), autonomyCatalog: contracts.catalogMetadata() }),
             contracts: (manifest.topics || []).map((topic) => ({
                 id: topic.id,
                 contractId: topic.contractId,
@@ -2525,7 +2533,7 @@ export class StorageService {
                 vehicleAssets: Object.fromEntries(resolvedVehicles.map((entry) => [entry.vehicleId, entry.assetHashes])),
                 },
             }, { sensorRegistry });
-        planProtobufRouteAdmission({ manifest: resolved.manifest, interfaceResource: protobufInterface,
+        routeAdmission({ manifest: resolved.manifest, interfaceResource: protobufInterface,
             schemas: resolved.schemas, resolvedRun: resolved });
         assertZeroSpeedResponse(resolved, pluginSession.plants);
         resolved.simulationSemanticHash = computeSimulationSemanticHash(resolved);
@@ -2547,7 +2555,7 @@ export class StorageService {
     }
 
     async importRunBundle(bundle = {}) {
-        verifyRunBundleIntegrity(bundle);
+        (await import("../headless/RunBundleInspection.js")).verifyRunBundleIntegrity(bundle);
         await this._assertLocalPbrImportDependencies(bundle.resolved);
         if ([12, 13].includes(bundle.resolved.version) && bundle.resolved.protobufInterface) {
             await this.putProtobufInterface(bundle.resolved.protobufInterface.document);
@@ -2555,7 +2563,8 @@ export class StorageService {
         for (const resource of bundle.resolved.pluginPackages ?? []) {
             await this.plugins.putPackage(resource);
         }
-        const incoming = normalizeRunManifest(bundle.manifest);
+        const normalizeImportedManifest = bundle.manifest?.version < 13 ? (await import("../interfaces/historical/RunContracts.js")).normalizeRunManifest : normalizeRunManifest;
+        const incoming = normalizeImportedManifest(bundle.manifest);
         const importedEnvironment = bundle.resolved.environment?.manifest;
         if (importedEnvironment) {
             const requestedId = incoming.environment.id;
@@ -2612,12 +2621,12 @@ export class StorageService {
             }
         }
         const existingManifest = await this.getRunManifest(incoming.id);
-        if (existingManifest && semanticHash(normalizeRunManifest(existingManifest)) === semanticHash(incoming)) {
+        if (existingManifest && semanticHash(normalizeImportedManifest(existingManifest)) === semanticHash(incoming)) {
             return existingManifest;
         }
         if (existingManifest) incoming.id = `${incoming.id}-${bundle.resolvedHash.slice(0, 8)}`;
         const retryManifest = await this.getRunManifest(incoming.id);
-        if (retryManifest && semanticHash(normalizeRunManifest(retryManifest)) === semanticHash(incoming)) return retryManifest;
+        if (retryManifest && semanticHash(normalizeImportedManifest(retryManifest)) === semanticHash(incoming)) return retryManifest;
         if (incoming.version < 13) return this._writeRunManifest(incoming.id, incoming, { expectedRevision: 0, create: true });
         return this.createRunManifest(incoming);
     }
@@ -2663,7 +2672,7 @@ export class StorageService {
             || path.basename(journalPath) !== `${journal.archiveHash}.json`) {
             throw visualAssetError(RUN_PACKAGE_ERROR_CODES.INVALID, "Package import journal identity is invalid.");
         }
-        const loaded = verifyRunBundleBytes(Buffer.from(journal.bundleBytes, "base64"), { execution: false });
+        const loaded = (await import("../headless/RunBundleInspection.js")).verifyRunBundleBytes(Buffer.from(journal.bundleBytes, "base64"), { execution: false });
         if (loaded.bundleBytesHash !== journal.bundleBytesHash) {
             throw visualAssetError(RUN_PACKAGE_ERROR_CODES.INVALID, "Package import journal bundle bytes are corrupt.");
         }
@@ -2724,16 +2733,16 @@ export class StorageService {
     async _loadPackageBundle(input = {}) {
         if (input.bundleBytes != null) {
             const bytes = Buffer.from(input.bundleBytes);
-            return verifyRunBundleBytes(bytes, { execution: false });
+            return (await import("../headless/RunBundleInspection.js")).verifyRunBundleBytes(bytes, { execution: false });
         }
         if (input.bundle) {
             const bytes = Buffer.from(runBundleBytes(input.bundle));
-            return verifyRunBundleBytes(bytes, { execution: false });
+            return (await import("../headless/RunBundleInspection.js")).verifyRunBundleBytes(bytes, { execution: false });
         }
         if (input.manifestId) {
             const bundle = await this.exportRunManifest(input.manifestId);
             const bytes = Buffer.from(canonicalRunBundleStringify(bundle), "utf8");
-            return verifyRunBundleBytes(bytes, { execution: false });
+            return (await import("../headless/RunBundleInspection.js")).verifyRunBundleBytes(bytes, { execution: false });
         }
         throw visualAssetError(
             RUN_PACKAGE_ERROR_CODES.INVALID,
@@ -3561,8 +3570,11 @@ export class StorageService {
                 });
             }
         }
+        const registryFactory = verified.some((packed) => packed.document.sensorTypes?.some((type) => type.sensorAbi === 1))
+            ? (await import("../interfaces/historical/SensorTypes.js")).createSensorDefinitionRegistry
+            : createSensorDefinitionRegistry;
         return {
-            registry: createSensorDefinitionRegistry(verified),
+            registry: registryFactory(verified),
             issues,
         };
     }
@@ -3830,7 +3842,8 @@ export class StorageService {
             }
             const now = new Date().toISOString();
             const sensorRegistry = await this._sensorRegistryForRunManifest({ ...manifest, id: manifestId });
-            const normalized = normalizeRunManifest({ ...manifest, id: manifestId }, { sensorRegistry });
+            const normalizeStoredManifest = manifest.version < 13 ? (await import("../interfaces/historical/RunContracts.js")).normalizeRunManifest : normalizeRunManifest;
+            const normalized = normalizeStoredManifest({ ...manifest, id: manifestId }, { sensorRegistry });
             const stored = {
                 ...normalized,
                 revision: currentRevision + 1,
@@ -4911,9 +4924,6 @@ function validateScenarioSensorBindings(scenario, manifest) {
     }
 }
 
-function standardRunSchemas() {
-    return schemaClosureForManifest(createDefaultRunManifest());
-}
 
 function parseEnvironmentWriteInput(input) {
     try {

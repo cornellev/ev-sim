@@ -11,19 +11,8 @@ import {
 import { normalizeSensorTransports, reconcileSensorTransportBindings } from "./sensors/SensorTransports.js";
 import { normalizeProtobufRunConfig } from "../interfaces/ProtobufRunBinding.js";
 import { normalizeNativeTopic, NATIVE_SENSOR_OUTPUT_CONTRACTS } from "./NativeTopicContracts.js";
-import { topicFromNativeContract, defaultNativeManifestTopics } from "./NativeTopicCatalog.js";
+import { topicFromNativeContract, defaultNativeManifestTopics, validateManifestTopicAuthority } from "./NativeTopicCatalog.js";
 import { normalizeControlSetpoint } from "../autonomy/ControlCommand.js";
-import {
-    catalogMetadata,
-    defaultManifestTopics,
-    ensureCandidateReturnTopics,
-    migrateLegacyTopic,
-    schemaClosureForManifest,
-    topicFromContract,
-    validateManifestTopicAuthority,
-    validateTopicAgainstCatalog,
-} from "../autonomy/AutonomyContractCatalog.js";
-import { threePoseToRep103 } from "../autonomy/CoordinateFrames.js";
 import { validateSensorRigFrames, validateSyncGroups } from "../simulation/TransformRuntime.js";
 import { validateScalarParameterTarget } from "../scenarios/ScenarioDocument.js";
 import { sha256 } from "@noble/hashes/sha2.js";
@@ -104,24 +93,6 @@ const DEFAULT_CONTROLS = Object.freeze({
     actuatorOverrides: {},
 });
 
-function topic(value = {}, index = 0) {
-    return migrateLegacyTopic(value, index);
-}
-
-function normalizeSiCommand(value = null) {
-    if (value == null) return null;
-    const source = object(value);
-    const mode = CONTROL_COMMAND_MODES.includes(source.mode) ? source.mode : "stop";
-    return {
-        mode,
-        steering_angle: finite(source.steering_angle ?? source.steeringAngle, 0),
-        steering_angle_velocity: finite(source.steering_angle_velocity ?? source.steeringAngleVelocity, 0),
-        speed: finite(source.speed, 0),
-        acceleration: finite(source.acceleration, 0),
-        jerk: finite(source.jerk, 0),
-    };
-}
-
 function normalizeActuatorOverrides(value = {}) {
     const source = object(value);
     const out = {};
@@ -142,7 +113,7 @@ function normalizeActuatorOverrides(value = {}) {
     return out;
 }
 
-export function normalizeControlsConfig(value = {}, { targetVehicleId = "ego", native = false } = {}) {
+export function normalizeControlsConfig(value = {}, { targetVehicleId = "ego" } = {}) {
     const source = object(value);
     if (source.zeroSpeedResponse !== undefined && source.zeroSpeedResponse !== "brake-v1") {
         throw new TypeError('controls.zeroSpeedResponse must be "brake-v1" when provided.');
@@ -154,7 +125,7 @@ export function normalizeControlsConfig(value = {}, { targetVehicleId = "ego", n
         referenceShadow: source.referenceShadow !== false,
         watchdogNs: Math.max(0, Math.floor(finite(source.watchdogNs, DEFAULT_CONTROLS.watchdogNs))),
         stalePolicy,
-        fallbackCommand: (native ? normalizeControlSetpoint : normalizeSiCommand)(source.fallbackCommand),
+        fallbackCommand: normalizeControlSetpoint(source.fallbackCommand),
         referenceSource: text(source.referenceSource, DEFAULT_CONTROLS.referenceSource) || null,
         actuatorOverrides: normalizeActuatorOverrides(source.actuatorOverrides),
         ...(source.keyboardDrive === true ? { keyboardDrive: true } : {}),
@@ -246,86 +217,6 @@ function syncGroup(value = {}, index = 0) {
     };
 }
 
-function migrateSensorToV4(sensor, sourceVersion, registry = sensorTypeRegistry) {
-    const normalized = normalizeRunSensor(sensor, 0, registry);
-    if (sourceVersion >= RUN_MANIFEST_V7) return normalized;
-    const migrated = {
-        ...normalized,
-        pose: sourceVersion < RUN_MANIFEST_V5 ? threePoseToRep103(normalized.pose) : normalized.pose,
-    };
-    if (normalized.type === "camera") {
-        const optical = normalized.frameId?.includes("optical")
-            ? normalized.frameId
-            : `${normalized.id.replace(/-camera$/, "")}_camera_optical_frame`.replace(/^([^_]+)$/, "$1_camera_optical_frame");
-        const mount = optical.replace(/_optical_frame$/, "_link").replace(/_optical$/, "_link");
-        migrated.mountFrameId = text(sensor.mountFrameId, mount);
-        migrated.measurementFrameId = text(sensor.measurementFrameId, optical);
-        migrated.frameId = migrated.measurementFrameId;
-    } else {
-        const frame = text(normalized.frameId, `${normalized.id}_frame`);
-        migrated.mountFrameId = text(sensor.mountFrameId, frame);
-        migrated.measurementFrameId = text(sensor.measurementFrameId, frame);
-        migrated.frameId = frame;
-    }
-    if (!migrated.syncGroupId && sourceVersion < RUN_MANIFEST_V5 && normalized.type !== "unknown") {
-        migrated.syncGroupId = "perception-primary";
-    }
-    // v5 → v6 / v6 → v7: preserve measured RGB/CameraInfo/PointCloud2; do not silently enable oracle products.
-    if (sourceVersion < RUN_MANIFEST_V7 && migrated.type === "camera") {
-        migrated.calibration = {
-            ...migrated.calibration,
-            products: {
-                rgb: true,
-                cameraInfo: true,
-                depth: false,
-                semantic: false,
-                instance: false,
-                detections2d: false,
-                detections3d: false,
-                lanes: false,
-                trafficControls: false,
-                diagnostics: migrated.calibration?.products?.diagnostics !== false,
-                ...object(sensor.calibration?.products),
-                depth: sensor.calibration?.products?.depth === true,
-                semantic: sensor.calibration?.products?.semantic === true,
-                instance: sensor.calibration?.products?.instance === true,
-                detections2d: sensor.calibration?.products?.detections2d === true,
-                detections3d: sensor.calibration?.products?.detections3d === true,
-                lanes: sensor.calibration?.products?.lanes === true,
-                trafficControls: sensor.calibration?.products?.trafficControls === true,
-            },
-        };
-        const outputs = { ...migrated.outputs };
-        delete outputs.depthTopicId;
-        delete outputs.semanticTopicId;
-        delete outputs.instanceTopicId;
-        delete outputs.detections2dTopicId;
-        delete outputs.detections3dTopicId;
-        delete outputs.lanesTopicId;
-        delete outputs.trafficControlsTopicId;
-        if (sensor.outputs) {
-            for (const key of Object.keys(sensor.outputs)) {
-                if (sensor.outputs[key]) outputs[key] = sensor.outputs[key];
-            }
-        }
-        migrated.outputs = outputs;
-    }
-    if (sourceVersion < RUN_MANIFEST_V7 && migrated.type === "lidar3d") {
-        migrated.calibration = {
-            ...migrated.calibration,
-            products: {
-                pointCloud: true,
-                semanticPointCloud: sensor.calibration?.products?.semanticPointCloud === true,
-                diagnostics: migrated.calibration?.products?.diagnostics !== false,
-            },
-        };
-        const outputs = { ...migrated.outputs };
-        if (!sensor.outputs?.semanticPointCloudTopicId) delete outputs.semanticPointCloudTopicId;
-        migrated.outputs = outputs;
-    }
-    return migrated;
-}
-
 function sensorInheritance(rig) {
     return rig.inheritance?.mode === "vehicle" ? { mode: "vehicle" } : null;
 }
@@ -340,12 +231,9 @@ function normalizeSensorRig(source = {}, sourceVersion = RUN_MANIFEST_VERSION, r
     const rig = object(source);
     const inheritance = sensorInheritance(rig);
     const sensors = (Array.isArray(rig.sensors) ? rig.sensors : [])
-        .map((entry) => withInheritedFrom(migrateSensorToV4(entry, sourceVersion, registry), entry, inheritance));
+        .map((entry) => withInheritedFrom(normalizeRunSensor(entry, 0, registry), entry, inheritance));
     if (sourceVersion === NATIVE_RUN_MANIFEST_VERSION) for (const sensor of sensors) delete sensor.schema;
     let syncGroups = Array.isArray(rig.syncGroups) ? rig.syncGroups.map(syncGroup) : [];
-    if (sourceVersion < RUN_MANIFEST_V7 && sensors.length > 0 && syncGroups.length === 0) {
-        syncGroups = defaultSyncGroups();
-    }
     return {
         mapFrameId: text(rig.mapFrameId, "map"),
         odomFrameId: text(rig.odomFrameId, "odom"),
@@ -508,7 +396,7 @@ export function applyManifestOracleProduct(manifest, sensorIndex, productKey, en
     const topicId = nextSensor.outputs?.[toggle.outputKey];
     let topics = Array.isArray(source.topics) ? [...source.topics] : [];
     if (enabled && topicId && !topics.some((topic) => topic.id === topicId)) {
-        topics = [...topics, (source.version === 13 ? topicFromNativeContract : topicFromContract)(toggle.contractId, { id: topicId })];
+        topics = [...topics, topicFromNativeContract(toggle.contractId, { id: topicId })];
     }
     const syncGroups = Array.isArray(source.sensorRig?.syncGroups)
         ? source.sensorRig.syncGroups.map((group) => ({
@@ -537,7 +425,7 @@ export function applyManifestOracleProduct(manifest, sensorIndex, productKey, en
 }
 
 export function createDefaultRunManifest(overrides = {}) {
-    const native = (overrides.version ?? RUN_MANIFEST_VERSION) === NATIVE_RUN_MANIFEST_VERSION;
+    if (overrides.version !== undefined && overrides.version !== NATIVE_RUN_MANIFEST_VERSION) throw new Error("Historical runs require reviewed native adoption.");
     const base = {
         cameraObjectMotion: LIVE_CAMERA_OBJECT_MOTION,
         kind: RUN_MANIFEST_KIND,
@@ -633,16 +521,15 @@ export function createDefaultRunManifest(overrides = {}) {
             ],
         },
         scripts: { enabled: true, artifacts: [], bindingIds: [], expectedBindingsHash: null, embeddedBindings: [] },
-        topics: native ? defaultNativeManifestTopics() : defaultManifestTopics(),
+        topics: defaultNativeManifestTopics(),
         controls: { ...DEFAULT_CONTROLS },
-        ...(native ? {} : { autonomyCatalog: catalogMetadata() }),
         assertions: [],
         parameters: [],
         logging: { policy: "optional", profileId: "simulation-run-full-sensors" },
         provenance: createDefaultManifestProvenance(),
     };
     const candidate = { ...base, ...overrides };
-    if (native) candidate.sensorRig = { ...candidate.sensorRig, sensors: candidate.sensorRig.sensors.map((sensor) => {
+    candidate.sensorRig = { ...candidate.sensorRig, sensors: candidate.sensorRig.sensors.map((sensor) => {
         const normalized = { ...sensor };
         delete normalized.schema;
         return normalized;
@@ -677,32 +564,8 @@ export function normalizeRunManifest(value, {
         throw new Error(`Unsupported run manifest kind: ${JSON.stringify(source.kind)}.`);
     }
     const sourceVersion = source.version === undefined ? RUN_MANIFEST_VERSION : Number(source.version);
-    const supported = [
-        LEGACY_RUN_MANIFEST_VERSION,
-        RUN_MANIFEST_V2,
-        RUN_MANIFEST_V3,
-        RUN_MANIFEST_V4,
-        RUN_MANIFEST_V5,
-        RUN_MANIFEST_V6,
-        RUN_MANIFEST_V7,
-        RUN_MANIFEST_V8,
-        RUN_MANIFEST_V9,
-        RUN_MANIFEST_V10,
-        RUN_MANIFEST_V11,
-        RUN_MANIFEST_V12,
-        NATIVE_RUN_MANIFEST_VERSION,
-    ];
-    if (!supported.includes(sourceVersion)) {
-        throw new Error(`Unsupported run manifest version ${source.version}; expected version 1–${NATIVE_RUN_MANIFEST_VERSION}.`);
-    }
-    if (sourceVersion < RUN_MANIFEST_V11 && source.plugins !== undefined) {
-        throw new Error("Plugin selection requires run-manifest version 11.");
-    }
-    if (sourceVersion < RUN_MANIFEST_V11 && source.sensorTransports !== undefined) {
-        throw new Error("Sensor transport bindings require run-manifest version 11.");
-    }
-    if (sourceVersion < RUN_MANIFEST_V12 && source.protobuf !== undefined) {
-        throw new Error("Protobuf interface selection requires run-manifest version 12.");
+    if (sourceVersion !== NATIVE_RUN_MANIFEST_VERSION) {
+        throw new Error(`Unsupported run manifest version ${source.version}; historical runs require reviewed native adoption.`);
     }
     const protobuf = normalizeProtobufRunConfig(source.protobuf);
     const plugins = normalizePluginSelection(source.plugins);
@@ -716,11 +579,7 @@ export function normalizeRunManifest(value, {
     const native = sourceVersion === NATIVE_RUN_MANIFEST_VERSION;
     if (native && (source.sensorRig?.sensors ?? []).some((sensor) => sensor.schema !== undefined)) throw new Error("Native sensor declarations cannot contain legacy schemas.");
     if (native && source.autonomyCatalog !== undefined) throw new Error("Native manifests cannot contain a ROS autonomy catalog.");
-    const migratedTopics = (Array.isArray(source.topics) ? source.topics : []).map(native ? normalizeNativeTopic : topic);
-    // Ensure candidate returns for pre-v8 and always rewrite legacy ackdrive via migrateLegacyTopic.
-    const topics = sourceVersion < RUN_MANIFEST_V8
-        ? ensureCandidateReturnTopics(migratedTopics)
-        : migratedTopics;
+    const topics = (Array.isArray(source.topics) ? source.topics : []).map(normalizeNativeTopic);
     const vehicles = (Array.isArray(initial.vehicles) ? initial.vehicles : []).map((vehicle, index) => ({
         ...object(vehicle),
         id: text(vehicle?.id, `vehicle-${index + 1}`),
@@ -748,7 +607,7 @@ export function normalizeRunManifest(value, {
     };
     return {
         kind: RUN_MANIFEST_KIND,
-        version: native ? NATIVE_RUN_MANIFEST_VERSION : RUN_MANIFEST_V12,
+        version: NATIVE_RUN_MANIFEST_VERSION,
         id: text(source.id, "untitled-run"),
         name: text(source.name, "Untitled Run"),
         description: text(source.description),
@@ -799,9 +658,6 @@ export function normalizeRunManifest(value, {
             profileId: text(source.logging?.profileId, "simulation-run-full-sensors"),
         },
         provenance: normalizeManifestProvenance(source.provenance),
-        ...(!native ? { autonomyCatalog: source.autonomyCatalog?.version
-            ? { ...catalogMetadata(), ...object(source.autonomyCatalog) }
-            : catalogMetadata() } : {}),
     };
 }
 
@@ -848,17 +704,14 @@ export function validateRunManifest(value, {
             }
             const linked = topics.get(topicId);
             const native = manifest.version === NATIVE_RUN_MANIFEST_VERSION;
-            const linkedType = native ? linked?.valueContract?.id : linked?.schema?.type || linked?.type;
-            const expectedType = native ? definition?.run?.outputs?.find((output) => output.key === key)?.valueContract?.id ?? NATIVE_SENSOR_OUTPUT_CONTRACTS[key] : definition?.run?.outputs?.find((output) => output.key === key)?.rosType;
+            const linkedType = linked?.valueContract?.id;
+            const expectedType = definition?.run?.outputs?.find((output) => output.key === key)?.valueContract?.id ?? NATIVE_SENSOR_OUTPUT_CONTRACTS[key];
             if (native && topicId && !expectedType) issues.push({ path: `sensorRig.sensors.${index}.outputs.${key}`, message: "Sensor output has no admitted native contract." });
             if (topicId && linked && expectedType && linkedType !== expectedType) {
                 issues.push({ path: `sensorRig.sensors.${index}.outputs.${key}`, message: `Sensor product requires ${expectedType}, not ${linkedType}.` });
             }
             if (topicId && linked && linked.direction !== "output") {
                 issues.push({ path: `sensorRig.sensors.${index}.outputs.${key}`, message: "Sensor products require an output topic." });
-            }
-            if (!native && topicId && linked && sensorEntry.schema[key] !== linkedType) {
-                issues.push({ path: `sensorRig.sensors.${index}.schema.${key}`, message: `Schema must match topic type "${linkedType}".` });
             }
         }
     }
@@ -873,9 +726,6 @@ export function validateRunManifest(value, {
     }
     issues.push(...validateSensorRigFrames(manifest));
     issues.push(...validateSyncGroups(manifest));
-    for (const [index, topicEntry] of manifest.topics.entries()) {
-        if (manifest.version !== NATIVE_RUN_MANIFEST_VERSION) issues.push(...validateTopicAgainstCatalog(topicEntry, index));
-    }
     issues.push(...validateManifestTopicAuthority(manifest));
     const controlsTopics = (manifest.topics || []).filter((topic) => topic.valueContract?.id === "cev.control-command" || topic.stage === "controls" || topic.contractId === "controls-command");
     if (controlsTopics.length > 1) {

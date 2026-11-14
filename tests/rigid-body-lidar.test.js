@@ -25,7 +25,6 @@ import { CpuLidarScene } from "../app/simulation/sensors/CpuLidarScene.js";
 import { createCpuLidarBackendSelection } from "../app/simulation/sensors/CpuLidarBackend.js";
 import { createGpuSensorBackendSelection } from "../app/simulation/sensors/GpuSensorBackend.js";
 import { HeadlessGpuSensorManager } from "../app/simulation/sensors/HeadlessGpuSensorManager.js";
-import { loadHeadlessMessageCodec } from "../app/simulation/sensors/HeadlessMessageCodec.js";
 import { HeadlessSensorManager } from "../app/simulation/sensors/HeadlessSensorManager.js";
 import { createRunSensor } from "../app/simulation/sensors/SensorTypeRegistry.js";
 import { compilePrimitiveSolid } from "../app/simulation/world/PrimitiveSolids.js";
@@ -99,7 +98,6 @@ test("headless CPU and Helios captures follow a moved rigid body and return at s
     await manager.configureFromManifest({ sensors: [lidarSensor()] }, {
         backendSelections: [createCpuLidarBackendSelection()],
         lidarGeometry: geometry,
-        messageCodec: await loadHeadlessMessageCodec(),
         seed: "0",
     });
     manager.plugin.scene = pluginScene;

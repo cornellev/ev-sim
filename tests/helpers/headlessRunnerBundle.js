@@ -1,12 +1,9 @@
+import { createSensorDefinitionRegistry as createHistoricalSensorRegistry } from "../../server/interfaces/historical/SensorTypes.js";
 import { buildCalibrationBundle } from "../../app/autonomy/CalibrationBundle.js";
 import { createBindingManifest } from "../../app/scripting/bindings/BindingDocument.js";
 import { verifyRoute } from "../../app/scenarios/route/Route.js";
-import {
-    RUN_BUNDLE_KIND,
-    RUN_BUNDLE_VERSION,
-    computeResolvedRunHash,
-    normalizeRunManifest,
-} from "../../app/simulation/RunManifest.js";
+import { RUN_BUNDLE_KIND, RUN_BUNDLE_VERSION, computeResolvedRunHash } from "../../app/simulation/RunManifest.js";
+import { normalizeRunManifest } from "../../server/interfaces/historical/RunContracts.js";
 import { WORLD_BOUND_PLUGINS_IDENTITY } from "../../app/simulation/kernel/RunIdentity.js";
 import { createPluginPackage, verifyPluginPackage } from "../../app/plugin/PluginPackage.js";
 import { createPluginSensorsResource } from "../../app/plugin/PluginSensorIdentity.js";
@@ -31,7 +28,7 @@ import path from "node:path";
 const worldBoundFixtureUrl = new URL("../fixtures/visual-layer/world-bound-state.v11.json", import.meta.url);
 const pluginSensorFixtureUrl = new URL("../fixtures/plugins/test.range-image-fixture/", import.meta.url);
 
-export async function pluginSensorFixtureResource({ native = false } = {}) {
+export async function pluginSensorFixtureResource({ native = true, mutateFiles } = {}) {
     const [document, runtime, ui] = await Promise.all([
         fs.readFile(new URL("plugin.json", pluginSensorFixtureUrl), "utf8"),
         fs.readFile(new URL("runtime/index.js", pluginSensorFixtureUrl), "utf8"),
@@ -48,6 +45,10 @@ export async function pluginSensorFixtureResource({ native = false } = {}) {
         "runtime/index.js": native ? runtime.replaceAll("buildPointCloud2", "buildNativePoints") : runtime,
     };
     if (parsed.entry?.ui) files[parsed.entry.ui] = ui;
+    if (mutateFiles) {
+        for (const key of Object.keys(files)) files[key] = new TextEncoder().encode(files[key]);
+        mutateFiles(files);
+    }
     return createPluginPackage(files);
 }
 
@@ -322,7 +323,7 @@ export async function createPluginPortableHeadlessBundle(resource, options = {})
     }];
     const native = options.native ?? !(verified.document.sensorTypes?.some((sensor) => sensor.sensorAbi === 1) || (verified.document.topicAbi !== 2 && verified.document.capabilities.some((capability) => capability.startsWith("topics."))));
     const bundle = await createPortableHeadlessBundle({ ...options, native });
-    const sensorRegistry = createSensorDefinitionRegistry([verified]);
+    const sensorRegistry = (native ? createSensorDefinitionRegistry : createHistoricalSensorRegistry)([verified]);
     bundle.resolved.manifest = normalizeRunManifest({
         ...bundle.resolved.manifest,
         plugins: {

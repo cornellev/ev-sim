@@ -20,7 +20,7 @@ import {
     threeToRep103Vector,
 } from "../app/autonomy/CoordinateFrames.js";
 import { buildCalibrationBundle, calibrationBundleHash } from "../app/autonomy/CalibrationBundle.js";
-import { createDefaultRunManifest, normalizeRunManifest } from "../app/simulation/RunManifest.js";
+import { createDefaultRunManifest, normalizeRunManifest } from "../server/interfaces/historical/RunContracts.js";
 
 test("Three.js and REP-103 basis conversion preserves forward placement", () => {
     const threePose = { position: { x: 1.5, y: 0.5, z: 0 }, rotation: { x: 0, y: 0, z: 0, order: "XYZ" } };

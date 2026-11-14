@@ -14,7 +14,9 @@ import { sha256ExactBytes } from "../app/simulation/visual/VisualLayer.js";
 import { ManagedHeadlessSession, managedEpisodeIdentity } from "../server/headless/ManagedHeadlessSession.js";
 import { HeadlessSession } from "../server/headless/HeadlessSession.js";
 import { HeadlessSupervisor } from "../server/headless/HeadlessSupervisor.js";
-import { canonicalRunBundleStringify, runBundleBytes, verifyRunBundle, verifyRunBundleBytes, verifyRunBundleIntegrity } from "../server/headless/RunBundle.js";
+import { canonicalRunBundleStringify, runBundleBytes, verifyRunBundle } from "../server/headless/RunBundle.js";
+import { verifyRunBundleBytes } from "../server/headless/RunBundleInspection.js";
+import { verifyRunBundleIntegrity } from "../server/headless/RunBundleInspection.js";
 import { StorageService } from "../server/storage/StorageService.js";
 import { createPortableHeadlessBundle, rehashRunBundle } from "./helpers/headlessRunnerBundle.js";
 

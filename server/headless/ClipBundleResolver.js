@@ -1,5 +1,4 @@
 import { topicFromNativeContract } from "../../app/simulation/NativeTopicCatalog.js";
-import { topicFromContract } from "../../app/autonomy/AutonomyContractCatalog.js";
 import { resolveFixedStepSensorSchedule } from "../../app/simulation/sensors/FixedStepSensorSchedule.js";
 import { createRunSensor } from "../../app/simulation/sensors/SensorTypeRegistry.js";
 import { defaultCameraRenderSelection } from "../../app/simulation/render/RenderSceneProviderRegistry.js";
@@ -147,7 +146,7 @@ function captureCount(camera, clock) {
 
 function ensureTopic(manifest, contractId, id) {
     if ((manifest.topics || []).some((topic) => topic.id === id)) return;
-    manifest.topics.push((manifest.version === 13 ? topicFromNativeContract : topicFromContract)(contractId, {
+    manifest.topics.push(topicFromNativeContract(contractId, {
         id,
         name: `/${String(id).replaceAll("-", "_")}`,
     }));

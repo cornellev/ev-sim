@@ -10,9 +10,7 @@ import { DEFAULT_ACTUATOR_LIMITS } from "../vehicles/VehicleManifest.js";
 import {
     emptyInternalCommand,
     internalCommandFromSi,
-    normalizeStampedAckermannCommand,
     threeSteeringToRep103,
-    toStampedAckermannEnvelope,
 } from "./ControlCommandAdapter.js";
 import {
     emptyControlsSnapshot,
@@ -141,22 +139,6 @@ export class ControlRuntime {
         return true;
     }
 
-    /** Ingest a stamped SI topic payload (candidate/reference). */
-    ingestStampedCommand(info, {
-        vehicleId = null,
-        producer = null,
-        applyTimeNs = 0,
-    } = {}) {
-        const target = vehicleId || this.controls?.targetVehicleId || "ego";
-        const resolvedProducer = producer || info?.producer || "candidate";
-        const normalized = normalizeStampedAckermannCommand(info?.value, {
-            applyTimeNs,
-            producer: resolvedProducer,
-            source: "topic",
-        });
-        return this._ingestNormalized(normalized, info, target, resolvedProducer);
-    }
-
     ingestCommand(info, { vehicleId = null, producer = null, applyTimeNs = 0, runId = this.runId ?? this.manifest?.id } = {}) {
         const target = vehicleId || this.controls?.targetVehicleId || "ego";
         const resolvedProducer = producer || info?.producer || "candidate";
@@ -258,7 +240,7 @@ export class ControlRuntime {
         } else if (authority === "reference") {
             selected = reference || state.selected;
         } else {
-            selected = candidate || state.selected;
+            selected = candidate || (state.selected?.producer === "bypass" ? state.requested : state.selected);
             if (reference && this.controls?.referenceShadow !== false) {
                 state.referenceShadow = cloneCommand(reference);
             }
@@ -315,9 +297,9 @@ export class ControlRuntime {
                 const fb = this.controls.fallbackCommand;
                 desired = internalCommandFromSi({
                     mode: fb.mode || "stop",
-                    speedMps: this.manifest?.version === 13 ? fb.speedMps : fb.speed,
-                    steeringRadRep103: this.manifest?.version === 13 ? fb.steeringRad : fb.steering_angle,
-                    accelerationMps2: this.manifest?.version === 13 ? fb.accelerationMps2 : fb.acceleration,
+                    speedMps: fb.speedMps,
+                    steeringRadRep103: fb.steeringRad,
+                    accelerationMps2: fb.accelerationMps2,
                     sequence: nextSequence(state.lastSequence),
                     captureTimeNs: timeNs,
                     producer: "bypass",
@@ -398,9 +380,7 @@ export class ControlRuntime {
                 zeroSpeedResponse: this.controls.zeroSpeedResponse,
                 actuatorLimits: this.getLimits(vehicleId),
             } : {}),
-            activeEnvelope: this.manifest?.version === 13
-                ? controlCommandValue(state.applied, { runId: this.runId ?? this.manifest.id, applyTimeNs: timeNs, leaseId: this.ownershipGuard?.lease?.leaseId })
-                : toStampedAckermannEnvelope(state.applied, { applyTimeNs: timeNs }),
+            activeEnvelope: controlCommandValue(state.applied, { runId: this.runId ?? this.manifest?.id ?? "", applyTimeNs: timeNs, leaseId: this.ownershipGuard?.lease?.leaseId }),
         };
     }
 
@@ -538,7 +518,7 @@ export class ControlRuntime {
             } : null,
             wheelbase: this.getLimits(id).wheelbase,
         });
-        if (this.manifest?.version === 13) snapshot.sequence = String(applied?.sequence ?? requested?.sequence ?? 0);
+        snapshot.sequence = String(applied?.sequence ?? requested?.sequence ?? 0);
         return snapshot;
     }
 

@@ -34,12 +34,12 @@ export function getDeviceTelemetrySignals(device, registry = sensorTypeRegistry)
         })),
         ...outputs.map((output) => ({
             suffix: output.signal,
-            type: "bytes",
+            type: "json",
             replayRole: "derived",
             logClass: "heavy",
             metadata: {
                 deviceType,
-                rosType: device.config?.schema?.[output.key] || output.rosType,
+                valueContract: output.valueContract,
             },
         })),
     ];

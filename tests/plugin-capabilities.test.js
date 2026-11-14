@@ -41,7 +41,11 @@ function selectionFrom(resource, capabilities) {
 
 async function loadSession(t, fixture, capabilities) {
     const { store, moduleSource } = await harness(t);
-    const resource = await pluginFixtureResource({ fixture });
+    const resource = await pluginFixtureResource({ fixture, mutateDocument(document) {
+        if (fixture === "acme.topics") document.topicAbi = 2;
+    }, mutateFiles(files) {
+        if (fixture === "acme.topics") files["runtime/index.js"] = new TextEncoder().encode(new TextDecoder().decode(files["runtime/index.js"]).replace('typeStr: "std_msgs/Float64"', 'valueContract: message.valueContract'));
+    } });
     await store.putPackage(resource);
     const session = await new PluginRunSession({
         moduleSource,
@@ -59,8 +63,7 @@ function pluginTopics() {
             contractId: "plugin-in",
             name: "plugin-in",
             direction: "input",
-            type: "std_msgs/Float64",
-            schema: { type: "std_msgs/Float64" },
+            valueContract: { id: "cev.scalar-f64", version: 1 },
             producer: "simulator",
             authority: "reference",
             routeDownstream: true,
@@ -70,8 +73,7 @@ function pluginTopics() {
             contractId: "plugin-out",
             name: "plugin-out",
             direction: "output",
-            type: "std_msgs/Float64",
-            schema: { type: "std_msgs/Float64" },
+            valueContract: { id: "cev.scalar-f64", version: 1 },
             producer: "simulator",
             authority: "reference",
         },
@@ -80,8 +82,7 @@ function pluginTopics() {
             contractId: "controls-command",
             name: "/controls/command",
             direction: "input",
-            type: "sensor_fusion_msgs/StampedAckermannDrive",
-            schema: { type: "sensor_fusion_msgs/StampedAckermannDrive" },
+            valueContract: { id: "cev.control-command", version: 1 },
             producer: "candidate",
             authority: "candidate",
             stage: "controls",
@@ -218,23 +219,23 @@ test("topic delivery is ordered, deferred, and overflow-fatal", async (t) => {
     for (const value of [1, 2, 3]) {
         const routed = router.routeInbound({
             name: "plugin-in",
-            typeStr: "std_msgs/Float64",
-            value: { data: value },
+            valueContract: { id: "cev.scalar-f64", version: 1 },
+            value,
         }, { applyStep: 1, applyTimeNs: 1 });
         assert.equal(routed.ok, true, routed.message);
     }
     session.deliverTopics({ step: 1, timeNs: 1 });
     assert.equal(session.getDeterministicState().systems[0].state.seen, 3);
-    assert.equal(session.getDeterministicState().systems[0].state.last.data, 3);
+    assert.equal(session.getDeterministicState().systems[0].state.last, 3);
     const produced = router.lastProducer.get("plugin-out");
-    assert.equal(produced.value.data, 3);
+    assert.equal(produced.value, 3);
 
     assert.throws(() => {
         for (let index = 0; index <= PLUGIN_TOPIC_QUEUE_LIMIT; index += 1) {
             const routed = router.routeInbound({
                 name: "plugin-in",
-                typeStr: "std_msgs/Float64",
-                value: { data: index },
+                valueContract: { id: "cev.scalar-f64", version: 1 },
+                value: index,
             }, { applyStep: 2, applyTimeNs: 2 });
             if (routed.ok !== true) throw routed;
         }
@@ -252,7 +253,7 @@ test("control topics cannot be published by plugins", async (t) => {
         pluginId: "acme.topics",
         topicId: "controls-command",
         value: { data: 1 },
-        typeStr: "sensor_fusion_msgs/StampedAckermannDrive",
+        valueContract: { id: "cev.control-command", version: 1 },
     });
     assert.throws(
         () => session.commitEvaluation(token),

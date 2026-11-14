@@ -1,14 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { topicFromNativeContract as topicFromContract } from "../app/simulation/NativeTopicCatalog.js";
+import { validateNativeTopicValue } from "../app/simulation/NativeTopicContracts.js";
+import { buildNativeOdometry } from "../app/simulation/sensors/NativeSensorProducts.js";
 import {
-    fixturePayloadForType,
-    topicFromContract,
-} from "../app/autonomy/AutonomyContractCatalog.js";
-import {
-    normalizeDetections3D,
+    normalizeDetections3D as normalizeNativeDetections3D,
     normalizeOdometry,
-    validateInboundPayload,
     VISUALIZATION_STATUS,
 } from "../app/autonomy/AutonomyVisualizationModel.js";
 import { composeRep103Poses } from "../app/autonomy/CoordinateFrames.js";
@@ -20,64 +18,31 @@ import { TransformRuntime } from "../app/simulation/TransformRuntime.js";
 import { SignalStore } from "../app/scripting/runtime/SignalStore.js";
 import { LogDataset } from "../app/logging/LogDataset.js";
 
-test("validateInboundPayload rejects non-finite detection geometry", () => {
-    const bad = fixturePayloadForType("vision_msgs/Detection3DArray");
-    bad.detections = [{
-        header: bad.header,
-        results: [{ hypothesis: { class_id: "vehicle", score: 1 }, pose: { pose: { position: { x: 0, y: 0, z: 0 }, orientation: { x: 0, y: 0, z: 0, w: 1 } }, covariance: new Array(36).fill(0) } }],
-        bbox: {
-            center: { position: { x: Number.NaN, y: 0, z: 0 }, orientation: { x: 0, y: 0, z: 0, w: 1 } },
-            size: { x: 1, y: 1, z: 1 },
-        },
-        id: "1",
-        visibility: 1,
-        occlusion: 0,
-    }];
-    const result = validateInboundPayload("perception-detections-3d", "vision_msgs/Detection3DArray", bad);
+const detectionContract = { id: "cev.detections-3d", version: 1 };
+function detection3dPayload({ position, size = { x: 1, y: 1, z: 1 } }) {
+    return { detections: [{ id: "1", classId: "vehicle", score: 1, pose: { position, orientation: { x: 0, y: 0, z: 0, w: 1 } }, size, visibility: 1, occlusion: 0 }] };
+}
+function normalizeDetections3D(value, options = {}) {
+    return normalizeNativeDetections3D(value, { valueContract: detectionContract, metadata: { frameId: "map", captureTimeNs: 0 }, ...options });
+}
+test("native detection validation rejects non-finite geometry", () => {
+    const result = validateNativeTopicValue(detectionContract, detection3dPayload({ position: { x: NaN, y: 0, z: 0 } }));
     assert.equal(result.ok, false);
-    assert.equal(result.code, "malformed-geometry");
 });
-
 test("normalizeDetections3D maps REP-103 centers into three-space", () => {
-    const payload = fixturePayloadForType("vision_msgs/Detection3DArray");
-    payload.detections = [{
-        header: payload.header,
-        results: [{ hypothesis: { class_id: "vehicle", score: 0.9 }, pose: { pose: { position: { x: 0, y: 0, z: 0 }, orientation: { x: 0, y: 0, z: 0, w: 1 } }, covariance: new Array(36).fill(0) } }],
-        bbox: {
-            center: { position: { x: 2, y: 1, z: 0.5 }, orientation: { x: 0, y: 0, z: 0, w: 1 } },
-            size: { x: 4, y: 2, z: 1.5 },
-        },
-        id: "12",
-        visibility: 1,
-        occlusion: 0,
-    }];
-    const [box] = normalizeDetections3D(payload, { source: "candidate" });
-    assert.equal(box.box3d.threeCenter.x, 2);
-    assert.equal(box.box3d.threeCenter.y, 0.5);
-    // REP-103 +Y is left; Three.js +Z is right.
-    assert.equal(box.box3d.threeCenter.z, -1);
+    const [box] = normalizeDetections3D(detection3dPayload({ position: { x: 2, y: 1, z: 0.5 }, size: { x: 4, y: 2, z: 1.5 } }));
+    assert.deepEqual(box.box3d.threeCenter, { x: 2, y: 0.5, z: -1 });
     assert.equal(box.classId, "vehicle");
 });
-
-function detection3dPayload({ frameId, position, size = { x: 1, y: 1, z: 1 } }) {
-    const payload = fixturePayloadForType("vision_msgs/Detection3DArray");
-    payload.header.frame_id = frameId;
-    payload.detections = [{
-        header: payload.header,
-        results: [{ hypothesis: { class_id: "vehicle", score: 1 }, pose: { pose: { position: { x: 0, y: 0, z: 0 }, orientation: { x: 0, y: 0, z: 0, w: 1 } }, covariance: new Array(36).fill(0) } }],
-        bbox: {
-            center: { position, orientation: { x: 0, y: 0, z: 0, w: 1 } },
-            size,
-        },
-        id: "1",
-        visibility: 1,
-        occlusion: 0,
-    }];
-    return payload;
-}
+test("empty native telemetry waits without trying to normalize absent products", () => {
+    const telemetry = new SignalStore();
+    const runtime = new CandidateOutputRuntime({ telemetry, manifest: createDefaultRunManifest() });
+    assert.doesNotThrow(() => runtime.refreshOracle());
+    assert.deepEqual(runtime.lastPerception.oracle.detections3d, []);
+});
 
 test("map-frame 3D detections keep world centers when TF is applied", () => {
-    const bundle = buildCalibrationBundle(createDefaultRunManifest({ version: 12 }));
+    const bundle = buildCalibrationBundle(createDefaultRunManifest());
     const tf = new TransformRuntime(bundle, { routeOutbound() {}, getTopic() { return null; } });
     tf.publishDynamicTransforms(0, 0, [{
         telemetryId: "ego",
@@ -100,7 +65,7 @@ test("map-frame 3D detections keep world centers when TF is applied", () => {
 });
 
 test("optical-frame 3D detections compose child-most-first into map", () => {
-    const bundle = buildCalibrationBundle(createDefaultRunManifest({ version: 12 }));
+    const bundle = buildCalibrationBundle(createDefaultRunManifest());
     const tf = new TransformRuntime(bundle, { routeOutbound() {}, getTopic() { return null; } });
     tf.publishDynamicTransforms(0, 0, [{
         telemetryId: "ego",
@@ -122,7 +87,7 @@ test("optical-frame 3D detections compose child-most-first into map", () => {
     const runtime = new CandidateOutputRuntime({ transformRuntime: tf });
     const [box] = normalizeDetections3D(
         detection3dPayload({ frameId: "front_camera_optical_frame", position: { x: 0, y: 0, z: 2 } }),
-        { source: "candidate", transformToMap: runtime._transformToMapBinder(0) },
+        { source: "candidate", metadata: { frameId: "front_camera_optical_frame", captureTimeNs: 0 }, transformToMap: runtime._transformToMapBinder(0) },
     );
     assert.equal(box.status, VISUALIZATION_STATUS.OK);
     assert.ok(Math.abs(box.box3d.center.x - 13.5) < 1e-6);
@@ -130,35 +95,24 @@ test("optical-frame 3D detections compose child-most-first into map", () => {
 });
 
 test("normalizeOdometry exposes covariance ellipse radii", () => {
-    const payload = fixturePayloadForType("nav_msgs/Odometry");
-    payload.pose.covariance[0] = 0.25;
-    payload.pose.covariance[7] = 1;
-    const estimate = normalizeOdometry(payload);
+    const payload = buildNativeOdometry();
+    payload.poseCovariance[0] = 0.25;
+    payload.poseCovariance[7] = 1;
+    const estimate = normalizeOdometry(payload, { valueContract: { id: "cev.odometry", version: 1 }, metadata: { frameId: "map", captureTimeNs: 0 } });
     assert.equal(estimate.covarianceEllipse.sigmaX, 0.5);
     assert.equal(estimate.covarianceEllipse.sigmaY, 1);
 });
 
 test("candidate output runtime publishes visualization without activating downstream", () => {
     const store = new SignalStore({}, { sourceId: "candidate-runtime" });
-    const manifest = createDefaultRunManifest({ version: 12 });
+    const manifest = createDefaultRunManifest();
     const router = new TopicContractRouter(manifest, { telemetry: store });
     const runtime = new CandidateOutputRuntime({ telemetry: store, manifest });
     const topic = topicFromContract("perception-detections-3d");
-    const payload = fixturePayloadForType("vision_msgs/Detection3DArray");
-    payload.detections = [{
-        header: payload.header,
-        results: [{ hypothesis: { class_id: "barrel", score: 1 }, pose: { pose: { position: { x: 0, y: 0, z: 0 }, orientation: { x: 0, y: 0, z: 0, w: 1 } }, covariance: new Array(36).fill(0) } }],
-        bbox: {
-            center: { position: { x: 1, y: 0, z: 0 }, orientation: { x: 0, y: 0, z: 0, w: 1 } },
-            size: { x: 0.5, y: 0.5, z: 0.8 },
-        },
-        id: "7",
-        visibility: 1,
-        occlusion: 0,
-    }];
+    const payload = detection3dPayload({ position: { x: 1, y: 0, z: 0 }, size: { x: 0.5, y: 0.5, z: 0.8 } });
     const routed = router.routeInbound({
         name: topic.name,
-        typeStr: topic.schema.type,
+        valueContract: topic.valueContract, metadata: { frameId: "map", captureTimeNs: 0 },
         value: payload,
     }, { applyStep: 2, applyTimeNs: 33_333_334, arrivalTimeNs: 33_333_334 });
     runtime.ingestRouted(routed, { applyStep: 2, applyTimeNs: 33_333_334 });
@@ -170,23 +124,23 @@ test("candidate output runtime publishes visualization without activating downst
 
 test("stale localization ghosts last-good estimate in visualization", () => {
     const store = new SignalStore({}, { sourceId: "stale-runtime" });
-    const manifest = createDefaultRunManifest({ version: 12 });
+    const manifest = createDefaultRunManifest();
     const estimate = manifest.topics.find((entry) => entry.contractId === "localization-estimate");
     estimate.timeoutNs = 1_000;
     const router = new TopicContractRouter(manifest, { telemetry: store });
     const runtime = new CandidateOutputRuntime({ telemetry: store, manifest });
-    const payload = fixturePayloadForType("nav_msgs/Odometry");
-    payload.pose.pose.position.x = 3;
+    const payload = buildNativeOdometry();
+    payload.pose.position.x = 3;
     const ok = router.routeInbound({
         name: estimate.name,
-        typeStr: estimate.schema.type,
+        valueContract: estimate.valueContract, metadata: { frameId: "map", captureTimeNs: 0 },
         value: payload,
     }, { applyStep: 1, applyTimeNs: 1_000_000, arrivalTimeNs: 1_000_000 });
     runtime.ingestRouted(ok, { applyStep: 1, applyTimeNs: 1_000_000 });
 
     const stale = router.routeInbound({
         name: estimate.name,
-        typeStr: estimate.schema.type,
+        valueContract: estimate.valueContract, metadata: { frameId: "map", captureTimeNs: 0 },
         value: payload,
     }, { applyStep: 2, applyTimeNs: 5_000_000, arrivalTimeNs: 1_000_000 });
     assert.equal(stale.ok, false);

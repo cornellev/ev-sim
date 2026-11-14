@@ -7,8 +7,8 @@ import { LogService } from "../logging/LogService.js";
 import { sha256ExactBytes } from "../../app/simulation/visual/VisualLayer.js";
 import { HeadlessRunnerError } from "./HeadlessRunnerErrors.js";
 import { renderSceneProviderRegistry } from "../../app/simulation/render/RenderSceneProviderRegistry.js";
-import { verifyRunBundleBytes, verifyRunBundleIntegrity, runBundleBytes } from "./RunBundle.js";
-import { verifyRunPackageArchive } from "./VisualAssetPack.js";
+import { verifyRunBundleBytes, verifyRunBundleIntegrity, runBundleBytes } from "./RunBundleInspection.js";
+import { inspectRunPackageArchive as verifyRunPackageArchive } from "./RunBundleInspection.js";
 
 async function readJson(filePath) {
     try {

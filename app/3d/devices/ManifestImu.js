@@ -3,7 +3,7 @@ import * as THREE from "three";
 
 import Device from "./Device.js";
 import { SensorPublisher } from "./SensorPublisher.js";
-import { buildImuMessage } from "./SensorMessages.js";
+
 import {
     buildImuMeasurement,
     captureVehicleSnapshot,
@@ -78,7 +78,7 @@ export class ManifestImu extends Device {
             topicId: this.config.outputs.imuTopicId,
             signal: "imu",
             frameId,
-            value: (this.contractPublisher.nativeTopics ? buildNativeImu : buildImuMessage)({
+            value: (buildNativeImu)({
                 timeNs: captureTimeNs,
                 frameId,
                 ...measurement,

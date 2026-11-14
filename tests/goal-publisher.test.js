@@ -3,7 +3,6 @@ import test from "node:test";
 
 import { TopicContractRouter } from "../app/simulation/TopicContractRouter.js";
 import {
-    GOAL_MESSAGE_TYPE,
     GOAL_TOPIC,
     GoalPublisher,
     scenarioGoalPose,
@@ -40,6 +39,7 @@ function resolvedRun(routes, { targetVehicleId = "ego", topics = null } = {}) {
     });
     if (topics) manifest.topics = topics;
     return {
+        version: 13,
         manifest,
         definitionHash: "a".repeat(64),
         resolvedHash: "b".repeat(64),
@@ -51,14 +51,13 @@ function resolvedRun(routes, { targetVehicleId = "ego", topics = null } = {}) {
     };
 }
 
-function poseTopic(type = GOAL_MESSAGE_TYPE) {
+function poseTopic(valueContract = { id: "cev.goal", version: 1 }) {
     return {
         id: "goal",
         contractId: "goal",
         name: GOAL_TOPIC,
         direction: "output",
-        type,
-        schema: { type, version: 1 },
+        valueContract,
         required: false,
         producer: "oracle",
         authority: "oracle",
@@ -66,29 +65,12 @@ function poseTopic(type = GOAL_MESSAGE_TYPE) {
     };
 }
 
-function publisherFor(run, { client = null, topics = [] } = {}) {
+function publisherFor(run, { topics = [] } = {}) {
     const telemetry = new SignalStore({}, { sourceId: "goal-publisher-test" });
-    const topicRouter = new TopicContractRouter({ topics }, { telemetry });
     const published = [];
-    const ros = client ?? {
-        open: true,
-        isOpen() { return this.open; },
-        publish(topic, type, value) {
-            published.push({ topic, type, value });
-            return Promise.resolve();
-        },
-    };
-    return {
-        published,
-        telemetry,
-        topicRouter,
-        publisher: new GoalPublisher({
-            topicRouter,
-            telemetry,
-            client: ros,
-            resolvedRun: run,
-        }),
-    };
+    run.manifest.topics = topics;
+    const topicRouter = new TopicContractRouter(run.manifest, { telemetry, publicationPort(product) { published.push(product); return { ok: true }; } });
+    return { published, telemetry, topicRouter, publisher: new GoalPublisher({ topicRouter, resolvedRun: run }) };
 }
 
 test("scenario goal pose is the ego route's final waypoint in REP-103", () => {
@@ -139,46 +121,40 @@ test("scenario goal pose publishes nothing without a finish waypoint", () => {
     ])), null);
 });
 
-test("goal publisher routes a declared Pose topic and still publishes to the orchestrator", () => {
+test("goal publisher routes a declared native goal through the publication port", () => {
     const run = resolvedRun([route("ego", [waypoint(1, 0, 0)])]);
     const harness = publisherFor(run, { topics: [poseTopic()] });
     const pose = harness.publisher.publish(0);
-    assert.deepEqual(harness.telemetry.read("oracle.topics.goal").value, pose);
-    assert.equal(harness.telemetry.read(topicSignalPath(GOAL_TOPIC)).exists, false);
-    assert.deepEqual(harness.published, [{
-        topic: GOAL_TOPIC,
-        type: GOAL_MESSAGE_TYPE,
-        value: pose,
-    }]);
+    assert.deepEqual(harness.telemetry.read("oracle.topics.goal").value, { pose });
+    assert.equal(harness.telemetry.read("oracle.topics.goal").exists, true);
+    assert.equal(harness.published.length, 1);
+    assert.equal(harness.published[0].topicId, "goal");
+    assert.deepEqual(harness.published[0].valueContract, { id: "cev.goal", version: 1 });
+    assert.deepEqual(harness.published[0].value, { pose });
+    assert.equal(harness.published[0].metadata.frameId, "map");
 });
 
-test("goal publisher records topics./goal when /goal is not declared", () => {
+test("goal publisher publishes nothing when the goal topic is not declared", () => {
     const run = resolvedRun([route("ego", [waypoint(1, 0, 2)])]);
     const harness = publisherFor(run);
     const pose = harness.publisher.publish(0);
-    assert.deepEqual(harness.telemetry.read(topicSignalPath(GOAL_TOPIC)).value, pose);
+    assert.ok(pose);
     assert.equal(harness.telemetry.read("oracle.topics.goal").exists, false);
-    assert.equal(harness.published.length, 1);
+    assert.equal(harness.telemetry.read("oracle.topics.goal").exists, false);
+    assert.equal(harness.published.length, 0);
 });
 
 test("goal publisher leaves a differently typed /goal topic untouched", () => {
     const run = resolvedRun([route("ego", [waypoint(1, 0, 0)])]);
-    const harness = publisherFor(run, { topics: [poseTopic("geometry_msgs/Point")] });
+    const harness = publisherFor(run, { topics: [poseTopic({ id: "cev.vector3", version: 1 })] });
     assert.equal(harness.publisher.publish(0), null);
     assert.equal(harness.telemetry.read("oracle.topics.goal").exists, false);
-    assert.equal(harness.telemetry.read(topicSignalPath(GOAL_TOPIC)).exists, false);
+    assert.equal(harness.telemetry.read("oracle.topics.goal").exists, false);
     assert.deepEqual(harness.published, []);
 });
 
 test("kernel publishes /goal once at episode start and not on later steps or stop", async () => {
     const published = [];
-    const client = {
-        isOpen: () => true,
-        publish(topic, type, value) {
-            published.push({ topic, type, value });
-            return Promise.resolve();
-        },
-    };
     const telemetry = new SignalStore({}, { sourceId: "goal-kernel-test" });
     const vehicle = {
         telemetryId: "ego",
@@ -192,7 +168,7 @@ test("kernel publishes /goal once at episode start and not on later steps or sto
     };
     const context = createSimulationRuntimeContext({
         telemetry,
-        topicClient: () => client,
+        publicationPort(product) { published.push(product); return { ok: true }; },
         inputs: { update() {} },
         scripts: {
             signalStore: telemetry,
@@ -209,23 +185,23 @@ test("kernel publishes /goal once at episode start and not on later steps or sto
         scenarios: { configure() {}, reset() {}, setControlRuntime() {}, getSnapshot() { return null; } },
     });
     const kernel = new SimulationKernel(context);
-    const run = resolvedRun([route("ego", [waypoint(6, 1, -2)])]);
+    const run = resolvedRun([route("ego", [waypoint(6, 1, -2)])], { topics: [poseTopic()] });
     await kernel.configureRun(run);
 
     assert.equal(published.length, 1);
-    assert.equal(published[0].topic, GOAL_TOPIC);
-    assert.equal(published[0].type, GOAL_MESSAGE_TYPE);
-    assert.deepEqual(published[0].value.position, { x: 6, y: 2, z: 1 });
-    assert.deepEqual(telemetry.read(topicSignalPath(GOAL_TOPIC)).value, published[0].value);
+    assert.equal(published[0].topicId, "goal");
+    assert.deepEqual(published[0].valueContract, { id: "cev.goal", version: 1 });
+    assert.deepEqual(published[0].value.pose.position, { x: 6, y: 2, z: 1 });
+    assert.deepEqual(telemetry.read("oracle.topics.goal").value, published[0].value);
 
     kernel.step(1);
     assert.equal(published.length, 1);
 
     kernel.reset();
     assert.equal(published.length, 2);
-    assert.equal(telemetry.read(topicSignalPath(GOAL_TOPIC)).exists, true);
+    assert.equal(telemetry.read("oracle.topics.goal").exists, true);
 
     kernel.reset(null, { episodePhase: "stop" });
     assert.equal(published.length, 2);
-    assert.equal(telemetry.read(topicSignalPath(GOAL_TOPIC)).exists, false);
+    assert.equal(telemetry.read("oracle.topics.goal").exists, false);
 });

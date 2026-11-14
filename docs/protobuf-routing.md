@@ -1,10 +1,6 @@
-# Generic Protobuf publication
+# Zenoh / Protobuf integration
 
-The replacement is tracked in [the Zenoh/Protobuf roadmap](zenoh-protobuf-plan.md).
-ZPB-01 provides the immutable interface contract and local schema loader;
-ZPB-02 adds persistent imports and explicit pinned-source update previews.
-ZPB-03 adds manifest v12 pins, self-contained run snapshots, and route admission.
-The live transport described below remains the current path during migration.
+Production runs use run-manifest v13, interface@2, and native `cev.*` topic contracts. Browser and headless sessions publish binary Protobuf through Zenoh directly. No orchestrator or ROS schema registration is required. See [mapping](zenoh-protobuf-mapping.md) and [native transport](zenoh-native-transport.md).
 
 ## Persistent interface authoring
 
@@ -82,59 +78,42 @@ bytes rather than supplying server filesystem paths.
 ## Resolved interface selection
 
 Save `protobuf:{mode:"zenoh", interfaceHash:"<sha256>", externalController:false}`
-in a v12 run manifest after publishing/importing an interface. The hash selects
-immutable content, independently of mutable source records. Resolution embeds
-the complete document and descriptor bytes at `resolved.protobufInterface`;
-offline verification and package import need no source lookup.
+in a v13 run manifest after publishing an interface@2 resource. Resolution embeds
+the exact document and descriptor bytes at `resolved.protobufInterface` and binds
+`nativeTopicContracts`. Offline bundle inspection and import need no source lookup.
 
-Admission uses exact manifest topic IDs, direction, local field shapes, typed
-constants, and frozen run/metadata paths. No named runtime adapters are available
-in ZPB-03. Controls subscriptions require explicit external-controller selection
-and a single candidate authority. Key binding checks actual run ID collisions.
-Publish-only configuration changes full run identity; admitted subscription
-contracts also change simulation and episode identity. See
-[Run Manifests](run-manifests.md#pinned-protobuf-interfaces-zpb-03) for details.
+`planProtobufRouteAdmission()` validates topic IDs, native value contracts,
+direction, typed mappings, frozen values, and concrete key collisions. Controls
+subscriptions require explicit external-controller selection and candidate authority.
+Publish-only interfaces affect full resolved identity; subscribed contracts also
+bind simulation and episode identity. See [Run manifests](run-manifests.md).
 
-Zenoh mode can be inspected/exported/imported, but preparation fails with
-`UNSUPPORTED_CAPABILITY` until later transport packages are implemented. The
-default is explicit disabled mode. Interface@1, bundle@1, package@1, and the
-headless Protobuf protocol remain unchanged.
+## Runtime connections
 
-## Current browser transport
+The browser uses `ClientManager`, `ZenohBrowserTransport`, and
+`ProtobufRouteRuntime`. The server supplies an operator-owned
+`cev-sim.zenoh-browser-host-config@1` endpoint through the existing storage API.
+The official pinned `@eclipse-zenoh/zenoh-ts` SDK transports binary samples through
+the router remote API. Route declarations and bounded subscription queues belong
+to one run generation. Reset and reconnect close old declarations and clear queues.
+Required-route failure remains visible; acceptance does not acknowledge actuator
+application. Headless sessions use the native addon and explicit TCP host config.
 
-The existing browser Client now supports schema-bound publication/subscription:
+Values remain native until `ProtobufRouteRuntime` applies the admitted mapping and
+encodes wire bytes. Capture metadata supplies frame, integer simulation time, and
+sequence; values contain no ROS headers. Use decimal strings for exact uint64
+fields. Sensor delivery requires synchronous bounded transport acceptance.
 
-```js
-await client.bindProtobuf({ runId, fingerprint });
-await client.subscribeProtobuf('reply', (value) => console.log(value));
-await client.publishProtobuf('note', { title: 'hello', nonce: '18446744073709551615' });
-await client.unsubscribeProtobuf('reply');
-```
+`./install.sh --onboarding` installs the checksum-pinned Zenoh router and native
+transport prerequisites. Removed orchestrator flags are rejected. The independent
+SDK probe is `scripts/protobuf-probe.mjs`; the real browser gate is
+`npm run test:zenoh-browser`. Hardware release gates remain in
+[Headless release](headless-release.md).
 
-Register the descriptor set and explicit routes with orchestrator first. Values
-use standard ProtoJSON. The browser sends versioned text frames on its existing
-WebSocket; orchestrator validates them, encodes binary Protobuf, and publishes to
-the route's Zenoh key. Reverse subscriptions deliver ProtoJSON values. Existing
-binary `.msg` methods remain compatible. New text samples go only to subscribers.
-A routing acknowledgement confirms acceptance, not physical command application.
+## Historical artifacts
 
-Bindings require an exact descriptor fingerprint and run ID. Connection loss clears
-the binding and subscriptions. A fresh run requires a new bind; there is no automatic
-resume. Failed operations reject promises. Source timestamps/sequence identity belong
-to message contracts; a route does not infer frames, units, or actuator safety.
-
-Use decimal strings or BigInt for 64-bit integer fields. BigInt is converted to a
-decimal string before sending. Non-finite JavaScript numbers are rejected. The
-channel bounds outstanding requests and subscriptions; existing socket backpressure
-limits still apply.
-
-`--onboarding` on the combined installer includes orchestrator's Protobuf extra and
-the checksum-pinned Zenoh 1.10.2 router. `--orchestrator-ref` selects its exact Git
-revision. Modified existing orchestrator checkouts are preserved by refusing a
-revision switch. Native Windows setup remains documented rather than automated.
-
-For isolated services, set `NEXT_PUBLIC_ORCHESTRATOR_API` and
-`NEXT_PUBLIC_ORCHESTRATOR_WS` before starting/building the browser application.
-Defaults remain localhost ports 8090 and 8080. The generic client example is
-`scripts/protobuf-probe.mjs`; orchestrator's integration runner pairs it with the
-onboarding Rust probe through a real router. Visual field wiring is deferred.
+Older interface@1 and ROS-shaped bundles remain inspectable through
+`server/headless/RunBundleInspection.js`. Their frozen contracts live under
+`server/interfaces/historical/`. Explicit reviewed native adoption creates new
+native resources and preserves the originals. Production verification and browser
+preparation reject older execution formats. There is no runtime legacy mode.

@@ -10,7 +10,8 @@ import {
     getSensorType,
     normalizeRunSensor,
 } from "../app/3d/devices/SensorTypeRegistry.js";
-import { createDefaultRunManifest, computeResolvedRunHash, normalizeRunManifest, validateRunManifest } from "../app/simulation/RunManifest.js";
+import { computeResolvedRunHash } from "../app/simulation/RunManifest.js";
+import { createDefaultRunManifest, normalizeRunManifest, validateRunManifest } from "../server/interfaces/historical/RunContracts.js";
 import { HeadlessEpisode, normalizeEpisodeSpec } from "../app/simulation/headless/HeadlessEpisode.js";
 import {
     GPU_SENSOR_BACKEND_CONFIG_HASH,
@@ -39,12 +40,9 @@ import {
     defaultEpisodeIdentity,
 } from "../app/simulation/kernel/SimulationHashes.js";
 import { StorageService } from "../server/storage/StorageService.js";
-import {
-    canonicalRunBundleStringify,
-    verifyRunBundle,
-    verifyRunBundleBytes,
-    verifyRunBundleIntegrity,
-} from "../server/headless/RunBundle.js";
+import { canonicalRunBundleStringify, verifyRunBundle } from "../server/headless/RunBundle.js";
+import { verifyRunBundleBytes } from "../server/headless/RunBundleInspection.js";
+import { verifyRunBundleIntegrity } from "../server/headless/RunBundleInspection.js";
 import {
     createHeadlessImu,
     createPortableHeadlessBundle,

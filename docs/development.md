@@ -63,7 +63,7 @@ The `server/data/` directory is git-ignored; it is created on first write.
 - `app/3d/`: Three.js scene, vehicles, devices, city objects, overlays, and IGVC scenarios.
 - `app/3d/editor/`: environment editor state, tools, chunks, and document model.
 - `app/3d/earth/`: Earth Import (tiles, roads, geospatial transforms).
-- `app/client/`: orchestrator WebSocket and message encoding client.
+- `app/interfaces/`: native Protobuf mappings and browser Zenoh transport.
 - `app/physics/`: physics engine wrapper.
 - `app/scripting/`: visual node editor, block classes, runtime compiler, and runner.
 - `app/simulation/`: simulation loop.
@@ -89,7 +89,7 @@ For visual or simulation changes, also run `npm run dev` and manually verify:
 - The scripting canvas still loads.
 - The `Escape` menu switches between scripting, simulation, and the environment editor.
 - The 3D scene starts without console errors.
-- If orchestrator integration changed, the app behaves both with and without the orchestrator running.
+- If native transport changes, run the pinned real-router browser and headless checks.
 
 For environment editor or earth import changes, also verify:
 
@@ -102,7 +102,7 @@ For environment editor or earth import changes, also verify:
 
 - Keep visual scripting block UI and backend `UnitBlock` behavior in sync.
 - Declare compileable blocks once in `UnitCatalog.meta.js`, then attach their React component by stable type in `UnitCatalog.js`; registration is derived from the server-safe metadata.
-- Keep message definitions in `public/messages/` synchronized with the orchestrator repo when they are used as browser fallbacks - this will be edited soon to be synchronized.
+- Native topic shapes live in `NativeTopicContracts.js`; historical inspection contracts stay isolated under `server/interfaces/historical/`.
 - Do not commit downloaded CommonRoad scenario folders or other large generated assets.
 
 ## Environment Variables

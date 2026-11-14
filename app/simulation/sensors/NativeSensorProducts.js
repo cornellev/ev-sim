@@ -1,4 +1,3 @@
-import { forEachLidarHit } from "./SensorMessages.js";
 import { lidarShaderDirectionToRep103 } from "../../autonomy/CoordinateFrames.js";
 
 const vector = (value = {}) => ({ x: Number(value.x ?? 0), y: Number(value.y ?? 0), z: Number(value.z ?? 0) });
@@ -69,3 +68,48 @@ export function buildNativeDetections2D(options) { return buildNativeDetections(
 export function buildNativeLanes({ lanes = [] }) { return { lanes: lanes.map((lane, index) => ({ id: String(lane.id ?? index), points: (lane.points || lane.left || []).map(vector) })) }; }
 export function buildNativeTrafficControls({ controls = [] }) { return { controls: controls.map((item) => ({ id: String(item.instanceId || 0), classId: String(item.semanticClass || item.classId || "unknown"), kind: String(item.kind || "unknown"), state: String(item.state || "unknown"), position: vector(item.position), visibility: Number(item.visibility ?? 1), occlusion: Number(item.occlusion ?? 0) })) }; }
 export function buildNativeDiagnostics({ sensorId, metrics = {}, level = 0, message = "OK" }) { return { entries: [{ name: `sensor/${sensorId}`, level, message, values: Object.entries(metrics).filter(([, value]) => ["number", "string", "boolean"].includes(typeof value)).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => ({ key, value: String(value) })) }] }; }
+
+function lidarGridMeta(calibration) {
+    const layout = calibration.scanLayout;
+    if (layout) {
+        return {
+            rangeLimit: Number(layout.maxRangeM),
+            azimuthCount: layout.azimuthsDeg.length,
+            elevationCount: layout.channels.length,
+            layout,
+        };
+    }
+    const rangeLimit = Number(calibration.range || 20);
+    const azimuth = calibration.azimuth || { startDeg: -180, endDeg: 180, stepDeg: 2 };
+    const elevation = calibration.elevation || { startDeg: -20, endDeg: 20, stepDeg: 1 };
+    const azimuthCount = Math.ceil((azimuth.endDeg - azimuth.startDeg) / azimuth.stepDeg);
+    return { rangeLimit, azimuth, elevation, azimuthCount };
+}
+
+export function forEachLidarHit(buffer, calibration, bufferEncoding, onHit) {
+    const { rangeLimit, azimuth, elevation, azimuthCount, layout } = lidarGridMeta(calibration);
+    const legacy = bufferEncoding === "legacy-normalized";
+    for (let offset = 0; offset + 3 < buffer.length; offset += 4) {
+        const hit = legacy ? buffer[offset + 3] > 0.5 : layout
+            ? buffer[offset] > 0 && buffer[offset] <= rangeLimit
+            : buffer[offset + 3] > 0 && buffer[offset] > 0;
+        if (!hit) continue;
+        const index = offset / 4;
+        const azimuthIndex = index % azimuthCount;
+        const elevationIndex = Math.floor(index / azimuthCount);
+        const channel = layout?.channels[elevationIndex];
+        const thetaDeg = layout
+            ? layout.azimuthsDeg[azimuthIndex] + channel.azimuthOffsetDeg
+            : azimuth.startDeg + azimuthIndex * azimuth.stepDeg;
+        const phiDeg = layout ? channel.elevationDeg : elevation.startDeg + elevationIndex * elevation.stepDeg;
+        if (!layout && (thetaDeg > azimuth.endDeg || phiDeg > elevation.endDeg)) continue;
+        onHit({
+            offset,
+            index,
+            theta: thetaDeg * Math.PI / 180,
+            phi: phiDeg * Math.PI / 180,
+            rangeLimit,
+            legacy,
+        });
+    }
+}

@@ -33,6 +33,7 @@ export class PluginHost {
         blockRegistry = new BlockRegistry(),
         sensorRegistry = registerBuiltInSensorTypes(new SensorTypeRegistry({ allowPlugins: true })),
         createUnitAdapterClass = createPluginUnitAdapterClass,
+        createSensorTypeDefinition = createPluginSensorTypeDefinition,
         simulatorVersion = CEV_SIM_VERSION,
         availableCapabilities = [],
         logger = () => {},
@@ -42,6 +43,7 @@ export class PluginHost {
         this.blockRegistry = blockRegistry;
         this.sensorRegistry = sensorRegistry;
         this.createUnitAdapterClass = createUnitAdapterClass;
+        this.createSensorTypeDefinition = createSensorTypeDefinition;
         this.simulatorVersion = simulatorVersion;
         this.availableCapabilities = Object.freeze([...availableCapabilities].sort(comparePluginText));
         this.logger = logger;
@@ -313,7 +315,7 @@ export class PluginHost {
                 contributionId: contribution.type,
                 hook: "dispose",
             });
-            candidateSensors.register(createPluginSensorTypeDefinition(definition, ownership), ownership);
+            candidateSensors.register(this.createSensorTypeDefinition(definition, ownership), ownership);
             seenSensors.add(contribution.type);
             sensorFactories.push(Object.freeze({
                 type: contribution.type,

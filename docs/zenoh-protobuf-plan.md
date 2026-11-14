@@ -140,7 +140,7 @@ Accept unknown numeric proto3 enum values and ignore unknown wire fields.
 | ZPB-06 | 04 | Native Zenoh addon and shared memory | Implemented; Linux/Jetson acceptance pending |
 | ZPB-07 | 06 | Headless publication and realtime controller mode | Implemented; Linux installed CLI and hardware evidence pending |
 | ZPB-08 | 05, 07 | Onboarding and control ownership migration | Implemented; final acceptance evidence in zpb-08-work-packages.md |
-| ZPB-09 | 08 | Orchestrator deletion and release acceptance | Planned |
+| ZPB-09 | 08 | Orchestrator deletion and local acceptance | Complete |
 
 ### ZPB-01 — interface and loader
 
@@ -550,7 +550,7 @@ Gate: installer-to-driving browser and headless onboarding smoke tests,
 ownership conflicts and expiry, run-info/node-status lifetime, and independent
 consumers using the pinned schemas without a running orchestrator.
 
-### ZPB-09 — delete the old path and accept the release
+### ZPB-09 — delete the old path and accept local execution
 
 Remove `server/ensureOrchestrator.js` and its startup/shutdown calls in
 `server/App.js`. Delete orchestrator-specific client/channel/codec code in
@@ -565,11 +565,12 @@ variables, tests for the deleted protocol, and stale documentation references.
 Search all callers before deleting. Update `docs/protobuf-routing.md`,
 `docs/architecture.md`, and the release/artifact workflow documentation.
 
-Gate: clean install with no orchestrator, no live code references to its HTTP/WS
-APIs, actual browser/headless/Jetson round trips, SHM soak/cleanup, onboarding,
-and required lint/full/headless/parity/CLI/Python suites. Record hardware and
-hosted evidence separately from unit results. Do not mark missing hardware
-evidence as passed.
+Gate (user-approved 2026-11-14): clean installer checks with no orchestrator,
+no execution imports or requests to retired HTTP/WS APIs, actual local browser
+and headless native round trips, queue/reset cleanup, onboarding, and required
+lint/full/headless/parity/CLI/Python suites. Local quick soak is maintenance
+evidence only. Formal release, hosted, Jetson, and Linux SHM soak/cleanup are
+deferred; existing release artifact and hardware gates remain unchanged.
 Fresh native browser/headless execution must initialize no ROS schema/codec
 and construct no ROS message wrapper. Missing configured products fail
 admission visibly. There is no final optional legacy mode.
@@ -779,3 +780,23 @@ remain ZPB-08; orchestrator deletion remains ZPB-09.
   [zpb-08-work-packages.md](zpb-08-work-packages.md). Automatic orchestrator
   startup is disabled; deletion and paired platform release acceptance stay
   ZPB-09. No release hardware/hosted gate is inferred from these local checks.
+
+- 2026-11-14: ZPB-09 implementation started at `2ed3c93`; work is tracked in [zpb-09-work-packages.md](zpb-09-work-packages.md). User acceptance is local validation, with no formal release, hosted, Jetson, or Linux SHM claim. Historical SFLogs retain metadata and scalar inspection only. Existing release artifact checks stay intact. Package 09.1 isolated historical inspection and reviewed adoption; focused, lint, and full JavaScript checks passed.
+
+- **2026-11-14 — ZPB-09 local acceptance complete.** All eight packages are
+  implemented. Native authoring, controls, sensors, recording, preview, and
+  transport no longer import the retired ROS/orchestrator runtime. Frozen
+  server inspection preserves historical identities and explicit reviewed
+  adoption; historical ROS logs retain metadata/scalar inspection without
+  sensor payload preview/export. Full JavaScript: 2,817 passed, 16 skipped;
+  Python: 155 passed; lint: zero errors, three existing warnings. Pinned
+  characterization, all-language parity, quick soak, generated Protobuf drift,
+  native Rust, and the independent real headless controller gates pass. Three
+  real browser checks pass, including schema imports, native control and wheel
+  data, binary isolation, router recovery, run identity, worker teardown, zero
+  outbound queues, and no retired HTTP/WS requests. The production webpack
+  build passes; local Turbopack worker-port binding is denied by the environment.
+  No identity fixtures or dependency locks changed. Formal release, hosted,
+  Jetson, Linux-only CLI/SHM, and full soak remain deferred; existing release
+  gates are unchanged. Detailed evidence is in
+  [zpb-09-work-packages.md](zpb-09-work-packages.md).

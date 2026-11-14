@@ -4,6 +4,7 @@ import { register } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { verifyRunBundleIntegrity } from "../server/headless/RunBundleInspection.js";
 import { Euler, Vector3 } from "three";
 
 import { createPluginPackage, verifyPluginPackage } from "../app/plugin/PluginPackage.js";
@@ -56,8 +57,11 @@ async function fixtureResource({ mutateDocument = null, mutateRuntime = null, ex
         fs.readFile(new URL("ui/index.js", fixtureRoot), "utf8"),
     ]);
     const parsed = JSON.parse(document);
+    parsed.sensorTypes[0].sensorAbi = 2;
+    for (const product of parsed.sensorTypes[0].products) if (product.kind === "pointCloud") { delete product.rosType; product.valueContract = { id: "cev.points", version: 1 }; }
     mutateDocument?.(parsed);
-    const runtimeSource = mutateRuntime ? mutateRuntime(runtime) : runtime;
+    const nativeRuntime = runtime.replaceAll("buildPointCloud2", "buildNativePoints");
+    const runtimeSource = mutateRuntime ? mutateRuntime(nativeRuntime) : nativeRuntime;
     const files = {
         "plugin.json": JSON.stringify(parsed),
         "runtime/index.js": runtimeSource,
@@ -241,9 +245,9 @@ test("PLG-05 rejects invalid grants and explicit layouts while preserving legacy
     );
     await assert.rejects(
         () => fixtureResource({ mutateDocument(document) {
-            document.sensorTypes[0].products[0].rosType = "custom/PointCloud";
+            document.sensorTypes[0].products[0].valueContract = { id: "custom.points", version: 1 };
         } }),
-        /sensor_msgs\/PointCloud2/,
+        /cev.points@1/,
     );
 });
 
@@ -285,13 +289,13 @@ test("PLG-05 rejects invalid factories, capture shapes, backends, and package cl
     wrongBackend.resolved.backendSelections = wrongBackend.resolved.backendSelections.map((entry) => (
         Number(entry.kind) === 3 ? createCpuLidarBackendSelection() : entry
     ));
-    assert.throws(() => verifyRunBundle(rehashRunBundle(wrongBackend)), /require.*version 2/i);
+    assert.throws(() => verifyRunBundleIntegrity(rehashRunBundle(wrongBackend)), /require.*version 2/i);
 
     const corruptClosure = structuredClone(bundle);
     const runtimeFile = corruptClosure.resolved.pluginPackages[0].files
         .find((entry) => entry.path === "runtime/index.js");
     runtimeFile.sha256 = "0".repeat(64);
-    assert.throws(() => verifyRunBundle(rehashRunBundle(corruptClosure)), /byte verification/i);
+    assert.throws(() => verifyRunBundleIntegrity(rehashRunBundle(corruptClosure)), /byte verification/i);
 });
 
 test("PLG-06a verifies packet transports structurally and admits them only on a capable host", async () => {
@@ -699,6 +703,7 @@ test("plugin range-image devices tolerate vehicle parent updates", async () => {
     const { Vehicle } = await import("../app/3d/vehicles/Vehicle.js");
     const instance = Object.fromEntries(PLUGIN_SENSOR_LIFECYCLE_METHODS.map((method) => [method, () => {}]));
     const device = new PluginSensorDevice({
+        plugin: { descriptor: { sensorAbi: 2 } },
         sensor: {
             id: "helios",
             type: FIXTURE_TYPE,

@@ -58,7 +58,7 @@ const JAVASCRIPT_ROOTS = Object.freeze([
     "server/sensor-transports",
     "server/storage",
 ]);
-const JAVASCRIPT_ENTRY_FILES = Object.freeze(["app/3d/devices/sensorEncode.worker.js"]);
+const JAVASCRIPT_ENTRY_FILES = Object.freeze([]);
 
 async function readJson(file) {
     return JSON.parse(await fs.readFile(path.join(REPOSITORY_ROOT, file), "utf8"));

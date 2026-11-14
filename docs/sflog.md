@@ -109,7 +109,7 @@ Header metadata written at session create includes:
 | `appVersion`, `gitHash` | Build identity |
 | `runId`, `manifestId`, `manifestRevision` | Run-manifest session, when present |
 | `definitionHash`, `resolvedHash` | Frozen run hashes |
-| `provenance` | Optional browser/WebGL/orchestrator identity |
+| `provenance` | Optional browser/WebGL/native transport identity |
 | `tags`, `incomplete` | Catalog defaults |
 
 ### Chunks
@@ -432,7 +432,7 @@ A prepared run calls `_ensureRecording` before the first step. Manifest `logging
 | `optional` | Logging starts automatically; storage or finalize failure degrades the run and emits `optional-recording-unavailable` / `optional-recording-finalization-failed` |
 | `disabled` | No SFLog session |
 
-The default profile id is `simulation-run-full-sensors`. Run sessions use `timeBase: "simulation"` and stamp metadata with run id, manifest identity, definition/resolved hashes, and browser/WebGL provenance. Headless LiDAR provenance includes the locked CPU/BVH backend selection. GPU runs additionally retain the pooled-renderer diagnostic snapshot, Chromium and sidecar versions, launch arguments and sandbox state, ANGLE/WebGL renderer, GPU/driver identity, required format support, and fixed context count. Final result diagnostics retain the same determinism-scope evidence. Measured and semantic PointCloud2 records use their capture simulation timestamps. Encoded ROS sensor bytes are the same bytes published on the wire; replay reads those samples instead of recapturing on the replay GPU.
+The default profile id is `simulation-run-full-sensors`. Run sessions use `timeBase: "simulation"` and stamp metadata with run id, manifest identity, definition/resolved hashes, and browser/WebGL provenance. Headless LiDAR provenance includes the locked CPU/BVH backend selection. GPU runs additionally retain the pooled-renderer diagnostic snapshot, Chromium and sidecar versions, launch arguments and sandbox state, ANGLE/WebGL renderer, GPU/driver identity, required format support, and fixed context count. Final result diagnostics retain the same determinism-scope evidence. Native measured and semantic point records retain capture simulation timestamps. Native products use JSON records with `{__sflogNativeProduct:1,value,metadata}`; typed arrays use `{__sflogTypedArray:"Uint8Array",base64:"..."}` (or the corresponding packed numeric array type). The decoder restores exact array bytes and each update’s capture metadata. This additive JSON convention retains SFLog version 1 and leaves older records unchanged. Replay reads retained products without recapturing. Historical ROS logs expose metadata and scalar records; sensor payload previews and ROS camera export decoding are unavailable.
 
 Reset finalizes the active result and SFLog, then prepares a replacement run paused at step zero.
 

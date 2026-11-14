@@ -6,7 +6,6 @@ import { getDeviceTelemetrySignals } from "./DeviceTelemetrySignals.js";
 import { PluginSensorDevice } from "../../simulation/sensors/PluginSensorAdapter.js";
 import { BrowserCpuLidarRuntime } from "../devices/BrowserCpuLidarRuntime.js";
 import { SensorPublisher as BrowserSensorPublisher } from "../devices/SensorPublisher.js";
-import { encodeTopicValue, registerMsgDefinition } from "../../client/TopicCodec.js";
 import { browserSimulationPerformance } from "../../simulation/performance/BrowserSimulationPerformance.js";
 import { setRigidBodyLidarPoses } from "../editor/projection/rigidBodyLidarSolids.js";
 
@@ -24,12 +23,16 @@ function summarizeMeasurementState(state) {
         }
         if (value && typeof value === "object" && ArrayBuffer.isView(value.data)) {
             out[key] = {
-                encoding: value.encoding ?? null,
+                pixelFormat: value.pixelFormat ?? null,
                 width: value.width ?? null,
                 height: value.height ?? null,
-                point_step: value.point_step ?? null,
+                strideBytes: value.strideBytes ?? null,
                 byteLength: value.data.byteLength,
             };
+            continue;
+        }
+        if (value && ArrayBuffer.isView(value.positions)) {
+            out[key] = { count: value.count, byteLength: Object.values(value).reduce((total, field) => total + (ArrayBuffer.isView(field) ? field.byteLength : 0), 0) };
             continue;
         }
         out[key] = value && typeof value === "object" ? structuredClone(value) : value;
@@ -182,7 +185,6 @@ export class DeviceDatabase extends Database {
             this.pluginSensorScene = runtime;
             return runtime.prepare(options.resolvedRun ?? { lidarGeometry: options.lidarGeometry },
                 [...pluginRecords.values()].map((entry) => entry.sensor)).then(() => {
-                for (const [type, definition] of Object.entries(options.schemas ?? {})) registerMsgDefinition(type, definition);
                 return this._createManifestDevices(sensorRig, options, pluginRecords, byId);
             });
         }
@@ -212,12 +214,12 @@ export class DeviceDatabase extends Database {
                     Publisher: BrowserSensorPublisher,
                     transformRuntime: options.transformRuntime,
                     publisherOptions: {
+                        runId: options.runId,
                         seed: options.seed,
                         topics: options.topics,
                         topicRouter: options.topicRouter,
                         calibrationHash: options.calibrationHash,
                         stepNs: options.stepNs,
-                        encodeTopicValue,
                         nativePacketSink: options.nativePacketSink,
                     },
                 })

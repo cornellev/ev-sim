@@ -7,6 +7,7 @@ export default defineConfig({
     retries: process.env.CI ? 2 : 0,
     reporter: process.env.CI ? "github" : "list",
     use: {
+        launchOptions: { args: process.platform === "darwin" ? ["--use-angle=metal"] : [] },
         baseURL: "http://127.0.0.1:3100",
         colorScheme: "dark",
         screenshot: "only-on-failure",

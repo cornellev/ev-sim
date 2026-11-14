@@ -41,8 +41,8 @@ test("catalog metadata is explicit, unique, JSON-safe, and registry-authoritativ
         assert.equal(getRegisteredBlockType(entry.type), entry.blockClass, entry.type);
         assert.equal(entry.blockClass.blockType, entry.type, entry.type);
     });
-    assert.ok(getRegisteredBlockType("ROSInputBlock"));
-    assert.ok(getRegisteredBlockType("ROSOutputBlock"));
+    assert.equal(getRegisteredBlockType("ROSInputBlock"), null);
+    assert.equal(getRegisteredBlockType("ROSOutputBlock"), null);
 });
 
 test("legacy composites remain registered but are not placeable", () => {

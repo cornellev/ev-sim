@@ -592,7 +592,6 @@ export function applyPluginSensorAuthoringPatch(sensor, definition, { path, valu
     const normalized = {
         ...candidate,
         calibration: specific.calibration,
-        schema: specific.schema,
         health: specific.health || candidate.health,
         determinism: specific.determinism || candidate.determinism,
     };

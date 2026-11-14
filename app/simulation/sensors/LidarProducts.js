@@ -1,5 +1,5 @@
 import { gaussianSample } from "../../autonomy/LocalizationMeasurements.js";
-import { buildPointCloud2, buildSemanticPointCloud2 } from "./SensorMessages.js";
+
 import { buildNativePoints } from "./NativeSensorProducts.js";
 
 function gaussian(rng) {
@@ -62,7 +62,7 @@ export function buildLidarCapture({
         const hasRangeNoise = Number(noise.bias) !== 0
             || (noise.model === "gaussian" && Number(noise.standardDeviation) > 0);
         const hasPointDropout = Number(noise.pointDropoutProbability) > 0;
-        const value = (publisher?.nativeTopics ? buildNativePoints : buildPointCloud2)({
+        const value = (buildNativePoints)({
             buffer,
             bufferEncoding: "metric-v2",
             calibration: config.calibration,
@@ -97,7 +97,7 @@ export function buildLidarCapture({
             topicId: config.outputs.semanticPointCloudTopicId,
             signal: "semanticPointCloud",
             frameId,
-            value: (publisher?.nativeTopics ? buildNativePoints : buildSemanticPointCloud2)({
+            value: (buildNativePoints)({
                 semantic: true,
                 buffer,
                 bufferEncoding: "metric-v2",

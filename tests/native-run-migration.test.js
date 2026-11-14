@@ -1,12 +1,15 @@
+import { createDefaultRunManifest } from "../server/interfaces/historical/RunContracts.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdtemp, rm, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { createDefaultRunManifest, normalizeRunManifest, computeResolvedRunHash } from "../app/simulation/RunManifest.js";
-import { planNativeRunMigration, validateNativeRunMigration, applyNativeRunMigration } from "../app/interfaces/NativeRunMigration.js";
+import {  normalizeRunManifest, computeResolvedRunHash } from "../app/simulation/RunManifest.js";
+import { planNativeRunMigration, validateNativeRunMigration, applyNativeRunMigration } from "../server/interfaces/NativeRunMigration.js";
 import { StorageService } from "../server/storage/StorageService.js";
-import { verifyRunBundleIntegrity, verifyRunBundle, canonicalRunBundleStringify, verifyRunBundleBytes } from "../server/headless/RunBundle.js";
+import { verifyRunBundle, canonicalRunBundleStringify } from "../server/headless/RunBundle.js";
+import { verifyRunBundleBytes } from "../server/headless/RunBundleInspection.js";
+import { verifyRunBundleIntegrity } from "../server/headless/RunBundleInspection.js";
 import { SimulationKernel } from "../app/simulation/kernel/SimulationKernel.js";
 import { createHeadlessRuntimeContext } from "../app/simulation/headless/HeadlessRuntimeContext.js";
 import { computeEpisodeHash, defaultEpisodeIdentity } from "../app/simulation/kernel/SimulationHashes.js";
@@ -60,7 +63,7 @@ test("reviewed native migration preserves originals and blocks unknown graphs an
     assert.equal(plan.ok, true, JSON.stringify(plan.blocked));
     assert.deepEqual(manifest, original); assert.deepEqual(plan.original.manifest, original);
     assert.equal(applyNativeRunMigration(plan, { expectedRevision: 0 }).manifest.version, 13);
-    assert.equal(normalizeRunManifest({ version: 12 }).version, 12);
+    assert.throws(() => normalizeRunManifest({ version: 12 }), /reviewed native adoption/);
     assert.throws(() => applyNativeRunMigration(plan, { expectedRevision: 1 }), /revision/);
     const tampered = structuredClone(plan); tampered.candidate.clock.stepNs++;
     assert.equal(validateNativeRunMigration(tampered).ok, false);

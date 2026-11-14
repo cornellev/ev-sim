@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { register } from "node:module";
 import test from "node:test";
-import { topicFromContract } from "../app/autonomy/AutonomyContractCatalog.js";
+import { topicFromNativeContract as topicFromContract } from "../app/simulation/NativeTopicCatalog.js";
 import { CandidateOutputRuntime } from "../app/autonomy/CandidateOutputRuntime.js";
 import { ControlRuntime } from "../app/autonomy/ControlRuntime.js";
 import { newContactRunDefaults } from "../app/config/simpleRunModel.js";
@@ -27,7 +27,7 @@ const { ManifestWheelOdometry } = await import("../app/3d/devices/ManifestWheelO
 const { ManifestLidar3d } = await import("../app/3d/devices/ManifestLidar3d.js");
 
 test("sensor wiring is reviewed, typed, deterministic, and preserves existing mappings", () => {
-    const manifest = createDefaultRunManifest({ version: 12 });
+    const manifest = createDefaultRunManifest();
     manifest.sensorRig.sensors = manifest.sensorRig.sensors.filter((sensor) => ["imu", "wheel-odometry", "lidar3d"].includes(sensor.type));
     for (const sensor of manifest.sensorRig.sensors) sensor.outputs = {};
     const before = JSON.stringify(manifest);
@@ -43,7 +43,7 @@ test("sensor wiring is reviewed, typed, deterministic, and preserves existing ma
 });
 
 test("ambiguous topic repair requires an explicit choice and never overwrites a mapping", () => {
-    const manifest = createDefaultRunManifest({ version: 12 });
+    const manifest = createDefaultRunManifest();
     manifest.sensorRig.sensors = manifest.sensorRig.sensors.filter((sensor) => sensor.type === "imu");
     manifest.sensorRig.sensors[0].outputs = {};
     manifest.topics = [topicFromContract("imu", { id: "one", name: "/one" }), topicFromContract("imu", { id: "two", name: "/two" })];
@@ -56,7 +56,7 @@ test("ambiguous topic repair requires an explicit choice and never overwrites a 
 });
 
 test("review guards reject stale drafts, vehicles, and catalog changes without applying anything", () => {
-    const manifest = createDefaultRunManifest({ version: 12 });
+    const manifest = createDefaultRunManifest();
     const vehicle = rcVehicleManifest();
     const review = { source: JSON.stringify(manifest), vehicle, catalogRevision: 1 };
     assert.doesNotThrow(() => assertSensorWiringReviewCurrent(review, manifest, { vehicle, catalogRevision: 1 }));
@@ -146,7 +146,7 @@ test("contact diagnostics distinguish obstacles and other vehicles from floor su
 });
 
 test("candidate status starts waiting or inactive and reset never reports missing localization as ok", () => {
-    const waiting = new CandidateOutputRuntime({ manifest: createDefaultRunManifest({ version: 12 }) });
+    const waiting = new CandidateOutputRuntime({ manifest: createDefaultRunManifest() });
     assert.equal(waiting.lastLocalization.status, "waiting");
     waiting.reset();
     assert.equal(waiting.lastLocalization.status, "waiting");
@@ -157,7 +157,7 @@ test("candidate status starts waiting or inactive and reset never reports missin
 });
 
 test("brake profile is explicit, semantic, and rejects unsupported or unusable targets", () => {
-    const legacy = createDefaultRunManifest({ version: 12 });
+    const legacy = createDefaultRunManifest();
     assert.equal(normalizeRunManifest(legacy).controls.zeroSpeedResponse, undefined);
     const enabled = createDefaultRunManifest({ controls: { zeroSpeedResponse: "brake-v1" } });
     assert.notEqual(computeSimulationSemanticHash({ manifest: legacy }), computeSimulationSemanticHash({ manifest: enabled }));

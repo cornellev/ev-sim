@@ -1,3 +1,4 @@
+import { validateRunManifest as validateHistoricalRunManifest, normalizeRunManifest as normalizeHistoricalRunManifest } from "../server/interfaces/historical/RunContracts.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { promises as fs } from "node:fs";
@@ -59,7 +60,7 @@ test("run manifest bindingSource freezes empty and nonempty embedded binding set
 });
 
 test("run manifest v4 migrates v1-v3 and rejects future versions and duplicate stable ids", () => {
-    const migrated = normalizeRunManifest({
+    const migrated = normalizeHistoricalRunManifest({
         ...createDefaultRunManifest(),
         version: 1,
         protobuf: undefined,
@@ -70,7 +71,7 @@ test("run manifest v4 migrates v1-v3 and rejects future versions and duplicate s
     assert.ok(migrated.controls);
     assert.equal(migrated.controls.stalePolicy, "stop");
     assert.deepEqual(migrated.provenance.candidateModels, []);
-    assert.throws(() => normalizeRunManifest({ kind: "cev-sim.run-manifest", version: 14 }), /version 14/);
+    assert.throws(() => normalizeHistoricalRunManifest({ kind: "cev-sim.run-manifest", version: 14 }), /version 14/);
     const manifest = createDefaultRunManifest();
     manifest.topics.push({ ...manifest.topics[0] });
     const validation = validateRunManifest(manifest);
@@ -79,7 +80,7 @@ test("run manifest v4 migrates v1-v3 and rejects future versions and duplicate s
 });
 
 test("run manifest migrates /ackdrive to /controls/command and validates controls block", () => {
-    const migrated = normalizeRunManifest({
+    const migrated = normalizeHistoricalRunManifest({
         kind: "cev-sim.run-manifest",
         version: 8,
         id: "legacy-ack",
@@ -97,7 +98,7 @@ test("run manifest migrates /ackdrive to /controls/command and validates control
     assert.equal(migrated.topics[0].name, "/controls/command");
     assert.equal(migrated.topics[0].contractId, "controls-command");
     assert.equal(migrated.controls.targetVehicleId, "ego");
-    assert.equal(validateRunManifest(migrated).ok, true);
+    assert.equal(validateHistoricalRunManifest(migrated).ok, true);
 
     const bad = createDefaultRunManifest();
     bad.controls.stalePolicy = "fallback";
@@ -107,7 +108,7 @@ test("run manifest migrates /ackdrive to /controls/command and validates control
 
 test("run manifest v9 migrates to v12 with provenance and candidate models change full hashes only", async () => {
     const digest = "a".repeat(64);
-    const migrated = normalizeRunManifest({
+    const migrated = normalizeHistoricalRunManifest({
         ...createDefaultRunManifest(),
         version: 9,
         protobuf: undefined,

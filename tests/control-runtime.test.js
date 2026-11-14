@@ -1,15 +1,14 @@
+import { normalizeControlCommand } from "../app/autonomy/ControlCommand.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-    normalizeStampedAckermannCommand,
     rep103SteeringToThree,
     threeSteeringToRep103,
-    validateStampedAckermannCommand,
 } from "../app/autonomy/ControlCommandAdapter.js";
 import { ControlRuntime } from "../app/autonomy/ControlRuntime.js";
 
-function stamped({
+function command({
     sequence = 1,
     mode = "velocity",
     speed = 2,
@@ -20,28 +19,23 @@ function stamped({
     nanosec = 0,
 } = {}) {
     return {
-        header: { stamp: { sec, nanosec }, frame_id: "base_link" },
-        sequence,
-        mode,
-        deadline_ns: deadlineNs ?? 0,
-        steering_angle: steering,
-        steering_angle_velocity: 0,
-        speed,
-        acceleration,
-        jerk: 0,
+        runId: "control-test", frameId: "base_link", captureTimeNs: sec * 1e9 + nanosec,
+        sequence: String(sequence), mode, deadlineNs: deadlineNs ?? 0,
+        speedMps: speed, accelerationMps2: acceleration, jerkMps3: 0,
+        steeringRad: steering, steeringRateRadps: 0,
     };
 }
 
-test("stamped command validation rejects bad mode, sequence, and non-finite fields", () => {
-    assert.equal(validateStampedAckermannCommand(null).ok, false);
-    assert.equal(validateStampedAckermannCommand({ header: { stamp: { sec: 0, nanosec: 0 } }, mode: "warp", sequence: 1 }).ok, false);
-    assert.equal(validateStampedAckermannCommand(stamped({ sequence: -1 })).ok, false);
-    assert.equal(validateStampedAckermannCommand(stamped({ speed: Number.NaN })).ok, false);
-    assert.equal(validateStampedAckermannCommand(stamped()).ok, true);
+test("native command validation rejects bad mode, sequence, and non-finite fields", () => {
+    assert.equal(normalizeControlCommand(null).ok, false);
+    assert.equal(normalizeControlCommand({ header: { stamp: { sec: 0, nanosec: 0 } }, mode: "warp", sequence: 1 }).ok, false);
+    assert.equal(normalizeControlCommand(command({ sequence: -1 })).ok, false);
+    assert.equal(normalizeControlCommand(command({ speed: Number.NaN })).ok, false);
+    assert.equal(normalizeControlCommand(command()).ok, true);
 });
 
 test("normalization converts REP-103 steering once at the actuator boundary", () => {
-    const result = normalizeStampedAckermannCommand(stamped({ steering: 0.25, speed: 3 }));
+    const result = normalizeControlCommand(command({ steering: 0.25, speed: 3 }));
     assert.equal(result.ok, true);
     assert.equal(result.command.steeringRadRep103, 0.25);
     assert.equal(result.command.steeringRadThree, rep103SteeringToThree(0.25));
@@ -50,7 +44,7 @@ test("normalization converts REP-103 steering once at the actuator boundary", ()
 
 test("steering normalization preserves positive-left, negative-right, and zero signs", () => {
     for (const angle of [0.25, -0.25, 0]) {
-        const result = normalizeStampedAckermannCommand(stamped({ steering: angle }));
+        const result = normalizeControlCommand(command({ steering: angle }));
         assert.equal(result.ok, true);
         assert.equal(result.command.steeringRadRep103, angle);
         assert.equal(result.command.steeringRadThree, angle);
@@ -73,9 +67,9 @@ test("control runtime applies velocity commands with saturation and keeps reques
         controls: runtime.controls,
         vehicleLimits: { ego: { maxSpeed: 5, maxSteeringAngle: 0.6, maxAcceleration: 100, maxDeceleration: 100, maxSteeringRate: 100 } },
     });
-    runtime.ingestStampedCommand({
+    runtime.ingestCommand({
         name: "/controls/command",
-        value: stamped({ speed: 20, steering: 0.05, sequence: 1, nanosec: 1 }),
+        value: command({ speed: 20, steering: 0.05, sequence: 1, nanosec: 1 }),
     }, { applyTimeNs: 1 });
     const applied = runtime.step({ step: 1, timeNs: 1, dt: 0.05 });
     const setpoint = applied.get("ego");
@@ -97,9 +91,9 @@ test("watchdog safe-stop fires when heartbeat expires", () => {
         },
     });
     runtime.configure({ controls: runtime.controls, vehicleLimits: { ego: {} } });
-    runtime.ingestStampedCommand({
+    runtime.ingestCommand({
         name: "/controls/command",
-        value: stamped({ speed: 4, sequence: 1, nanosec: 1 }),
+        value: command({ speed: 4, sequence: 1, nanosec: 1 }),
     }, { applyTimeNs: 1 });
     runtime.step({ step: 1, timeNs: 1, dt: 0.05 });
     // No new command; advance past watchdog.
@@ -119,7 +113,7 @@ test("hold and fallback stale policies preserve or substitute commands", () => {
         },
     });
     hold.configure({ controls: hold.controls, vehicleLimits: { ego: {} } });
-    hold.ingestStampedCommand({ name: "/controls/command", value: stamped({ speed: 3, sequence: 1, nanosec: 1 }) }, { applyTimeNs: 1 });
+    hold.ingestCommand({ name: "/controls/command", value: command({ speed: 3, sequence: 1, nanosec: 1 }) }, { applyTimeNs: 1 });
     hold.step({ step: 1, timeNs: 1, dt: 0.05 });
     const held = hold.step({ step: 2, timeNs: 100, dt: 0.05 }).get("ego");
     assert.ok(Math.abs(held.speedMps - 3) < 1e-6);
@@ -130,12 +124,12 @@ test("hold and fallback stale policies preserve or substitute commands", () => {
             authority: "candidate",
             watchdogNs: 10,
             stalePolicy: "fallback",
-            fallbackCommand: { mode: "velocity", speed: 1, steering_angle: 0 },
+            fallbackCommand: { mode: "velocity", speedMps: 1, steeringRad: 0 },
             actuatorOverrides: { maxAcceleration: 100, maxDeceleration: 100, maxSteeringRate: 100 },
         },
     });
     fallback.configure({ controls: fallback.controls, vehicleLimits: { ego: {} } });
-    fallback.ingestStampedCommand({ name: "/controls/command", value: stamped({ speed: 3, sequence: 1, nanosec: 1 }) }, { applyTimeNs: 1 });
+    fallback.ingestCommand({ name: "/controls/command", value: command({ speed: 3, sequence: 1, nanosec: 1 }) }, { applyTimeNs: 1 });
     fallback.step({ step: 1, timeNs: 1, dt: 0.05 });
     const fb = fallback.step({ step: 2, timeNs: 100, dt: 0.05 }).get("ego");
     assert.ok(Math.abs(fb.speedMps - 1) < 1e-6);
@@ -158,10 +152,10 @@ test("response delay holds previous applied until ready time", () => {
         },
     });
     runtime.configure({ controls: runtime.controls, vehicleLimits: { ego: { responseDelayNs: 50_000_000 } } });
-    runtime.ingestStampedCommand({ name: "/controls/command", value: stamped({ speed: 2, sequence: 1, nanosec: 0 }) }, { applyTimeNs: 0 });
+    runtime.ingestCommand({ name: "/controls/command", value: command({ speed: 2, sequence: 1, nanosec: 0 }) }, { applyTimeNs: 0 });
     const first = runtime.step({ step: 1, timeNs: 0, dt: 0.05 }).get("ego");
     assert.equal(first.speedMps, 0);
-    runtime.ingestStampedCommand({ name: "/controls/command", value: stamped({ speed: 2, sequence: 2, nanosec: 50_000_000 }) }, { applyTimeNs: 50_000_000 });
+    runtime.ingestCommand({ name: "/controls/command", value: command({ speed: 2, sequence: 2, nanosec: 50_000_000 }) }, { applyTimeNs: 50_000_000 });
     // At ready time the delayed command from t=0 is released.
     const second = runtime.step({ step: 2, timeNs: 50_000_000, dt: 0.05 }).get("ego");
     assert.ok(Math.abs(second.speedMps - 2) < 1e-6);
@@ -179,13 +173,13 @@ test("sequence regression is rejected and authority selection is deterministic",
         },
     });
     runtime.configure({ controls: runtime.controls, vehicleLimits: { ego: {} } });
-    assert.equal(runtime.ingestStampedCommand({
+    assert.equal(runtime.ingestCommand({
         name: "/controls/command",
-        value: stamped({ speed: 2, sequence: 5, nanosec: 1 }),
+        value: command({ speed: 2, sequence: 5, nanosec: 1 }),
     }, { applyTimeNs: 1 }).ok, true);
-    assert.equal(runtime.ingestStampedCommand({
+    assert.equal(runtime.ingestCommand({
         name: "/controls/command",
-        value: stamped({ speed: 9, sequence: 4, nanosec: 2 }),
+        value: command({ speed: 9, sequence: 4, nanosec: 2 }),
     }, { applyTimeNs: 2 }).ok, false);
 
     runtime.submitSiSpeedSteer("ego", { speedMps: 1, steeringRadRep103: 0.2, producer: "reference", captureTimeNs: 1 });
@@ -205,9 +199,9 @@ test("achieved sampling stays distinct from applied under limits", () => {
         },
     });
     runtime.configure({ controls: runtime.controls, vehicleLimits: { ego: { maxSpeed: 2 } } });
-    runtime.ingestStampedCommand({
+    runtime.ingestCommand({
         name: "/controls/command",
-        value: stamped({ speed: 2, sequence: 1, nanosec: 1 }),
+        value: command({ speed: 2, sequence: 1, nanosec: 1 }),
     }, { applyTimeNs: 1 });
     runtime.step({ step: 1, timeNs: 1, dt: 0.05 });
     runtime.sampleAchieved("ego", { speedMps: 1.5, steeringRadThree: 0, accelerationMps2: 0 });

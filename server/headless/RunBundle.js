@@ -52,7 +52,7 @@ function invalid(code, message, details = null) {
 }
 
 /** Verify received immutable content before any authoring migration or execution. */
-export function verifyRunBundleIntegrity(bundle) {
+export function verifyRunBundleIntegrityUsing(bundle, routeAdmission, sensorRegistryFactory = createSensorDefinitionRegistry, sensorAdmissionPlanner = planSensorAdmission) {
     if (!bundle || typeof bundle !== "object" || Array.isArray(bundle)) {
         invalid("BUNDLE_INVALID", "A portable cev-sim.run-bundle document is required.");
     }
@@ -78,7 +78,7 @@ export function verifyRunBundleIntegrity(bundle) {
     if (!bundle.manifest || stringify(bundle.manifest) !== stringify(resolved.manifest)) {
         invalid("BUNDLE_INVALID", "The bundle manifest does not match the resolved manifest.");
     }
-    if ([12, 13].includes(resolved.version)) verifyProtobufSnapshot(resolved);
+    if ([12, 13].includes(resolved.version)) verifyProtobufSnapshot(resolved, routeAdmission);
     const resolvedHash = computeResolvedRunHash(resolved);
     if (!bundle.resolvedHash || (resolved.version >= 10 && !resolved.resolvedHash)
         || (resolved.resolvedHash && bundle.resolvedHash !== resolved.resolvedHash)
@@ -109,7 +109,7 @@ export function verifyRunBundleIntegrity(bundle) {
     };
     // Corrected v11 bundles authenticate every nested portable resource even
     // when the caller is performing inspection rather than execution.
-    if (identityVersion === 2) verifyBundleStructure(verified, { requireRuntime: false });
+    if (identityVersion === 2) verifyBundleStructure(verified, { requireRuntime: false, sensorRegistryFactory, sensorAdmissionPlanner });
     return verified;
 }
 
@@ -200,7 +200,7 @@ function verifyPluginClosure(resolved) {
     return plugins.map((entry) => packageById.get(entry.pluginId));
 }
 
-function verifyProtobufSnapshot(resolved) {
+function verifyProtobufSnapshot(resolved, routeAdmission) {
     try {
         const config = normalizeProtobufRunConfig(resolved.manifest?.protobuf);
         if (canonicalExactStringify(config) !== canonicalExactStringify(resolved.manifest?.protobuf)) {
@@ -224,7 +224,7 @@ function verifyProtobufSnapshot(resolved) {
             || Array.isArray(resolved.schemas) || Object.values(resolved.schemas).some((definition) => typeof definition !== "string"))) {
             invalid("BUNDLE_INVALID", "Protobuf snapshots require an embedded local schema closure.");
         }
-        planProtobufRouteAdmission({ manifest: resolved.manifest, interfaceResource: resolved.protobufInterface,
+        routeAdmission({ manifest: resolved.manifest, interfaceResource: resolved.protobufInterface,
             schemas: resolved.schemas, resolvedRun: resolved });
     } catch (error) {
         if (error instanceof HeadlessEpisodeError) throw error;
@@ -232,7 +232,7 @@ function verifyProtobufSnapshot(resolved) {
     }
 }
 
-function verifyBundleStructure(verified, { requireRuntime = false } = {}) {
+function verifyBundleStructure(verified, { requireRuntime = false, sensorRegistryFactory = createSensorDefinitionRegistry, sensorAdmissionPlanner = planSensorAdmission } = {}) {
     const { resolved } = verified;
     if (resolved.manifest?.kind !== RUN_MANIFEST_KIND || resolved.manifest.version !== resolved.version) {
         invalid("BUNDLE_INVALID", "Resolved and authored manifest versions must agree.");
@@ -274,8 +274,8 @@ function verifyBundleStructure(verified, { requireRuntime = false } = {}) {
     let sensorAdmission;
     let expectedPluginSensors;
     try {
-        const sensorRegistry = createSensorDefinitionRegistry(verifiedPackages);
-        sensorAdmission = planSensorAdmission({
+        const sensorRegistry = sensorRegistryFactory(verifiedPackages);
+        sensorAdmission = sensorAdmissionPlanner({
             manifest: resolved.manifest,
             sensorRegistry,
             backendSelections: resolved.backendSelections,
@@ -422,13 +422,15 @@ function verifyBundleStructure(verified, { requireRuntime = false } = {}) {
     }
 }
 
-/** Execution accepts only implemented immutable versions; no normalization here. */
+/** Verify immutable native contracts without normalizing the received document. */
+export function verifyRunBundleIntegrity(bundle) {
+    return verifyRunBundleIntegrityUsing(bundle, planProtobufRouteAdmission);
+}
+
 export function verifyRunBundle(bundle) {
+    if (bundle?.resolved?.version !== 13) invalid("UNSUPPORTED_CAPABILITY", "Historical bundles require reviewed native migration and re-resolution before execution.");
     const verified = verifyRunBundleIntegrity(bundle);
     const { resolved } = verified;
-    if (resolved.version !== 13) {
-        invalid("UNSUPPORTED_CAPABILITY", "Historical bundles require reviewed native migration and re-resolution before execution.");
-    }
     verifyBundleStructure(verified, { requireRuntime: true });
     return verified;
 }
@@ -450,7 +452,7 @@ export function runBundleBytes(bundle) {
     return new Uint8Array(received?.bytes ?? new TextEncoder().encode(canonical));
 }
 
-export function verifyRunBundleBytes(input, { expectedBundleBytesHash, execution = true } = {}) {
+export function verifyRunBundleBytesUsing(input, { expectedBundleBytesHash } = {}, verify) {
     if (!(input instanceof ArrayBuffer) && !ArrayBuffer.isView(input)) {
         invalid("BUNDLE_INVALID", "Run bundle byte verification requires an ArrayBuffer or typed-array view.");
     }
@@ -466,9 +468,13 @@ export function verifyRunBundleBytes(input, { expectedBundleBytesHash, execution
     } catch (error) {
         invalid("BUNDLE_INVALID", `Invalid run bundle JSON: ${error.message}`);
     }
-    const verified = execution ? verifyRunBundle(bundle) : verifyRunBundleIntegrity(bundle);
+    const verified = verify(bundle);
     receivedBytes.set(bundle, { bytes, canonical: canonicalRunBundleStringify(bundle) });
     return { ...verified, bundleBytes: new Uint8Array(bytes), bundleBytesHash };
+}
+
+export function verifyRunBundleBytes(input, { expectedBundleBytesHash, execution = true } = {}) {
+    return verifyRunBundleBytesUsing(input, { expectedBundleBytesHash }, execution ? verifyRunBundle : verifyRunBundleIntegrity);
 }
 
 export function cloneRunBundle(bundle) {

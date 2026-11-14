@@ -179,6 +179,7 @@ export class ScenarioRuntime {
         this.resolvedRun = resolvedRun ?? null;
         this.scenario = this.resolvedRun?.scenario?.scenario
             ?? (this.resolvedRun?.scenario?.kind === "cev-sim.scenario" ? this.resolvedRun.scenario : null);
+        if (this.scenario?.routes?.some((route) => route.controller?.kind === "external-ros")) throw new Error("Historical external controllers require reviewed native adoption.");
         this.active = Boolean(this.scenario);
         this.resetSeed = String(this.resolvedRun?.manifest?.seed ?? "0");
         this.pluginSession = pluginSession;
@@ -538,45 +539,14 @@ export class ScenarioRuntime {
         if (!this.active) return false;
         const topic = this.resolvedRun?.manifest?.topics?.find((entry) => entry.name === info.name || entry.id === info.name);
         const route = this.scenario.routes.find((candidate) => (
-            ["external-ros", "external-topic"].includes(candidate.controller?.kind)
+            candidate.controller?.kind === "external-topic"
             && (candidate.controller.topicId === topic?.id || candidate.controller.topicId === info.name)
         ));
         if (!route) return false;
-        if (route.controller.kind === "external-topic") {
-            if (!this.controlRuntime?.ingestCommand) throw new Error("External topic controller requires ControlRuntime.");
-            if (topic?.valueContract?.id !== "cev.control-command") throw new Error("External topic controller requires cev.control-command.");
-            if (this._controllerActive(route.controller)) return { handled: true, ...this.controlRuntime.ingestCommand({ ...info, valueContract: topic.valueContract }, { vehicleId: route.actorId, applyTimeNs }) };
-            else this.controlRuntime.submitSiSpeedSteer(route.actorId, { speedMps: 0, steeringRadRep103: 0, captureTimeNs: applyTimeNs, producer: topic.producer || "candidate" });
-            return true;
-        }
-        if (!this._controllerActive(route.controller)) {
-            // A matching scenario topic is still consumed while its controller
-            // is inactive. Clear any prior external command so a rejected
-            // packet cannot move the actor now or become live after re-enable.
-            this._setControllerCommand(route.actorId, 0, 0);
-            return true;
-        }
-        const value = info.value ?? {};
-        const hasStamp = value.header?.stamp != null;
-        const isStampedSi = hasStamp || (
-            (topic?.contractId === "controls-command" || info.name === "/controls/command")
-            && (value.mode != null || value.sequence != null || value.steering_angle != null || value.deadline_ns != null)
-            && value.speedMps == null && value.steeringRad == null
-        );
-        let speed;
-        let steeringRep103;
-        if (isStampedSi) {
-            const mode = String(value.mode || "velocity");
-            speed = mode === "stop" ? 0 : finite(value.speed);
-            steeringRep103 = mode === "stop" ? 0 : finite(value.steering_angle);
-        } else {
-            // Scenario/script SI helpers (speedMps + steeringRad in plant or REP-103 radians).
-            speed = value.speedMps ?? value.speed_mps ?? value.speed;
-            steeringRep103 = value.steeringRad ?? value.steering_rad
-                ?? (value.steering_angle !== undefined ? finite(value.steering_angle) : value.steering);
-        }
-        // Stored plant steering matches REP-103. Positive is left.
-        this._setControllerCommand(route.actorId, finite(speed), finite(steeringRep103));
+        if (!this.controlRuntime?.ingestCommand) throw new Error("External topic controller requires ControlRuntime.");
+        if (topic?.valueContract?.id !== "cev.control-command") throw new Error("External topic controller requires cev.control-command.");
+        if (this._controllerActive(route.controller)) return { handled: true, ...this.controlRuntime.ingestCommand({ ...info, valueContract: topic.valueContract }, { vehicleId: route.actorId, applyTimeNs }) };
+        this.controlRuntime.submitSiSpeedSteer(route.actorId, { speedMps: 0, steeringRadRep103: 0, captureTimeNs: applyTimeNs, producer: topic.producer || "candidate" });
         return true;
     }
 
@@ -597,7 +567,6 @@ export class ScenarioRuntime {
             }
             if (controller.kind === "route-follower") this._followRoute(route, dt);
             else if (["script", "script-with-route"].includes(controller.kind)) this._runControllerScript(route, dt);
-            else if (controller.kind === "external-ros") this._reapplyControllerCommand(route.actorId);
         }
     }
 
@@ -721,12 +690,6 @@ export class ScenarioRuntime {
         };
         this.controllerCommands.set(actorId, command);
         if (this._latestActorEffect(actorId)) return true;
-        return this._applyVehicleCommand(actorId, command.speedMps, command.steeringRad);
-    }
-
-    _reapplyControllerCommand(actorId) {
-        if (this._latestActorEffect(actorId)) return true;
-        const command = this.controllerCommands.get(actorId) ?? { speedMps: 0, steeringRad: 0 };
         return this._applyVehicleCommand(actorId, command.speedMps, command.steeringRad);
     }
 

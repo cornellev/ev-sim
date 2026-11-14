@@ -5,11 +5,14 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { unzipSync } from "fflate";
 import WebSocket from "ws";
+import { externalBundle } from "../tests/helpers/headlessZenoh.js";
 
 const pair = JSON.parse(await readFile(new URL("../tests/fixtures/protobuf/zenoh-browser-compatibility.json", import.meta.url)));
 const artifact = pair.artifacts[`${process.platform}-${process.arch}`];
 if (!artifact) throw new Error("Browser compatibility gate requires Linux x64 or macOS ARM64.");
 const directory = await mkdtemp(path.join(tmpdir(), "cev-zenoh-browser-"));
+const bundlePath = path.join(directory, "native-run.json");
+await writeFile(bundlePath, JSON.stringify(await externalBundle({ maxSteps: 240 })));
 let binary = process.env.CEV_SIM_ZENOH_BROWSER_TEST_BINARY;
 if (!binary) {
     const response = await fetch(`https://github.com/eclipse-zenoh/zenoh-ts/releases/download/${pair.routerVersion}/${artifact.name}`);
@@ -51,8 +54,8 @@ const control = createServer(async (request, response) => {
 });
 try {
     await ready(); await new Promise((resolve) => control.listen(10006, "127.0.0.1", resolve));
-    const tests = spawn("npx", ["playwright", "test", "tests/ui/zenoh-browser.spec.js", "tests/ui/protobuf-interface.spec.js"], {
-        stdio: "inherit", env: { ...process.env, CEV_SIM_ZENOH_BROWSER_CONFIG: config, CEV_SIM_ZENOH_BROWSER_GATE: "1", CEV_SIM_DATA_DIR: path.join(directory, "storage") },
+    const tests = spawn("npx", ["playwright", "test", "tests/ui/zenoh-browser.spec.js", "tests/ui/protobuf-interface.spec.js", ...process.argv.slice(2)], {
+        stdio: "inherit", env: { ...process.env, CEV_SIM_ZENOH_BROWSER_CONFIG: config, CEV_SIM_ZENOH_BROWSER_GATE: "1", CEV_SIM_ZENOH_BROWSER_TEST_BUNDLE: bundlePath, CEV_SIM_DATA_DIR: path.join(directory, "storage") },
     });
     const code = await new Promise((resolve) => tests.on("exit", resolve)); process.exitCode = code ?? 1;
 } finally { router.kill(); control.close(); }

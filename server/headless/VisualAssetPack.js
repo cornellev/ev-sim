@@ -527,7 +527,7 @@ export async function verifyRunPackageArchive(input, options = {}) {
         }
         let verifiedBundle;
         try {
-            verifiedBundle = verifyRunBundleBytes(bundleBytes, { execution: false });
+            verifiedBundle = (options.verifyBundleBytes ?? verifyRunBundleBytes)(bundleBytes, { execution: false });
         } catch (error) {
             throw runPackageError(
                 error.code === "BUNDLE_HASH_MISMATCH" ? RUN_PACKAGE_ERROR_CODES.INVALID : RUN_PACKAGE_ERROR_CODES.INVALID,

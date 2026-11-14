@@ -426,9 +426,6 @@ export function createSimulationRuntimeContext(options = {}) {
             dispose() { options.protobufRoutes?.dispose(); },
             publicationPort() { return options.publicationPort ?? null; },
             deliver(clock) { return options.protobufRoutes?.deliver?.(clock); },
-            client() {
-                return resolve(options.topicClient) ?? null;
-            },
         },
         episodeOverlay: options.episodeOverlay ?? new EpisodeOverlay(),
     };

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { normalizeRunManifest, createDefaultRunManifest } from "../app/simulation/RunManifest.js";
+import { normalizeRunManifest, createDefaultRunManifest } from "../server/interfaces/historical/RunContracts.js";
 import { SimulationKernel } from "../app/simulation/kernel/SimulationKernel.js";
 import { verifyRunBundle } from "../server/headless/RunBundle.js";
 import { createPortableHeadlessBundle, createPluginPortableHeadlessBundle } from "./helpers/headlessRunnerBundle.js";

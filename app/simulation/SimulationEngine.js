@@ -168,7 +168,6 @@ export class SimulationEngine {
             physics: () => this.data.physics?.(),
             scenarios: scenarioRuntime,
             vehicleScene: () => this.scene,
-            topicClient: () => this.data.client?.()?.get?.(),
             applyEnvironment: (environment, resolvedRun, worldResource) => {
                 return this._applyResolvedEnvironment(environment, resolvedRun, worldResource);
             },
@@ -632,7 +631,6 @@ export class SimulationEngine {
     }
 
     play() {
-        if (!this.resolvedRun) this.data.client?.()?.setup?.().catch((error) => console.warn("Legacy client setup failed:", error.message));
         this.syncEditorRigidBodies();
         this.restoreStoppedEditorBodies();
         this.startLoop();

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { isControlsCommandTopic } from "../app/autonomy/AutonomyContractCatalog.js";
+import { isControlsCommandTopic } from "../app/simulation/NativeTopicCatalog.js";
 import {
     buildComparisonBaseline,
     classifyConfiguration,
@@ -19,7 +19,7 @@ import { getBuiltInVehicleManifest } from "../app/vehicles/BuiltInVehicleManifes
 const bigCar = getBuiltInVehicleManifest("big-car");
 
 function localScenario(overrides = {}) {
-    return createDefaultScenario({ version: 1, ...overrides });
+    return createDefaultScenario({ version: 2, ...overrides });
 }
 
 function manifestFor(scenario, overrides = {}) {
@@ -94,9 +94,9 @@ test("standard patch changes only its leaves and keeps advanced customizations",
     assert.equal(manifest.seed, 7);
 });
 
-test("external controller uses reference for external-ros and candidate for direct command", () => {
+test("external controller uses reference for external-topic and candidate for direct command", () => {
     const remote = localScenario({
-        routes: [{ actorId: "ego", controller: { kind: "external-ros", topicId: "controls-command" } }],
+        routes: [{ actorId: "ego", controller: { kind: "external-topic", topicId: "controls-command" } }],
     });
     const remoteManifest = manifestFor(remote);
     remoteManifest.clock.pacing = "unbounded";
@@ -109,7 +109,7 @@ test("external controller uses reference for external-ros and candidate for dire
     const remotePreview = previewProfile(remoteManifest, "external", { scenario: remote });
 
     assert.equal(remotePreview.ready, true);
-    assert.equal(remotePreview.controlSource.kind, "external-ros");
+    assert.equal(remotePreview.controlSource.kind, "external-topic");
     assert.equal(remotePreview.controlSource.topicId, "controls-command");
     assert.deepEqual(remotePreview.issues, []);
     assert.equal(remotePreview.nextManifest.controls.authority, "reference");
@@ -121,7 +121,7 @@ test("external controller uses reference for external-ros and candidate for dire
     assert.equal(remotePreview.nextManifest.logging.profileId, remoteBefore.logging.profileId);
     assert.equal(remotePreview.nextManifest.controls.watchdogNs, 80);
     assert.deepEqual(remotePreview.nextManifest.topics, remoteBefore.topics);
-    assert.equal(remote.routes[0].controller.kind, "external-ros");
+    assert.equal(remote.routes[0].controller.kind, "external-topic");
 
     const direct = createDefaultRunManifest();
     direct.controls.authority = "reference";
@@ -161,7 +161,7 @@ test("presets explain missing controllers and topics without repairing them", ()
     assert.equal(preview.nextManifest.initialState.vehicles[1].id, "walker");
 
     const missingTopic = localScenario({
-        routes: [{ actorId: "ego", controller: { kind: "external-ros", topicId: "not-a-topic" } }],
+        routes: [{ actorId: "ego", controller: { kind: "external-topic", topicId: "not-a-topic" } }],
     });
     const topicManifest = manifestFor(missingTopic);
     const topicBefore = topicManifest.topics.length;
@@ -172,7 +172,7 @@ test("presets explain missing controllers and topics without repairing them", ()
     assert.equal(missingTopic.routes[0].controller.topicId, "not-a-topic");
 
     const blankTopic = localScenario({
-        routes: [{ actorId: "ego", controller: { kind: "external-ros", topicId: "" } }],
+        routes: [{ actorId: "ego", controller: { kind: "external-topic", topicId: "" } }],
     });
     const blankPreview = previewProfile(manifestFor(blankTopic), "external", { scenario: blankTopic });
     assert.equal(blankPreview.issues[0].code, "missing-external-topic");
@@ -271,7 +271,7 @@ test("inference checks external first and leaves unusual runs custom", () => {
     assert.equal(inferExecutionProfile(manifest, { scenario }).profileId, null);
 
     const remote = localScenario({
-        routes: [{ actorId: "ego", controller: { kind: "external-ros", topicId: "controls-command" } }],
+        routes: [{ actorId: "ego", controller: { kind: "external-topic", topicId: "controls-command" } }],
     });
     const remoteManifest = manifestFor(remote);
     remoteManifest.controls.authority = "reference";

@@ -169,38 +169,6 @@ export function threeCameraLookAlongMountForwardRotation() {
     return eulerToQuaternion(threeCameraLookAlongMountForwardEuler());
 }
 
-export function buildTransformStamped({
-    timeNs = 0,
-    parentFrameId = "",
-    childFrameId = "",
-    translation = { x: 0, y: 0, z: 0 },
-    rotation = null,
-    euler = null,
-}) {
-    const rot = rotation || eulerToQuaternion(euler || { x: 0, y: 0, z: 0, order: "XYZ" });
-    return {
-        header: { stamp: simulationStamp(timeNs), frame_id: String(parentFrameId) },
-        child_frame_id: String(childFrameId),
-        transform: {
-            translation: {
-                x: Number(translation.x || 0),
-                y: Number(translation.y || 0),
-                z: Number(translation.z || 0),
-            },
-            rotation: {
-                x: Number(rot.x),
-                y: Number(rot.y),
-                z: Number(rot.z),
-                w: Number(rot.w),
-            },
-        },
-    };
-}
-
-export function buildTFMessage(transforms = []) {
-    return { transforms: [...transforms] };
-}
-
 /** Compose REP-103 poses: parent * child (child rotation as euler or quaternion). */
 /** Inverse of a REP-103 pose. Rotation may be an XYZ Euler or a quaternion. */
 export function invertRep103Pose(pose = {}) {

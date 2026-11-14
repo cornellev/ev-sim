@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { storeData } from "../../ScriptManager";
 
-const { default: Unit } = require("../Unit")
+import Unit from "../Unit";
 
 export default function NumberUnit(props) {
     const [value, setValue] = useState(() => props.initialData ?? 0);

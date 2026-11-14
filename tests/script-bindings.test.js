@@ -279,7 +279,7 @@ test("topic updates populate the signal store and dispatch matching bindings", a
     }, { persist: false });
     await flush();
 
-    clientManager.emit({ name: "/controls/command", typeStr: "pkg/AckermannDrive", value: { speed: 4, steering_angle: 1 } });
+    runtime.applyTopicUpdate({ name: "/controls/command", typeStr: "pkg/AckermannDrive", value: { speed: 4, steering_angle: 1 } });
 
     assert.deepEqual(runs, [{ speed: 4 }]);
     assert.deepEqual(runtime.signalStore.read("topics./controls/command").value, { speed: 4, steering_angle: 1 });
@@ -311,10 +311,10 @@ test("topic updates do not dispatch bindings for other topics", async () => {
     }, { persist: false });
     await flush();
 
-    clientManager.emit({ name: "/other", value: 1 });
+    runtime.applyTopicUpdate({ name: "/other", value: 1 });
     assert.equal(runs.length, 0);
 
-    clientManager.emit({ name: "/controls/command", value: 1 });
+    runtime.applyTopicUpdate({ name: "/controls/command", value: 1 });
     assert.equal(runs.length, 1);
 });
 
@@ -537,12 +537,14 @@ test("input resolution covers signal paths with fields and constants", async () 
     assert.equal("missing" in runs[0], false);
 });
 
-test("publish sinks route outputs through the client", async () => {
+test("publish sinks route native outputs through the topic router", async () => {
     const clientManager = createClientManagerStub();
     const runtime = createRuntime({
         clientManager,
         scripts: { "script-1": createScriptStub(() => ({ cmd: { speed: 2 } })) }
     });
+    const published = [];
+    runtime.setTopicRouter({ routeOutbound(topic, info) { published.push({ topic, ...info }); return { ok: true }; } }, [{ id: "out", name: "/cmd_out", direction: "output", valueContract: { id: "cev.points", version: 1 } }]);
     await runtime.ready();
 
     await runtime.setManifest({
@@ -550,16 +552,14 @@ test("publish sinks route outputs through the client", async () => {
             id: "b1",
             scriptId: "script-1",
             trigger: { kind: "fixed-update", everyN: 1 },
-            outputs: [{ output: "cmd", sink: "publish", topic: "/cmd_out", type: "pkg/AckermannDrive" }]
+            outputs: [{ output: "cmd", sink: "publish", topic: "/cmd_out", valueContract: { id: "cev.points", version: 1 } }]
         }]
     }, { persist: false });
     await flush();
 
     runtime.update(0.016);
 
-    assert.deepEqual(clientManager.published, [
-        { topic: "/cmd_out", typeStr: "pkg/AckermannDrive", value: { speed: 2 } }
-    ]);
+    assert.deepEqual(published, [{ topic: "out", value: { speed: 2 } }]);
 });
 
 test("script failures are isolated and recorded in telemetry", async () => {

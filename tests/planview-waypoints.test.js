@@ -1,16 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { catalogHash, catalogSchemas } from "../app/autonomy/AutonomyContractCatalog.js";
-import { registerMsgDefinition } from "../app/client/TopicCodec.js";
 import { buildPlanViewFrame } from "../app/spatial/planview/frame.js";
 import "../app/spatial/planview/layers/index.js";
 import { PLAN_COLORS } from "../app/spatial/planview/primitives.js";
 import { projectPlanView } from "../app/spatial/planview/project.js";
 import { defaultVisibility } from "../app/spatial/planview/visibility.js";
 import {
-    PLAN_WAYPOINTS_DEFINITION,
-    PLAN_WAYPOINTS_TYPE,
     getPlanWaypoints,
     setPlanWaypoints,
 } from "../app/spatial/planview/waypoints.js";
@@ -78,11 +74,4 @@ test("client payload keeps x and z and drops non-finite points", () => {
     assert.deepEqual(getPlanWaypoints(), [{ x: 1, z: 2 }, { x: 3, z: 4 }]);
     setPlanWaypoints([]);
     assert.deepEqual(getPlanWaypoints(), []);
-});
-
-test("registering the waypoint message leaves the catalog hash unchanged", () => {
-    assert.equal(catalogSchemas()[PLAN_WAYPOINTS_TYPE], undefined);
-    const before = catalogHash();
-    registerMsgDefinition(PLAN_WAYPOINTS_TYPE, PLAN_WAYPOINTS_DEFINITION);
-    assert.equal(catalogHash(), before);
 });

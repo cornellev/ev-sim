@@ -61,6 +61,12 @@ async function writeLocalPlugin(pluginsRoot, { version = "1.0.0", units = [SCALE
     const files = await pluginFixtureFiles("test.range-image-fixture");
     const document = JSON.parse(new TextDecoder().decode(files["plugin.json"]));
     document.version = version;
+    document.sensorTypes[0].sensorAbi = 2;
+    for (const product of document.sensorTypes[0].products) if (product.kind === "pointCloud") {
+        delete product.rosType;
+        product.valueContract = { id: "cev.points", version: 1 };
+    }
+    files["runtime/index.js"] = new TextEncoder().encode(new TextDecoder().decode(files["runtime/index.js"]).replaceAll("buildPointCloud2", "buildNativePoints"));
     document.units = units;
     files["plugin.json"] = new TextEncoder().encode(`${JSON.stringify(document, null, 2)}\n`);
     if (runtimeSuffix) {

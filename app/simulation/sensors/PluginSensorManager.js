@@ -40,15 +40,7 @@ export class PluginSensorManager {
         if (String(selection.version) !== CPU_LIDAR_EXPLICIT_LAYOUT_BACKEND_VERSION) {
             throw new Error("Plugin range-image sensors require deterministic-cpu-bvh-lidar version 2.");
         }
-        const messageCodec = options.messageCodec ?? this.options.messageCodec;
-        const needsCodec = records.some((record) => record.plugin.descriptor.sensorAbi === 1);
-        if (needsCodec && (typeof messageCodec?.encodeTopicValue !== "function"
-            || typeof messageCodec?.registerMsgDefinition !== "function")) {
-            throw new Error("Plugin point-cloud sensors require a message-codec adapter.");
-        }
-        for (const [type, definition] of Object.entries(options.schemas ?? {})) {
-            if (needsCodec) messageCodec.registerMsgDefinition(type, definition);
-        }
+        if (records.some((record) => record.plugin.descriptor.sensorAbi !== 2)) throw new Error("Plugin sensor execution requires sensorAbi 2; use reviewed native adoption.");
         const pluginSession = options.pluginSession;
         if (!pluginSession) throw new Error("Plugin sensor execution requires its prepared plugin session.");
         const { CpuLidarScene } = await import("./CpuLidarScene.js");
@@ -74,14 +66,14 @@ export class PluginSensorManager {
                     Publisher: options.Publisher,
                     transformRuntime: options.transformRuntime,
                     publisherOptions: {
-                        nativeTopics: record.plugin.descriptor.sensorAbi === 2,
                         seed: this.seed,
                         topics: options.topics,
                         topicRouter: options.topicRouter,
                         calibrationHash: options.calibrationHash,
                         stepNs: options.stepNs,
                         runtimeData,
-                        encodeTopicValue: messageCodec?.encodeTopicValue,
+                        runId: options.runId,
+                        publicationPort: options.publicationPort,
                         nativePacketSink: options.nativePacketSink,
                         nowNs: options.nowNs ?? (() => 0),
                     },

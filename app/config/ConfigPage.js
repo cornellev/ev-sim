@@ -35,13 +35,7 @@ import {
     RUN_MANIFEST_VERSION,
     validateRunManifest,
 } from "../simulation/RunManifest.js";
-import {
-    AUTHORITY_MODES,
-    listAutonomyContracts,
-    PRODUCER_NAMESPACES,
-    topicFromContract,
-} from "../autonomy/AutonomyContractCatalog.js";
-import { listNativeTopicDefinitions, topicFromNativeContract } from "../simulation/NativeTopicCatalog.js";
+import { AUTHORITY_MODES, PRODUCER_NAMESPACES, listNativeTopicDefinitions, topicFromNativeContract } from "../simulation/NativeTopicCatalog.js";
 import {
     changeRunManifestId,
     createRunManifest,
@@ -1681,7 +1675,7 @@ function Controls({ draft, update }) {
         <div className="space-y-5" data-testid="controls-config">
             <p className="text-[12px] leading-relaxed text-[var(--slate-muted)]">
                 Canonical plant input is <code className="font-mono">/controls/command</code> ({controlTopics.length === 1 ? "declared" : controlTopics.length === 0 ? "missing — add controls-command from Topics" : "multiple declared — keep exactly one"}).
-                Empty max-speed / steer-rate fields keep the vehicle defaults; fill them to override this run only. Stale policy defaults to safe stop. Reference authority with a scenario route-follower or script closes the loop in-sim and does not need that topic advertised on the orchestrator.
+                Empty max-speed / steer-rate fields keep the vehicle defaults; fill them to override this run only. Stale policy defaults to safe stop. Reference authority with a scenario route-follower or script closes the loop in the simulator.
             </p>
             <div className="grid gap-4 md:grid-cols-3">
                 <Field label="Zero-speed response">
@@ -2768,11 +2762,11 @@ function Scripts({
 
 function Topics({ draft, update }) {
     const native = draft.version === 13;
-    const contracts = useMemo(() => native ? listNativeTopicDefinitions() : listAutonomyContracts(), [native]);
+    const contracts = useMemo(() => listNativeTopicDefinitions(), []);
     const [filter, setFilter] = useState("all");
     const addFromContract = (contractId) => {
         if (!contractId) return;
-        update(["topics"], [...draft.topics, (native ? topicFromNativeContract : topicFromContract)(contractId)]);
+        update(["topics"], [...draft.topics, topicFromNativeContract(contractId)]);
     };
     const indexed = draft.topics.map((topic, index) => ({ topic, index }));
     const inputs = indexed.filter(({ topic }) => topic.direction === "input");
@@ -2864,7 +2858,6 @@ function Topics({ draft, update }) {
 }
 
 function TopicCard({ topic, index, contracts, update, onRemove, native = false }) {
-    const rosType = topic.schema?.type || topic.type || "";
     const isInput = topic.direction === "input";
     return (
         <div className="grid gap-3 rounded-[var(--radius)] border border-[var(--slate-border-60)] bg-[var(--slate-surface-1)] p-3 md:grid-cols-2 xl:grid-cols-3">
@@ -2883,11 +2876,11 @@ function TopicCard({ topic, index, contracts, update, onRemove, native = false }
                     onChange={(event) => {
                         const contractId = event.target.value;
                         if (!contractId) return;
-                        const next = (native ? topicFromNativeContract : topicFromContract)(contractId, { id: topic.id, name: topic.name });
+                        const next = topicFromNativeContract(contractId, { id: topic.id, name: topic.name });
                         update(["topics", index], next);
                     }}
                 >
-                    <option value="">Custom / legacy</option>
+                    <option value="">Custom</option>
                     {contracts.map((contract) => (
                         <option key={contract.id} value={contract.id}>{contract.id}</option>
                     ))}
@@ -2911,20 +2904,10 @@ function TopicCard({ topic, index, contracts, update, onRemove, native = false }
                         <option value="output">Output (simulator)</option>
                     </select>
                 </Field>
-                {native ? <>
+                <>
                     <Field label="Native contract"><input id={`run-focus-topic-${index}-schema`} value={topic.valueContract?.id ?? ""} onChange={(event) => update(["topics", index, "valueContract"], { id: event.target.value, version: topic.valueContract?.version ?? 1 })} /></Field>
                     <Field label="Contract version"><input type="number" min="1" value={topic.valueContract?.version ?? 1} onChange={(event) => update(["topics", index, "valueContract", "version"], Number(event.target.value))} /></Field>
-                </> : <Field label="ROS type">
-                    <input
-                        id={`run-focus-topic-${index}-schema`}
-                        value={rosType}
-                        onChange={(event) => update(["topics", index], {
-                            ...topic,
-                            type: event.target.value,
-                            schema: { ...(topic.schema || {}), type: event.target.value, version: topic.schema?.version || 1 },
-                        })}
-                    />
-                </Field>}
+                </>
                 <Field label="Producer">
                     <select value={topic.producer || "simulator"} onChange={(event) => update(["topics", index, "producer"], event.target.value)}>
                         {PRODUCER_NAMESPACES.map((namespace) => (

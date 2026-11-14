@@ -1,3 +1,4 @@
+import { inspectRunPackageArchive as verifyRunPackageArchive } from "../server/headless/RunBundleInspection.js";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
@@ -20,7 +21,6 @@ import {
     normalizeRunPackageManifest,
     resolveRunPackageLimits,
     ustarEof,
-    verifyRunPackageArchive,
 } from "../server/headless/VisualAssetPack.js";
 import { RUN_PACKAGE_ERROR_CODES } from "../server/storage/StorageErrors.js";
 import { StorageService } from "../server/storage/StorageService.js";

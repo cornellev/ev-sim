@@ -47,57 +47,31 @@ def _sized(payload: bytes) -> bytes:
     return _varuint(len(payload)) + payload
 
 
-def _u32(value: int) -> bytes:
-    return struct.pack("<I", value)
-
-
-def _text(value: str) -> bytes:
-    return _u32(len(value.encode())) + value.encode()
-
-
-def _envelope(type_name: str, body: bytes) -> bytes:
-    name = type_name.encode()
-    rest = struct.pack("<H", len(name)) + name + body
-    return bytes([0xFF]) + _u32(len(rest)) + rest
-
-
 def _image(stamp_ns: int, encoding: str, data: bytes) -> bytes:
-    sec, nanosec = divmod(stamp_ns, 1_000_000_000)
-    body = b"".join([
-        struct.pack("<iI", sec, nanosec),
-        _text("front_camera_optical_frame"),
-        _u32(2),
-        _u32(2),
-        _text(encoding),
-        bytes([0]),
-        _u32(8),
-        _u32(len(data)),
-        data,
-    ])
-    return _envelope("sensor_msgs/Image", body)
+    return json.dumps(
+        {
+            "width": 2,
+            "height": 2,
+            "pixelFormat": {"rgba8": "rgba8", "32FC1": "depth-f32-le"}.get(encoding, encoding),
+            "strideBytes": 8,
+            "data": {"__sflogTypedArray": "Uint8Array", "values": list(data * 4 if len(data) == 4 else data)},
+        }
+    ).encode()
 
 
 def _camera_info(stamp_ns: int) -> bytes:
-    sec, nanosec = divmod(stamp_ns, 1_000_000_000)
-    distortion = struct.pack("<5d", 0, 0, 0, 0, 0)
-    matrix = struct.pack("<9d", 469.16113422283404, 0, 639.5, 0, 469.16113422283404, 359.5, 0, 0, 1)
-    rectification = struct.pack("<9d", 1, 0, 0, 0, 1, 0, 0, 0, 1)
-    projection = struct.pack("<12d", 469.16113422283404, 0, 639.5, 0, 0, 469.16113422283404, 359.5, 0, 0, 0, 1, 0)
-    body = b"".join([
-        struct.pack("<iI", sec, nanosec),
-        _text("front_camera_optical_frame"),
-        _u32(720),
-        _u32(1280),
-        _text("none"),
-        _u32(5),
-        distortion,
-        matrix,
-        rectification,
-        projection,
-        _u32(0),
-        _u32(0),
-    ])
-    return _envelope("sensor_msgs/CameraInfo", body)
+    focal = 469.16113422283404
+    return json.dumps(
+        {
+            "width": 1280,
+            "height": 720,
+            "distortionModel": "none",
+            "distortion": [0] * 5,
+            "intrinsic": [focal, 0, 639.5, 0, focal, 359.5, 0, 0, 1],
+            "rectification": [1, 0, 0, 0, 1, 0, 0, 0, 1],
+            "projection": [focal, 0, 639.5, 0, 0, focal, 359.5, 0, 0, 0, 1, 0],
+        }
+    ).encode()
 
 
 def _js_round(value: float) -> int:
@@ -105,15 +79,24 @@ def _js_round(value: float) -> int:
 
 
 def _schema(schema_id: int, path: str, metadata: dict) -> bytes:
-    wrapped = json.dumps({
-        "source": "sensors",
-        "category": "devices",
-        "replayRole": "derived",
-        "logClass": "heavy",
-        "description": None,
-        "metadata": metadata,
-    }).encode()
-    return bytes([0x01, schema_id, 0x09]) + _sized(path.encode()) + _sized(b"") + _sized(wrapped)
+    wrapped = json.dumps(
+        {
+            "source": "sensors",
+            "category": "devices",
+            "replayRole": "derived",
+            "logClass": "heavy",
+            "description": None,
+            "metadata": {
+                **metadata,
+                "frameId": "front_camera_optical_frame",
+                "valueContract": {
+                    "id": "cev.camera-info" if path.endswith("cameraInfo") else "cev.image",
+                    "version": 1,
+                },
+            },
+        }
+    ).encode()
+    return bytes([0x01, schema_id, 0x00]) + _sized(path.encode()) + _sized(b"") + _sized(wrapped)
 
 
 def _cycle(stamp_ns: int, step: int, items: list[tuple[int, bytes]]) -> bytes:
@@ -125,16 +108,15 @@ def _cycle(stamp_ns: int, step: int, items: list[tuple[int, bytes]]) -> bytes:
 
 
 def _write_sflog(path: Path, frames: list[dict]) -> None:
-    first = frames[0]
-    metadata = {
-        "captureTimeNs": first.get("descriptorStamp", first["stamp"]),
-        "sequenceId": first.get("descriptorSample", 0),
-        "captureStep": first.get("descriptorStep", first["step"]),
-    }
     raw = bytearray()
-    for schema_id, signal in ((1, "image"), (2, "depth"), (3, "cameraInfo")):
-        raw += _schema(schema_id, f"devices.{CAMERA}.{signal}", metadata)
-    for frame in frames:
+    for index, frame in enumerate(frames):
+        metadata = {
+            "captureTimeNs": frame.get("descriptorStamp", frame["stamp"]),
+            "sequenceId": frame.get("descriptorSample", index),
+            "captureStep": frame.get("descriptorStep", frame["step"]),
+        }
+        for schema_id, signal in ((1, "image"), (2, "depth"), (3, "cameraInfo")):
+            raw += _schema(schema_id, f"devices.{CAMERA}.{signal}", metadata)
         items = []
         if frame.get("rgb", True):
             encoding = frame.get("rgbEncoding", "rgba8")
@@ -149,9 +131,19 @@ def _write_sflog(path: Path, frames: list[dict]) -> None:
     header = b"SFLG" + struct.pack("<HHI", 1, 3, 2) + b"{}"
     start = 0
     end = _js_round(frames[-1]["stamp"] / 1000)
-    chunk = b"CHNK" + struct.pack(
-        "<QQIIII", start, end, len(raw), len(compressed), zlib.crc32(bytes(raw)) & 0xFFFFFFFF, 0,
-    ) + compressed
+    chunk = (
+        b"CHNK"
+        + struct.pack(
+            "<QQIIII",
+            start,
+            end,
+            len(raw),
+            len(compressed),
+            zlib.crc32(bytes(raw)) & 0xFFFFFFFF,
+            0,
+        )
+        + compressed
+    )
     index_offset = len(header) + len(chunk)
     index = b"INDX" + struct.pack("<IQQQB", 1, start, end, len(header), 0)
     path.write_bytes(header + chunk + index + struct.pack("<Q", index_offset) + b"SEND")
@@ -223,12 +215,14 @@ def _write_run(root: Path, frames: list[dict], **overrides) -> None:
     provenance = {
         "kind": "cev-sim.headless.provenance",
         "version": 1,
-        "backendSelections": [{
-            "kind": 4,
-            "capabilityId": GPU_SENSOR_CAPABILITY,
-            "version": GPU_SENSOR_VERSION,
-            "configHash": GPU_SENSOR_CONFIG_HASH,
-        }],
+        "backendSelections": [
+            {
+                "kind": 4,
+                "capabilityId": GPU_SENSOR_CAPABILITY,
+                "version": GPU_SENSOR_VERSION,
+                "configHash": GPU_SENSOR_CONFIG_HASH,
+            }
+        ],
     }
     (root / "run-bundle.json").write_text(json.dumps(bundle), encoding="utf-8")
     (root / "run-results.json").write_text(json.dumps(results), encoding="utf-8")
@@ -274,11 +268,17 @@ def test_depth_visualization_uses_half_away_rounding():
 
 
 def test_image_and_camera_info_roundtrip_stamps():
-    image = decode_camera_payload(_image(33_333_333, "rgba8", b"rgba"))
-    info = decode_camera_payload(_camera_info(33_333_333))
+    image = decode_camera_payload(
+        _image(33_333_333, "rgba8", b"rgba"),
+        {"captureTimeNs": 33_333_333, "frameId": "camera", "valueContract": {"id": "cev.image", "version": 1}},
+    )
+    info = decode_camera_payload(
+        _camera_info(33_333_333),
+        {"captureTimeNs": 33_333_333, "frameId": "camera", "valueContract": {"id": "cev.camera-info", "version": 1}},
+    )
     assert image["encoding"] == "rgba8"
     assert image["stampNs"] == 33_333_333
-    assert image["data"] == b"rgba"
+    assert image["data"] == b"rgba" * 4
     assert info["distortionModel"] == "none"
     assert info["k"][0] == pytest.approx(469.16113422283404)
     assert info["stampNs"] == 33_333_333
@@ -300,17 +300,25 @@ def test_sflog_reader_keeps_schemas_across_chunks(tmp_path: Path):
     chunk_one = bytearray()
     for schema_id, signal in ((1, "image"), (2, "depth"), (3, "cameraInfo")):
         chunk_one += _schema(schema_id, f"devices.{CAMERA}.{signal}", metadata)
-    chunk_one += _cycle(first[0]["stamp"], first[0]["step"], [
-        (1, _image(first[0]["stamp"], "rgba8", b"\x01\x02\x03\x04")),
-        (2, _image(first[0]["stamp"], "32FC1", struct.pack("<f", 1.5))),
-        (3, _camera_info(first[0]["stamp"])),
-    ])
+    chunk_one += _cycle(
+        first[0]["stamp"],
+        first[0]["step"],
+        [
+            (1, _image(first[0]["stamp"], "rgba8", b"\x01\x02\x03\x04")),
+            (2, _image(first[0]["stamp"], "32FC1", struct.pack("<f", 1.5))),
+            (3, _camera_info(first[0]["stamp"])),
+        ],
+    )
     second = {"stamp": CAPTURE_INTERVAL_NS * 2, "step": 6}
-    chunk_two = _cycle(second["stamp"], second["step"], [
-        (1, _image(second["stamp"], "rgba8", b"\x05\x06\x07\x08")),
-        (2, _image(second["stamp"], "32FC1", struct.pack("<f", 2.5))),
-        (3, _camera_info(second["stamp"])),
-    ])
+    chunk_two = _schema(1, f"devices.{CAMERA}.image", {**metadata, "captureTimeNs": second["stamp"]}) + _cycle(
+        second["stamp"],
+        second["step"],
+        [
+            (1, _image(second["stamp"], "rgba8", b"\x05\x06\x07\x08")),
+            (2, _image(second["stamp"], "32FC1", struct.pack("<f", 2.5))),
+            (3, _camera_info(second["stamp"])),
+        ],
+    )
     header = b"SFLG" + struct.pack("<HHI", 1, 3, 2) + b"{}"
     body = bytearray(header)
     index_entries = b""
@@ -319,9 +327,19 @@ def test_sflog_reader_keeps_schemas_across_chunks(tmp_path: Path):
         offset = len(body)
         start = 0
         end = _js_round(second["stamp"] / 1000)
-        body += b"CHNK" + struct.pack(
-            "<QQIIII", start, end, len(raw), len(compressed), zlib.crc32(raw) & 0xFFFFFFFF, 0,
-        ) + compressed
+        body += (
+            b"CHNK"
+            + struct.pack(
+                "<QQIIII",
+                start,
+                end,
+                len(raw),
+                len(compressed),
+                zlib.crc32(raw) & 0xFFFFFFFF,
+                0,
+            )
+            + compressed
+        )
         index_entries += struct.pack("<QQQB", start, end, offset, 0)
     index_offset = len(body)
     body += b"INDX" + struct.pack("<I", 2) + index_entries + struct.pack("<Q", index_offset) + b"SEND"
@@ -341,16 +359,19 @@ def test_sflog_reader_returns_descriptor_metadata(tmp_path: Path):
     assert image.message["encoding"] == "rgba8"
 
 
-@pytest.mark.parametrize(("frames", "message"), [
-    ([{"stamp": CAPTURE_INTERVAL_NS, "step": 3}, {"stamp": CAPTURE_INTERVAL_NS, "step": 3}], "Duplicate"),
-    ([{"stamp": CAPTURE_INTERVAL_NS, "step": 3, "depth": False}], "missing depth"),
-    (_grid(2), "ended before window"),
-    (_grid(FRAME_COUNT, stamp_gap_at=4), "gap or duplicate"),
-    ([{"stamp": CAPTURE_INTERVAL_NS, "step": 4}], "simulation step grid"),
-    ([{"stamp": CAPTURE_INTERVAL_NS * 2, "step": 6}], "not at 33333333"),
-    ([{"stamp": CAPTURE_INTERVAL_NS, "step": 3, "descriptorStamp": 1}], "descriptor stamp"),
-    ([{"stamp": CAPTURE_INTERVAL_NS, "step": 3, "rgbEncoding": "mono8"}], "rgba8"),
-])
+@pytest.mark.parametrize(
+    ("frames", "message"),
+    [
+        ([{"stamp": CAPTURE_INTERVAL_NS, "step": 3}, {"stamp": CAPTURE_INTERVAL_NS, "step": 3}], "Duplicate"),
+        ([{"stamp": CAPTURE_INTERVAL_NS, "step": 3, "depth": False}], "missing depth"),
+        (_grid(2), "ended before window"),
+        (_grid(FRAME_COUNT, stamp_gap_at=4), "gap or duplicate"),
+        ([{"stamp": CAPTURE_INTERVAL_NS, "step": 4}], "simulation step grid"),
+        ([{"stamp": CAPTURE_INTERVAL_NS * 2, "step": 6}], "not at 33333333"),
+        ([{"stamp": CAPTURE_INTERVAL_NS, "step": 3, "descriptorStamp": 1}], "log time"),
+        ([{"stamp": CAPTURE_INTERVAL_NS, "step": 3, "rgbEncoding": "mono8"}], "Invalid native"),
+    ],
+)
 def test_exporter_rejects_capture_streams(tmp_path: Path, frames, message):
     with pytest.raises(ClipError, match=message):
         _export(tmp_path, frames)
@@ -375,9 +396,13 @@ def test_exporter_rejects_a_non_analytic_renderer(tmp_path: Path):
 
 def test_exporter_rejects_nonzero_noise_and_distortion(tmp_path: Path):
     with pytest.raises(ClipError, match="noise"):
-        _export(tmp_path, _grid(1), camera={
-            "noise": {"model": "gaussian", "standardDeviation": 1, "bias": 0, "dropoutProbability": 0},
-        })
+        _export(
+            tmp_path,
+            _grid(1),
+            camera={
+                "noise": {"model": "gaussian", "standardDeviation": 1, "bias": 0, "dropoutProbability": 0},
+            },
+        )
     with pytest.raises(ClipError, match="distortion"):
         _export(tmp_path, _grid(1), calibration={"distortionModel": "plumb_bob", "distortion": [0.1, 0, 0, 0, 0]})
 
@@ -396,19 +421,21 @@ def test_frame_content_rejects_empty_color_and_depth():
 def _publication_args(destination: Path):
     return {
         "destination": destination,
-        "frames": [CapturedFrame(
-            CAPTURE_INTERVAL_NS,
-            0,
-            3,
-            b"\x01\x00\x00\x00",
-            struct.pack("<f", 1.25),
-            {
-                "frameId": "front_camera_optical_frame",
-                "distortionModel": "none",
-                "distortion": [0, 0, 0, 0, 0],
-                "k": [469.16113422283404, 0, 639.5, 0, 469.16113422283404, 359.5, 0, 0, 1],
-            },
-        )],
+        "frames": [
+            CapturedFrame(
+                CAPTURE_INTERVAL_NS,
+                0,
+                3,
+                b"\x01\x00\x00\x00",
+                struct.pack("<f", 1.25),
+                {
+                    "frameId": "front_camera_optical_frame",
+                    "distortionModel": "none",
+                    "distortion": [0, 0, 0, 0, 0],
+                    "k": [469.16113422283404, 0, 639.5, 0, 469.16113422283404, 359.5, 0, 0, 1],
+                },
+            )
+        ],
         "camera": _camera(),
         "bundle": {"resolved": {"world": {"hash": WORLD}}},
         "results": {"episodeHash": EPISODE, "simulationSemanticHash": SEMANTIC, "resolvedHash": RESOLVED},
@@ -479,21 +506,30 @@ def _shell(directory: Path, *, frames: list[dict] | None = None, clip: dict | No
     }
     document.update(clip or {})
     (directory / "clip.json").write_text(json.dumps(document), encoding="utf-8")
-    (directory / "camera_info.json").write_text(json.dumps({
-        "distortionModel": "none",
-        "distortion": [0, 0, 0, 0, 0],
-    }), encoding="utf-8")
-    records = frames if frames is not None else [
-        {
-            "index": index,
-            "captureTimeNs": CAPTURE_INTERVAL_NS * (index + 1),
-            "sampleIndex": index,
-            "simulationStep": 3 * (index + 1),
-            "rgbByteLength": 3_686_400,
-            "depthValueCount": 921_600,
-        }
-        for index in range(FRAME_COUNT)
-    ]
+    (directory / "camera_info.json").write_text(
+        json.dumps(
+            {
+                "distortionModel": "none",
+                "distortion": [0, 0, 0, 0, 0],
+            }
+        ),
+        encoding="utf-8",
+    )
+    records = (
+        frames
+        if frames is not None
+        else [
+            {
+                "index": index,
+                "captureTimeNs": CAPTURE_INTERVAL_NS * (index + 1),
+                "sampleIndex": index,
+                "simulationStep": 3 * (index + 1),
+                "rgbByteLength": 3_686_400,
+                "depthValueCount": 921_600,
+            }
+            for index in range(FRAME_COUNT)
+        ]
+    )
     (directory / "frames.jsonl").write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
     for name in ("rgb.mp4", "depth.mp4", "depth.f32"):
         (directory / name).write_bytes(b"")
@@ -512,21 +548,27 @@ def test_checker_rejects_contract_violations(tmp_path: Path):
         check_clip(named)
 
     rendered = tmp_path / "rendered"
-    _shell(rendered, clip={
-        "renderer": {"id": "pbr-mesh", "version": 1},
-        "episodeHash": "rendered",
-        "cameraId": "cam",
-        "windowIndex": 0,
-    })
+    _shell(
+        rendered,
+        clip={
+            "renderer": {"id": "pbr-mesh", "version": 1},
+            "episodeHash": "rendered",
+            "cameraId": "cam",
+            "windowIndex": 0,
+        },
+    )
     rendered.rename(tmp_path / "clip-rendered-cam-0")
     with pytest.raises(ClipError, match="canonical-analytic"):
         check_clip(tmp_path / "clip-rendered-cam-0")
 
     noisy = tmp_path / f"clip-{EPISODE}-other-0"
-    _shell(noisy, clip={
-        "cameraId": "other",
-        "noise": {"model": "none", "standardDeviation": 1, "bias": 0, "dropoutProbability": 0},
-    })
+    _shell(
+        noisy,
+        clip={
+            "cameraId": "other",
+            "noise": {"model": "none", "standardDeviation": 1, "bias": 0, "dropoutProbability": 0},
+        },
+    )
     with pytest.raises(ClipError, match="noise"):
         check_clip(noisy)
 
@@ -554,3 +596,12 @@ def test_checker_rejects_contract_violations(tmp_path: Path):
     _shell(gapped, frames=bad_frames)
     with pytest.raises(ClipError, match="33333333"):
         check_clip(gapped)
+
+
+def test_historical_ros_payload_has_no_preview():
+    assert decode_camera_payload(bytes([0xFF, 0, 0, 0, 0])) is None
+    with pytest.raises(ClipError, match="Invalid native"):
+        decode_camera_payload(
+            _image(1, "rgba8", b"bad"),
+            {"captureTimeNs": 1, "frameId": "camera", "valueContract": {"id": "cev.image", "version": 1}},
+        )

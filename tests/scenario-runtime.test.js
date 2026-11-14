@@ -315,49 +315,15 @@ test("sensor disturbances override and restore enabled and deterministic dropout
     assert.equal(sensor.config.noise.dropoutProbability, 0.1);
 });
 
-test("inactive flag-started External ROS controllers consume commands and hold the actor stopped", () => {
-    const definition = scenario({
-        routes: [route("ego", {
-            kind: "external-ros",
-            activation: { kind: "flag", flag: "external-enabled" },
-            topicId: "ego-command",
-        })],
-    });
-    const { runtime, vehicles } = runtimeHarness(definition, {
-        topics: [{ id: "ego-command", name: "/controls/command", direction: "input" }],
-    });
-
-    assert.equal(runtime.applyExternalTopic({
-        name: "/controls/command",
-        value: { speedMps: 5, steeringRad: 0.2 },
-    }), true);
-    assert.equal(vehicles[0].velocity.x, 0);
-    assert.equal(vehicles[0].steeringAngle, 0);
-
-    runtime.setFlag("external-enabled", true);
-    runtime.applyExternalTopic({
-        name: "/controls/command",
-        value: { speedMps: 5, steeringRad: 0.2 },
-    });
-    assert.equal(vehicles[0].velocity.x, 5);
-    assert.equal(vehicles[0].steeringAngle, 0.2);
-
-    runtime.setFlag("external-enabled", false);
-    runtime.preMotion({ step: 1, timeNs: 1, dt: 0.01 });
-    assert.equal(vehicles[0].velocity.x, 0);
-    assert.equal(vehicles[0].steeringAngle, 0);
-    runtime.applyExternalTopic({
-        name: "/controls/command",
-        value: { speedMps: 9, steeringRad: -0.4 },
-    });
-    assert.equal(vehicles[0].velocity.x, 0);
-    assert.equal(vehicles[0].steeringAngle, 0);
+test("historical External ROS scenarios require reviewed native adoption", () => {
+    assert.throws(() => runtimeHarness(scenario({ routes: [route("ego", { kind: "external-ros", activation: { kind: "start" }, topicId: "ego-command" })] })), /reviewed native adoption/i);
 });
 
-test("actor-command expiry restores the latest External ROS command deterministically", () => {
+test("actor-command expiry restores the latest native external command deterministically", () => {
     const definition = scenario({
+        version: 2,
         routes: [route("ego", {
-            kind: "external-ros",
+            kind: "external-topic",
             activation: { kind: "start" },
             topicId: "ego-command",
         })],
@@ -376,37 +342,46 @@ test("actor-command expiry restores the latest External ROS command deterministi
             }],
         }],
     });
-    const { runtime, vehicles } = runtimeHarness(definition, {
-        topics: [{ id: "ego-command", name: "/controls/command", direction: "input" }],
+    const { runtime } = runtimeHarness(definition, {
+        topics: [{ id: "ego-command", name: "/controls/command", direction: "input", producer: "candidate", valueContract: { id: "cev.control-command", version: 1 } }],
     });
 
+    const controls = new ControlRuntime({ manifest: { id: "run", version: 13 }, controls: { targetVehicleId: "ego", authority: "candidate", stalePolicy: "stop", actuatorOverrides: { responseDelayNs: 0, maxAcceleration: 100, maxDeceleration: 100, maxSteeringRate: 100 } } });
+    runtime.setControlRuntime(controls);
+    const nativeCommand = (sequence, speedMps, steeringRad) => ({ runId: "run", mode: "velocity", sequence, captureTimeNs: 0, deadlineNs: 100, frameId: "base_link", speedMps, steeringRad, accelerationMps2: 0, jerkMps3: 0, steeringRateRadps: 0 });
     runtime.applyExternalTopic({
         name: "/controls/command",
-        value: { speedMps: 3, steeringRad: 0.1 },
+        value: nativeCommand("1", 3, 0.1),
     });
     runtime.preMotion({ step: 1, timeNs: 1, dt: 0.01 });
-    assert.equal(vehicles[0].velocity.x, 7);
-    assert.equal(vehicles[0].steeringAngle, 0.25);
+    let applied = controls.step({ step: 1, timeNs: 1, dt: 0.1 }).get("ego");
+    assert.equal(applied.speedMps, 7);
+    assert.equal(applied.command.steeringRadRep103, 0.25);
 
     runtime.applyExternalTopic({
         name: "/controls/command",
-        value: { speedMps: 4, steeringRad: 0.15 },
+        value: nativeCommand("10", 4, 0.15),
     });
-    assert.equal(vehicles[0].velocity.x, 7);
-    assert.equal(vehicles[0].steeringAngle, 0.25);
+    assert.equal(applied.speedMps, 7);
+    assert.equal(applied.command.steeringRadRep103, 0.25);
     runtime.preMotion({ step: 2, timeNs: 2, dt: 0.01 });
-    assert.equal(vehicles[0].velocity.x, 7);
+    applied = controls.step({ step: 2, timeNs: 2, dt: 0.1 }).get("ego");
+    assert.equal(applied.speedMps, 7);
 
     runtime.preMotion({ step: 3, timeNs: 3, dt: 0.01 });
-    assert.equal(vehicles[0].velocity.x, 4);
-    assert.equal(vehicles[0].steeringAngle, 0.15);
+    applied = controls.step({ step: 3, timeNs: 3, dt: 0.1 }).get("ego");
+    assert.equal(applied.speedMps, 4);
+    assert.equal(applied.command.steeringRadRep103, 0.15);
 
     runtime.reset();
+    controls.reset();
     runtime.preMotion({ step: 1, timeNs: 1, dt: 0.01 });
+    controls.step({ step: 1, timeNs: 1, dt: 0.1 });
     runtime.preMotion({ step: 2, timeNs: 2, dt: 0.01 });
+    controls.step({ step: 2, timeNs: 2, dt: 0.1 });
     runtime.preMotion({ step: 3, timeNs: 3, dt: 0.01 });
-    assert.equal(vehicles[0].velocity.x, 0);
-    assert.equal(vehicles[0].steeringAngle, 0);
+    assert.equal(controls.step({ step: 3, timeNs: 3, dt: 0.1 }).get("ego").speedMps, 0);
+
 });
 
 test("scenario-rejected Ego commands and legacy /ackdrive never drive the plant", () => {

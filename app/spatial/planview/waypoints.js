@@ -1,8 +1,6 @@
 import { localToWorld } from "./transform.js";
 
 export const PLAN_WAYPOINTS_TOPIC = "/planning/waypoints";
-export const PLAN_WAYPOINTS_TYPE = "sensor_fusion_msgs/WaypointList";
-export const PLAN_WAYPOINTS_DEFINITION = "geometry_msgs/Point32[] points\n";
 
 let points = [];
 let revision = 0;

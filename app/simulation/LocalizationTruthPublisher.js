@@ -1,4 +1,3 @@
-import { buildOdometryMessage } from "./sensors/SensorMessages.js";
 import { buildNativeOdometry } from "./sensors/NativeSensorProducts.js";
 import {
     buildTruthOdometry,
@@ -26,8 +25,7 @@ export class LocalizationTruthPublisher {
         this.lastSnapshot = snapshot;
 
         const truth = buildTruthOdometry(snapshot, this.frames);
-        const native = this.topicRouter?.getTopic?.("truth-odometry")?.valueContract;
-        const payload = (native ? buildNativeOdometry : buildOdometryMessage)({
+        const payload = buildNativeOdometry({
             timeNs,
             frameId: truth.headerFrameId,
             childFrameId: truth.childFrameId,
@@ -41,7 +39,7 @@ export class LocalizationTruthPublisher {
 
         this.topicRouter?.routeOutbound?.("truth-odometry", {
             value: payload,
-            ...(native ? {} : { typeStr: "nav_msgs/Odometry" }),
+            ...({}),
         }, {
             producer: "oracle",
             captureTimeNs: timeNs,
@@ -50,7 +48,7 @@ export class LocalizationTruthPublisher {
             cycle: step,
             logClass: "standard",
             frameId: truth.headerFrameId,
-            ...(native ? { sequenceId: String(step), actualDeliveryStep: step } : {}),
+            ...({ sequenceId: String(step), actualDeliveryStep: step }),
         });
 
         return payload;

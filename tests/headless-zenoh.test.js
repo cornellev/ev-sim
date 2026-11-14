@@ -9,6 +9,7 @@ import { zenohHostConfig } from "./helpers/zenohFixtures.js";
 import { main } from "../server/headless/Cli.js";
 import { HeadlessSupervisor } from "../server/headless/HeadlessSupervisor.js";
 import { WorkerHandle } from "../server/headless/WorkerHandle.js";
+import { TransformRuntime } from "../app/simulation/TransformRuntime.js";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -32,6 +33,8 @@ test("external controls enter the next fixed step; identity, sequence, pause and
     const { session, binding } = sessionFor();
     t.after(() => session.close());
     const bundle = await externalBundle({ maxSteps: 80 });
+    const transforms = new TransformRuntime(bundle.resolved.calibration);
+    for (const sensor of bundle.manifest.sensorRig.sensors) assert.equal(transforms.resolveCaptureFrames(sensor).ok, true);
     await session.prepare(bundle); await session.start();
     const time = session.kernel.timeNs;
     send(binding, session, { run: "wrong-run" });

@@ -59,9 +59,8 @@ function validatePluginProducts(sensor, plugin, topics, producerTopics) {
             }
             const topic = topics.get(topicId);
             if (!topic) throw new Error(`Plugin sensor "${sensor.id}" references unknown topic "${topicId}".`);
-            const type = topic.schema?.type || topic.type;
-            if (product.valueContract ? topic.valueContract?.id !== product.valueContract.id || topic.valueContract?.version !== product.valueContract.version : type !== "sensor_msgs/PointCloud2" || sensor.schema?.[product.outputKey] !== type) {
-                throw new Error(`Plugin sensor "${sensor.id}" product "${product.productId}" requires ${product.valueContract ? `${product.valueContract.id}@${product.valueContract.version}` : "sensor_msgs/PointCloud2"}.`);
+            if (plugin.descriptor.sensorAbi !== 2 || topic.valueContract?.id !== product.valueContract?.id || topic.valueContract?.version !== product.valueContract?.version) {
+                throw new Error(`Plugin sensor "${sensor.id}" product "${product.productId}" requires cev.points@1 and sensorAbi 2.`);
             }
             if (product.contractId && topic.contractId !== product.contractId) {
                 throw new Error(`Plugin sensor "${sensor.id}" product "${product.productId}" requires contract "${product.contractId}".`);

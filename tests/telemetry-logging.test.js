@@ -37,6 +37,20 @@ import { createPluginPcapHeadlessBundle } from "./helpers/headlessRunnerBundle.j
 import { fixturePcapHostConfig, parseClassicPcapIndependently } from "./helpers/sensorTransportFixtures.js";
 import { measuredPerceptionProfileRef } from "../app/simulation/headless/ProfileRegistry.js";
 
+test("native SFLog products retain packed arrays and each capture's metadata", () => {
+    const encoder = new SFLogBatchEncoder();
+    const path = "devices.lidar.pointCloud";
+    const value = { positions: new Float32Array([1.25, -2, 3]), intensities: new Float32Array([0.5]), count: 1 };
+    const descriptor = { path, type: "json", metadata: { valueContract: { id: "cev.points", version: 1 }, frameId: "lidar", captureTimeNs: 0 } };
+    for (const captureTimeNs of [1000, 2000]) encoder.addUpdate({ path, descriptor, timeUs: captureTimeNs / 1000, entry: { type: "json", value, metadata: { captureTimeNs } } });
+    const updates = decodeRecordStream(encoder.flush().bytes).updates;
+    assert.deepEqual(updates.map((entry) => entry.descriptor.metadata.captureTimeNs), [1000, 2000]);
+    assert.deepEqual(updates.map((entry) => entry.value), [value, value]);
+    assert.ok(updates[0].value.positions instanceof Float32Array);
+    assert.throws(() => encoder.addUpdate({ path, descriptor, entry: { value: { ...value, count: 2 } } }), /Invalid SFLog native product/);
+    for (const base64 of ["!", "AQ=="]) assert.throws(() => decodeSignalValue("json", new TextEncoder().encode(JSON.stringify({ __sflogTypedArray: "Float32Array", base64 }))), /SFLog native typed array/);
+});
+
 test("native packet bursts share a bounded log flush without losing record order or bytes", async () => {
     const controller = new RecordingController({ store: new SignalStore() });
     controller.encoder = new SFLogBatchEncoder();

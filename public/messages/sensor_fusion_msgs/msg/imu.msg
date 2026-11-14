@@ -1,3 +1,0 @@
-geometry_msgs/Point32 heading
-geometry_msgs/Point32 angular_velocity
-geometry_msgs/Point32 linear_acceleration

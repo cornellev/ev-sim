@@ -1,4 +1,4 @@
-import { createDefaultRunManifest } from "../../app/simulation/RunManifest.js";
+import { createDefaultRunManifest } from "../../server/interfaces/historical/RunContracts.js";
 import { createProtobufInterfaceResource } from "../../app/interfaces/ProtobufRunBinding.js";
 import { loadUploadedProtoFiles } from "../../server/interfaces/ProtobufSourceLoader.js";
 import { uploadedSource } from "./protobufFixtures.js";

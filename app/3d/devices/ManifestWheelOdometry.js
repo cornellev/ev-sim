@@ -3,7 +3,7 @@ import * as THREE from "three";
 
 import Device from "./Device.js";
 import { SensorPublisher } from "./SensorPublisher.js";
-import { buildOdometryMessage } from "./SensorMessages.js";
+
 import {
     buildWheelOdometryMeasurement,
     captureVehicleSnapshot,
@@ -74,7 +74,7 @@ export class ManifestWheelOdometry extends Device {
             topicId: this.config.outputs.odometryTopicId,
             signal: "odometry",
             frameId,
-            value: (this.contractPublisher.nativeTopics ? buildNativeOdometry : buildOdometryMessage)({
+            value: (buildNativeOdometry)({
                 timeNs: captureTimeNs,
                 frameId,
                 childFrameId: measurement.childFrameId,

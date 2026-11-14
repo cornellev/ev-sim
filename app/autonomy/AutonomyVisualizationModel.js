@@ -2,12 +2,11 @@ import { Quaternion, Vector3 } from "three";
 import { validateNativeTopicValue } from "../simulation/NativeTopicContracts.js";
 /**
  * Renderer-neutral primitives for candidate/oracle perception and localization overlays.
- * Capture-time metadata travels with each snapshot so replay does not need ROS re-decode.
+ * Capture-time metadata travels with each snapshot for replay.
  */
 
 import {
     composeRep103Poses,
-    extractHeaderCaptureTimeNs,
     quaternionToEuler,
     rep103OrientationToThreeEuler,
     rep103PoseToThree,
@@ -151,148 +150,34 @@ function isFiniteQuat(q) {
         && Number.isFinite(Number(q.w));
 }
 
-export function validateInboundPayload(contractId, typeStr, value) {
-    if (value == null || typeof value !== "object") {
-        return { ok: false, code: "malformed-payload", message: "Payload must be an object." };
-    }
-    switch (typeStr) {
-        case "vision_msgs/Detection2DArray": {
-            if (!value.header?.stamp) return { ok: false, code: "missing-stamp", message: "Detection2DArray requires header.stamp." };
-            if (!Array.isArray(value.detections)) return { ok: false, code: "malformed-payload", message: "detections must be an array." };
-            for (const det of value.detections) {
-                const sizeX = finiteNumber(det?.bbox?.size_x);
-                const sizeY = finiteNumber(det?.bbox?.size_y);
-                const cx = finiteNumber(det?.bbox?.center?.position?.x);
-                const cy = finiteNumber(det?.bbox?.center?.position?.y);
-                if (sizeX === null || sizeY === null || cx === null || cy === null || sizeX < 0 || sizeY < 0) {
-                    return { ok: false, code: "malformed-geometry", message: "Detection2D has non-finite or negative geometry." };
-                }
-            }
-            return { ok: true };
-        }
-        case "vision_msgs/Detection3DArray": {
-            if (!value.header?.stamp) return { ok: false, code: "missing-stamp", message: "Detection3DArray requires header.stamp." };
-            if (!Array.isArray(value.detections)) return { ok: false, code: "malformed-payload", message: "detections must be an array." };
-            for (const det of value.detections) {
-                if (!isFiniteVec3(det?.bbox?.center?.position) || !isFiniteVec3(det?.bbox?.size)) {
-                    return { ok: false, code: "malformed-geometry", message: "Detection3D has non-finite geometry." };
-                }
-                const size = det.bbox.size;
-                if (Number(size.x) < 0 || Number(size.y) < 0 || Number(size.z) < 0) {
-                    return { ok: false, code: "malformed-geometry", message: "Detection3D size must be non-negative." };
-                }
-            }
-            return { ok: true };
-        }
-        case "sensor_fusion_msgs/StampedLanes": {
-            if (!value.header?.stamp) return { ok: false, code: "missing-stamp", message: "StampedLanes requires header.stamp." };
-            if (!Array.isArray(value.lanes)) return { ok: false, code: "malformed-payload", message: "lanes must be an array." };
-            for (const lane of value.lanes) {
-                if (!Array.isArray(lane?.points)) return { ok: false, code: "malformed-payload", message: "lane.points must be an array." };
-                for (const point of lane.points) {
-                    if (!isFiniteVec3(point)) return { ok: false, code: "malformed-geometry", message: "Lane point is non-finite." };
-                }
-            }
-            return { ok: true };
-        }
-        case "sensor_fusion_msgs/Boxes": {
-            if (!Array.isArray(value.boxes)) return { ok: false, code: "malformed-payload", message: "boxes must be an array." };
-            for (const box of value.boxes) {
-                if (!isFiniteVec3(box?.center) || !isFiniteVec3(box?.size)) {
-                    return { ok: false, code: "malformed-geometry", message: "Legacy box has non-finite geometry." };
-                }
-            }
-            return { ok: true };
-        }
-        case "sensor_fusion_msgs/Lanes": {
-            if (!Array.isArray(value.lanes)) return { ok: false, code: "malformed-payload", message: "lanes must be an array." };
-            return { ok: true };
-        }
-        case "sensor_msgs/Image": {
-            if (!value.header?.stamp) return { ok: false, code: "missing-stamp", message: "Image requires header.stamp." };
-            const height = Number(value.height);
-            const width = Number(value.width);
-            if (!Number.isInteger(height) || !Number.isInteger(width) || height < 0 || width < 0) {
-                return { ok: false, code: "malformed-image", message: "Image height/width must be non-negative integers." };
-            }
-            if (contractId === "perception-semantic" && value.encoding && value.encoding !== "16UC1") {
-                return { ok: false, code: "encoding-mismatch", message: `Semantic image expected 16UC1, got ${value.encoding}.` };
-            }
-            return { ok: true };
-        }
-        case "nav_msgs/Odometry": {
-            if (!value.header?.stamp) return { ok: false, code: "missing-stamp", message: "Odometry requires header.stamp." };
-            if (!isFiniteVec3(value?.pose?.pose?.position)) {
-                return { ok: false, code: "malformed-geometry", message: "Odometry position is non-finite." };
-            }
-            if (!isFiniteQuat(value?.pose?.pose?.orientation)) {
-                return { ok: false, code: "malformed-geometry", message: "Odometry orientation is non-finite." };
-            }
-            const cov = value?.pose?.covariance;
-            if (cov != null && (!Array.isArray(cov) || cov.length !== 36 || cov.some((entry) => !Number.isFinite(Number(entry))))) {
-                return { ok: false, code: "malformed-covariance", message: "Odometry pose.covariance must be 36 finite values." };
-            }
-            return { ok: true };
-        }
-        case "sensor_fusion_msgs/StampedAckermannDrive": {
-            if (!value.header?.stamp) return { ok: false, code: "missing-stamp", message: "StampedAckermannDrive requires header.stamp." };
-            const mode = String(value.mode || "velocity");
-            if (!["velocity", "acceleration", "stop"].includes(mode)) {
-                return { ok: false, code: "invalid-mode", message: `Invalid control mode "${mode}".` };
-            }
-            const sequence = Number(value.sequence);
-            if (!Number.isInteger(sequence) || sequence < 0) {
-                return { ok: false, code: "invalid-sequence", message: "sequence must be a non-negative integer." };
-            }
-            for (const field of ["steering_angle", "steering_angle_velocity", "speed", "acceleration", "jerk", "deadline_ns"]) {
-                if (value[field] !== undefined && value[field] !== null && !Number.isFinite(Number(value[field]))) {
-                    return { ok: false, code: "non-finite", message: `${field} must be finite.` };
-                }
-            }
-            return { ok: true };
-        }
-        default:
-            return { ok: true };
-    }
-}
-
 function assertNativeVisualization(payload, valueContract, id) {
-    if (!valueContract) return false;
-    if (valueContract.id !== id || valueContract.version !== 1) throw new Error(`Visualization requires ${id}@1.`);
+    if (valueContract?.id !== id || valueContract.version !== 1) throw new Error(`Visualization requires ${id}@1.`);
     const validation = validateNativeTopicValue(valueContract, payload);
     if (!validation.ok) throw new Error(validation.message);
     return true;
 }
 
-function classFromResults(results = []) {
-    const first = results[0]?.hypothesis || results[0];
-    return {
-        classId: String(first?.class_id ?? first?.classId ?? "unknown"),
-        score: Number(first?.score ?? 1),
-    };
-}
-
 export function normalizeDetections2D(payload, { source = "candidate", status = VISUALIZATION_STATUS.OK, valueContract = null, metadata = {} } = {}) {
-    const native = assertNativeVisualization(payload, valueContract, "cev.detections-2d");
-    const stampNs = native ? metadata.captureTimeNs : extractHeaderCaptureTimeNs(payload);
-    const frameId = native ? String(metadata.frameId || "") : String(payload?.header?.frame_id || "");
+    assertNativeVisualization(payload, valueContract, "cev.detections-2d");
+    const stampNs = metadata.captureTimeNs;
+    const frameId = String(metadata.frameId || "");
     return (payload?.detections || []).map((det, index) => ({
         id: String(det.id || `${source}-2d-${index}`),
         source,
         status,
-        frameId: String(det.header?.frame_id || frameId),
-        captureTimeNs: extractHeaderCaptureTimeNs(det) ?? stampNs,
-        ...(native ? { classId: det.classId, score: det.score } : classFromResults(det.results)),
+        frameId: frameId,
+        captureTimeNs: stampNs,
+        ...({ classId: det.classId, score: det.score }),
         box2d: {
             center: {
-                x: Number(native ? det.center.x : det.bbox?.center?.position?.x || 0),
-                y: Number(native ? det.center.y : det.bbox?.center?.position?.y || 0),
+                x: Number(det.center.x),
+                y: Number(det.center.y),
             },
             size: {
-                x: Number(native ? det.size.x : det.bbox?.size_x || 0),
-                y: Number(native ? det.size.y : det.bbox?.size_y || 0),
+                x: Number(det.size.x),
+                y: Number(det.size.y),
             },
-            theta: Number(det.bbox?.center?.theta || 0),
+            theta: Number(det.theta || 0),
         },
         visibility: Number(det.visibility ?? 1),
         occlusion: Number(det.occlusion ?? 0),
@@ -305,30 +190,30 @@ export function normalizeDetections3D(payload, {
     transformToMap = null,
     valueContract = null, metadata = {},
 } = {}) {
-    const native = assertNativeVisualization(payload, valueContract, "cev.detections-3d");
-    const stampNs = native ? metadata.captureTimeNs : extractHeaderCaptureTimeNs(payload);
-    const frameId = native ? String(metadata.frameId || "") : String(payload?.header?.frame_id || "");
+    assertNativeVisualization(payload, valueContract, "cev.detections-3d");
+    const stampNs = metadata.captureTimeNs;
+    const frameId = String(metadata.frameId || "");
     return (payload?.detections || []).map((det, index) => {
         const center = {
-            x: Number(native ? det.pose.position.x : det.bbox?.center?.position?.x || 0),
-            y: Number(native ? det.pose.position.y : det.bbox?.center?.position?.y || 0),
-            z: Number(native ? det.pose.position.z : det.bbox?.center?.position?.z || 0),
+            x: Number(det.pose.position.x),
+            y: Number(det.pose.position.y),
+            z: Number(det.pose.position.z),
         };
-        const orientation = native ? det.pose.orientation : det.bbox?.center?.orientation || { x: 0, y: 0, z: 0, w: 1 };
+        const orientation = det.pose.orientation;
         const size = {
-            x: Number(native ? det.size.x : det.bbox?.size?.x || 0),
-            y: Number(native ? det.size.y : det.bbox?.size?.y || 0),
-            z: Number(native ? det.size.z : det.bbox?.size?.z || 0),
+            x: Number(det.size.x),
+            y: Number(det.size.y),
+            z: Number(det.size.z),
         };
         let mapPose = { position: center, rotation: orientation };
         let transformOk = true;
-        const sourceFrameId = String(det.header?.frame_id || frameId);
+        const sourceFrameId = frameId;
         if (typeof transformToMap === "function") {
             const resolved = transformToMap({
                 position: center,
                 rotation: orientation,
                 frameId: sourceFrameId,
-                captureTimeNs: extractHeaderCaptureTimeNs(det) ?? stampNs,
+                captureTimeNs: stampNs,
             });
             if (resolved?.ok) mapPose = resolved.pose;
             else transformOk = false;
@@ -340,8 +225,8 @@ export function normalizeDetections3D(payload, {
             source,
             status: transformOk ? status : VISUALIZATION_STATUS.MISSING_FRAME,
             frameId: sourceFrameId,
-            captureTimeNs: extractHeaderCaptureTimeNs(det) ?? stampNs,
-            ...(native ? { classId: det.classId, score: det.score } : classFromResults(det.results)),
+            captureTimeNs: stampNs,
+            ...({ classId: det.classId, score: det.score }),
             box3d: {
                 center: mapPose.position,
                 size,
@@ -356,45 +241,15 @@ export function normalizeDetections3D(payload, {
     });
 }
 
-export function normalizeLegacyBoxes(payload, { source = "candidate", status = VISUALIZATION_STATUS.OK } = {}) {
-    return (payload?.boxes || []).map((box, index) => ({
-        id: String(box.id ?? `${source}-legacy-${index}`),
-        source,
-        status,
-        frameId: "map",
-        captureTimeNs: null,
-        classId: "unknown",
-        score: 1,
-        box3d: {
-            center: { x: Number(box.center?.x || 0), y: Number(box.center?.y || 0), z: Number(box.center?.z || 0) },
-            size: { x: Number(box.size?.x || 0), y: Number(box.size?.y || 0), z: Number(box.size?.z || 0) },
-            orientation: { x: 0, y: 0, z: 0, w: 1 },
-            threeCenter: {
-                x: Number(box.center?.x || 0),
-                y: Number(box.center?.z || 0),
-                z: Number(box.center?.y || 0),
-            },
-            threeSize: {
-                x: Number(box.size?.x || 0),
-                y: Number(box.size?.z || 0),
-                z: Number(box.size?.y || 0),
-            },
-            threeRotation: { x: 0, y: 0, z: 0, order: "XYZ" },
-        },
-        visibility: 1,
-        occlusion: 0,
-    }));
-}
-
 export function normalizeLanes(payload, {
     source = "candidate",
     status = VISUALIZATION_STATUS.OK,
     transformToMap = null,
     valueContract = null, metadata = {},
 } = {}) {
-    const native = assertNativeVisualization(payload, valueContract, "cev.lanes");
-    const stampNs = native ? metadata.captureTimeNs : extractHeaderCaptureTimeNs(payload);
-    const frameId = native ? String(metadata.frameId || "") : String(payload?.header?.frame_id || "map");
+    assertNativeVisualization(payload, valueContract, "cev.lanes");
+    const stampNs = metadata.captureTimeNs;
+    const frameId = String(metadata.frameId || "");
     const lanes = payload?.lanes || [];
     return lanes.map((lane, index) => {
         const points = (lane.points || []).map((point) => {
@@ -403,7 +258,7 @@ export function normalizeLanes(payload, {
                 y: Number(point.y || 0),
                 z: Number(point.z || 0),
             };
-            if (typeof transformToMap === "function" && (native || payload?.header)) {
+            if (typeof transformToMap === "function" && true) {
                 const resolved = transformToMap({
                     position,
                     rotation: { x: 0, y: 0, z: 0, w: 1 },
@@ -418,7 +273,7 @@ export function normalizeLanes(payload, {
             };
         });
         return {
-            id: native ? lane.id : `${source}-lane-${index}`,
+            id: lane.id,
             source,
             status,
             frameId,
@@ -445,16 +300,16 @@ export function normalizePath(payload, { valueContract, metadata = {}, transform
 
 export function normalizeSemanticImage(payload, { source = "candidate", status = VISUALIZATION_STATUS.OK, valueContract = null, metadata = {} } = {}) {
     if (!payload) return null;
-    const native = assertNativeVisualization(payload, valueContract, "cev.image");
+    assertNativeVisualization(payload, valueContract, "cev.image");
     return {
         source,
         status,
-        captureTimeNs: native ? metadata.captureTimeNs : extractHeaderCaptureTimeNs(payload),
-        frameId: native ? String(metadata.frameId || "") : String(payload.header?.frame_id || ""),
+        captureTimeNs: metadata.captureTimeNs,
+        frameId: String(metadata.frameId || ""),
         height: Number(payload.height || 0),
         width: Number(payload.width || 0),
-        encoding: String(native ? payload.pixelFormat : payload.encoding || "16UC1"),
-        step: Number(native ? payload.strideBytes : payload.step || 0),
+        encoding: String(payload.pixelFormat),
+        step: Number(payload.strideBytes),
         data: payload.data ?? null,
     };
 }
@@ -465,10 +320,10 @@ export function normalizeOdometry(payload, {
     valueContract = null, metadata = {},
 } = {}) {
     if (!payload) return null;
-    const native = assertNativeVisualization(payload, valueContract, "cev.odometry");
-    const position = native ? payload.pose.position : payload.pose?.pose?.position || { x: 0, y: 0, z: 0 };
-    const orientation = native ? payload.pose.orientation : payload.pose?.pose?.orientation || { x: 0, y: 0, z: 0, w: 1 };
-    const covariance = native ? [...payload.poseCovariance] : Array.isArray(payload.pose?.covariance) ? [...payload.pose.covariance] : new Array(36).fill(0);
+    assertNativeVisualization(payload, valueContract, "cev.odometry");
+    const position = payload.pose.position;
+    const orientation = payload.pose.orientation;
+    const covariance = [...payload.poseCovariance];
     const three = rep103PoseToThree({
         position,
         rotation: { x: 0, y: 0, z: 0 },
@@ -476,9 +331,9 @@ export function normalizeOdometry(payload, {
     return {
         source,
         status,
-        captureTimeNs: native ? metadata.captureTimeNs : extractHeaderCaptureTimeNs(payload),
-        frameId: native ? String(metadata.frameId || "") : String(payload.header?.frame_id || ""),
-        childFrameId: native ? payload.childFrameId : String(payload.child_frame_id || "base_link"),
+        captureTimeNs: metadata.captureTimeNs,
+        frameId: String(metadata.frameId || ""),
+        childFrameId: payload.childFrameId,
         position: {
             x: Number(position.x || 0),
             y: Number(position.y || 0),

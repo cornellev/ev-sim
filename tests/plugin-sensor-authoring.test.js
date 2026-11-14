@@ -305,8 +305,7 @@ test("missing package, wrong runtime hash, undeclared type, and missing grants f
 
 test("UI-only package edits change full identity but preserve simulation identity", async () => {
     const original = await pluginSensorFixtureResource();
-    const uiOnly = await pluginFixtureResource({
-        fixture: "test.range-image-fixture",
+    const uiOnly = await pluginSensorFixtureResource({
         mutateFiles(files) {
             const current = new TextDecoder().decode(files["ui/index.js"]);
             files["ui/index.js"] = new TextEncoder().encode(`${current}\n`);
@@ -327,8 +326,7 @@ test("UI-only package edits change full identity but preserve simulation identit
 
 test("runtime and config edits change semantic identity; legacy vehicles stay byte-identical", async () => {
     const original = await pluginSensorFixtureResource();
-    const runtimeEdit = await pluginFixtureResource({
-        fixture: "test.range-image-fixture",
+    const runtimeEdit = await pluginSensorFixtureResource({
         mutateFiles(files) {
             const current = new TextDecoder().decode(files["runtime/index.js"]);
             files["runtime/index.js"] = new TextEncoder().encode(`${current}\n`);

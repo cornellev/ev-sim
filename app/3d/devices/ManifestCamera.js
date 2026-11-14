@@ -3,14 +3,7 @@ import * as THREE from "three";
 
 import Device from "./Device.js";
 import { SensorPublisher } from "./SensorPublisher.js";
-import {
-    buildCameraInfo,
-    buildDetection2DArray,
-    buildDetection3DArray,
-    buildImageMessage,
-    buildStampedLanes,
-    buildTrafficControlStates,
-} from "./SensorMessages.js";
+
 import { rep103PoseToThree, threeCameraLookAlongMountForwardEuler } from "../../autonomy/CoordinateFrames.js";
 import { gaussianSample } from "../../autonomy/LocalizationMeasurements.js";
 import {
@@ -200,7 +193,7 @@ export class ManifestCamera extends Device {
                 topicId: outputs.imageTopicId,
                 signal: "image",
                 frameId,
-                value: (this.contractPublisher.nativeTopics ? buildNativeImage : buildImageMessage)({
+                value: (buildNativeImage)({
                     data: pixels,
                     width: calibration.width,
                     height: calibration.height,
@@ -215,7 +208,7 @@ export class ManifestCamera extends Device {
                 topicId: outputs.cameraInfoTopicId,
                 signal: "cameraInfo",
                 frameId,
-                value: (this.contractPublisher.nativeTopics ? buildNativeCameraInfo : buildCameraInfo)({
+                value: (buildNativeCameraInfo)({
                     ...calibration,
                     timeNs: captureTimeNs,
                     frameId,
@@ -227,7 +220,7 @@ export class ManifestCamera extends Device {
                 topicId: outputs.depthTopicId,
                 signal: "depth",
                 frameId,
-                value: (this.contractPublisher.nativeTopics ? buildNativeImage : buildImageMessage)({
+                value: (buildNativeImage)({
                     data: warp(captured.depth, 1, "nearest"),
                     width: calibration.width,
                     height: calibration.height,
@@ -242,7 +235,7 @@ export class ManifestCamera extends Device {
                 topicId: outputs.semanticTopicId,
                 signal: "semantic",
                 frameId,
-                value: (this.contractPublisher.nativeTopics ? buildNativeImage : buildImageMessage)({
+                value: (buildNativeImage)({
                     data: warp(captured.semantic, 1, "nearest"),
                     width: calibration.width,
                     height: calibration.height,
@@ -257,7 +250,7 @@ export class ManifestCamera extends Device {
                 topicId: outputs.instanceTopicId,
                 signal: "instance",
                 frameId,
-                value: (this.contractPublisher.nativeTopics ? buildNativeImage : buildImageMessage)({
+                value: (buildNativeImage)({
                     data: new Int32Array(warp(captured.instance, 1, "nearest")),
                     width: calibration.width,
                     height: calibration.height,
@@ -272,7 +265,7 @@ export class ManifestCamera extends Device {
                 topicId: outputs.detections2dTopicId,
                 signal: "detections2d",
                 frameId,
-                value: (this.contractPublisher.nativeTopics ? buildNativeDetections2D : buildDetection2DArray)({ detections: imageDetections, timeNs: captureTimeNs, frameId }),
+                value: (buildNativeDetections2D)({ detections: imageDetections, timeNs: captureTimeNs, frameId }),
             });
         }
         if (products.detections3d === true && outputs.detections3dTopicId) {
@@ -280,7 +273,7 @@ export class ManifestCamera extends Device {
                 topicId: outputs.detections3dTopicId,
                 signal: "detections3d",
                 frameId: mapFrameId,
-                value: (this.contractPublisher.nativeTopics ? buildNativeDetections : buildDetection3DArray)({
+                value: (buildNativeDetections)({
                     detections: imageDetections,
                     timeNs: captureTimeNs,
                     frameId: mapFrameId,
@@ -292,7 +285,7 @@ export class ManifestCamera extends Device {
                 topicId: outputs.lanesTopicId,
                 signal: "lanes",
                 frameId: mapFrameId,
-                value: (this.contractPublisher.nativeTopics ? buildNativeLanes : buildStampedLanes)({
+                value: (buildNativeLanes)({
                     lanes: truth.filter((record) => record.lane).map((record) => record.lane),
                     timeNs: captureTimeNs,
                     frameId: mapFrameId,
@@ -307,7 +300,7 @@ export class ManifestCamera extends Device {
                 topicId: outputs.trafficControlsTopicId,
                 signal: "trafficControls",
                 frameId: mapFrameId,
-                value: (this.contractPublisher.nativeTopics ? buildNativeTrafficControls : buildTrafficControlStates)({
+                value: (buildNativeTrafficControls)({
                     controls: truth.filter((record) => record.control).map((record) => ({
                         ...record,
                         ...record.control,

@@ -272,7 +272,7 @@ export class RecordingController {
                 heavy: true,
                 width: value?.width ?? null,
                 height: value?.height ?? null,
-                encoding: value?.encoding ?? null,
+                pixelFormat: value?.pixelFormat ?? null,
                 identity: value?.data ?? value,
             });
             return;
@@ -288,7 +288,7 @@ export class RecordingController {
         return previous.identity !== (value?.data ?? value)
             || previous.width !== (value?.width ?? null)
             || previous.height !== (value?.height ?? null)
-            || previous.encoding !== (value?.encoding ?? null);
+            || previous.pixelFormat !== (value?.pixelFormat ?? null);
     }
 
     _capture(message) {

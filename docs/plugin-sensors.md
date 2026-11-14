@@ -1,6 +1,6 @@
 # Plugin range-image sensors
 
-PLG-05 extends `cev-sim.plugin` API 1 with sensor ABI 1. It supports one
+Current native runs use `cev-sim.plugin` API 1 with sensor ABI 2. ABI 1 packages remain historical inspection/adoption inputs and cannot execute. It supports one
 sampling family, `range-image`, through the host CPU LiDAR backend. The host
 owns ray intersection, simulation timing, measurement policy, publishing,
 recording, and external I/O. A plugin receives measured data and implements a
@@ -15,7 +15,7 @@ with the package ID and has exactly these fields:
 ```json
 {
   "type": "acme.sensor.synthetic",
-  "sensorAbi": 1,
+  "sensorAbi": 2,
   "family": "range-image",
   "stateVersion": 1,
   "defaults": {
@@ -39,7 +39,7 @@ with the package ID and has exactly these fields:
       "kind": "pointCloud",
       "productId": "points",
       "outputKey": "pointCloudTopicId",
-      "rosType": "sensor_msgs/PointCloud2",
+      "valueContract": { "id": "cev.points", "version": 1 },
       "contractId": "front-lidar-points"
     },
     {
@@ -115,14 +115,14 @@ host range noise and point dropout once; the last two slots are zero. The
 plugin may modify its copy. The scoped `rng` exposes `next`, `range`, `int`,
 and `intRange`. Its stream is separate from host measurement and delivery RNG.
 
-`sampling.buildPointCloud2(buffer)` creates the only admitted PointCloud2
-shape: capture-time header and measurement frame, XYZ plus float32 intensity,
-little endian, 16-byte points. The host validates and canonicalizes the
-message, so a plugin cannot replace the capture time or frame.
+`sampling.buildNativePoints(buffer)` creates the admitted `cev.points@1` value:
+packed Float32 XYZ positions, Float32 intensities, and count. The host validates
+and copies the product; capture time and measurement frame are host-owned
+envelope metadata.
 `sampling.buildObservation(buffer)` creates the declared channel-major
 `float32[channelCount, azimuthCount, 2]` range/incidence tensor.
 
-A PointCloud2 capture message is `{ productId, value }`. A native packet
+A native point capture message is `{ productId, value }`. A native packet
 message is `{ productId, streamId, payload, offsetNs }`; payload is a copied
 complete UDP payload and `offsetNs` is a safe integer in
 `[0, scanDurationNs)`. A successful enabled mapped point-cloud capture returns
@@ -150,8 +150,8 @@ are semantic. Queue policy and host transport bindings are operational.
 Plugin-free runs omit the resource and retain their prior hashes and state.
 
 See `tests/fixtures/plugins/test.range-image-fixture/` for nonuniform channels,
-azimuth correction, measured scaling, PointCloud2, two packet streams,
-observations, and deterministic lifecycle state.
+azimuth correction, measured scaling, historical ABI 1 points, two packet streams,
+observations, and deterministic lifecycle state. Native tests adopt this fixture in memory without rewriting its historical source.
 
 PLG-06a portable files and classic PCAP artifacts are documented in
 [`sensor-packet-transports.md`](sensor-packet-transports.md) and

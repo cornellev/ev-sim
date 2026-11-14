@@ -1,3 +1,4 @@
+import { createDefaultRunManifest } from "../server/interfaces/historical/RunContracts.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -6,11 +7,10 @@ import path from "node:path";
 import { StorageService } from "../server/storage/StorageService.js";
 import { pluginFixtureResource } from "./helpers/pluginFixtures.js";
 import { verifyPluginPackage } from "../app/plugin/PluginPackage.js";
-import { createDefaultRunManifest } from "../app/simulation/RunManifest.js";
 import { createDefaultVehicleManifest, normalizeVehicleManifest } from "../app/vehicles/VehicleManifest.js";
-import { createSensorDefinitionRegistry } from "../app/simulation/sensors/SensorTypeRegistry.js";
+import { createSensorDefinitionRegistry } from "../server/interfaces/historical/SensorTypes.js";
 import { createPluginRangeImageFixtureSensor } from "./helpers/headlessRunnerBundle.js";
-import { verifyRunBundleIntegrity } from "../server/headless/RunBundle.js";
+import { verifyRunBundleIntegrity } from "../server/headless/RunBundleInspection.js";
 
 test("reviewed native adoption creates a vehicle and sensor package closure without rewriting originals", async (t) => {
     const root = await mkdtemp(path.join(os.tmpdir(), "cev-native-closure-"));

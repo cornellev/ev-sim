@@ -340,7 +340,7 @@ function BindingList({
                     <div className="px-6 py-14 text-center">
                         <p className="text-[13px] font-medium text-zinc-300">No bindings yet</p>
                         <p className="mx-auto mt-2 max-w-[220px] text-[11px] leading-relaxed text-zinc-500">
-                            A binding runs a script whenever a ROS topic updates, a simulation tick fires,
+                            A binding runs a script whenever a topic updates, a simulation tick fires,
                             a signal changes, or a timer elapses.
                         </p>
                         <button type="button" onClick={onCreate} className="bnd-btn bnd-btn--primary mt-5">
@@ -784,7 +784,7 @@ function OutputMappingRows({ binding, artifact, onPatchOutput }) {
                                 onChange={(event) => onPatchOutput(port.label, { sink: event.target.value })}
                             >
                                 <option value={OUTPUT_SINKS.SIGNAL}>Signal path</option>
-                                <option value={OUTPUT_SINKS.PUBLISH}>Publish to ROS</option>
+                                <option value={OUTPUT_SINKS.PUBLISH}>Publish to topic</option>
                             </SelectInput>
                             <div className="min-w-0">
                                 {mapping.sink === OUTPUT_SINKS.SIGNAL && (

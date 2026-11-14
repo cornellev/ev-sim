@@ -7,7 +7,7 @@ publishes the guarded authoring closure and the run manifest last. Marketplace
 release references, receipts, mappings, installed state, and preparations stay
 outside world, resolved-run, simulation, episode, and package identities.
 
-cev-sim is a Next.js app with two main user surfaces: a visual scripting canvas and a Three.js simulation scene. The browser app can also connect to an external orchestrator process for ROS-style topics.
+cev-sim is a Next.js app with two main user surfaces: a visual scripting canvas and a Three.js simulation scene. Browser and headless runs share native topic contracts and connect directly to Zenoh through admitted Protobuf routes.
 
 ```mermaid
 flowchart LR
@@ -20,10 +20,11 @@ flowchart LR
   simWorkspace --> simEngine[Simulation Engine]
   envWorkspace --> envDoc[EnvironmentDocument]
   envWorkspace --> earthImport[Earth Import]
-  scriptRuntime --> orchestratorClient[Orchestrator Client]
-  threeScene --> orchestratorClient
-  orchestratorClient --> externalOrchestrator[External Orchestrator]
-  externalOrchestrator --> ros2Nodes[ROS 2 Nodes]
+  scriptRuntime --> topicRouter[Native Topic Router]
+  simEngine --> topicRouter
+  topicRouter --> protobufRoutes[Protobuf Route Runtime]
+  protobufRoutes --> zenoh[Zenoh Transport]
+  zenoh --> controller[External Controller]
   simEngine --> sceneData[Data Registries]
   sceneData --> assets[Public Assets]
 ```
@@ -65,9 +66,9 @@ PLG-05 adds an isolated `SensorTypeRegistry` to the same transactional package
 session. `SensorAdmission.js` is the shared Node-safe authority used by
 resolution, bundle verification, browser preparation, and headless execution.
 It maps declared range-image types to host CPU LiDAR backend v2, portable
-geometry, PointCloud2/native packet products, and measured observation
+geometry, native point/native packet products, and measured observation
 descriptors. `PluginSensorAdapter` owns each lifecycle instance while
-`SensorPublisher` retains scheduling and atomically dispatches ROS values,
+`SensorPublisher` retains scheduling and atomically dispatches native values,
 opaque packet envelopes, and observations. Browser `DeviceDatabase` and
 headless `PluginSensorManager` use that same adapter during the existing
 `sensors` phase. See [Plugin sensors](plugin-sensors.md).
@@ -148,7 +149,7 @@ Native-packet recording shares framing/upload work within one JavaScript turn,
 retaining every update and the existing immediate byte-limit flushes. A deferred
 flush is bound to its encoder so it cannot flush a replacement recording session.
 
-`app/3d/Scene.js` creates the Three.js scene, camera, renderer, input managers, and shared `Data` object. `Data` owns registries for vehicles, devices, objects, city data, physics, settings, the orchestrator client, the simulation engine, and (in environment mode) earth tile streaming and import controllers.
+`app/3d/Scene.js` creates the Three.js scene, camera, renderer, input managers, and shared `Data` object. `Data` owns registries for vehicles, devices, objects, city data, physics, settings, the native Zenoh client, the simulation engine, and (in environment mode) earth tile streaming and import controllers.
 
 `app/simulation/SimulationEngine.js` is the browser adapter for the simulation
 loop. It owns RAF pacing, rendering, overlays, viewport controls, and UI
@@ -906,13 +907,9 @@ to settle before reporting the clock or finalizing logs. These operational
 records do not enter manifests or simulation identity.
 
 ZPB-08 production runs use native topic contracts and configured Zenoh/Protobuf
-transport. Automatic orchestrator startup is disabled. Historical ROS catalogs
-and codecs remain for inspection and migration until ZPB-09 deletion.
+transport. ZPB-09 deletes the orchestrator, ROS builders/codecs, encode workers, and message assets. Frozen historical contracts and shape parsing live in `server/interfaces/historical/`; explicit `RunBundleInspection` and reviewed adoption use them. Browser/kernel import-graph tests prohibit those modules in execution.
 
-Orchestrator can be found from [this repository](https://github.com/cornellev/orchestrator).
-
-The separate [Zenoh/Protobuf roadmap](zenoh-protobuf-plan.md) replaces this
-process in nine packages. ZPB-01 adds `app/interfaces/ProtobufInterface.js`
+The separate [Zenoh/Protobuf roadmap](zenoh-protobuf-plan.md) implements this boundary in nine packages. The following describes the historical package sequence. ZPB-01 adds `app/interfaces/ProtobufInterface.js`
 for immutable schema/route configuration, `ProtobufSchema.js` for isolated
 descriptor loading and exact-value codecs, and
 `server/interfaces/ProtobufSourceLoader.js` for bounded local imports.
@@ -974,7 +971,7 @@ Native bundles bind `nativeTopicContracts` instead of ROS schema closures;
 their identities are distinct from historical bundles. Publish-only interface
 changes remain operational. Reviewed native migrations preserve originals and
 recompile supported graph sources into new artifacts at an exact revision.
-ZPB-08 makes v13 the only writer and production execution format; ZPB-09 removes active ROS catalogs,
+ZPB-08 makes v13 the only writer and production execution format; ZPB-09 removed active ROS catalogs,
 codecs, builders, workers, wrappers and orchestrator infrastructure. Historical
 inspection/migration remains isolated from execution.
 
@@ -982,7 +979,6 @@ inspection/migration remains isolated from execution.
 
 Browser-served assets live under `public/`. Current important asset groups are:
 
-- `public/messages/` for fallback `.msg` definitions.
 - `public/shell.gltf` for model/optimizer experiments.
 - `public/scenarios/` for local CommonRoad scenarios, which should not be committed.
 

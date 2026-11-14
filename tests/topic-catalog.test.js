@@ -1,6 +1,4 @@
 import assert from "node:assert/strict";
-import { promises as fs } from "node:fs";
-import path from "node:path";
 import test from "node:test";
 
 import {
@@ -9,22 +7,22 @@ import {
     catalogSchemas,
     defaultManifestTopics,
     DEFAULT_CANDIDATE_RETURN_CONTRACT_IDS,
-    fixturePayloadForType,
     getAutonomyContract,
-    inputTopicRequiresOrchestrator,
     listAutonomyContracts,
     migrateLegacyTopic,
-    msgFilePathsForCatalog,
     schemaClosureForManifest,
     topicFromContract,
     validateManifestTopicAuthority,
     validateTopicAgainstCatalog,
-} from "../app/autonomy/AutonomyContractCatalog.js";
-import { createDefaultRunManifest, normalizeRunManifest, validateRunManifest } from "../app/simulation/RunManifest.js";
+} from "../server/interfaces/historical/TopicCatalog.js";
+import { createDefaultRunManifest, normalizeRunManifest, validateRunManifest } from "../server/interfaces/historical/RunContracts.js";
 import { TopicContractRouter } from "../app/simulation/TopicContractRouter.js";
 import { TopicInputQueue } from "../app/simulation/TopicInputQueue.js";
 import { SignalStore } from "../app/scripting/runtime/SignalStore.js";
-import { registerMsgDefinition } from "../app/client/Client.js";
+import { createDefaultRunManifest as createNativeRunManifest } from "../app/simulation/RunManifest.js";
+import { topicFromNativeContract } from "../app/simulation/NativeTopicCatalog.js";
+import { buildNativeOdometry } from "../app/simulation/sensors/NativeSensorProducts.js";
+const command = () => ({ runId: "test", mode: "velocity", sequence: "1", captureTimeNs: 0, deadlineNs: 100_000_000, frameId: "base_link", speedMps: 0, steeringRad: 0, accelerationMps2: 0, jerkMps3: 0, steeringRateRadps: 0 });
 
 test("autonomy catalog exposes versioned controls-command and retires ackdrive-legacy", () => {
     const metadata = catalogMetadata();
@@ -41,15 +39,6 @@ test("autonomy catalog exposes versioned controls-command and retires ackdrive-l
     assert.ok(closure["sensor_fusion_msgs/StampedAckermannDrive"]);
     assert.ok(!closure["sensor_fusion_msgs/AckermannDrive"]);
     assert.ok(closure["sensor_msgs/Image"]);
-});
-
-test("catalog msg file paths exist for every mapped type", async () => {
-    const root = path.resolve(import.meta.dirname, "..");
-    for (const [type, relativePath] of Object.entries(msgFilePathsForCatalog())) {
-        const absolute = path.join(root, "public", relativePath.replace(/^\//, ""));
-        await fs.access(absolute);
-        assert.ok(type.includes("/"), type);
-    }
 });
 
 test("legacy /ackdrive topics migrate to stamped SI controls-command", () => {
@@ -105,15 +94,15 @@ test("manifest authority validation rejects conflicting authority on the same co
 
 test("topic contract router writes producer and active namespaces for controls-command", () => {
     const store = new SignalStore({}, { sourceId: "router-test" });
-    const manifest = createDefaultRunManifest({ version: 12 });
+    const manifest = createNativeRunManifest();
     const router = new TopicContractRouter(manifest, { telemetry: store });
     const topic = manifest.topics.find((entry) => entry.contractId === "controls-command");
-    registerMsgDefinition("sensor_fusion_msgs/StampedAckermannDrive", catalogSchemas()["sensor_fusion_msgs/StampedAckermannDrive"]);
-    const payload = fixturePayloadForType("sensor_fusion_msgs/StampedAckermannDrive");
+    const payload = command();
     const routed = router.routeInbound({
         name: topic.name,
-        typeStr: topic.schema.type,
+        valueContract: topic.valueContract,
         value: payload,
+        metadata: { captureTimeNs: 0 },
     }, { applyStep: 1, applyTimeNs: 16_666_667, arrivalTimeNs: 10_000_000 });
     assert.equal(routed.ok, true);
     assert.ok(store.read("active.topics.controls-command").value);
@@ -122,14 +111,14 @@ test("topic contract router writes producer and active namespaces for controls-c
 
 test("observational candidate returns skip active namespace by default", () => {
     const store = new SignalStore({}, { sourceId: "observe-test" });
-    const manifest = createDefaultRunManifest({ version: 12 });
+    const manifest = createNativeRunManifest();
     const router = new TopicContractRouter(manifest, { telemetry: store });
     const topic = manifest.topics.find((entry) => entry.contractId === "localization-estimate");
     assert.equal(topic.routeDownstream, false);
     const routed = router.routeInbound({
         name: topic.name,
-        typeStr: topic.schema.type,
-        value: fixturePayloadForType(topic.schema.type),
+        valueContract: topic.valueContract,
+        value: buildNativeOdometry(),
     }, { applyStep: 1, applyTimeNs: 16_666_667, arrivalTimeNs: 16_666_667 });
     assert.equal(routed.ok, true);
     assert.ok(store.read("candidate.topics.localization-estimate")?.value);
@@ -218,8 +207,8 @@ test("v2 manifests normalize to v12 with controls-command migration", () => {
 
 test("inbound validity windows are enforced separately from transport timeout", () => {
     const store = new SignalStore({}, { sourceId: "validity-test" });
-    const manifest = createDefaultRunManifest({ version: 12 });
-    const stamped = topicFromContract("controls-command", {
+    const manifest = createNativeRunManifest();
+    const stamped = topicFromNativeContract("controls-command", {
         id: "controls-validity",
         name: "/controls/command-validity",
         validityNs: 1_000,
@@ -227,12 +216,13 @@ test("inbound validity windows are enforced separately from transport timeout", 
     });
     manifest.topics.push(stamped);
     const router = new TopicContractRouter(manifest, { telemetry: store });
-    const payload = fixturePayloadForType(stamped.schema.type);
-    payload.header.stamp = { sec: 0, nanosec: 0 };
+    const payload = command();
+
     const invalid = router.routeInbound({
         name: stamped.name,
-        typeStr: stamped.schema.type,
+        valueContract: stamped.valueContract,
         value: payload,
+        metadata: { captureTimeNs: 0 },
     }, { applyStep: 2, applyTimeNs: 5_000_000, arrivalTimeNs: 4_999_000 });
     assert.equal(invalid.ok, false);
     assert.equal(invalid.code, "invalid");
@@ -240,8 +230,8 @@ test("inbound validity windows are enforced separately from transport timeout", 
 
 test("stale inbound controls without fallback are rejected", () => {
     const store = new SignalStore({}, { sourceId: "stale-test" });
-    const manifest = createDefaultRunManifest({ version: 12 });
-    const primary = topicFromContract("controls-command", {
+    const manifest = createNativeRunManifest();
+    const primary = topicFromNativeContract("controls-command", {
         id: "controls-stale",
         name: "/controls/command-stale",
         timeoutNs: 1_000,
@@ -252,52 +242,9 @@ test("stale inbound controls without fallback are rejected", () => {
     const router = new TopicContractRouter(manifest, { telemetry: store });
     const stale = router.routeInbound({
         name: primary.name,
-        typeStr: primary.schema.type,
-        value: fixturePayloadForType(primary.schema.type),
+        valueContract: primary.valueContract,
+        value: command(),
     }, { applyStep: 3, applyTimeNs: 5_000_000, arrivalTimeNs: 1_000_000 });
     assert.equal(stale.ok, false);
     assert.equal(stale.code, "stale");
-});
-
-test("preflight does not require orchestrator /controls/command for local reference controllers", () => {
-    const controls = {
-        ...topicFromContract("controls-command"),
-        required: true,
-    };
-    const perception = topicFromContract("perception-detections-2d");
-    const routeFollower = { routes: [{ controller: { kind: "route-follower" } }] };
-    const script = { routes: [{ controller: { kind: "script", scriptId: "pilot" } }] };
-    const external = { routes: [{ controller: { kind: "external-ros", topicId: "/controls/command" } }] };
-    const legacyExternal = { routes: [{ controller: { kind: "external-ros", topicId: "ackdrive" } }] };
-
-    assert.equal(inputTopicRequiresOrchestrator(controls, {
-        controlsAuthority: "reference",
-        scenario: routeFollower,
-        scenarioSelected: true,
-    }), false);
-    assert.equal(inputTopicRequiresOrchestrator(controls, {
-        controlsAuthority: "reference",
-        scenario: script,
-        scenarioSelected: true,
-    }), false);
-    assert.equal(inputTopicRequiresOrchestrator(controls, {
-        controlsAuthority: "candidate",
-    }), true);
-    assert.equal(inputTopicRequiresOrchestrator(controls, {
-        controlsAuthority: "reference",
-        scenario: external,
-        scenarioSelected: true,
-    }), true);
-    assert.equal(inputTopicRequiresOrchestrator(controls, {
-        controlsAuthority: "reference",
-        scenario: legacyExternal,
-        scenarioSelected: true,
-    }), true);
-    assert.equal(inputTopicRequiresOrchestrator(controls, {
-        controlsAuthority: "reference",
-        scenarioSelected: true,
-    }), true);
-    assert.equal(inputTopicRequiresOrchestrator(perception, {
-        controlsAuthority: "candidate",
-    }), false);
 });
