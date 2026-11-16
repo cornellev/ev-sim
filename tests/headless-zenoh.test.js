@@ -139,6 +139,40 @@ test("external worker completion fences old run notifications and latches early 
     assert.deepEqual(await handle.waitForRealtimeCompletion(), { state: "terminal", error: null });
 });
 
+test("CLI supplies local endpoints and closes the router after external work, including failure", async (t) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "cev-router-cli-")); t.after(() => fs.rm(root, { recursive: true, force: true }));
+    const file = path.join(root, "run.json"); await fs.writeFile(file, JSON.stringify(await externalBundle()));
+    const order = [], stream = { write() {} };
+    const runner = { async validate(_, options) { assert.deepEqual(options.zenohTransport.connect, ["tcp/127.0.0.1:7447"]); return {}; },
+        async runExternalController(_, options) { order.push("run"); assert.deepEqual(options.zenohTransport.connect, ["tcp/127.0.0.1:7447"]); throw new Error("run failed"); } };
+    const io = { runner, stdout: stream, stderr: stream, stdin: { isTTY: true }, async acquireLocalZenohRouter(options) {
+        assert.equal(options.signal.aborted, false); order.push("acquire"); return { async close() { order.push("close"); } };
+    } };
+    const args = ["--bundle", file, "--controller-mode", "external-realtime"];
+    assert.equal(await main(["validate", ...args], io), 0); assert.deepEqual(order, []);
+    assert.equal(await main(["run", ...args, "--output", path.join(root, "result")], io), 5);
+    assert.deepEqual(order, ["acquire", "run", "close"]);
+    const errors = [];
+    const timeoutIo = { ...io, stderr: { write(line) { errors.push(JSON.parse(line)); } }, async acquireLocalZenohRouter() { throw new DOMException("startup timed out", "TimeoutError"); } };
+    assert.equal(await main(["run", ...args, "--output", path.join(root, "timeout")], timeoutIo), 5);
+    assert.equal(errors[0].code, "INTERNAL"); assert.equal(errors[0].message, "startup timed out");
+});
+
+test("CLI supervisor validates before acquisition and closes server before router", async () => {
+    const order = [], before = process.listenerCount("SIGINT"), stream = { write() {} };
+    const io = { stdout: stream, stderr: stream, async acquireLocalZenohRouter() {
+        order.push("acquire"); return { async close() { order.push("router-close"); } };
+    }, async startHeadlessSupervisor(options) {
+        assert.deepEqual(options.config.zenohTransport.connect, ["tcp/127.0.0.1:7447"]);
+        order.push("listen"); process.emit("SIGINT");
+        return { address: "127.0.0.1:50051", config: { listener: { kind: "tcp" } }, async close() { order.push("server-close"); } };
+    } };
+    assert.equal(await main(["supervisor"], io), 3); assert.deepEqual(order, []);
+    await main(["supervisor", "--tcp", "127.0.0.1:50051"], io);
+    assert.deepEqual(order, ["acquire", "listen", "server-close", "router-close"]);
+    assert.equal(process.listenerCount("SIGINT"), before);
+});
+
 test("supervised external execution passes host config, stops on cancellation and frees capacity", async (t) => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "cev-external-supervisor-")); t.after(() => fs.rm(root, { recursive: true, force: true }));
     for (const cancelled of [false, true]) {

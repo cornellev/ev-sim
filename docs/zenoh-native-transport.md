@@ -8,7 +8,14 @@ the default run writer or the Python tensor shared-memory protocol.
 
 ## Host configuration and admission
 
-Supervisors accept an optional operator-owned `zenohTransport` section:
+Supervisors accept an optional operator-owned `zenohTransport` section.
+Server and CLI supervisors, plus external-realtime CLI runs, fill omitted
+connect addresses with `tcp/127.0.0.1:7447`. They acquire one checksum-pinned
+local router automatically unless opted out or given custom endpoints.
+Low-level sessions still require a valid explicit host configuration.
+See [protobuf-routing.md](protobuf-routing.md) for startup and ownership.
+
+Explicit configuration can retain transport limits or target another host:
 
 ```json
 {
@@ -137,6 +144,13 @@ retain existing headless use without claiming native Zenoh availability. A
 distribution built without `--zenoh-artifacts` remains valid for those uses;
 the internal candidate workflow supplies both artifacts.
 
+Automatic router startup also supports macOS and Windows x64 browser use.
+Windows uses pinned GNU `zenohd.exe` and `zenoh_plugin_remote_api.dll`, with
+an absolute required-plugin path and router SHM disabled. It does not add a
+Windows native transport release. Use the Linux addon inside WSL2 for headless
+Zenoh, keeping server and router in that same environment. Windows release
+and live acceptance remain deferred.
+
 ## Evidence and hardware reports
 
 Focused JavaScript tests run with `npm run test:zenoh-native`. Rust ownership
@@ -169,4 +183,16 @@ Jetson ARM64. Hardware hosts need build tools and outbound crate access;
 the workflow installs isolated pinned Rust to build the consumer/router.
 Native implementation is available; ZPB-06
 acceptance remains pending Linux and Jetson workflow reports and artifact hashes.
+
+Local-router maintenance checks use `tests/zenoh-local-router.test.js` with
+injected probes, processes, and archives. They never bind default ports or
+download. POSIX process/server checks are opt-in with
+`CEV_SIM_ZENOH_LOCAL_PROCESS_TEST=1`. Set
+`CEV_SIM_ZENOH_BROWSER_TEST_BINARY` to a verified cached bridge and
+`CEV_SIM_ZENOH_TEST_CONSUMER` to the pinned Rust `consumer` binary to run the
+temporary-port WebSocket ↔ Rust TCP gate in
+`tests/zenoh-local-router-process.test.js`, using Node's
+`--experimental-default-type=module --experimental-wasm-modules` flags.
+The test consumer's `put` instruction publishes a fixed four-byte test vector.
+These checks do not replace Linux SHM or release hardware evidence.
 Local macOS development results cannot satisfy those gates.

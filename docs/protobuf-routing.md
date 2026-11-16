@@ -91,21 +91,94 @@ bind simulation and episode identity. See [Run manifests](run-manifests.md).
 ## Runtime connections
 
 The browser uses `ClientManager`, `ZenohBrowserTransport`, and
-`ProtobufRouteRuntime`. The server supplies an operator-owned
-`cev-sim.zenoh-browser-host-config@1` endpoint through the existing storage API.
+`ProtobufRouteRuntime`. The server supplies a
+`cev-sim.zenoh-browser-host-config@1` endpoint at `/api/zenoh/browser-config`.
+Without an explicit browser file it defaults to `ws://127.0.0.1:10000/`.
 The official pinned `@eclipse-zenoh/zenoh-ts` SDK transports binary samples through
 the router remote API. Route declarations and bounded subscription queues belong
 to one run generation. Reset and reconnect close old declarations and clear queues.
 Required-route failure remains visible; acceptance does not acknowledge actuator
-application. Headless sessions use the native addon and explicit TCP host config.
+application. Headless sessions use the Linux native addon and TCP host config;
+CLI external runs and supervisors default to `tcp/127.0.0.1:7447`.
+
+### Start with no router setup
+
+Run `npm run dev` (or `npm start` after a production build). The server downloads
+and verifies the pinned Zenoh 1.10.2 router on first use, then owns one router
+child for its lifetime. Later starts use the verified cache. The router binds
+loopback TCP `7447` for Rust/headless sessions and remote-API WebSocket `10000`
+for the page. Sample bytes travel through the router; Node does not relay them.
+The browser opens its own WebSocket after fetching the endpoint from the server.
+
+In Run Configuration, select **Interface JSON** and import a reviewed mapped
+interface such as `examples/interfaces/onboarding-lease.v2.json`. Save its
+routes, enable **Zenoh for this run** and **External controller**, then save the
+run. Importing raw `.proto` files still requires authoring and saving mappings;
+the importer does not infer routes, frames, units or control authority.
+
+The onboarding command@2 interface requires the existing control lease. The
+launcher acquires and renews that lease every 250 ms, prepares the saved run
+paused with its credentials, obtains the actual run ID, then explicitly resumes
+it. See [browser-sim-api.md](browser-sim-api.md). The lease expires after 750 ms.
+Starting the router alone does not grant control authority. Partial Rust stacks
+send only their available products; missing commands use the existing stale
+command stop rule and are not a router failure.
+
+The shared cache is `~/.cache/cev-sim/zenoh` on macOS/Linux and
+`%LOCALAPPDATA%\cev-sim\zenoh` on Windows (fallback:
+`%USERPROFILE%\AppData\Local\cev-sim\zenoh`). It is independent of checkout and
+working directory. A verified old `.onboarding/router` install can seed it.
+Archives and installed executable/plugin bytes are checked. Missing files can
+be repaired; checksum changes are refused. First use needs network access once.
+`router.owner.json` and generated per-instance router configs live in that
+shared cache, alongside version/platform/architecture-specific binaries.
+Owner publication and stale recovery are exclusive. Recovery checks the
+recorded ports even if a new start requests another TCP port. Acquisition is
+bounded to 150 seconds, individual downloads to 120 seconds, and spawned-child
+readiness to 10 seconds. Generated configs never read `.onboarding/router.json5`.
+
+Native Windows x64 browser startup downloads the GNU `zenohd.exe` and matching
+remote-API DLL, loads that DLL by absolute path, and disables router SHM.
+macOS and Linux use the standalone remote-API bridge. Windows ARM64 has no
+pinned artifact. Native headless Zenoh still requires Linux x64/ARM64 and its
+verified addon; use WSL2 with server, router, and headless all inside WSL2.
+Native Windows and WSL2 have separate ownership files. A mixed setup needs
+explicit endpoints and a manually managed router. Windows release and live
+acceptance are deferred.
+
+`npm run dev`, `npm start`, and `cev-sim supervisor` acquire the listener for
+their process lifetime. An external-realtime CLI run attaches to that listener,
+or owns it only until its run exits. Stderr reports `starting`, `ready ... owner`,
+`attached`, and `stopping`; CLI stdout stays JSON. An attached command cannot
+stop the owner's child. Keep the server or supervisor running when the listener
+must survive a short run. Policy runs, validate, replay, and Node/UI tests do
+not acquire or download a router.
+
+`CEV_SIM_ZENOH_ROUTER=off` opts out when a test or manually started router owns
+the ports. An explicit browser file or TCP connect list with another endpoint
+also skips automatic startup and keeps the supplied addresses. Invalid explicit
+configuration is an error. Foreign listeners, live orphans, changed process
+identities, and ambiguous owner files are refused; no foreign process is killed
+and no alternate port is selected. The TCP override `CEV_SIM_ZENOH_TCP_PORT`
+accepts 1–65535 except 10000. The Rust stack keeps port 7447 unless its own
+`CEV_ZENOH_ENDPOINT` is set. Leave the default port unless changing both sides.
+
+There is no router respawn or ownership transfer. POSIX shutdown sends the
+owned child SIGTERM, waits up to five seconds, then escalates to SIGKILL.
+Windows terminates the owned child handle. Records are removed only after
+confirmed child exit. If the child dies, browser sessions pause and retry;
+headless required publication fails as infrastructure. Restart the owner and
+Rust sessions to recover.
 
 Values remain native until `ProtobufRouteRuntime` applies the admitted mapping and
 encodes wire bytes. Capture metadata supplies frame, integer simulation time, and
 sequence; values contain no ROS headers. Use decimal strings for exact uint64
 fields. Sensor delivery requires synchronous bounded transport acceptance.
 
-`./install.sh --onboarding` installs the checksum-pinned Zenoh router and native
-transport prerequisites. Removed orchestrator flags are rejected. The independent
+`./install.sh --onboarding` remains an optional POSIX prefetch; it writes no
+endpoint files or environment settings. Windows can prefetch with
+`node --experimental-default-type=module scripts/install-onboarding.mjs`.
+Removed orchestrator flags are rejected. The independent
 SDK probe is `scripts/protobuf-probe.mjs`; the real browser gate is
 `npm run test:zenoh-browser`. Hardware release gates remain in
 [Headless release](headless-release.md).

@@ -36,13 +36,14 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let session = zenoh::open(zenoh::Config::from_json5(&config.to_string())?).wait()?;
     let held = Arc::new(Mutex::new(Vec::<(ZBytes, u64)>::new()));
     let records = held.clone();
-    let subscriber = session.declare_subscriber(key).callback(move |sample| {
+    let subscriber = session.declare_subscriber(&key).callback(move |sample| {
         let mut records = records.lock().unwrap();
         if records.len() < hold { records.push((sample.payload().clone(), fingerprint(sample.payload()))); }
         let integrity = records.iter().all(|(bytes, expected)| fingerprint(bytes) == *expected);
         let bytes = sample.payload().to_bytes();
         println!("{}", serde_json::json!({"kind":"sample","length":sample.payload().len(),"firstByte":bytes.first(),"lastByte":bytes.last(),"shm":sample.payload().as_shm().is_some(),
-            "held":records.len(),"heldIntegrity":integrity,"fingerprint":fingerprint(sample.payload()).to_string()}));
+            "held":records.len(),"heldIntegrity":integrity,"fingerprint":fingerprint(sample.payload()).to_string(),
+            "bytes": if bytes.len() <= 32 { Some(bytes.as_ref()) } else { None }}));
     }).wait()?;
     println!(
         "{}",
@@ -50,6 +51,10 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     );
     for line in io::stdin().lock().lines() {
         match line?.as_str() {
+            "put" => {
+                session.put(&key, [0u8, 128, 255, 1]).wait()?;
+                println!("{}", serde_json::json!({"kind":"published"}));
+            }
             "check" => {
                 let records = held.lock().unwrap();
                 println!(

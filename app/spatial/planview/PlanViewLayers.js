@@ -1,5 +1,7 @@
 'use client';
 
+import { occupancyScreenRect } from "./occupancy/paint.js";
+
 function screenRadius(centerWorld, radiusM, toScreen) {
     const center = toScreen(centerWorld);
     const edge = toScreen({ x: centerWorld.x + radiusM, z: centerWorld.z });
@@ -28,10 +30,38 @@ function pickableProps(primitive, onSelectActor) {
     };
 }
 
-export function PlanViewLayers({ primitives = [], toScreen, onSelectActor }) {
+function OccupancyImage({ sample, viewport, size, canvasRef }) {
+    const rect = occupancyScreenRect(sample, viewport, size);
+    if (!(rect.width > 0) || !(rect.height > 0)) return null;
+    const image = (
+        <foreignObject x={rect.x} y={rect.y} width={rect.width} height={rect.height} style={{ pointerEvents: "none" }}>
+            <div xmlns="http://www.w3.org/1999/xhtml" style={{ width: "100%", height: "100%", pointerEvents: "none" }}>
+                <canvas
+                    ref={canvasRef}
+                    style={{ display: "block", width: "100%", height: "100%", imageRendering: "pixelated" }}
+                />
+            </div>
+        </foreignObject>
+    );
+    if (!rect.rotationDeg) return image;
+    const cx = rect.x + rect.width / 2;
+    const cy = rect.y + rect.height / 2;
+    return <g transform={`rotate(${rect.rotationDeg} ${cx} ${cy})`}>{image}</g>;
+}
+
+export function PlanViewLayers({ primitives = [], toScreen, onSelectActor, occupancy = [], viewport, size }) {
     if (!toScreen) return null;
     return (
         <g data-plan-view>
+            {occupancy.map((entry) => (
+                <OccupancyImage
+                    key={entry.key}
+                    sample={entry.sample}
+                    viewport={viewport}
+                    size={size}
+                    canvasRef={entry.canvasRef}
+                />
+            ))}
             {primitives.map((primitive, index) => {
                 const key = `${primitive.layerId}-${index}`;
                 if (primitive.kind === "polygon" || primitive.kind === "polyline") {

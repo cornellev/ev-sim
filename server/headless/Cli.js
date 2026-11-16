@@ -16,8 +16,9 @@ import { inspectTarget } from "./Inspection.js";
 import { stringifyJsonProtocol } from "./JsonProtocol.js";
 import { createPlanningBundle } from "./PlanningBundle.js";
 import { createHeadlessSmokeBundle } from "./SmokeBundle.js";
-import { readSupervisorConfig, normalizeControllerMode } from "./SupervisorConfig.js";
+import { readSupervisorConfig, normalizeControllerMode, resolveSupervisorConfig } from "./SupervisorConfig.js";
 import { resolveZenohTransportHostConfig } from "../sensor-transports/ZenohTransportConfig.js";
+import { acquireLocalZenohRouter, withLocalZenohTransportDefaults } from "../interfaces/ZenohLocalRouter.js";
 import { resolveSensorTransportHostConfig } from "../sensor-transports/SensorTransportConfig.js";
 import { SupervisorRunner } from "./SupervisorRunner.js";
 import { startHeadlessSupervisor } from "./SupervisorServer.js";
@@ -165,7 +166,7 @@ function artifactPolicy(options) {
 
 function exitForError(error) {
     if (error.name === "AbortError") return CLI_EXIT.INTERRUPTED;
-    if (error.code?.startsWith("RUN_PACKAGE_") || error.code?.startsWith("BUNDLE_") || error.code === "ENOENT") return CLI_EXIT.INVALID_INPUT;
+    if (typeof error.code === "string" && (error.code.startsWith("RUN_PACKAGE_") || error.code.startsWith("BUNDLE_") || error.code === "ENOENT")) return CLI_EXIT.INVALID_INPUT;
     if (error instanceof HeadlessRunnerError) {
         if (error.code === "USAGE") return CLI_EXIT.USAGE;
         if (error.code === "ARTIFACT_FAILURE") return CLI_EXIT.ARTIFACT_FAILURE;
@@ -207,28 +208,41 @@ export async function main(argv = process.argv.slice(2), io = {}) {
             const allowed = new Set(["socket", "tcp", "preset", "config", "allow-remote-tcp"]);
             const unsupported = Object.keys(options).find((key) => !allowed.has(key));
             if (unsupported) throw new HeadlessRunnerError("USAGE", `supervisor does not accept --${unsupported}.`);
-            const config = options.config ? await readSupervisorConfig(options.config) : null;
-            const running = await startHeadlessSupervisor({
-                ...(config ? { config } : {}),
+            const supplied = options.config ? await readSupervisorConfig(options.config) : null;
+            const config = { ...(supplied ?? { kind: "cev-sim.headless-supervisor-config", version: 1 }), zenohTransport: withLocalZenohTransportDefaults(supplied?.zenohTransport) };
+            const supervisorOptions = {
+                config,
                 ...(options.socket ? { socket: options.socket } : {}),
                 ...(options.tcp ? { tcp: options.tcp } : {}),
                 ...(options.preset ? { preset: options.preset } : {}),
                 ...(options["allow-remote-tcp"] ? { allowRemoteTcp: true } : {}),
-            });
-            const stopped = new Promise((resolve) => {
-                const stop = () => resolve();
-                process.once("SIGINT", stop);
-                process.once("SIGTERM", stop);
-            });
-            writeJson(stdout, {
-                kind: "cev-sim.headless.supervisor-listening",
-                version: 1,
-                protocol: HEADLESS_PROTOCOL,
-                address: running.address,
-                transport: running.config.listener.kind,
-            });
-            await stopped;
-            await running.close();
+            };
+            resolveSupervisorConfig(supervisorOptions);
+            const abortController = new AbortController();
+            let stop;
+            const stopped = new Promise((resolve) => { stop = () => { abortController.abort(); resolve(); }; });
+            process.once("SIGINT", stop);
+            process.once("SIGTERM", stop);
+            let router, running;
+            try {
+                router = await (io.acquireLocalZenohRouter ?? acquireLocalZenohRouter)({ zenohTransport: config.zenohTransport, signal: abortController.signal, onLog: (line) => stderr.write(`[zenoh-router] ${line}\n`) });
+                abortController.signal.throwIfAborted();
+                running = await (io.startHeadlessSupervisor ?? startHeadlessSupervisor)(supervisorOptions);
+                abortController.signal.throwIfAborted();
+                writeJson(stdout, {
+                    kind: "cev-sim.headless.supervisor-listening",
+                    version: 1,
+                    protocol: HEADLESS_PROTOCOL,
+                    address: running.address,
+                    transport: running.config.listener.kind,
+                });
+                await stopped;
+            } finally {
+                try { try { await running?.close(); } finally { await router?.close(); } } finally {
+                    process.removeListener("SIGINT", stop);
+                    process.removeListener("SIGTERM", stop);
+                }
+            }
             return CLI_EXIT.OK;
         }
         if (command === "catalog") {
@@ -342,17 +356,22 @@ export async function main(argv = process.argv.slice(2), io = {}) {
             ? await readHostConfig(options["sensor-transport-config"])
             : null;
         if (options["zenoh-transport-config"] && options.config) throw new HeadlessRunnerError("USAGE", "--zenoh-transport-config applies to direct runs; supervisor hosts use zenohTransport in --config.");
-        const zenohTransport = options["zenoh-transport-config"]
+        let zenohTransport = options["zenoh-transport-config"]
             ? resolveZenohTransportHostConfig(await readJson(options["zenoh-transport-config"], "Zenoh host configuration")) : null;
-        const configured = options.config ? await readSupervisorConfig(options.config) : null;
+        let configured = options.config ? await readSupervisorConfig(options.config) : null;
         const controllerMode = normalizeControllerMode(options["controller-mode"] ?? configured?.controllerMode);
         const external = controllerMode === "external-realtime";
+        if (external) {
+            if (configured) configured = { ...configured, zenohTransport: withLocalZenohTransportDefaults(configured.zenohTransport) };
+            else zenohTransport = withLocalZenohTransportDefaults(zenohTransport);
+        }
         if (external && (command === "replay" || options.episode || options.actions || options.tape)) throw new HeadlessRunnerError("USAGE", "external-realtime uses frozen run settings and rejects replay, --episode, --actions and --tape.");
         const packagePath = options.package || null;
         const abortController = new AbortController();
         const onSignal = () => abortController.abort();
         process.once("SIGINT", onSignal);
         process.once("SIGTERM", onSignal);
+        let router;
         try {
             const bundle = packagePath
                 ? (await verifyRunPackageArchive(createReadStream(packagePath, { signal: abortController.signal }))).bundle
@@ -381,6 +400,8 @@ export async function main(argv = process.argv.slice(2), io = {}) {
             let actionStream = null;
             let final;
             if (external) {
+                router = await (io.acquireLocalZenohRouter ?? acquireLocalZenohRouter)({ zenohTransport: configured?.zenohTransport ?? zenohTransport, signal: abortController.signal, onLog: (line) => stderr.write(`[zenoh-router] ${line}\n`) });
+                abortController.signal.throwIfAborted();
                 final = await (configured ? (io.supervisorRunner ?? new SupervisorRunner()) : runner).runExternalController(bundle, {
                     ...(configured ? { config: configured } : { hostConfig, zenohTransport }), packagePath,
                     artifactPolicy: artifactPolicy(options), outputUri: options.output, signal: abortController.signal,
@@ -425,14 +446,16 @@ export async function main(argv = process.argv.slice(2), io = {}) {
             if (abortController.signal.aborted || final.result.interruptedBySignal) return CLI_EXIT.INTERRUPTED;
             return final.result.passed ? CLI_EXIT.OK : CLI_EXIT.SEMANTIC_FAILURE;
         } finally {
-            process.removeListener("SIGINT", onSignal);
-            process.removeListener("SIGTERM", onSignal);
+            try { await router?.close(); } finally {
+                process.removeListener("SIGINT", onSignal);
+                process.removeListener("SIGTERM", onSignal);
+            }
         }
     } catch (error) {
         writeJson(stderr, {
             kind: "cev-sim.headless.error",
             version: 1,
-            code: error.code || "INTERNAL",
+            code: typeof error.code === "string" ? error.code : "INTERNAL",
             message: error.message,
             details: error.details ?? null,
         });

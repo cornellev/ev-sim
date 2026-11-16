@@ -79,5 +79,5 @@ test("MKT-07 server startup constructs Marketplace after supervisor initializati
     assert.ok(source.indexOf("await headlessExperimentService.initialize()") < source.indexOf("MarketplaceService.open(storageService.dataDir"));
     assert.match(source, /hostProfileProvider:[\s\S]+supervisor\.getCapabilities/);
     assert.match(source, /if \(marketplaceService\) server\.use\('\/api\/marketplace'/);
-    assert.match(source, /await marketplaceService\?\.close\(\)/);
+    assert.match(source, /cleanups\.push\(\(\) => marketplaceService\.close\(\)\)/);
 });

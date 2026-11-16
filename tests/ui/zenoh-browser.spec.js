@@ -44,7 +44,8 @@ test("@zenoh real SDK binary round trip, isolated runs, router recovery and clea
         await Promise.all(transports.map((transport) => transport.close())); return results;
     });
     expect(binary).toEqual({ a: [[0, 128, 255, 1]], b: [[2, 0, 254]] });
-    const controller = await Session.open(new Config("ws://127.0.0.1:10005", 5000));
+    const host = JSON.parse(await readFile(process.env.CEV_SIM_ZENOH_BROWSER_CONFIG, "utf8"));
+    const controller = await Session.open(new Config(host.endpoint, 5000));
     const stateType = controllerSchema.root.lookupType("headless_test.State");
     const commandType = controllerSchema.root.lookupType("headless_test.Command");
     const wheelSpeeds = [], controllerErrors = [];
@@ -77,7 +78,7 @@ test("@zenoh real SDK binary round trip, isolated runs, router recovery and clea
         await clockSubscription?.undeclare(); await wheelSubscription?.undeclare(); await controller.close();
     }
     await expect.poll(() => page.evaluate(() => globalThis.__cevSimBenchmarkRuntime.snapshot().simulation.steps)).toBeGreaterThan(1);
-    const restarted = request.post("http://127.0.0.1:10006/restart");
+    const restarted = request.post(`${process.env.CEV_SIM_ZENOH_BROWSER_GATE_CONTROL}/restart`);
     await expect.poll(() => page.evaluate(() => globalThis.__cevSimBenchmarkRuntime.snapshot().run.transport.state), { timeout: 12000 }).toBe("reconnecting");
     await expect(page.getByRole("status").filter({ hasText: "Reconnecting…" }).last()).toBeVisible();
     const pausedStep = await page.evaluate(() => globalThis.__cevSimBenchmarkRuntime.snapshot().simulation.steps);

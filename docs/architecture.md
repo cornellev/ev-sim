@@ -909,6 +909,31 @@ records do not enter manifests or simulation identity.
 ZPB-08 production runs use native topic contracts and configured Zenoh/Protobuf
 transport. ZPB-09 deletes the orchestrator, ROS builders/codecs, encode workers, and message assets. Frozen historical contracts and shape parsing live in `server/interfaces/historical/`; explicit `RunBundleInspection` and reviewed adoption use them. Browser/kernel import-graph tests prohibit those modules in execution.
 
+`server/interfaces/ZenohLocalRouter.js` derives local endpoints and acquires one
+router child from server/supervisor startup or an external-realtime CLI run.
+The default TCP endpoint is `tcp/127.0.0.1:7447`; the browser obtains
+`ws://127.0.0.1:10000/` from `/api/zenoh/browser-config` and connects directly.
+Node manages the router lifecycle; sample bytes do not pass through Node.
+Explicit remote endpoints retain their addresses and bypass acquisition.
+
+Pins live in `native/zenoh-transport/router-artifacts.json` and ship in headless
+packages. Downloads, executable/plugin hashes, and installation markers are
+verified in a per-user cache independent of checkout/CWD. Complete exclusive
+owner records identify parent and child by PID plus process birth identity.
+Concurrent starts attach only after both endpoints are ready. Dead ownership
+can be recovered only when both recorded processes are dead and ports are free.
+Foreign listeners and live orphans fail; attached handles never kill a child.
+Only the spawning process terminates its child, after its own work closes.
+No refcount, ownership transfer, respawn, or semantic identity changes result.
+
+macOS/Linux use the standalone bridge with explicit router-mode override.
+Windows x64 uses pinned GNU zenohd and an absolute required remote-API plugin,
+with SHM disabled. Process identities use `/proc` on Linux, `ps` on macOS, and
+PowerShell CIM creation times on Windows. Windows browser startup is implemented;
+native headless Zenoh remains Linux/WSL2. Windows release and live acceptance are
+deferred. Windows directory fsync is unavailable through Node; atomic exclusive
+publication and file syncing remain, with crash durability deferred.
+
 The separate [Zenoh/Protobuf roadmap](zenoh-protobuf-plan.md) implements this boundary in nine packages. The following describes the historical package sequence. ZPB-01 adds `app/interfaces/ProtobufInterface.js`
 for immutable schema/route configuration, `ProtobufSchema.js` for isolated
 descriptor loading and exact-value codecs, and

@@ -54,36 +54,4 @@ export async function installZenohArtifact(dist, manifest, installedRoot) {
     return record;
 }
 
-/** Install one checksum-pinned remote-API router in a versioned directory. */
-export async function installZenohRouter(root, { platform = process.platform, architecture = process.arch, fetchArchive } = {}) {
-    const pair = JSON.parse(await fs.readFile(new URL("../../tests/fixtures/protobuf/zenoh-browser-compatibility.json", import.meta.url)));
-    const record = pair.artifacts[`${platform}-${architecture}`];
-    if (!record) throw new Error(`Zenoh router is unavailable for ${platform}-${architecture}.`);
-    const directory = path.join(path.resolve(root), `${pair.routerVersion}-${platform}-${architecture}`);
-    const binary = path.join(directory, "zenoh-bridge-remote-api");
-    const marker = { version: pair.routerVersion, archiveSha256: record.sha256 };
-    try {
-        const installed = JSON.parse(await fs.readFile(path.join(directory, "installed.json"), "utf8"));
-        const bytes = await fs.readFile(binary);
-        if (installed.archiveSha256 !== marker.archiveSha256 || installed.binarySha256 !== createHash("sha256").update(bytes).digest("hex")) throw new Error("Installed router checksum changed.");
-        return { binary, directory, version: pair.routerVersion };
-    } catch (error) { if (error.code !== "ENOENT") throw error; }
-    const url = `https://github.com/eclipse-zenoh/zenoh-ts/releases/download/${pair.routerVersion}/${record.name}`;
-    const bytes = fetchArchive ? await fetchArchive(url) : await (async () => {
-        const response = await fetch(url, { signal: AbortSignal.timeout(120000) });
-        if (!response.ok) throw new Error(`Router download failed: ${response.status}`);
-        return new Uint8Array(await response.arrayBuffer());
-    })();
-    if (createHash("sha256").update(bytes).digest("hex") !== record.sha256) throw new Error("Router archive checksum mismatch.");
-    const { unzipSync } = await import("fflate");
-    const contents = unzipSync(bytes)["zenoh-bridge-remote-api"];
-    if (!contents?.length) throw new Error("Router archive omits the standalone executable.");
-    await fs.mkdir(path.dirname(directory), { recursive: true });
-    const staging = await fs.mkdtemp(`${directory}.tmp-`);
-    try {
-        await fs.writeFile(path.join(staging, "zenoh-bridge-remote-api"), contents, { mode: 0o755 });
-        await fs.writeFile(path.join(staging, "installed.json"), `${JSON.stringify({ ...marker, binarySha256: createHash("sha256").update(contents).digest("hex") })}\n`);
-        await fs.rename(staging, directory);
-    } finally { await fs.rm(staging, { recursive: true, force: true }); }
-    return { binary, directory, version: pair.routerVersion };
-}
+export { installZenohRouter } from "../../server/interfaces/ZenohLocalRouter.js";

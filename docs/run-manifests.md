@@ -104,8 +104,11 @@ retain the corresponding v11 semantic/episode identities and identity profiles.
 
 ZPB-03 admits offline snapshots and structural inspection. ZPB-05 admits browser
 Zenoh execution for explicit v13/interface@2 snapshots through the official
-browser SDK worker. Configure the host with `CEV_SIM_ZENOH_BROWSER_CONFIG` as
-documented in `docs/zenoh-protobuf-plan.md`. Preflight checks schema/mapping
+browser SDK worker. The server defaults to its automatically acquired local
+router; `CEV_SIM_ZENOH_BROWSER_CONFIG` remains an explicit override as documented
+in [protobuf-routing.md](protobuf-routing.md). Endpoint defaults, router cache,
+and process ownership are operational and do not change run identities.
+Preflight checks schema/mapping
 admission, required subscription routes and router declarations before starting;
 it does not require an external peer to be present. A lost connection pauses the
 run, clears queued inputs and old bindings, and reconnects the same frozen run

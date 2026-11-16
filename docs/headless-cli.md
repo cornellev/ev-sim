@@ -11,19 +11,36 @@ verified bundle.
 
 ## Native external controllers (ZPB-07)
 
-Install the verified Linux x64 or ARM64 addon and pinned Zenoh 1.10.2 router
-described in [zenoh-native-transport.md](zenoh-native-transport.md). The default
+Install the verified Linux x64 or ARM64 addon described in
+[zenoh-native-transport.md](zenoh-native-transport.md). Router setup is automatic
+for external runs; default TCP is `tcp/127.0.0.1:7447`. The default
 controller mode is `policy`. Select `external-realtime` explicitly:
 
 ```bash
-cev-sim validate --bundle external-v13.json --controller-mode external-realtime --zenoh-transport-config zenoh.json
-cev-sim run --bundle external-v13.json --controller-mode external-realtime --zenoh-transport-config zenoh.json --output runs/external
+cev-sim validate --bundle external-v13.json --controller-mode external-realtime
+cev-sim run --bundle external-v13.json --controller-mode external-realtime --output runs/external
 cev-sim run --bundle external-v13.json --controller-mode external-realtime --config supervisor.json --output runs/external-supervised
 ```
 
 Supervisor JSON may set `controllerMode: "external-realtime"` and
-`zenohTransport`; `--controller-mode` wins. A direct run uses
-`--zenoh-transport-config`; combining that option with `--config` is an error.
+`zenohTransport`; `--controller-mode` wins. Omitted connect addresses use the
+local default. A direct run can override it with `--zenoh-transport-config`;
+combining that option with `--config` is an error. Validate supplies defaults
+but does not start or fetch a router. Policy and replay do not acquire it.
+
+Start `npm run dev` or `cev-sim supervisor --socket /tmp/cev-sim.sock` first to
+keep the listener alive between runs. Otherwise the external CLI run owns the
+listener only until it exits. See [protobuf-routing.md](protobuf-routing.md)
+for cache, opt-out, explicit endpoints, and ownership failure behavior.
+
+These direct commands require an unleased controls interface. The onboarding
+command@2 interface needs the existing server ownership service and
+`/api/headless/external-runs` preparation/command API; the direct CLI cannot
+mint a lease. Native headless Zenoh is Linux/WSL2 only. Windows x64 browser
+and router startup are implemented; Windows release and live acceptance are
+deferred. To run a source supervisor on Windows, use
+`node --experimental-default-type=module bin/cev-sim.js supervisor --tcp 127.0.0.1:50051`
+instead of a Unix socket or POSIX shebang. This does not enable a Windows addon.
 External execution requires an immutable v13 Zenoh bundle with
 `protobuf.externalController: true`, one admitted native controls subscription,
 positive clock speed, and enabled inputs, controls and vehicles. It rejects

@@ -45,6 +45,13 @@
     font-size: 12px;
 }
 
+.layerNote {
+    grid-column: 1 / -1;
+    margin: 0;
+    color: #fbbf24;
+    font-size: 12px;
+}
+
 .map {
     position: absolute;
     inset: 0;

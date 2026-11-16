@@ -21,6 +21,22 @@
     "darwin-x64": {
       "name": "zenoh-ts-1.10.2-x86_64-apple-darwin-standalone.zip",
       "sha256": "43955b24116dd4e1e3db657a1d2a4bf50eeeb2743f7ce745f2cc950cebc2a25b"
+    },
+    "win32-x64": {
+      "archives": [
+        {
+          "repository": "eclipse-zenoh/zenoh",
+          "name": "zenoh-1.10.2-x86_64-pc-windows-gnu-standalone.zip",
+          "sha256": "10663b818cf8b147785d32a6f001579d21b8c7bd5941b22cdfa12a8aa2906d30",
+          "file": "zenohd.exe"
+        },
+        {
+          "repository": "eclipse-zenoh/zenoh-ts",
+          "name": "zenoh-ts-1.10.2-x86_64-pc-windows-gnu-standalone.zip",
+          "sha256": "95ecf12932758f5cab5912d5938b97503cd7ace6c100fb466b36a2fcc8d00bda",
+          "file": "zenoh_plugin_remote_api.dll"
+        }
+      ]
     }
   }
 }

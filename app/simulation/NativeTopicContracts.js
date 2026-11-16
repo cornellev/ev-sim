@@ -36,6 +36,8 @@ const shapes = {
     "cev.clock": record({ timeNs: scalar("timeNs") }),
     "cev.goal": record({ pose }),
     "cev.path": record({ points: array(vector) }),
+    "cev.occupancy": record({ data: scalar("bytes"), width: scalar("uint32"), height: scalar("uint32"),
+        resolutionM: scalar("double"), origin: vector, encoding: scalar("string") }),
     "cev.diagnostics": record({ entries: array(record({ name: scalar("string"), level: scalar("uint32"), message: scalar("string"), values: array(record({ key: scalar("string"), value: scalar("string") })) })) }),
     "cev.control-command": record({ runId: scalar("string"), mode: scalar("string"), sequence: scalar("uint64"),
         captureTimeNs: scalar("timeNs"), deadlineNs: scalar("timeNs"), frameId: scalar("string"), speedMps: scalar("double"),
@@ -130,6 +132,11 @@ export function validateNativeTopicValue(contract, value) {
         if (id === "cev.image") {
             const bytesPerPixel = { rgba8: 4, "depth-f32-le": 4, "semantic-u16-le": 2, "instance-u32-le": 4 }[value.pixelFormat];
             if (!bytesPerPixel || !value.width || !value.height || value.strideBytes * value.height !== value.data.byteLength || value.strideBytes < value.width * bytesPerPixel) throw new Error("Image layout does not match bytes.");
+        }
+        if (id === "cev.occupancy") {
+            if ((value.encoding !== "cost" && value.encoding !== "ternary") || !(value.resolutionM > 0) || !value.width || !value.height || value.data.byteLength !== value.width * value.height) {
+                throw new Error("Occupancy layout does not match bytes.");
+            }
         }
         return { ok: true };
     } catch (error) { return { ok: false, code: "native-value-invalid", message: error.message }; }

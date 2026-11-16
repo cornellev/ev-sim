@@ -1,6 +1,6 @@
 import { getRoutePolyline } from "../scenarios/route/Route.js";
 import { resolveEgoRoute } from "../simulation/headless/MeasuredStateObservation.js";
-import { headingFromPose, worldPointFromPose } from "./trajectorySimplify.js";
+import { headingFromPose, headingWedgeLengthForBox, worldPointFromPose } from "./trajectorySimplify.js";
 
 export const SPATIAL_LAYER_DEFAULTS = Object.freeze({
     environment: true,
@@ -83,6 +83,15 @@ export function spatialFitPoints({ environment, route, trails = [] }) {
     return points;
 }
 
+function boundingBoxForCursor(resolvedRun, entityId) {
+    const vehicles = Array.isArray(resolvedRun?.vehicles) ? resolvedRun.vehicles : [];
+    if (entityId) {
+        return vehicles.find((entry) => entry?.actorId === entityId)?.manifest?.boundingBox ?? null;
+    }
+    if (vehicles.length === 1) return vehicles[0]?.manifest?.boundingBox ?? null;
+    return null;
+}
+
 export function buildSpatialLogModel({
     environment = null,
     resolvedRun = null,
@@ -119,6 +128,7 @@ export function buildSpatialLogModel({
         trails: visibleTrails,
         cursor: layers.cursor ? cursorPose : null,
         cursorHeading: cursorPose ? headingFromPose(cursorPose) : 0,
+        cursorWedgeLength: headingWedgeLengthForBox(boundingBoxForCursor(resolvedRun, activeEntity)),
         events: visibleEvents,
         fitPoints: spatialFitPoints({
             environment: layers.environment ? environment : null,

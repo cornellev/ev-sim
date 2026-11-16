@@ -9,14 +9,49 @@ loadEnvConfig(REPOSITORY_ROOT, dev);
 const app = next({ dev });
 const handle = app.getRequestHandler();
 
-// just general logging + preflight checks
-const ready = require("./startup.js").startup(REPOSITORY_ROOT, process.env);
+const abortController = new AbortController();
+const cleanups = [];
+let starting = true;
+let shutdownPromise;
+const shutdown = () => shutdownPromise ??= (async () => {
+    for (const close of cleanups.reverse()) {
+        try { await close(); } catch (error) { console.error(error); process.exitCode = 1; }
+    }
+    // Next dev watchers can survive app.close(); application work and the owned router have finished closing.
+    process.exit(process.exitCode ?? 0);
+})();
+const onSignal = () => {
+    abortController.abort();
+    if (!starting) void shutdown();
+};
+process.once('SIGTERM', onSignal);
+process.once('SIGINT', onSignal);
 
-if (!ready) {
-    process.exit(1);
-}
-
-app.prepare().then(async () => {
+async function start() {
+    if (!await require('./startup.js').startup(REPOSITORY_ROOT, process.env, abortController.signal)) throw new Error('Server preflight failed.');
+    abortController.signal.throwIfAborted();
+    const { acquireLocalZenohRouter, localZenohBrowserConfig, withLocalZenohTransportDefaults } = await import('./interfaces/ZenohLocalRouter.js');
+    const { readZenohBrowserConfig } = await import('./interfaces/ZenohBrowserConfig.js');
+    const { readSupervisorConfigFromEnv, resolveSupervisorConfig } = await import('./headless/SupervisorConfig.js');
+    let supervisorConfig;
+    let supervisorConfigError = null;
+    let zenohBrowserConfig = null;
+    let zenohBrowserConfigError = null;
+    try {
+        const configured = await readSupervisorConfigFromEnv(process.env, REPOSITORY_ROOT);
+        if (configured != null) resolveSupervisorConfig({ socket: configured.socket ?? path.join(REPOSITORY_ROOT, '.embedded-headless-supervisor.sock'), config: configured });
+        supervisorConfig = { ...configured, zenohTransport: withLocalZenohTransportDefaults(configured?.zenohTransport) };
+    } catch (error) { supervisorConfigError = error.message; console.error(`[headless] ${error.message}`); }
+    try { zenohBrowserConfig = await readZenohBrowserConfig(process.env) ?? localZenohBrowserConfig(); }
+    catch (error) { zenohBrowserConfigError = error; console.error(`[zenoh-browser] ${error.message}`); }
+    if (!zenohBrowserConfigError && !supervisorConfigError) {
+        const router = await acquireLocalZenohRouter({ browserConfig: zenohBrowserConfig, zenohTransport: supervisorConfig.zenohTransport, signal: abortController.signal });
+        cleanups.push(() => router.close());
+    }
+    cleanups.push(() => app.close());
+    abortController.signal.throwIfAborted();
+    await app.prepare();
+    abortController.signal.throwIfAborted();
     const server = express();
 
     const { resolveMarketplaceConfig } = await import('./marketplace/MarketplaceConfig.js');
@@ -32,7 +67,6 @@ app.prepare().then(async () => {
     const { createLogRouter } = await import('./routes/logRouter.js');
     const { HeadlessExperimentService } = await import('./headless/HeadlessExperimentService.js');
     const { HEADLESS_PROTOCOL } = await import('./headless/HeadlessProtocol.js');
-    const { readSupervisorConfigFromEnv } = await import('./headless/SupervisorConfig.js');
     const { createHeadlessRouter } = await import('./routes/headlessRouter.js');
     const { BrowserSimService } = await import('./browser-sim/BrowserSimService.js');
     const { createBrowserSimRouter } = await import('./routes/browserSimRouter.js');
@@ -68,17 +102,10 @@ app.prepare().then(async () => {
             ? Number(process.env.CEV_SIM_MAX_LOG_IMPORT_BYTES)
             : undefined,
     });
-    let supervisorConfig;
-    let supervisorConfigError = null;
-    try {
-        supervisorConfig = await readSupervisorConfigFromEnv(process.env, REPOSITORY_ROOT) ?? undefined;
-    } catch (error) {
-        supervisorConfigError = error.message;
-        console.error(`[headless] ${error.message}`);
-    }
     const headlessExperimentService = new HeadlessExperimentService(storageService, logService, {
         supervisorConfig,
     });
+    cleanups.push(() => headlessExperimentService.close());
     await headlessExperimentService.initialize();
     if (MarketplaceService) {
         const { storageEvents } = await import('./mcp/events.js');
@@ -102,6 +129,7 @@ app.prepare().then(async () => {
             }),
             connectionDirectory: server.locals.marketplaceConfig.connectionsDir,
         });
+        cleanups.push(() => marketplaceService.close());
         storageService.setMarketplaceExecutablePolicy(marketplaceService.executablePolicy);
         server.locals.marketplaceService = marketplaceService;
     }
@@ -124,12 +152,7 @@ app.prepare().then(async () => {
     // read the body themselves. Plugin catalog/compile live on Express so they
     // can use StorageService.
     server.use(['/api', '/mcp'], createRequestSecurityMiddleware(httpSecurity));
-    const { readZenohBrowserConfig } = await import('./interfaces/ZenohBrowserConfig.js');
     const { createZenohBrowserRouter } = await import('./routes/zenohBrowserRouter.js');
-    let zenohBrowserConfig = null;
-    let zenohBrowserConfigError = null;
-    try { zenohBrowserConfig = await readZenohBrowserConfig(process.env); }
-    catch (error) { zenohBrowserConfigError = error; console.error(`[zenoh-browser] ${error.message}`); }
     server.use('/api/zenoh', createZenohBrowserRouter({ config: zenohBrowserConfig, error: zenohBrowserConfigError }));
     const jsonParser = express.json({ limit: process.env.CEV_SIM_JSON_LIMIT || '8mb' });
     const headlessJsonParser = express.json({ limit: process.env.CEV_SIM_HEADLESS_JSON_LIMIT || '1mb' });
@@ -142,6 +165,7 @@ app.prepare().then(async () => {
     const { createControlOwnershipRouter } = await import('./routes/controlOwnershipRouter.js');
     const { storageEvents } = await import('./mcp/events.js');
     const controlOwnership = new ControlOwnershipService();
+    cleanups.push(() => controlOwnership.close());
     headlessExperimentService.controlOwnership = controlOwnership;
     controlOwnership.on('change', (lease) => {
         if (lease.target.kind === 'browser') storageEvents.publish({ domain: 'browser-sim', id: lease.target.id, action: 'control-ownership', data: { leaseId: lease.leaseId, status: lease.status } });
@@ -152,6 +176,7 @@ app.prepare().then(async () => {
     const { BrowserPacketRelay, readBrowserPacketHostConfig } = await import('./sensor-transports/BrowserPacketRelay.js');
     const { createBrowserPacketRouter } = await import('./routes/browserPacketRouter.js');
     const browserPacketRelay = new BrowserPacketRelay({ hostConfig: await readBrowserPacketHostConfig(process.env) });
+    cleanups.push(() => browserPacketRelay.shutdown());
     server.use('/api/browser-packets', createBrowserPacketRouter(browserPacketRelay));
     if (supervisorConfigError) cosmosClipJob.rendererError = supervisorConfigError;
     // three does not export `./package.json`; resolve the pinned Basis files via
@@ -178,22 +203,18 @@ app.prepare().then(async () => {
     });
 
     const PORT = process.env.PORT || 3000;
-    const httpServer = server.listen(PORT, httpSecurity.bindHost, (err) => {
-        if (err) throw err;
-        console.log(`> Ready on http://${httpSecurity.bindHost}:${PORT}`);
-        console.log(`> MCP endpoint: http://${httpSecurity.bindHost}:${PORT}/mcp`);
-    });
-
-    let shuttingDown = false;
-    const shutdown = async () => {
-        if (shuttingDown) return;
-        shuttingDown = true;
-        httpServer.close();
-        controlOwnership.close();
-        await browserPacketRelay.shutdown();
-        await marketplaceService?.close();
-        await headlessExperimentService.close();
-    };
-    process.once('SIGTERM', shutdown);
-    process.once('SIGINT', shutdown);
-})
+    abortController.signal.throwIfAborted();
+    const httpServer = server.listen(PORT, httpSecurity.bindHost);
+    cleanups.push(() => new Promise((resolve, reject) => httpServer.close((error) => error && error.code !== 'ERR_SERVER_NOT_RUNNING' ? reject(error) : resolve())));
+    await new Promise((resolve, reject) => { httpServer.once('listening', resolve); httpServer.once('error', reject); });
+    abortController.signal.throwIfAborted();
+    console.log(`> Ready on http://${httpSecurity.bindHost}:${PORT}`);
+    console.log(`> MCP endpoint: http://${httpSecurity.bindHost}:${PORT}/mcp`);
+}
+start().catch((error) => {
+    if (!abortController.signal.aborted) { console.error(error); process.exitCode = 1; }
+    abortController.abort();
+}).finally(async () => {
+    starting = false;
+    if (abortController.signal.aborted) await shutdown();
+});

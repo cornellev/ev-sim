@@ -1,6 +1,8 @@
 import { vehicleForwardTangent } from "../scenarios/route/geometry.js";
 
 export const DEFAULT_HEADING_WEDGE_LENGTH = 1.4;
+const HEADING_WEDGE_WING_ANGLE = 2.4;
+const HEADING_WEDGE_WING_SCALE = 0.55;
 
 function distancePointToSegment(point, start, end) {
     const dx = end.x - start.x;
@@ -124,14 +126,31 @@ export function offsetByVehicleYaw(origin, yaw, length) {
 }
 
 /**
+ * Cursor wedge length that stays inside a vehicle ground box.
+ * The tip lands on the front face, and the wings stay inside the body width.
+ * A missing or non-positive box keeps the historical 1.4 m wedge.
+ */
+export function headingWedgeLengthForBox(boundingBox, fallback = DEFAULT_HEADING_WEDGE_LENGTH) {
+    const sizeX = Number(boundingBox?.size?.x);
+    const sizeZ = Number(boundingBox?.size?.z);
+    if (!(sizeX > 0) || !(sizeZ > 0)) return fallback;
+    const centerX = Number(boundingBox?.center?.x);
+    const front = (Number.isFinite(centerX) ? centerX : 0) + sizeX / 2;
+    const lateral = Math.sin(HEADING_WEDGE_WING_ANGLE) * HEADING_WEDGE_WING_SCALE;
+    const widthLimit = lateral > 0 ? (sizeZ / 2) / lateral : front;
+    const length = Math.min(front, widthLimit);
+    return length > 0 ? length : fallback;
+}
+
+/**
  * Cursor wedge vertices in world XZ, matching bicycle-plant forward.
  * Tip is along yaw; wings are ±2.4 rad from that heading.
  */
 export function headingWedgeWorldPoints(origin, heading, length = DEFAULT_HEADING_WEDGE_LENGTH) {
     return {
         tip: offsetByVehicleYaw(origin, heading, length),
-        left: offsetByVehicleYaw(origin, heading + 2.4, length * 0.55),
-        right: offsetByVehicleYaw(origin, heading - 2.4, length * 0.55),
+        left: offsetByVehicleYaw(origin, heading + HEADING_WEDGE_WING_ANGLE, length * HEADING_WEDGE_WING_SCALE),
+        right: offsetByVehicleYaw(origin, heading - HEADING_WEDGE_WING_ANGLE, length * HEADING_WEDGE_WING_SCALE),
     };
 }
 

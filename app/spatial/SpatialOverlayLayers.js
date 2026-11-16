@@ -137,7 +137,7 @@ export default function SpatialOverlayLayers({
                 const origin = worldPointFromPose(model.cursor);
                 const screen = toScreen(origin);
                 if (!screen) return null;
-                const wedge = headingWedge(origin, model.cursorHeading)
+                const wedge = headingWedge(origin, model.cursorHeading, model.cursorWedgeLength)
                     .split(" ")
                     .map((pair) => {
                         const [x, z] = pair.split(",").map(Number);

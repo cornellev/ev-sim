@@ -31,8 +31,10 @@ export async function fsyncFile(filePath, faults) {
     }
 }
 
-export async function fsyncDir(dirPath, faults) {
+export async function fsyncDir(dirPath, faults, platform = process.platform) {
     await maybeFault(faults, "dirFsync");
+    // shortcut: Node cannot fsync Windows directories; add native durability before a Windows crash-durable release.
+    if (platform === "win32") return;
     const handle = await fs.open(dirPath, "r");
     try {
         await handle.sync();

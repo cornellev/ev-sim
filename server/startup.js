@@ -6,18 +6,18 @@ function isMajorZeroVersion(version) {
     return Number.isFinite(major) && major === 0;
 }
 
-async function checkInternet() {
+async function checkInternet(signal) {
     const source = "https://github.com/cornellev/ev-sim";
     try {
-        const req = await fetch(source);
+        await fetch(source, { signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(10000)]) });
     } catch (e) {
         return false;
     }
     return true;
 }
 
-async function startup(directoryRoot, env) {
-    if (!(await checkInternet())) {
+async function startup(directoryRoot, env, signal) {
+    if (!(await checkInternet(signal))) {
         console.warn(
             `[WARNING] You're offline! Cannot check upstream.`
         )

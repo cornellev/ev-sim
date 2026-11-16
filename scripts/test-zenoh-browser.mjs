@@ -6,10 +6,11 @@ import { spawn } from "node:child_process";
 import { unzipSync } from "fflate";
 import WebSocket from "ws";
 import { externalBundle } from "../tests/helpers/headlessZenoh.js";
+import { createServer as createTcpServer } from "node:net";
 
-const pair = JSON.parse(await readFile(new URL("../tests/fixtures/protobuf/zenoh-browser-compatibility.json", import.meta.url)));
+const pair = JSON.parse(await readFile(new URL("../native/zenoh-transport/router-artifacts.json", import.meta.url)));
 const artifact = pair.artifacts[`${process.platform}-${process.arch}`];
-if (!artifact) throw new Error("Browser compatibility gate requires Linux x64 or macOS ARM64.");
+if (!artifact?.name) throw new Error("Browser compatibility gate requires a macOS/Linux standalone bridge; Windows live acceptance is deferred.");
 const directory = await mkdtemp(path.join(tmpdir(), "cev-zenoh-browser-"));
 const bundlePath = path.join(directory, "native-run.json");
 await writeFile(bundlePath, JSON.stringify(await externalBundle({ maxSteps: 240 })));
@@ -26,15 +27,20 @@ if (!binary) {
 }
 const config = path.join(directory, "browser.json");
 const routerConfig = path.join(directory, "router.json5");
-await writeFile(config, JSON.stringify({ kind: "cev-sim.zenoh-browser-host-config", version: 1, endpoint: "ws://127.0.0.1:10005" }));
+const listener = createTcpServer();
+await new Promise((resolve) => listener.listen(0, "127.0.0.1", resolve));
+const wsAddress = `127.0.0.1:${listener.address().port}`;
+await new Promise((resolve) => listener.close(resolve));
+const endpoint = `ws://${wsAddress}`;
+await writeFile(config, JSON.stringify({ kind: "cev-sim.zenoh-browser-host-config", version: 1, endpoint }));
 await writeFile(routerConfig, JSON.stringify({ listen: { endpoints: [] }, scouting: { multicast: { enabled: false }, gossip: { enabled: false } } }));
 await mkdir(path.join(directory, "storage"));
-function startRouter() { return spawn(binary, ["--config", routerConfig, "--ws-port", "127.0.0.1:10005"], { stdio: "ignore" }); }
+function startRouter() { return spawn(binary, ["--config", routerConfig, "--ws-port", wsAddress], { stdio: "ignore" }); }
 let router = startRouter();
 async function ready() {
     for (let attempt = 0; attempt < 50; attempt++) {
         if (router.exitCode !== null) throw new Error(`Router exited ${router.exitCode}`);
-        const connected = await new Promise((resolve) => { const socket = new WebSocket("ws://127.0.0.1:10005"); const timer = setTimeout(() => { socket.terminate(); resolve(false); }, 200);
+        const connected = await new Promise((resolve) => { const socket = new WebSocket(endpoint); const timer = setTimeout(() => { socket.terminate(); resolve(false); }, 200);
             socket.on("open", () => { clearTimeout(timer); socket.close(); resolve(true); }); socket.on("error", () => { clearTimeout(timer); resolve(false); }); });
         if (connected) return;
         await new Promise((resolve) => setTimeout(resolve, 100));
@@ -53,9 +59,9 @@ const control = createServer(async (request, response) => {
     } catch (error) { response.writeHead(500).end(error.message); }
 });
 try {
-    await ready(); await new Promise((resolve) => control.listen(10006, "127.0.0.1", resolve));
+    await ready(); await new Promise((resolve) => control.listen(0, "127.0.0.1", resolve));
     const tests = spawn("npx", ["playwright", "test", "tests/ui/zenoh-browser.spec.js", "tests/ui/protobuf-interface.spec.js", ...process.argv.slice(2)], {
-        stdio: "inherit", env: { ...process.env, CEV_SIM_ZENOH_BROWSER_CONFIG: config, CEV_SIM_ZENOH_BROWSER_GATE: "1", CEV_SIM_ZENOH_BROWSER_TEST_BUNDLE: bundlePath, CEV_SIM_DATA_DIR: path.join(directory, "storage") },
+        stdio: "inherit", env: { ...process.env, CEV_SIM_ZENOH_ROUTER: "off", CEV_SIM_ZENOH_BROWSER_CONFIG: config, CEV_SIM_ZENOH_BROWSER_GATE: "1", CEV_SIM_ZENOH_BROWSER_GATE_CONTROL: `http://127.0.0.1:${control.address().port}`, CEV_SIM_ZENOH_BROWSER_TEST_BUNDLE: bundlePath, CEV_SIM_DATA_DIR: path.join(directory, "storage") },
     });
     const code = await new Promise((resolve) => tests.on("exit", resolve)); process.exitCode = code ?? 1;
 } finally { router.kill(); control.close(); }

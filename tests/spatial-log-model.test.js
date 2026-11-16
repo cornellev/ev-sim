@@ -7,9 +7,22 @@ import {
     routePolylinePoints,
     trailSegmentForTime,
 } from "../app/spatial/spatialLogModel.js";
-import { simplifyTrajectory, headingFromPose, headingWedgeWorldPoints, worldPointFromPose } from "../app/spatial/trajectorySimplify.js";
+import {
+    DEFAULT_HEADING_WEDGE_LENGTH,
+    headingFromPose,
+    headingWedgeLengthForBox,
+    headingWedgeWorldPoints,
+    simplifyTrajectory,
+    worldPointFromPose,
+} from "../app/spatial/trajectorySimplify.js";
+import { getBuiltInVehicleManifest } from "../app/vehicles/BuiltInVehicleManifests.js";
 import { vehicleForwardTangent } from "../app/scenarios/route/geometry.js";
 import { compareWorldCompatibility, buildComparisonTrails } from "../app/spatial/spatialComparison.js";
+
+function wedgeHalfWidth(length) {
+    const points = headingWedgeWorldPoints({ x: 0, z: 0 }, 0, length);
+    return Math.max(Math.abs(points.left.z), Math.abs(points.right.z));
+}
 
 test("discoverVehiclePosePaths finds pose3 vehicle channels", () => {
     const paths = discoverVehiclePosePaths([
@@ -98,6 +111,69 @@ test("heading wedge uses plant-forward -sin(yaw)", () => {
     assert.ok(Math.abs((tip.x - 3) - tangent.x) < 1e-5);
     assert.ok(Math.abs((tip.z + 1) - tangent.z) < 1e-5);
     assert.ok(tangent.z < 0);
+});
+
+test("heading wedge length stays inside the vehicle box", () => {
+    const big = getBuiltInVehicleManifest("big-car").boundingBox;
+    const bigLength = headingWedgeLengthForBox(big);
+    assert.ok(Math.abs(bigLength - (big.center.x + big.size.x / 2)) < 1e-9);
+    assert.ok(Math.abs(bigLength - DEFAULT_HEADING_WEDGE_LENGTH) > 1e-3);
+    assert.ok(wedgeHalfWidth(bigLength) <= big.size.z / 2 + 1e-6);
+
+    const igvc = getBuiltInVehicleManifest("igvc-car").boundingBox;
+    const igvcLength = headingWedgeLengthForBox(igvc);
+    assert.ok(igvcLength < DEFAULT_HEADING_WEDGE_LENGTH / 2);
+    assert.ok(igvcLength <= igvc.center.x + igvc.size.x / 2 + 1e-9);
+    assert.ok(wedgeHalfWidth(igvcLength) <= igvc.size.z / 2 + 1e-6);
+
+    const narrow = { size: { x: 4, z: 0.4 }, center: { x: 0, z: 0 } };
+    const narrowLength = headingWedgeLengthForBox(narrow);
+    assert.ok(narrowLength < narrow.size.x / 2);
+    assert.ok(Math.abs(wedgeHalfWidth(narrowLength) - narrow.size.z / 2) < 1e-6);
+
+    assert.equal(headingWedgeLengthForBox(null), DEFAULT_HEADING_WEDGE_LENGTH);
+    assert.equal(headingWedgeLengthForBox({ size: { x: 2 } }), DEFAULT_HEADING_WEDGE_LENGTH);
+    assert.equal(headingWedgeLengthForBox({ size: { x: 1, z: 1 }, center: { x: -2 } }), DEFAULT_HEADING_WEDGE_LENGTH);
+});
+
+test("buildSpatialLogModel scales the cursor wedge to the selected vehicle", () => {
+    const igvc = getBuiltInVehicleManifest("igvc-car").boundingBox;
+    const big = getBuiltInVehicleManifest("big-car").boundingBox;
+    const samples = [{ timeUs: 0, position: { x: 0, y: 0, z: 0 }, rotation: { y: 0 } }];
+    const selected = buildSpatialLogModel({
+        resolvedRun: {
+            vehicles: [
+                { actorId: "ego", manifest: { boundingBox: big } },
+                { actorId: "npc", manifest: { boundingBox: igvc } },
+            ],
+        },
+        trails: [
+            { entityId: "ego", samples },
+            { entityId: "npc", samples },
+        ],
+        primaryEntityId: "npc",
+    });
+    assert.equal(selected.cursorWedgeLength, headingWedgeLengthForBox(igvc));
+
+    const onlyVehicle = buildSpatialLogModel({
+        resolvedRun: { vehicles: [{ actorId: "ego", manifest: { boundingBox: igvc } }] },
+    });
+    assert.equal(onlyVehicle.cursorWedgeLength, headingWedgeLengthForBox(igvc));
+
+    const ambiguous = buildSpatialLogModel({
+        resolvedRun: {
+            vehicles: [
+                { actorId: "ego", manifest: { boundingBox: big } },
+                { actorId: "npc", manifest: { boundingBox: igvc } },
+            ],
+        },
+    });
+    assert.equal(ambiguous.cursorWedgeLength, DEFAULT_HEADING_WEDGE_LENGTH);
+
+    const missing = buildSpatialLogModel({
+        trails: [{ entityId: "ego", samples }],
+    });
+    assert.equal(missing.cursorWedgeLength, DEFAULT_HEADING_WEDGE_LENGTH);
 });
 
 test("compareWorldCompatibility rejects mismatched resolved hashes", () => {

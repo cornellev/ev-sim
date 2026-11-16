@@ -10,9 +10,11 @@ import {
 import {
     MAP_WORLD_SCALE,
     shouldShowMapAssetFootprint,
+    worldRadiusToScreen,
     worldSizeToScreen,
     worldToScreen,
 } from "../../editor/map/mapCoords.js";
+import { primitiveMapFootprint } from "../../editor/map/mapHitTest.js";
 import { DEFAULT_ROAD_EDGE } from "../../editor/document/EnvironmentDocument.js";
 import { MAP_SELECTION_TYPES } from "../../editor/EditorState.js";
 import { DEFAULT_CHUNK_SIZE } from "../../editor/chunks/ChunkIndex.js";
@@ -469,23 +471,31 @@ function Features({ documentSnapshot, viewport, size, layers, showDetail, mapSel
     if (!showDetail || !layers.props) return null;
 
     const primitives = (documentSnapshot.primitives ?? []).map((primitive) => {
-        const screen = worldToScreen(primitive.position, viewport, size);
+        const footprint = primitiveMapFootprint(primitive);
         const selected = mapSelection?.type === MAP_SELECTION_TYPES.PRIMITIVE && mapSelection.id === primitive.id;
-        const radius = Math.max(4, Math.max(primitive.size?.x ?? 1, primitive.size?.z ?? 1) * (viewport.zoom ?? 1) * 0.5);
-        return (
-            <g key={`primitive:${primitive.id}`}>
-                <rect
-                    x={screen.x - radius}
-                    y={screen.y - radius}
-                    width={radius * 2}
-                    height={radius * 2}
-                    fill={primitive.color ?? "#a3a3a3"}
-                    fillOpacity={0.85}
-                    stroke={selected ? "#38bdf8" : "#52525b"}
-                    strokeWidth={selected ? 2 : 1}
+        const paint = {
+            fill: primitive.color ?? "#a3a3a3",
+            fillOpacity: 0.85,
+            stroke: selected ? "#38bdf8" : "#52525b",
+            strokeWidth: selected ? 2 : 1,
+        };
+        if (footprint.kind === "circle") {
+            const center = worldToScreen(footprint.center, viewport, size);
+            return (
+                <circle
+                    key={`primitive:${primitive.id}`}
+                    cx={center.x}
+                    cy={center.y}
+                    r={worldRadiusToScreen(footprint.radius, viewport)}
+                    {...paint}
                 />
-            </g>
-        );
+            );
+        }
+        const points = footprint.points
+            .map((point) => worldToScreen(point, viewport, size))
+            .map((point) => `${point.x},${point.y}`)
+            .join(" ");
+        return <polygon key={`primitive:${primitive.id}`} points={points} {...paint} />;
     });
     return [...primitives, ...documentSnapshot.features.map((feature) => {
         const screen = worldToScreen(feature, viewport, size);

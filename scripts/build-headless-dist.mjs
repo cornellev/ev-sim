@@ -47,6 +47,7 @@ const COPY_ENTRIES = Object.freeze([
     "docs/zenoh-native-transport.md",
     "native/zenoh-transport/index.js",
     "native/zenoh-transport/package.json",
+    "native/zenoh-transport/router-artifacts.json",
     "LICENSE",
 ]);
 const JAVASCRIPT_ROOTS = Object.freeze([
@@ -153,6 +154,7 @@ function packageMetadata(rootPackage) {
         "@tufjs/canonical-json",
         "@tufjs/models",
         "acorn",
+        "fflate",
         "ajv",
         "semver",
         "sharp",

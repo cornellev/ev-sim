@@ -4,7 +4,9 @@ External controllers can launch a saved manifest and control an already-open
 simulator page through `/api/browser-sim`. Start the usual `npm run dev` or
 `npm run start` server and open its simulator page first. This API does not
 launch browser processes or change driving authority. Sensor and `/clock`
-traffic continues through the existing orchestrator/Zenoh connection.
+traffic continues through the admitted Zenoh connection. The server acquires
+the pinned local router automatically; see [protobuf-routing.md](protobuf-routing.md)
+for startup, explicit endpoints, and Windows x64 browser use.
 
 ## Endpoints
 
@@ -100,6 +102,29 @@ unresolved commands are not evicted while their page remains connected.
 Server restart discards the registry. Page reload and server restart never
 replay commands. A closed HTTP client does not stop a simulation. Browser
 suspension can delay execution and heartbeats.
+
+### Owned external controllers
+
+The onboarding leased command@2 interface requires control ownership:
+
+1. Select a connected `browserId` and acquire a lease with
+   `POST /api/interfaces/control-ownership`, body
+   `{ "target": { "kind": "browser", "id": "BROWSER_ID", "vehicleId": "ego" }, "mode": "autonomous" }`.
+   Retain `leaseId` and the returned credential `token`.
+2. Renew every 250 ms with `POST /api/interfaces/control-ownership/LEASE_ID/renew`
+   and `Authorization: Bearer TOKEN`. The lease expires after 750 ms; keep
+   renewing throughout preparation and execution.
+3. Submit `start` with the saved manifest, selected browser, `autoplay: false`,
+   `controlLeaseId`, and `controlLeaseToken`. Wait for its succeeded receipt.
+4. Use its `snapshot.runId` in wire commands. Submit `resume` with that run ID,
+   browser ID, and the same lease ID/token. Command@2 carries the lease ID;
+   never reuse a prior run's identity or sequence fence.
+
+Lease loss clears controls and pauses locally. Router ownership and control
+ownership are separate. An owned headless run uses the existing
+`/api/headless/external-runs` preparation/commands API with its headless lease;
+the direct CLI does not provide the ownership service. Headless Zenoh requires
+the Linux addon, including when using WSL2 on Windows.
 
 ## Example
 

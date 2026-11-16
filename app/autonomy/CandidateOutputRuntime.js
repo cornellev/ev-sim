@@ -12,6 +12,7 @@ import {
     normalizeLanes,
     normalizeOdometry,
     normalizeSemanticImage,
+    normalizeOccupancy,
     normalizePath,
     truthAtCaptureTime,
 } from "./AutonomyVisualizationModel.js";
@@ -51,11 +52,13 @@ export class CandidateOutputRuntime {
         this.lastGoodLocalization = null;
         this.truthHistory = [];
         this.lastPath = null;
+        this.lastOccupancy = null;
         this._defineSignals();
     }
 
     reset() {
         this.lastPath = null;
+        this.lastOccupancy = null;
         this.lastPerception = emptyPerceptionSnapshot({ status: this._initialStatus(PERCEPTION_CONTRACTS) });
         this.lastLocalization = emptyLocalizationSnapshot({ status: this._initialStatus(LOCALIZATION_CONTRACTS) });
         this.lastGoodPerception = null;
@@ -86,6 +89,10 @@ export class CandidateOutputRuntime {
         if (envelope.valueContract?.id === "cev.path") {
             this.lastPath = normalizePath(envelope.value, { valueContract: envelope.valueContract, metadata: envelope.metadata, transformToMap: this._transformToMapBinder(envelope.captureTimeNs ?? applyTimeNs) });
             return this.lastPath;
+        }
+        if (envelope.valueContract?.id === "cev.occupancy") {
+            this.lastOccupancy = normalizeOccupancy(envelope.value, { valueContract: envelope.valueContract, metadata: envelope.metadata, transformToMap: this._transformToMapBinder(envelope.captureTimeNs ?? applyTimeNs) });
+            return this.lastOccupancy;
         }
         if (PERCEPTION_CONTRACTS.has(id)) {
             return this._ingestPerception(id, envelope, { applyStep, applyTimeNs, status: VISUALIZATION_STATUS.OK });

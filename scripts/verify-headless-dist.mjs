@@ -126,12 +126,30 @@ async function verifyNpm(root, tarball, dist, manifest) {
     );
     for (const name of [
         "@tufjs/canonical-json", "@tufjs/models", "acorn", "ajv", "semver", "sharp",
-        "spdx-expression-parse", "tuf-js",
+        "spdx-expression-parse", "tuf-js", "fflate",
     ]) {
         if (!installedPackage.dependencies?.[name]) {
             throw new Error(`Headless npm package must depend on ${name} for plugin verification.`);
         }
     }
+    await checked(process.execPath, ["--input-type=module", "-e", `
+        import assert from 'node:assert/strict';
+        import { createHash } from 'node:crypto';
+        import { zipSync } from 'fflate';
+        import { installZenohRouter, readZenohRouterPins, localZenohEndpoints } from './node_modules/cev-sim/server/interfaces/ZenohLocalRouter.js';
+        const pinned = await readZenohRouterPins();
+        assert.equal(pinned.routerVersion, '1.10.2');
+        assert.equal(pinned.artifacts['win32-x64'].archives.length, 2);
+        assert.equal(localZenohEndpoints({}).tcp, 'tcp/127.0.0.1:7447');
+        const archive = zipSync({ 'zenoh-bridge-remote-api': new Uint8Array([1, 2, 3]) });
+        const pins = { routerVersion: '1.10.2', artifacts: { 'linux-x64': {
+            name: 'fixture.zip', sha256: createHash('sha256').update(archive).digest('hex') } } };
+        const options = { platform: 'linux', architecture: 'x64',
+            dependencies: { readPins: async () => pins }, fetchArchive: async () => archive };
+        const first = await installZenohRouter('./router-cache', options);
+        const cached = await installZenohRouter('./router-cache', { ...options, fetchArchive: async () => { throw Error('unexpected download'); } });
+        assert.equal(first.binary, cached.binary);
+    `], { cwd: project });
     const executable = path.join(project, "node_modules/.bin/cev-sim");
     const help = await checked(executable, ["--help"], { cwd: project });
     if (!help.stdout.includes("cev-sim supervisor")) throw new Error("Installed npm CLI did not expose headless commands.");
@@ -282,11 +300,11 @@ async function verifyNpm(root, tarball, dist, manifest) {
         throw new Error("Installed npm CLI did not expose cev-sim-plugin pack/verify.");
     }
     const standalonePlugin = path.join(project, "external-plugin");
-    await fs.cp(
-        path.resolve("tests/fixtures/plugins/test.range-image-fixture"),
-        standalonePlugin,
-        { recursive: true },
-    );
+    for (const member of sensorResource.files) {
+        const file = path.join(standalonePlugin, member.path);
+        await fs.mkdir(path.dirname(file), { recursive: true });
+        await fs.writeFile(file, Buffer.from(member.data, "base64"));
+    }
     const packedPlugin = path.join(project, "external.plugin.json");
     await checked(pluginCli, ["pack", "--directory", standalonePlugin, "--output", packedPlugin], { cwd: project });
     const verifiedPacked = await checked(pluginCli, ["verify", "--file", packedPlugin], { cwd: project });

@@ -283,6 +283,46 @@ export function normalizeLanes(payload, {
     });
 }
 
+const WORLD_OCCUPANCY_FRAMES = new Set(["", "map", "world"]);
+
+export function normalizeOccupancy(payload, { valueContract, metadata = {}, transformToMap = null } = {}) {
+    assertNativeVisualization(payload, valueContract, "cev.occupancy");
+    const frameId = String(metadata.frameId || "");
+    let originX = Number(payload.origin.x);
+    let originZ = Number(payload.origin.z);
+    let yawRad = 0;
+    let status = VISUALIZATION_STATUS.OK;
+    if (transformToMap && !WORLD_OCCUPANCY_FRAMES.has(frameId)) {
+        const resolved = transformToMap({
+            position: payload.origin,
+            rotation: { x: 0, y: 0, z: 0, w: 1 },
+            frameId,
+            captureTimeNs: metadata.captureTimeNs,
+        });
+        if (!resolved?.ok) return { status: VISUALIZATION_STATUS.MISSING_FRAME };
+        const three = rep103PoseToThree({
+            position: resolved.pose.position,
+            rotation: quaternionToEuler(resolved.pose.rotation || {}),
+        });
+        originX = three.position.x;
+        originZ = three.position.z;
+        yawRad = three.rotation.y;
+    }
+    return {
+        status,
+        cells: payload.data,
+        width: payload.width,
+        height: payload.height,
+        originX,
+        originZ,
+        resolutionM: payload.resolutionM,
+        yawRad,
+        palette: payload.encoding,
+        captureTimeNs: metadata.captureTimeNs,
+        frameId,
+    };
+}
+
 export function normalizePath(payload, { valueContract, metadata = {}, transformToMap = null } = {}) {
     assertNativeVisualization(payload, valueContract, "cev.path");
     let status = VISUALIZATION_STATUS.OK;

@@ -7,6 +7,7 @@ import { assetBindingRevisionVersion, isAssetBackedObject, readAssetBinding } fr
 import { assetMetricKey } from "../../../editor-assets/AssetMetricSnapshot.js";
 import { indexObjectsById } from "../commands/objectMutations.js";
 import { isObjectHidden } from "../projection/projectors/objectsProjector.js";
+import { normalizePrimitiveRecord } from "../../../simulation/world/PrimitiveRecords.js";
 
 /** Lane under a pointer projected onto a compiled edge, or null on the shoulder. */
 function laneSubAtProjection(worldPoint, entry, projection) {
@@ -59,6 +60,50 @@ export function distanceToSegmentXZ(point, start, end) {
     const projectedX = start.x + t * dx;
     const projectedZ = start.z + t * dz;
     return Math.hypot(point.x - projectedX, point.z - projectedZ);
+}
+
+function yawPoint(position, rotationY, x, z) {
+    const c = Math.cos(rotationY);
+    const s = Math.sin(rotationY);
+    return {
+        x: position.x + c * x + s * z,
+        z: position.z - s * x + c * z,
+    };
+}
+
+function localOffset(position, rotationY, worldPoint) {
+    const c = Math.cos(rotationY);
+    const s = Math.sin(rotationY);
+    const dx = worldPoint.x - position.x;
+    const dz = worldPoint.z - position.z;
+    return { x: c * dx - s * dz, z: s * dx + c * dz };
+}
+
+const ROUND_SHAPES = new Set(["sphere", "cylinder", "cone"]);
+
+/** Ground outline. Yaw matches the solid: x' = cos x + sin z, z' = -sin x + cos z. */
+export function primitiveMapFootprint(record) {
+    const primitive = normalizePrimitiveRecord(record);
+    const center = { x: primitive.position.x, z: primitive.position.z };
+    if (ROUND_SHAPES.has(primitive.shape)) {
+        return { kind: "circle", center, radius: primitive.size.x * 0.5 };
+    }
+    const hx = primitive.size.x * 0.5;
+    const hz = primitive.size.z * 0.5;
+    return {
+        kind: "polygon",
+        points: [[-hx, -hz], [hx, -hz], [hx, hz], [-hx, hz]].map(([x, z]) => yawPoint(primitive.position, primitive.rotationY, x, z)),
+    };
+}
+
+function distanceToPrimitive(primitive, worldPoint) {
+    const local = localOffset(primitive.position, primitive.rotationY, worldPoint);
+    if (ROUND_SHAPES.has(primitive.shape)) {
+        return Math.max(0, Math.hypot(local.x, local.z) - primitive.size.x * 0.5);
+    }
+    const dx = Math.max(Math.abs(local.x) - primitive.size.x * 0.5, 0);
+    const dz = Math.max(Math.abs(local.z) - primitive.size.z * 0.5, 0);
+    return Math.hypot(dx, dz);
 }
 
 /**
@@ -240,18 +285,17 @@ export function pickMapTarget(worldPoint, documentSnapshot, viewport, layers, sc
         }
 
         let nearestPrimitive = null;
-        let nearestPrimitiveDistance = radiusWorld;
+        let nearestCenter = Infinity;
         for (const primitive of documentSnapshot.primitives ?? []) {
-            const radius = Math.max(Number(primitive.size?.x) || 1, Number(primitive.size?.z) || 1) * 0.5;
-            const distance = Math.hypot(primitive.position.x - worldPoint.x, primitive.position.z - worldPoint.z);
-            if (distance <= Math.max(nearestPrimitiveDistance, radius) && distance <= nearestPrimitiveDistance + radius) {
-                nearestPrimitiveDistance = distance;
-                nearestPrimitive = primitive;
+            const record = normalizePrimitiveRecord(primitive);
+            if (distanceToPrimitive(record, worldPoint) > radiusWorld) continue;
+            const centerDistance = Math.hypot(record.position.x - worldPoint.x, record.position.z - worldPoint.z);
+            if (centerDistance < nearestCenter) {
+                nearestCenter = centerDistance;
+                nearestPrimitive = record;
             }
         }
-        if (nearestPrimitive && nearestPrimitiveDistance <= radiusWorld + Math.max(Number(nearestPrimitive.size?.x) || 1, Number(nearestPrimitive.size?.z) || 1) * 0.5) {
-            return { type: "primitive", id: nearestPrimitive.id };
-        }
+        if (nearestPrimitive) return { type: "primitive", id: nearestPrimitive.id };
 
         if (nearestFeature) {
             return { type: "feature", id: nearestFeature.id };

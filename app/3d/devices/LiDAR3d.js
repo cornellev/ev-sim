@@ -180,6 +180,7 @@ export class LiDAR3d extends Device {
 
     onShaderUpdate(buffer) {
         this.buff = buffer;
+        this.buffGeneration = (this.buffGeneration || 0) + 1;
         this.emitRays(buffer);
     }
 

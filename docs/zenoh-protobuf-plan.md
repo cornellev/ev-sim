@@ -37,6 +37,14 @@ contract, run-manifest documentation, and architecture before runtime changes.
   transport uses a thin Rust/napi addon in the existing environment process.
   Keep Zenoh/router/native compatibility pinned to the existing 1.10.2 baseline;
   pin and verify the browser client and router plugin together in ZPB-05.
+- Local-router maintenance defaults the browser, server/supervisor, and
+  external-realtime CLI host endpoints and acquires one checksum-pinned router
+  child in a shared per-user cache. Explicit endpoints and opt-out remain
+  operational. PID plus birth identity governs attachment and stale recovery;
+  no refcount, respawn, ownership transfer, or run hash changes are introduced.
+  Native Windows x64 browser/router startup is included. Native headless Zenoh
+  remains Linux/WSL2; Windows release and live acceptance are deferred by the
+  user. This maintenance does not create another ZPB or headless milestone.
 - Linux x64 and Jetson ARM64 consumers receive large immutable encoded payloads
   through Zenoh's own shared-memory support. Do not publish process pointers,
   custom `/dev/shm` paths, or a second image-reference protocol. Consumer-held
@@ -383,7 +391,7 @@ ZPB-05 implementation uses these dependency-ordered working packages:
 
 | Working package | Implementation | Data and evidence |
 | --- | --- | --- |
-| WP1 — host configuration | `app/client/ZenohBrowserConfig.js::normalizeZenohBrowserConfig()`, `server/interfaces/ZenohBrowserConfig.js::readZenohBrowserConfig()`, `server/routes/zenohBrowserRouter.js` | Explicit host JSON@1, same-origin configuration endpoint, SDK lockfile and router archive checksums in `tests/fixtures/protobuf/zenoh-browser-compatibility.json`; Node wire pair verified, browser conformance open |
+| WP1 — host configuration | `app/client/ZenohBrowserConfig.js::normalizeZenohBrowserConfig()`, `server/interfaces/ZenohBrowserConfig.js::readZenohBrowserConfig()`, `server/routes/zenohBrowserRouter.js` | Explicit host JSON@1, same-origin configuration endpoint, SDK lockfile and router archive checksums in `native/zenoh-transport/router-artifacts.json`; Node wire pair verified, browser conformance open |
 | WP2 — worker transport | `ZenohBrowserTransport.js::{connect,publish,subscribe,unsubscribe,close}`, `ZenohBrowserWorkerRuntime.js::createZenohBrowserWorkerRuntime()`, `zenohBrowserTransport.worker.js` | Official public SDK APIs in a terminable worker, request Map, route/subscription Maps, owned FIFO payloads, inbound credit Map, one active publication |
 | WP3 — kernel wiring | `ProtobufRouteRuntime.js::invalidateBindings()`, kernel/runtime context topic lifecycle, `ControlRuntime.js` run identity | Actual kernel `TopicInputQueue`, concrete run ID, native publication port; reconnect preserves bootstrap schedule, reset re-arms it |
 | WP4 — startup | `ClientManager.js::{setup,preflight,activateRoutes,dispose}`, `RunSessionController.js::{prepare,_applyPending}` | Frozen interface admission and awaited router declarations before play; required external inputs need routes, without peer discovery; legacy setup loads lazily |
@@ -809,3 +817,25 @@ remain ZPB-08; orchestrator deletion remains ZPB-09.
   Jetson, Linux-only CLI/SHM, and full soak remain deferred; existing release
   gates are unchanged. Detailed evidence is in
   [zpb-09-work-packages.md](zpb-09-work-packages.md).
+
+- **2026-11-15 — Local-router maintenance implemented.** Server, standalone
+  supervisor, and external-realtime CLI entry points supply local defaults and
+  acquire one router child; explicit hosts and opt-out retain their addresses.
+  Runtime pins and the checksum installer ship in headless packages. The
+  shared per-user cache supports verified legacy reuse, exclusive installation,
+  complete owner records, PID/birth-identity attachment, conservative stale
+  recovery, bounded startup, and owned-child shutdown without respawn or
+  ownership transfer. Windows x64 browser startup uses GNU zenohd plus an
+  absolute required remote-API plugin; native headless remains Linux/WSL2.
+  Production startup is portable, optional onboarding only prefetches, and
+  Windows directory fsync remains an explicit crash-durability limitation.
+  Run identities and characterization fixtures stay unchanged; this creates
+  no roadmap milestone. Lint passes with three existing warnings; 42 focused
+  checks and the full JavaScript suite (2,848 passed, 20 skipped) pass. Five
+  POSIX real-process/router/server checks pass, including exact bidirectional
+  official WebSocket SDK ↔ Rust TCP bytes and SDK reconnection. The production
+  webpack build and isolated npm/wheel/sdist verification with Python 3.12
+  pass. All three macOS Playwright browser/import checks pass against a fresh
+  production build, using temporary ports and the router opt-out.
+  Windows live acceptance and release work remain deferred by user request;
+  Linux SHM, hosted, and hardware release gates remain unchanged.
