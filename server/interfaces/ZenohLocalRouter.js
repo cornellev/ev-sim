@@ -273,7 +273,7 @@ export async function installZenohRouter(root, { platform = process.platform, ar
         return missing ? null : contents;
     };
     await fs.mkdir(root, { recursive: true, mode: 0o700 });
-    const hostId = normalizeHostId(await (dependencies.hostId ?? localZenohHostId)({ platform, signal }));
+    const hostId = normalizeHostId(await (dependencies.hostId ?? localZenohHostId)({ signal }));
     if (!hostId) throw fail("Cannot identify the local machine.");
     const unlock = await installationLock(`${directory}.install-owner.json`, signal,
         dependencies.identity ?? zenohProcessIdentity, Date.now() + ACQUIRE_MS, hostId);
@@ -396,7 +396,7 @@ export async function acquireLocalZenohRouter({ env = process.env, browserConfig
     const parent = await lookup(process.pid);
     if (!parent) throw fail("Cannot identify the router parent process.");
     const acquisition = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(dependencies.acquireMs ?? ACQUIRE_MS)]);
-    const hostId = normalizeHostId(await (dependencies.hostId ?? localZenohHostId)({ platform, signal: acquisition }));
+    const hostId = normalizeHostId(await (dependencies.hostId ?? localZenohHostId)({ signal: acquisition }));
     if (!hostId) throw fail("Cannot identify the local machine.");
     const imageOf = dependencies.processImage ?? ((pid) => zenohProcessImage(pid, { platform, signal: acquisition }));
     const signalProcess = dependencies.signal ?? signalRouterProcess;

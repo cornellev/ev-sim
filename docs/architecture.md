@@ -945,17 +945,23 @@ Explicit remote endpoints retain their addresses and bypass acquisition.
 Pins live in `native/zenoh-transport/router-artifacts.json` and ship in headless
 packages. Downloads, executable/plugin hashes, and installation markers are
 verified in a per-user cache independent of checkout/CWD. Complete exclusive
-owner records identify parent and child by PID plus process birth identity.
-Concurrent starts attach only after both endpoints are ready. Dead ownership
-can be recovered only when both recorded processes are dead and ports are free.
-Foreign listeners and live orphans fail; attached handles never kill a child.
-Only the spawning process terminates its child, after its own work closes.
+owner records identify parent and child by PID plus process birth identity,
+and the machine by a stable host id rather than the DHCP hostname. Concurrent
+starts attach only after both endpoints are ready. Dead ownership can be
+recovered when both recorded processes are dead and ports are free. A later
+start may stop a child whose parent is gone and whose PID, birth time, and
+cache executable match. Foreign listeners fail. Attached handles never kill a
+child whose parent is alive. Only that identified orphan, or the spawning
+process after its own work closes, terminates a router child.
 No refcount, ownership transfer, respawn, or semantic identity changes result.
 
 macOS/Linux use the standalone bridge with explicit router-mode override.
 Windows x64 uses pinned GNU zenohd and an absolute required remote-API plugin,
 with SHM disabled. Process identities use `/proc` on Linux, `ps` on macOS, and
-PowerShell CIM creation times on Windows. Windows browser startup is implemented;
+PowerShell CIM creation times on Windows. Host identity uses `/etc/machine-id`,
+`IOPlatformUUID`, and `MachineGuid` on those platforms. An orphan executable is
+read from `/proc/<pid>/exe`, `ps -ww -o command=`, or the Windows process path.
+Windows browser startup is implemented;
 native headless Zenoh remains Linux/WSL2. Windows release and live acceptance are
 deferred. Windows directory fsync is unavailable through Node; atomic exclusive
 publication and file syncing remain, with crash durability deferred.

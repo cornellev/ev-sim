@@ -24,6 +24,7 @@ const onSignal = () => {
     abortController.abort();
     if (!starting) void shutdown();
 };
+// The helper is ESM. Bind it before preflight so SIGINT, SIGTERM, and SIGHUP reach shutdown.
 const shutdownSignalsReady = import('./headless/shutdownSignals.js').then(({ bindShutdownSignals }) => {
     bindShutdownSignals(process, onSignal);
 });

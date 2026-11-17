@@ -128,9 +128,9 @@ test("stale dead identities recover only with both ports free; a non-cache liste
     assert.equal(h.spawns, 2); assert.deepEqual(h.signals, []);
 });
 
-test("a dead parent reaps the cache router and a deaf child keeps its record", async (t) => {
+test("a dead parent reaps the cache router after a hostname change", async (t) => {
     const h = await harness(t, { platform: "linux", architecture: "x64" });
-    const owner = await acquireLocalZenohRouter(h.options);
+    await acquireLocalZenohRouter(h.options);
     const file = path.join(h.root, "router.owner.json"), record = JSON.parse(await fs.readFile(file));
     record.parent = { pid: 99991, startTime: "gone" }; record.hostname = "dhcp-vl2041.eduroam.example";
     await fs.writeFile(file, JSON.stringify(record));
@@ -138,16 +138,19 @@ test("a dead parent reaps the cache router and a deaf child keeps its record", a
     const next = await acquireLocalZenohRouter(h.options);
     assert.deepEqual(h.signals, ["SIGTERM"]); assert.equal(next.role, "owner"); assert.equal(h.spawns, 2);
     await next.close();
-    h.signals.length = 0;
-    const retained = JSON.parse(await fs.readFile(file));
-    retained.parent = { pid: 99991, startTime: "gone" }; retained.child = { pid: h.child.pid, startTime: "child" };
-    h.identities.set(h.child.pid, { pid: h.child.pid, startTime: "child" });
-    await fs.writeFile(file, JSON.stringify(retained));
+});
+
+test("orphan reap retains the record when the cache router ignores both signals", async (t) => {
+    const h = await harness(t, { platform: "linux", architecture: "x64" });
+    const owner = await acquireLocalZenohRouter(h.options);
+    t.after(() => owner.close());
+    const file = path.join(h.root, "router.owner.json"), record = JSON.parse(await fs.readFile(file));
+    record.parent = { pid: 99991, startTime: "gone" }; await fs.writeFile(file, JSON.stringify(record));
+    h.dependencies.processImage = async () => path.join(h.root, "router", "zenoh-bridge-remote-api");
     h.dependencies.signal = async (_pid, signalName) => { h.signals.push(signalName); };
     await assert.rejects(acquireLocalZenohRouter(h.options), /retained/);
     assert.deepEqual(h.signals, ["SIGTERM", "SIGKILL"]);
-    assert.equal(JSON.parse(await fs.readFile(file)).token, retained.token);
-    await owner.close();
+    assert.equal(JSON.parse(await fs.readFile(file)).token, record.token);
 });
 
 test("a changed hostname recovers when both ports are free, and another machine is not signaled", async (t) => {
@@ -164,7 +167,10 @@ test("a changed hostname recovers when both ports are free, and another machine 
     h.dependencies.processImage = async () => path.join(h.root, "router", "zenoh-bridge-remote-api");
     await assert.rejects(acquireLocalZenohRouter(h.options), /another machine/);
     assert.deepEqual(h.signals, []);
-    await recovered.close();
+    h.dependencies.probe = async (_, handshake) => ({ tcp: !!handshake, websocket: !!handshake });
+    const restarted = await acquireLocalZenohRouter(h.options);
+    assert.equal(restarted.role, "owner"); assert.deepEqual(h.signals, []);
+    await restarted.close();
 });
 
 test("live owner with a reused child PID, changed pins, or dead child cannot attach", async (t) => {
@@ -288,7 +294,7 @@ test("installer replaces a legacy hostname lock and another machine's live pid",
     const file = `${directory}.install-owner.json`;
     await fs.mkdir(root, { recursive: true });
     await fs.writeFile(file, JSON.stringify({ kind: "cev-sim.zenoh-router-owner", version: 1, token: "44444444-4444-4444-4444-444444444444",
-        hostname: "MacBookPro.localdomain", parent: { pid: process.pid, startTime: "installer" }, state: "installing" }));
+        hostname: "MacBookPro.localdomain", parent: { pid: 99991, startTime: "gone" }, state: "installing" }));
     await installZenohRouter(root, fixture.options);
     await fs.writeFile(file, JSON.stringify({ kind: "cev-sim.zenoh-router-owner", version: 1, token: "55555555-5555-5555-5555-555555555555",
         hostname: "other.local", hostId: OTHER_HOST_ID, parent: { pid: process.pid, startTime: "installer" }, state: "installing" }));
