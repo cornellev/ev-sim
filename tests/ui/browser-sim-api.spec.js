@@ -163,3 +163,47 @@ test("default commands and status follow human interaction while accepted comman
         await request.delete(`/api/storage/run-manifests/${manifestId}`);
     }
 });
+
+test("reloading one tab stays a single connected browser and a second tab stays separate", async ({ page, context, request }) => {
+    await installTabFixture(page);
+    const before = new Set((await (await request.get(`${base}/browsers`)).json()).browsers.map((browser) => browser.browserId));
+    await page.goto("/browser-sim-control-fixture");
+    await expect(page.getByRole("button", { name: "Play", exact: true })).toBeVisible();
+    let first;
+    await expect.poll(async () => {
+        const listing = await (await request.get(`${base}/browsers`)).json();
+        first = listing.browsers.find((browser) => browser.connected && !before.has(browser.browserId))?.browserId;
+        return Boolean(first);
+    }, { timeout: 10_000 }).toBe(true);
+    const known = new Set((await (await request.get(`${base}/browsers`)).json()).browsers.map((browser) => browser.browserId));
+    await page.reload();
+    await expect(page.getByRole("button", { name: "Play", exact: true })).toBeVisible();
+    let reloaded;
+    await expect.poll(async () => {
+        const listing = await (await request.get(`${base}/browsers`)).json();
+        const oldConnected = listing.browsers.some((browser) => browser.browserId === first && browser.connected);
+        const fresh = listing.browsers.filter((browser) => browser.connected && !known.has(browser.browserId));
+        if (!oldConnected && fresh.length === 1) reloaded = fresh[0].browserId;
+        return !oldConnected && fresh.length === 1;
+    }, { timeout: 10_000 }).toBe(true);
+    const secondPage = await context.newPage();
+    try {
+        await installTabFixture(secondPage);
+        const beforeSecond = new Set((await (await request.get(`${base}/browsers`)).json()).browsers.map((browser) => browser.browserId));
+        await secondPage.goto("/browser-sim-control-fixture");
+        await expect(secondPage.getByRole("button", { name: "Play", exact: true })).toBeVisible();
+        let second;
+        await expect.poll(async () => {
+            const listing = await (await request.get(`${base}/browsers`)).json();
+            second = listing.browsers.find((browser) => browser.connected && !beforeSecond.has(browser.browserId))?.browserId;
+            return Boolean(second);
+        }, { timeout: 10_000 }).toBe(true);
+        const connected = new Set((await (await request.get(`${base}/browsers`)).json()).browsers.filter((browser) => browser.connected).map((browser) => browser.browserId));
+        expect(connected.has(reloaded)).toBe(true);
+        expect(connected.has(second)).toBe(true);
+        expect(second).not.toBe(reloaded);
+        expect(connected.has(first)).toBe(false);
+    } finally {
+        await secondPage.close();
+    }
+});

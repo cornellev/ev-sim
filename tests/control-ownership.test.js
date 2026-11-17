@@ -55,6 +55,20 @@ test("local watchdog clears delayed controls and does not resume from a late sta
     guard.close();
 });
 
+test("a lease receipt extends the window from the time it arrives", () => {
+    let now = 0;
+    const guard = new ControlOwnershipGuard({ now: () => now, startTimer: false });
+    const snapshot = { leaseId: "lease", runId: "run", status: "active", mode: "autonomous", remainingMs: 750, target };
+    guard.attach(snapshot);
+    now = 500;
+    assert.equal(guard.update({ ...snapshot, remainingMs: 750 }, { requestedAt: now }), true);
+    now = 1200;
+    assert.equal(guard.check(), true);
+    now = 1250;
+    assert.equal(guard.check(), false);
+    guard.close();
+});
+
 test("observe cannot actuate and drive-test ends after one simulation second", () => {
     const guard = new ControlOwnershipGuard({ now: () => 0, startTimer: false });
     const snapshot = { leaseId: "lease", runId: "run", status: "active", mode: "observe", remainingMs: 750, target };

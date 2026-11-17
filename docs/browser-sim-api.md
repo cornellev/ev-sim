@@ -34,7 +34,11 @@ Pages report status every five seconds and on lifecycle/activity changes.
 After fifteen seconds without contact, a page is unavailable. Default selection
 excludes unavailable pages. An unavailable explicit target returns HTTP `503`
 `BROWSER_UNAVAILABLE` instead of selecting another page. A page reload gets a
-new ID. Accepted commands keep their original target even if focus changes.
+new ID. The page keeps a tab id in `sessionStorage`, which survives reload in
+that tab and is not shared with other tabs. Registering that tab again drops
+the previous id immediately, so one visible tab is one connected browser
+before the fifteen-second timeout. A crashed or killed page still waits out
+that timeout. Accepted commands keep their original target even if focus changes.
 
 Every status and command receipt identifies its selected `browserId`. Status
 also reports `connected`, `lastSeenAt`, `lastInteractionAt`, `interactionOrder`,

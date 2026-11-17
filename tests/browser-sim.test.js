@@ -101,6 +101,38 @@ test("default tab follows reported human activity, never heartbeats or API calls
     assert.throws(() => f.service.status([a.browserId]), { code: "INVALID_REQUEST" });
 });
 
+test("re-registering one tab replaces it immediately and a second tab stays connected", async () => {
+    const f = fixture();
+    const connected = () => f.service.list().browsers.filter((browser) => browser.connected).map((browser) => browser.browserId);
+    const open = (tabId, epoch, activity = 0) => f.service.register({ snapshot: { status: "idle" }, activity, sequence: 1, tabId, epoch });
+    const first = open("tab-a", 1, 1);
+    const pending = f.service.submit({ action: "start", manifestId: "saved", browserId: first.browserId });
+    const replaced = open("tab-a", 2, 1);
+    assert.notEqual(replaced.browserId, first.browserId);
+    assert.deepEqual(connected(), [replaced.browserId]);
+    assert.equal(f.service.get(pending.commandId).state, "failed");
+    assert.throws(() => f.service.unregister(first.browserId, first.token), { code: "BROWSER_NOT_REGISTERED" });
+    assert.throws(() => open("tab-a", 1), { code: "BRIDGE_REPLACED" });
+    assert.deepEqual(connected(), [replaced.browserId]);
+    const other = open("tab-b", 1);
+    assert.deepEqual(connected(), [replaced.browserId, other.browserId]);
+    f.service.heartbeat(other.browserId, other.token, { snapshot: { status: "idle" }, activity: 1, sequence: 2 });
+    assert.equal(f.service.status().browserId, other.browserId);
+    f.service.heartbeat(replaced.browserId, replaced.token, { snapshot: { status: "idle" }, activity: 2, sequence: 2 });
+    assert.equal(f.service.status().browserId, replaced.browserId);
+    assert.equal(f.service.status(other.browserId).browserId, other.browserId);
+    f.advance(15_000);
+    assert.throws(() => f.service.status(), { code: "BROWSER_UNAVAILABLE" });
+    assert.throws(() => f.service.status(replaced.browserId), { code: "BROWSER_UNAVAILABLE" });
+    await tick();
+
+    const limited = fixture({ maxBrowsers: 1 });
+    limited.service.register({ snapshot: { status: "idle" }, activity: 0, sequence: 1, tabId: "tab-a", epoch: 1 });
+    const next = limited.service.register({ snapshot: { status: "idle" }, activity: 0, sequence: 2, tabId: "tab-a", epoch: 2 });
+    assert.deepEqual(limited.service.list().browsers.map((browser) => browser.browserId), [next.browserId]);
+    assert.throws(() => limited.service.register({ snapshot: { status: "idle" }, activity: 0, sequence: 3, tabId: "tab-b", epoch: 1 }), { code: "CAPACITY" });
+});
+
 test("commands and retries stay bound to the selected tab despite focus changes", async () => {
     const f = fixture();
     const a = f.register({ status: "idle" }, 1);
@@ -249,6 +281,22 @@ test("HTTP routes return asynchronous receipts and preserve host/origin protecti
     assert.equal(bad.status, 400);
 });
 
+function memoryStorage() {
+    const values = new Map();
+    return { getItem: (key) => values.get(key) ?? null, setItem: (key, value) => { values.set(key, String(value)); } };
+}
+
+function tabBridge(f, storage, fetchImpl = f.fetch) {
+    return new BrowserSimBridge({
+        controller: fakeController(),
+        windowImpl: Object.assign(new Surface(), { sessionStorage: storage }),
+        documentImpl: new Surface(),
+        getContext: () => ({ navigationBlocked: () => false, openSimulation: () => true }),
+        subscribeEvents: () => () => {},
+        fetchImpl,
+    });
+}
+
 class Surface {
     constructor() { this.listeners = new Map(); this.visibilityState = "visible"; }
     hasFocus() { return false; }
@@ -354,6 +402,52 @@ test("bridge recovers missed SSE and lost claim/completion replies without execu
     assert.equal(bridge.syncing, null);
     assert.equal(controller.calls.length, 1, "server restart does not replay a previous launch");
     assert.equal(f.service.status().runId, controller.state.activeRunId);
+});
+
+test("a same-tab remount leaves one connected browser and the replaced bridge stops", async (t) => {
+    const f = await httpFixture(t);
+    const storage = memoryStorage();
+    const connected = () => f.service.list().browsers.filter((browser) => browser.connected);
+    const first = tabBridge(f, storage);
+    t.after(first.start());
+    await waitFor(() => first.registration && !first.syncing);
+    const oldId = first.registration.browserId;
+    const second = tabBridge(f, storage);
+    t.after(second.start());
+    await waitFor(() => second.registration && !second.syncing);
+    assert.equal(connected().length, 1);
+    assert.equal(connected()[0].browserId, second.registration.browserId);
+    assert.notEqual(second.registration.browserId, oldId);
+    await first.sync();
+    assert.equal(first.active, false);
+    assert.equal(connected().length, 1);
+    assert.equal(connected()[0].browserId, second.registration.browserId);
+});
+
+test("a stale in-flight register does not replace the newer tab bridge", async (t) => {
+    const f = await httpFixture(t);
+    const storage = memoryStorage();
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const first = tabBridge(f, storage, async (path, options) => {
+        if (String(path).endsWith("/bridge/register")) await gate;
+        return f.fetch(path, options);
+    });
+    t.after(first.start());
+    const second = tabBridge(f, storage);
+    t.after(second.start());
+    try {
+        await waitFor(() => second.registration && !second.syncing);
+        release();
+        await waitFor(() => first.active === false);
+    } finally {
+        release();
+    }
+    const connected = f.service.list().browsers.filter((browser) => browser.connected);
+    assert.equal(connected.length, 1);
+    assert.equal(connected[0].browserId, second.registration.browserId);
+    await first.sync();
+    assert.equal(f.service.list().browsers.filter((browser) => browser.connected).length, 1);
 });
 
 test("browser repeats admission against live state and rejects navigation without launching later", async () => {
