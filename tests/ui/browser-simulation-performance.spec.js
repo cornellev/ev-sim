@@ -53,8 +53,10 @@ test("browser simulation performance report smoke", async ({ page }) => {
 });
 
 test("rejected PBR worker falls back inline without starving car, follow, or orbit presentation", async ({ page }) => {
+    test.setTimeout(180_000);
     await installModuleRoutes(page);
-    await page.goto("/");
+    await page.goto("/?browserPerformance=1");
+    await page.waitForFunction(() => globalThis.__cevSimBenchmarkRuntime, null, { timeout: 90_000 });
     await page.setContent(`<script type="importmap">${JSON.stringify({ imports: {
         "@/": "/test-modules/",
         three: "/test-modules/node_modules/three/build/three.module.js",
@@ -78,7 +80,8 @@ test("rejected PBR worker falls back inline without starving car, follow, or orb
     } })}</script>`);
     const result = await page.evaluate(async () => {
         const THREE = await import("three");
-        const { SimulationEngine } = await import("/test-modules/app/simulation/SimulationEngine.js");
+        const { engine: liveEngine } = await globalThis.__cevSimBenchmarkRuntime.visualization();
+        const SimulationEngine = liveEngine.constructor;
         const { RendererPresentationLease } = await import(
             "/test-modules/app/3d/perception/RendererPresentationLease.js"
         );

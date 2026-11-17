@@ -223,6 +223,32 @@ received serialized bytes; the separate
 `simulationSemanticHash` excludes logging, resource/artifact policy, wall
 pacing, and presentation settings before episode identity is computed.
 
+Runtime visualization is owned by `app/visualization/`: one Ackermann,
+planned-trajectory, past-trajectory, localization, and occupancy tool serves
+both scene and map. The base and routing manager import no React, Three.js,
+DOM, or Zenoh. Concrete tools own their geometry, materials, textures, and
+appearance clones. `AutonomyOverlay` keeps perception/lane rendering and
+delegates explicit compatibility snapshots; live runtime updates preserve
+independent bindings. Vehicle presentation no longer owns steering ribbons.
+Operator objects use layer 31, disable raycasting/collision, and are excluded
+by sensor capture filtering.
+
+`LiveVisualizationSource` releases local signal and shared occupancy samples
+after each authoritative completed step. Document/UI events refresh paused
+presentation after scene projection. Its optional owned read-only Zenoh source
+uses existing descriptors, fingerprints, browser configuration, and transport;
+display subscriptions never enter the managed input/control path. Sources
+implement cancellable `subscribe(bindings, onEvent)` and `dispose()`, allowing
+future replacement without implementing replay now. Projections emit internal
+Three.js positions/orientations while preserving source frame and exact
+sequence metadata. The manager coalesces dirty display work through engine
+presentation, respects renderer leases, and publishes cached independent
+scene/map snapshots. Map consumers use subscriptions instead of visualization
+polling. Bindings, visibility, display caches, and CPU timings remain outside
+run identities and canonical state. See
+[Runtime visualization implementation](runtime-visualization-plan.md) for
+package evidence and binding examples.
+
 `app/simulation/world/WorldDescription.js` is the UI-independent world seam.
 It normalizes schema-v2, v3, and v4 environment documents into canonical
 `cev-sim.world-description` v1, v2, or v3 JSON with stable source IDs,

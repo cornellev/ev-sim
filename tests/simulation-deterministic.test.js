@@ -60,7 +60,9 @@ function harness(options = {}) {
         earthTilesManager: () => null,
         skyManager: () => null,
     };
-    return { engine: new SimulationEngine(data, options), data, store, runtime, vehicle, calls, vehicleConfigurations, keysDown };
+    const engine = new SimulationEngine(data, options);
+    engine.render();
+    return { engine, data, store, runtime, vehicle, calls, vehicleConfigurations, keysDown };
 }
 
 function resolved(manifest) {

@@ -124,18 +124,19 @@ function harness(devices) {
         telemetryId: "ego",
         devices,
         controlsEnabled: true,
-        path: { visible: true },
     };
     const overlay = {
-        hidden: false,
-        setPredictedPathHidden(hidden) { this.hidden = hidden; },
+        visualizationManager: {
+            hidden: false,
+            setPredictedPathHidden(hidden) { this.hidden = hidden; },
+        },
     };
     const data = {
         camera,
         renderer: { domElement: { clientWidth: 800, clientHeight: 400 } },
         settings: () => settings,
         vehicles: () => ({ vehicles: [ego] }),
-        simulation: () => ({ resolvedRun: null, controls, autonomyOverlay: overlay }),
+        simulation: () => ({ resolvedRun: null, controls, autonomyOverlay: overlay, visualizationManager: overlay.visualizationManager }),
     };
     const controller = new PerspectiveViewController({
         data,
@@ -159,8 +160,8 @@ test("perspective enter locks to the vehicle camera and exit restores orbit", ()
     assert.equal(settings.cameraControlsEnabled, false);
     assert.equal(controls.enabled, false);
     assert.equal(camera.fov, 48);
-    assert.equal(ego.path.visible, false);
-    assert.equal(overlay.hidden, true);
+    assert.equal(!overlay.visualizationManager.hidden, false);
+    assert.equal(overlay.visualizationManager.hidden, true);
     assert.ok(camera.position.distanceTo(savedPosition) > 1);
 
     const tracked = camera.position.clone();
@@ -182,8 +183,8 @@ test("perspective enter locks to the vehicle camera and exit restores orbit", ()
     assert.equal(camera.aspect, 2);
     assert.ok(camera.position.distanceTo(savedPosition) < 1e-5);
     assert.ok(controls.target.distanceTo(savedTarget) < 1e-5);
-    assert.equal(ego.path.visible, true);
-    assert.equal(overlay.hidden, false);
+    assert.equal(!overlay.visualizationManager.hidden, true);
+    assert.equal(overlay.visualizationManager.hidden, false);
 });
 
 test("perspective without a vehicle camera hides chrome state but leaves orbit", () => {
@@ -194,8 +195,8 @@ test("perspective without a vehicle camera hides chrome state but leaves orbit",
     assert.equal(entered.active, true);
     assert.equal(entered.locked, false);
     assert.equal(entered.label, "No vehicle camera");
-    assert.equal(ego.path.visible, true);
-    assert.equal(overlay.hidden, false);
+    assert.equal(!overlay.visualizationManager.hidden, true);
+    assert.equal(overlay.visualizationManager.hidden, false);
     assert.equal(settings.cameraControlsEnabled, true);
     assert.equal(controls.enabled, true);
     controller.applyFrame(camera, controls);
@@ -212,14 +213,14 @@ test("perspective releases orbit when the vehicle camera disappears", () => {
     const { settings, camera, controls, data, controller, ego, overlay } = harness([device]);
     controller.enter();
     assert.equal(settings.cameraControlsEnabled, false);
-    assert.equal(ego.path.visible, false);
-    assert.equal(overlay.hidden, true);
+    assert.equal(!overlay.visualizationManager.hidden, false);
+    assert.equal(overlay.visualizationManager.hidden, true);
 
     data.vehicles = () => ({ vehicles: [ego] });
     ego.devices = [];
     controller.applyFrame(camera, controls);
-    assert.equal(ego.path.visible, true);
-    assert.equal(overlay.hidden, false);
+    assert.equal(!overlay.visualizationManager.hidden, true);
+    assert.equal(overlay.visualizationManager.hidden, false);
 
     const snapshot = controller.getSnapshot();
     assert.equal(snapshot.active, true);
@@ -231,7 +232,7 @@ test("perspective releases orbit when the vehicle camera disappears", () => {
 
 test("steering prediction ribbons stay hidden while perspective is locked", () => {
     const overlay = new AutonomyOverlay();
-    const ribbons = overlay.group.children[3];
+    const ribbons = overlay.visualizationManager.tools.ackermann.group;
     overlay.setPredictedPathHidden(true);
     overlay.updateFromSnapshot({
         controls: {

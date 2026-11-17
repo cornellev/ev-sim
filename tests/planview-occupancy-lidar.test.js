@@ -42,5 +42,17 @@ test("a lidar return lands on the matching window cell", () => {
     assert.equal(sample.cells[row * CELLS + col], SENSOR_OCCUPANCY_OCCUPIED);
     const again = sampler.sample({ vehicles: [vehicle], ego: { x: 0, z: 0 } });
     assert.equal(again.changed, false);
+    for (const change of [
+        () => { vehicle.devices[0].buffGeneration = 1; },
+        () => { vehicle.devices[0].config.calibration = { ...calibration }; },
+        () => { calibration.azimuth.startDeg = -89; },
+        () => { vehicle.devices[0].config.pose.position.x = 0.1; },
+        () => { vehicle.position.y = 0.1; },
+        () => { vehicle.rotation.y = 0.1; },
+    ]) {
+        change();
+        assert.equal(sampler.sample({ vehicles: [vehicle], ego: { x: 0, z: 0 } }).changed, true);
+        assert.equal(sampler.sample({ vehicles: [vehicle], ego: { x: 0, z: 0 } }).changed, false);
+    }
     assert.equal(sampler.sample({ vehicles: [], ego: { x: 0, z: 0 } }), null);
 });

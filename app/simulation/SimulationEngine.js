@@ -21,6 +21,16 @@ import { BrowserPacketRelaySink } from "./sensors/BrowserPacketRelaySink.js";
 import { ProtobufRouteRuntime } from "../interfaces/ProtobufRouteRuntime.js";
 import { applyOriginMarkersVisible, applySensorMarkersVisible } from "../3d/runtimeVisibility.js";
 import { LIVE_CAMERA_OBJECT_MOTION } from "./render/CameraObjectMotion.js";
+import { VisualizationManager } from "../visualization/VisualizationManager.js";
+import { LocalizationVisualizer, localizationSnapshotInputs } from "../visualization/visualizers/LocalizationVisualizer.js";
+import { AckermannVisualizer, controlsSnapshotInputs } from "../visualization/visualizers/AckermannVisualizer.js";
+import { PlannedTrajectoryVisualizer, plannedPathSnapshotInputs } from "../visualization/visualizers/PlannedTrajectoryVisualizer.js";
+import { TrajectoryPastVisualizer } from "../visualization/visualizers/TrajectoryPastVisualizer.js";
+import { OccupancyVisualizer } from "../visualization/visualizers/OccupancyVisualizer.js";
+import { rep103ToThreeVector } from "../autonomy/CoordinateFrames.js";
+import { planActorId } from "../spatial/planview/selection.js";
+import { LiveVisualizationSource } from "../visualization/sources/LiveVisualizationSource.js";
+import { vehiclesLeafPath } from "../scripting/runtime/SignalPaths.js";
 
 const KERNEL_PROPERTIES = [
     "stepNs",
@@ -104,6 +114,7 @@ export class SimulationEngine {
         this._dueAdvanceTimer = null;
         this.looping = false;
         this.listeners = new Set();
+        this.visualizationRevision = 0;
         this.viewportActive = true;
         this.sceneRenderEnabled = true;
         this.lidarViewport = new LidarViewportPreview(this.data);
@@ -118,12 +129,48 @@ export class SimulationEngine {
         this._presentationRequested = false;
         this._presentationRequestGeneration = 0;
         this._presentationServiceQueued = false;
+        this._visualizationFlush = null;
+        this._visualizationBindings = {
+            ackermann: {
+                data: [{ id: "ackermann-controls", kind: "runtime", signalPath: "visualization.controls.snapshot", project: (snapshot) => this._controlsVisualizationInputs(snapshot) }],
+                pose: [{ id: "ackermann-pose", kind: "runtime" }],
+                predictedPath: true,
+            },
+            plannedTrajectory: {
+                data: [{ id: "planned-trajectory", kind: "runtime", signalPath: "visualization.plannedTrajectory.snapshot", project: plannedPathSnapshotInputs }],
+                pose: [{ id: "planned-trajectory-pose", kind: "runtime" }],
+            },
+            trajectoryPast: {
+                data: [{ id: "trajectory-actors", kind: "runtime", signalPath: "visualization.trajectoryPast.actors" }],
+            },
+            localization: {
+                data: [{ id: "localization", kind: "runtime", signalPath: "visualization.localization.status", project: (_status, metadata) => localizationSnapshotInputs(this.candidateOutputRuntime?.lastLocalization, metadata) }],
+            },
+            occupancy: {
+                data: ["oracle", "lidar", "stack"].map((channel) => ({ id: `occupancy-${channel}`, kind: "runtime", signalPath: `visualization.occupancy.${channel}` })),
+                pose: [{ id: "occupancy-pose", kind: "runtime" }],
+                visible: { scene: false, map: true },
+            },
+        };
+        this._visualizationGeneration = 0;
+        this._visualizationStepActive = false;
+        this.liveVisualizationSource = null;
+        this._visualizationZenoh = options.visualizationZenoh;
+        this.visualizationManager = new VisualizationManager({
+            tools: { ackermann: new AckermannVisualizer(), plannedTrajectory: new PlannedTrajectoryVisualizer(), trajectoryPast: new TrajectoryPastVisualizer(), localization: new LocalizationVisualizer({ createAppearanceClone: () => this._estimateVehicle()?.cloneVisualBody?.() ?? null }), occupancy: new OccupancyVisualizer(), ...options.visualizationTools },
+            requestFlush: (callback) => {
+                this._visualizationFlush = callback;
+                this._requestPresentation();
+                this._queuePendingPresentation();
+                return () => { if (this._visualizationFlush === callback) this._visualizationFlush = null; };
+            },
+        });
         this._renderPresentationUnsubscribe = null;
         this._editorRigidBodyHash = null;
         this._editorPhysicsSync = Promise.resolve();
 
         this.scenarioDiagnostics = new ScenarioDiagnostics();
-        this.autonomyOverlay = new AutonomyOverlay();
+        this.autonomyOverlay = new AutonomyOverlay({ visualizationManager: this.visualizationManager });
         this.perspectiveView = new PerspectiveViewController({
             data: this.data,
             getCamera: () => this.camera,
@@ -138,6 +185,10 @@ export class SimulationEngine {
             estimateClone: true,
             lanes: true,
             controls: true,
+            oracleOccupancy: false,
+            lidarOccupancy: false,
+            stackOccupancy: false,
+            pastTrajectories: true,
         };
         this.debugVisuals = { sensorMarkers: true, originMarker: true };
 
@@ -201,6 +252,7 @@ export class SimulationEngine {
         });
         this.kernel = new SimulationKernel(this.runtimeContext, options);
         exposeKernelProperties(this);
+        this._bindLiveVisualizationSource();
         this._keyboardDrive = createKeyboardDriveState();
         this._episodeMeshIds = new Set();
         this._episodeMeshSync = Promise.resolve();
@@ -266,6 +318,132 @@ export class SimulationEngine {
         this.controls = controls;
         this.scenarioDiagnostics.attach(scene, camera);
         this.autonomyOverlay?.attach?.(scene, camera);
+        this.visualizationManager.configure(this._resolvedVisualizationBindings(), { sceneContext: { scene, camera, renderer } });
+    }
+
+    /** Display bindings are presentation-only and never enter the resolved run. */
+    configureVisualizations(toolBindings) {
+        const previous = this.visualizationManager.bindings;
+        this.visualizationManager.configure(this._resolvedVisualizationBindings(toolBindings, false));
+        if (this.visualizationManager.bindings !== previous) this._visualizationBindings = toolBindings;
+    }
+
+    _resolvedVisualizationBindings(toolBindings = this._visualizationBindings, preserveVisibility = true) {
+        const vehicles = this.runtimeContext?.vehicles.list() ?? [];
+        const ego = vehicles.find((vehicle) => (vehicle.telemetryId || vehicle.id) === "ego") ?? vehicles[0];
+        const targetId = this.resolvedRun?.manifest?.controls?.targetVehicleId
+            ?? ego?.telemetryId ?? ego?.id ?? (ego ? `vehicle-${vehicles.indexOf(ego) + 1}` : "ego");
+        return Object.fromEntries(Object.entries(toolBindings).map(([toolId, config]) => [toolId, {
+            ...config,
+            ...(preserveVisibility && this.visualizationManager.entries.has(toolId)
+                ? { visible: { ...this.visualizationManager.entries.get(toolId).visible } } : {}),
+            data: (config.data ?? []).map((binding) => ({ ...binding, eventType: "data" })),
+            pose: (config.pose ?? []).map((binding) => ({
+                ...binding,
+                ...(binding.kind === "runtime" ? { signalPath: binding.signalPath ?? vehiclesLeafPath(binding.vehicleId ?? targetId, "pose") } : {}),
+                eventType: "pose",
+            })),
+        }]));
+    }
+
+    _controlsVisualizationInputs(snapshot) {
+        if (!this.controlRuntime) return controlsSnapshotInputs(this._controlsVisualizationSnapshot() ?? {});
+        const wheelbase = this.controlRuntime.getLimits(this.resolvedRun?.manifest?.controls?.targetVehicleId ?? "ego").wheelbase;
+        return controlsSnapshotInputs({ ...snapshot, wheelbase });
+    }
+
+    _controlsVisualizationSnapshot() {
+        const vehicles = this.runtimeContext?.vehicles.list() ?? [];
+        const targetId = this.resolvedRun?.manifest?.controls?.targetVehicleId;
+        const vehicle = vehicles.find((entry) => (entry.telemetryId || entry.id) === (targetId ?? "ego")) ?? vehicles[0];
+        if (this.controlRuntime) return this.controlRuntime.getSnapshot(targetId, { applyTimeNs: this.timeNs });
+        if (!vehicle) return null;
+        const wheelbase = vehicle.manifest?.kinematics?.wheelbase
+            ?? this.resolvedRun?.vehicles?.find((entry) => entry.actorId === targetId)?.manifest?.kinematics?.wheelbase;
+        return {
+            wheelbase: wheelbase ?? 1.5,
+            applied: vehicle.controlsEnabled === false ? null : { steeringRad: vehicle.displaySteeringAngle ?? vehicle.steeringAngle ?? 0 },
+            achieved: vehicle.controlsEnabled === false ? null : { steeringRad: vehicle.steeringAngle ?? 0, speedMps: Math.hypot(vehicle.velocity?.x ?? 0, vehicle.velocity?.z ?? 0) },
+        };
+    }
+
+    _clearVisualizationSource() {
+        this._visualizationGeneration += 1;
+        this.liveVisualizationSource = null;
+        this.visualizationManager.setSource(null);
+    }
+
+    _plannedVisualizationSnapshot() {
+        const path = this.candidateOutputRuntime?.lastPath;
+        if (!path) return null;
+        const matching = [...(this.topicRouter?.lastProducer?.values() ?? [])].filter((entry) => entry.valueContract?.id === "cev.path"
+            && entry.metadata?.sequenceId === path.sequenceId && entry.metadata?.captureTimeNs === path.captureTimeNs && entry.metadata?.frameId === path.frameId);
+        // Normalized paths omit producer identity; ambiguous matches must retain their world points.
+        const envelope = matching.length === 1 ? matching[0] : null;
+        if (this._plannedVisualizationCache?.path === path && this._plannedVisualizationCache.envelope === envelope) return this._plannedVisualizationCache.snapshot;
+        const vehicleFrameId = this.transformRuntime?.frames?.baseLink ?? this.resolvedRun?.manifest?.sensorRig?.frames?.baseLink ?? "base_link";
+        const relative = envelope?.metadata?.frameId === vehicleFrameId;
+        const snapshot = relative ? {
+            ...path,
+            points: envelope.value.points.map(rep103ToThreeVector),
+            vehicleRelative: true,
+            metadata: envelope.metadata,
+        } : path;
+        this._plannedVisualizationCache = { path, envelope, snapshot };
+        return snapshot;
+    }
+
+    _bindLiveVisualizationSource(generation = this._visualizationGeneration, seedInitial = true) {
+        if (generation !== this._visualizationGeneration || this.kernel.lifecycleState === "disposed") return;
+        if (this._visualizationStepActive) {
+            // A cancelled capture may still write old telemetry while draining.
+            this.whenIdle().then(() => {
+                this._bindLiveVisualizationSource(generation, false);
+                if (generation === this._visualizationGeneration && this.kernel.lifecycleState !== "disposed") this._emitFrame();
+            });
+            return;
+        }
+        const source = new LiveVisualizationSource({
+            zenoh: this._visualizationZenoh,
+            signalStore: this.telemetry,
+            runId: this.resolvedRun ? this.kernel.runId ?? this.resolvedRun.manifest.id : null,
+            getTimeNs: () => this.timeNs,
+            isStepInFlight: () => this._visualizationStepActive,
+            seedInitial,
+            getOccupancySources: () => {
+                const vehicles = this.runtimeContext.vehicles.list();
+                const targetId = this.resolvedRun?.manifest?.controls?.targetVehicleId ?? "ego";
+                const ego = vehicles.find((vehicle) => (vehicle.telemetryId || vehicle.id) === targetId) ?? vehicles[0];
+                return { vehicles, ego: ego?.position, resolvedRun: this.resolvedRun,
+                    description: this.resolvedRun?.world?.description ?? this.data?.environment?.()?.worldDescription ?? null,
+                    obstacles: this.kernel.context?.episodeOverlay?.toObstacles?.() ?? [], runtime: this.candidateOutputRuntime, topicRouter: this.topicRouter };
+            },
+            subscribeRuntimeChanges: (callback) => this.data?.environment?.()?.getDocument?.()?.subscribe?.(callback) ?? (() => {}),
+            getData: (path) => {
+                if (path === "visualization.controls.snapshot") return this._controlsVisualizationSnapshot();
+                if (path === "visualization.plannedTrajectory.snapshot") return this._plannedVisualizationSnapshot() ?? { status: "inactive" };
+                if (path === "visualization.localization.status") return this.candidateOutputRuntime?.lastLocalization ?? { status: "inactive" };
+                if (path !== "visualization.trajectoryPast.actors") return null;
+                const roles = new Map((this.scenarioRuntime?.scenario?.actors ?? []).map((actor) => [actor.id, actor.role]));
+                return { timeNs: this.timeNs, actors: this.runtimeContext.vehicles.list().map((vehicle, index) => ({
+                    id: planActorId(vehicle, index),
+                    role: roles.get(planActorId(vehicle, index)),
+                    position: { x: vehicle.position?.x ?? 0, y: vehicle.position?.y ?? 0, z: vehicle.position?.z ?? 0 },
+                })) };
+            },
+            getPose: (path) => {
+                const vehicles = this.runtimeContext.vehicles.list();
+                const index = vehicles.findIndex((vehicle, index) => vehiclesLeafPath(vehicle.telemetryId || vehicle.id || `vehicle-${index + 1}`, "pose") === path);
+                const vehicle = vehicles[index];
+                return vehicle ? {
+                    position: { x: vehicle.position?.x ?? 0, y: vehicle.position?.y ?? 0, z: vehicle.position?.z ?? 0 },
+                    rotation: { x: vehicle.rotation?.x ?? 0, y: vehicle.rotation?.y ?? 0, z: vehicle.rotation?.z ?? 0, order: vehicle.rotation?.order ?? "XYZ" },
+                } : null;
+            },
+        });
+        this.visualizationManager.configure(this._resolvedVisualizationBindings());
+        this.visualizationManager.setSource(source);
+        this.liveVisualizationSource = source;
     }
 
     _bindRenderRuntime(runtime, { fallbackReason = null } = {}) {
@@ -315,6 +493,10 @@ export class SimulationEngine {
         this._presentationRequested = false;
         this._presentationRequestGeneration = this._advanceGeneration;
         this._presentationServiceQueued = false;
+        if (this._visualizationFlush) {
+            this._requestPresentation();
+            this._queuePendingPresentation();
+        }
     }
 
     _queuePendingPresentation() {
@@ -481,7 +663,8 @@ export class SimulationEngine {
             droppedDebtNs: this.droppedDebtNs,
             effectiveRealtimeRate: this._effectiveRealtimeRate(),
             scenarioDiagnostics: { enabled: this.scenarioDiagnostics.enabled },
-            autonomyOverlay: { ...this._autonomyOverlayEnabled },
+            autonomyOverlay: this._autonomyOverlaySnapshot(),
+            visualizationRevision: this.visualizationRevision,
             debugVisuals: { ...this.debugVisuals },
         };
     }
@@ -561,7 +744,8 @@ export class SimulationEngine {
             droppedDebtNs: this.droppedDebtNs,
             effectiveRealtimeRate: this._effectiveRealtimeRate(),
             scenarioDiagnostics: { enabled: this.scenarioDiagnostics.enabled },
-            autonomyOverlay: { ...this._autonomyOverlayEnabled },
+            autonomyOverlay: this._autonomyOverlaySnapshot(),
+            visualizationRevision: this.visualizationRevision,
             debugVisuals: { ...this.debugVisuals },
         };
     }
@@ -612,6 +796,8 @@ export class SimulationEngine {
         this.perspectiveView?.exit?.();
         detachPerspectiveView(this.perspectiveView);
         this.stopLoop();
+        this._clearVisualizationSource();
+        this.visualizationManager.dispose();
         this.controls?.dispose();
         this.kernel.dispose();
         this.packetRelay?.close();
@@ -702,6 +888,7 @@ export class SimulationEngine {
     }
 
     stop({ reset = true, dispatchEpisode = true } = {}) {
+        this._clearVisualizationSource();
         this._advanceGeneration += 1;
         this._pendingFrameNs = 0;
         this._clearDueAdvance();
@@ -712,6 +899,7 @@ export class SimulationEngine {
         if (reset) this.frames = 0;
         this._keyboardDrive = createKeyboardDriveState();
         this.kernel.stop({ reset, dispatchEpisode });
+        this._bindLiveVisualizationSource();
         this.autonomyOverlay?.disposeEstimateClone?.();
         if (reset) this.autonomyOverlay?.clear?.();
         this._syncEpisodeOverlayMeshes();
@@ -721,6 +909,7 @@ export class SimulationEngine {
     }
 
     reset(episodeSpec = null) {
+        this._clearVisualizationSource();
         this._advanceGeneration += 1;
         this._pendingFrameNs = 0;
         this._clearDueAdvance();
@@ -731,6 +920,7 @@ export class SimulationEngine {
         this._resetPacingState();
         this._keyboardDrive = createKeyboardDriveState();
         this.kernel.reset(episodeSpec);
+        this._bindLiveVisualizationSource();
         this.autonomyOverlay?.clear?.();
         this.parkRigidBodiesAtAuthoredPose();
         this._emit();
@@ -741,19 +931,25 @@ export class SimulationEngine {
         if (this._usesAsyncSensors()) {
             return this._serializeAsyncAdvance(() => this._stepAsync(count));
         }
-        this.kernel.step(count, {
-            beforeStep: () => this._submitKeyboardDrive(),
-            afterStep: (dt) => this._updatePresentationAfterStep(dt),
-        });
+        let source;
+        try {
+            this.kernel.step(count, {
+                beforeStep: () => { this._visualizationStepActive = true; source = this.liveVisualizationSource; this._submitKeyboardDrive(); },
+                afterStep: (dt) => this._updatePresentationAfterStep(dt, source),
+            });
+        } finally { this._visualizationStepActive = false; }
         this.render();
         this._emit();
     }
 
     async _stepAsync(count) {
-        await this.kernel.stepAsync(count, {
-            beforeStep: () => this._submitKeyboardDrive(),
-            afterStep: (dt) => this._updatePresentationAfterStep(dt),
-        });
+        let source;
+        try {
+            await this.kernel.stepAsync(count, {
+                beforeStep: () => { this._visualizationStepActive = true; source = this.liveVisualizationSource; this._submitKeyboardDrive(); },
+                afterStep: (dt) => this._updatePresentationAfterStep(dt, source),
+            });
+        } finally { this._visualizationStepActive = false; }
         this.render();
         this._emit();
     }
@@ -800,6 +996,30 @@ export class SimulationEngine {
             ...this._autonomyOverlayEnabled,
             ...patch,
         };
+        for (const [key, toolId] of [["controls", "ackermann"], ["candidate", "plannedTrajectory"], ["pastTrajectories", "trajectoryPast"]]) {
+            if (patch[key] !== undefined && this.visualizationManager.entries.has(toolId)) this.visualizationManager.setVisible(toolId, "scene", patch[key] !== false);
+        }
+        if (this.visualizationManager.entries.has("occupancy")) {
+            const entry = this.visualizationManager.entries.get("occupancy");
+            if (!entry.visible.scene && ["oracleOccupancy", "lidarOccupancy", "stackOccupancy"].some((key) => patch[key] !== undefined)) {
+                for (const channel of ["oracle", "lidar", "stack"]) {
+                    if (entry.tool.layerVisibility.scene[channel] === undefined) this.visualizationManager.setLayerVisible("occupancy", channel, "scene", false);
+                }
+            }
+            let changed = false;
+            for (const [key, channel] of [["oracleOccupancy", "oracle"], ["lidarOccupancy", "lidar"], ["stackOccupancy", "stack"]]) {
+                if (patch[key] === undefined) continue;
+                this.visualizationManager.setLayerVisible("occupancy", channel, "scene", patch[key] !== false);
+                changed = true;
+            }
+            if (changed) this.visualizationManager.setVisible("occupancy", "scene", ["oracle", "lidar", "stack"].some((channel) => this.visualizationManager.tools.occupancy.layerVisibility.scene[channel] !== false));
+        }
+        if (this.visualizationManager.entries.has("localization")) {
+            for (const key of ["ekf", "estimateClone"]) {
+                if (patch[key] !== undefined) this.visualizationManager.setLayerVisible("localization", key, "scene", patch[key] !== false);
+            }
+            if (patch.ekf === true || patch.estimateClone === true) this.visualizationManager.setVisible("localization", "scene", true);
+        }
         if (this.candidateOutputRuntime || this.controlRuntime) {
             this.autonomyOverlay?.updateFromRuntime?.(
                 this.candidateOutputRuntime,
@@ -815,6 +1035,28 @@ export class SimulationEngine {
         }
         this.render();
         this._emit();
+    }
+
+    _autonomyOverlaySnapshot() {
+        const snapshot = { ...this._autonomyOverlayEnabled };
+        for (const [key, toolId] of [["controls", "ackermann"], ["candidate", "plannedTrajectory"], ["pastTrajectories", "trajectoryPast"]]) {
+            const entry = this.visualizationManager.entries.get(toolId);
+            if (entry) snapshot[key] = entry.visible.scene;
+        }
+        const localization = this.visualizationManager.entries.get("localization");
+        if (localization) for (const key of ["ekf", "estimateClone"]) snapshot[key] = localization.visible.scene && localization.tool.layerVisibility.scene[key] !== false;
+        const occupancy = this.visualizationManager.entries.get("occupancy");
+        if (occupancy) for (const [key, channel] of [["oracleOccupancy", "oracle"], ["lidarOccupancy", "lidar"], ["stackOccupancy", "stack"]]) snapshot[key] = occupancy.visible.scene && occupancy.tool.layerVisibility.scene[channel] !== false;
+        return snapshot;
+    }
+
+    /** Paused device edits update display data without waiting for another simulation step. */
+    notifyVisualizationChange() {
+        this.visualizationRevision += 1;
+        if (!this._visualizationStepActive) this.liveVisualizationSource?.releasePending(this.timeNs);
+        this._emitFrame();
+        this._requestPresentation();
+        this._queuePendingPresentation();
     }
 
     setDebugVisuals(patch = {}) {
@@ -880,6 +1122,7 @@ export class SimulationEngine {
     async applyRunManifest(resolved, options = {}) {
         if (!resolved?.manifest) throw new Error("Resolved run manifest is required.");
         assertProtobufExecutionCapabilities(resolved, { target: "browser", transport: "zenoh-browser", controlOwnership: Boolean(this.ownershipGuard) });
+        this._clearVisualizationSource();
         this.pause();
         await this.whenIdle();
         this.scenarioDiagnostics.configure(null);
@@ -902,6 +1145,7 @@ export class SimulationEngine {
             throw error;
         }
         this.scenarioDiagnostics.configure(this.resolvedRun?.scenario?.scenario ?? null);
+        this._bindLiveVisualizationSource();
         this._emit();
         this.render();
         return this.getSnapshot();
@@ -918,11 +1162,13 @@ export class SimulationEngine {
     }
 
     clearRun() {
+        this._clearVisualizationSource();
         this.stopLoop();
         this._keyboardDrive = createKeyboardDriveState();
         this.kernel.clearRun();
         this.packetRelay?.close();
         this.autonomyOverlay?.clear?.();
+        this._bindLiveVisualizationSource();
         this._emit();
     }
 
@@ -1144,11 +1390,15 @@ export class SimulationEngine {
     }
 
     _fixedStep(dt) {
+        const source = this.liveVisualizationSource;
+        this._visualizationStepActive = true;
         const previousStep = this.steps;
-        this._submitKeyboardDrive();
-        const shouldContinue = this.kernel.advanceStep(dt);
-        if (this.steps > previousStep) this._updatePresentationAfterStep(dt);
-        return shouldContinue;
+        try {
+            this._submitKeyboardDrive();
+            const shouldContinue = this.kernel.advanceStep(dt);
+            if (this.steps > previousStep) this._updatePresentationAfterStep(dt, source);
+            return shouldContinue;
+        } finally { this._visualizationStepActive = false; }
     }
 
     async _advanceSimulationAsync(frameDt) {
@@ -1184,14 +1434,20 @@ export class SimulationEngine {
     }
 
     async _fixedStepAsync(dt) {
+        const source = this.liveVisualizationSource;
+        this._visualizationStepActive = true;
         const previousStep = this.steps;
-        this._submitKeyboardDrive();
-        const shouldContinue = await this.kernel.advanceStepAsync(dt);
-        if (this.steps > previousStep) this._updatePresentationAfterStep(dt);
-        return shouldContinue;
+        try {
+            this._submitKeyboardDrive();
+            const shouldContinue = await this.kernel.advanceStepAsync(dt);
+            if (this.steps > previousStep) this._updatePresentationAfterStep(dt, source);
+            return shouldContinue;
+        } finally { this._visualizationStepActive = false; }
     }
 
-    _updatePresentationAfterStep(dt) {
+    _updatePresentationAfterStep(dt, source = this.liveVisualizationSource) {
+        this._visualizationStepActive = false;
+        if (source === this.liveVisualizationSource) source?.releasePending(this.timeNs);
         this.autonomyOverlay?.updateFromRuntime?.(
             this.candidateOutputRuntime,
             this._autonomyOverlayEnabled,
@@ -1291,12 +1547,17 @@ export class SimulationEngine {
     }
 
     render() {
-        if (!this.sceneRenderEnabled || !this.scene || !this.camera || !this.renderer) return false;
+        const sceneReady = this.sceneRenderEnabled && this.scene && this.camera && this.renderer;
+        if (!this._visualizationFlush && !sceneReady) return false;
         if (this._presentationBlocked()) {
             this._requestPresentation();
             return false;
         }
         this._presentationRequested = false;
+        const flush = this._visualizationFlush;
+        this._visualizationFlush = null;
+        flush?.();
+        if (!sceneReady) return false;
         this.perspectiveView?.applyFrame?.(this.camera, this.controls);
         this._applyDisplayPerformance();
         this.data.earthTilesManager?.()?.update?.(this.camera, {

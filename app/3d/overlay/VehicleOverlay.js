@@ -180,6 +180,7 @@ export function VehicleOverlay({ data }) {
                     }}
                     onDeviceEnabledChange={(enabled) => {
                         selectedDevice.setEnabled?.(enabled);
+                        data?.simulation?.()?.notifyVisualizationChange?.();
                         setDeviceEnabledOverrides((current) => ({
                             ...current,
                             [`${selectedDeviceRef.vehicleIndex}:${selectedDeviceRef.deviceIndex}`]: Boolean(enabled),
@@ -188,9 +189,13 @@ export function VehicleOverlay({ data }) {
                     }}
                     onDeviceSettingsChange={(settings) => {
                         selectedDevice.setSettings?.(settings);
+                        data?.simulation?.()?.notifyVisualizationChange?.();
                         refreshDevices((revision) => revision + 1);
                     }}
-                    onDeviceTelemetryIdChange={() => refreshDevices((revision) => revision + 1)}
+                    onDeviceTelemetryIdChange={() => {
+                        refreshDevices((revision) => revision + 1);
+                        data?.simulation?.()?.notifyVisualizationChange?.();
+                    }}
                     panelClassName="left-[306px]"
                     visible={deviceOverlayVisible}
                 />

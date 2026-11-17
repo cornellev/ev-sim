@@ -17,14 +17,9 @@ function snapshotChanged(previous, next) {
 
 /** Predicted path ribbons sit in the middle of a forward vehicle camera. */
 function syncPredictedPaths(data, hide) {
-    const vehicles = data?.vehicles?.()?.vehicles;
-    if (Array.isArray(vehicles)) {
-        for (const entry of vehicles) {
-            if (!entry?.path) continue;
-            entry.path.visible = !hide && entry.controlsEnabled !== false;
-        }
-    }
-    data?.simulation?.()?.autonomyOverlay?.setPredictedPathHidden?.(hide);
+    const simulation = data?.simulation?.();
+    const manager = simulation?.visualizationManager ?? simulation?.autonomyOverlay?.visualizationManager;
+    manager?.setPredictedPathHidden?.(hide);
 }
 
 export class PerspectiveViewController {

@@ -7,23 +7,30 @@ import os from "node:os";
 import path from "node:path";
 import { zipSync } from "fflate";
 import { acquireLocalZenohRouter, installZenohRouter, localZenohEndpoints, localZenohBrowserConfig,
-    localZenohCacheRoot, withLocalZenohTransportDefaults, zenohProcessIdentity, zenohRouterLaunch } from "../server/interfaces/ZenohLocalRouter.js";
+    localZenohCacheRoot, localZenohHostId, withLocalZenohTransportDefaults, zenohProcessIdentity, zenohProcessImage, zenohRouterLaunch } from "../server/interfaces/ZenohLocalRouter.js";
 import { fsyncDir, writeExclusiveFile } from "../server/storage/visual-assets/atomicFs.js";
 
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const host = (connect) => ({ kind: "cev-sim.zenoh-transport-host-config", version: 1, connect });
+const HOST_ID = "11111111-1111-1111-1111-111111111111";
+const OTHER_HOST_ID = "22222222-2222-2222-2222-222222222222";
+const legacyOwner = (extra) => ({ kind: "cev-sim.zenoh-router-owner", version: 1, token: "33333333-3333-3333-3333-333333333333",
+    hostname: "MacBookPro.localdomain", parent: { pid: 99991, startTime: "gone" }, child: { pid: 99992, startTime: "gone" },
+    state: "ready", tcp: "tcp/127.0.0.1:7447", websocket: "ws://127.0.0.1:10000/", ...extra });
 async function rootFor(t) {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "cev-local-zenoh-"));
     t.after(() => fs.rm(root, { recursive: true, force: true }));
     return root;
 }
 async function harness(t, overrides = {}) {
-    const root = await rootFor(t), kills = [], logs = [];
+    const root = await rootFor(t), kills = [], signals = [], logs = [];
     const identities = new Map([[process.pid, { pid: process.pid, startTime: "parent" }]]);
     let child, spawns = 0, installs = 0;
     const dependencies = {
         root, platform: "win32", architecture: "x64", readyMs: 300, stopMs: 30, acquireMs: 1000,
+        hostId: async () => HOST_ID, processImage: async () => null,
         identity: async (pid) => identities.get(pid) ?? null,
+        signal: async (pid, signalName) => { signals.push(signalName); identities.delete(pid); },
         probe: async () => ({ tcp: !!child && identities.has(child.pid), websocket: !!child && identities.has(child.pid) }),
         install: async () => { installs++; return { binary: path.join(root, "zenohd.exe"), plugin: path.join(root, "zenoh_plugin_remote_api.dll") }; },
         spawn: (binary, args, options) => {
@@ -36,7 +43,7 @@ async function harness(t, overrides = {}) {
         }, ...overrides,
     };
     const options = { env: {}, dependencies, onLog: (line) => logs.push(line) };
-    return { root, dependencies, options, identities, kills, logs, get child() { return child; },
+    return { root, dependencies, options, identities, kills, signals, logs, get child() { return child; },
         get spawns() { return spawns; }, get installs() { return installs; } };
 }
 
@@ -75,13 +82,13 @@ test("one owner starts while concurrent callers attach; attached close leaves it
     assert.ok(owner); assert.ok(attached);
     assert.equal(h.spawns, 1); assert.equal(h.installs, 1);
     const record = JSON.parse(await fs.readFile(path.join(h.root, "router.owner.json")));
-    assert.equal(record.state, "ready"); assert.equal(record.child.startTime, "child");
+    assert.equal(record.state, "ready"); assert.equal(record.child.startTime, "child"); assert.equal(record.hostId, HOST_ID);
     const config = JSON.parse(await fs.readFile(record.config));
     assert.equal(config.plugins.remote_api.__path__, h.child.launch.binary.replace("zenohd.exe", "zenoh_plugin_remote_api.dll"));
     assert.equal(config.plugins.remote_api.__required__, true);
     assert.equal(config.transport.shared_memory.enabled, false);
     assert.equal(h.child.launch.options.shell, false); assert.equal(h.child.launch.options.windowsHide, true);
-    await attached.close(); assert.deepEqual(h.kills, []);
+    await attached.close(); assert.deepEqual(h.kills, []); assert.deepEqual(h.signals, []);
     await Promise.all([owner.close(), owner.close()]); assert.deepEqual(h.kills, ["SIGKILL"]);
     await assert.rejects(fs.stat(path.join(h.root, "router.owner.json")), { code: "ENOENT" });
     assert.ok(h.logs.some((line) => line.endsWith("owner"))); assert.ok(h.logs.some((line) => line.startsWith("attached")));
@@ -104,19 +111,60 @@ test("foreign or ambiguous listeners fail before download without killing anythi
     }
 });
 
-test("stale dead identities recover only with both ports free; live orphans fail", async (t) => {
+test("stale dead identities recover only with both ports free; a non-cache listener is left alone", async (t) => {
     const h = await harness(t);
     const owner = await acquireLocalZenohRouter(h.options);
     const file = path.join(h.root, "router.owner.json"), record = JSON.parse(await fs.readFile(file));
     record.parent = { pid: 99991, startTime: "gone" }; await fs.writeFile(file, JSON.stringify(record));
+    h.dependencies.processImage = async () => "/usr/local/bin/other-router";
     await assert.rejects(acquireLocalZenohRouter(h.options), /orphan/);
+    assert.deepEqual(h.signals, []); assert.deepEqual(h.kills, []);
     record.child = { pid: 99992, startTime: "gone" }; await fs.writeFile(file, JSON.stringify(record));
     h.dependencies.probe = async () => ({ tcp: false, websocket: false });
     await owner.close();
     await fs.writeFile(file, JSON.stringify(record));
     h.dependencies.probe = async (_, handshake) => ({ tcp: !!handshake, websocket: !!handshake });
     const next = await acquireLocalZenohRouter(h.options); await next.close();
-    assert.equal(h.spawns, 2);
+    assert.equal(h.spawns, 2); assert.deepEqual(h.signals, []);
+});
+
+test("a dead parent reaps the cache router and a deaf child keeps its record", async (t) => {
+    const h = await harness(t, { platform: "linux", architecture: "x64" });
+    const owner = await acquireLocalZenohRouter(h.options);
+    const file = path.join(h.root, "router.owner.json"), record = JSON.parse(await fs.readFile(file));
+    record.parent = { pid: 99991, startTime: "gone" }; record.hostname = "dhcp-vl2041.eduroam.example";
+    await fs.writeFile(file, JSON.stringify(record));
+    h.dependencies.processImage = async (pid) => pid === h.child.pid ? path.join(h.root, "router", "zenoh-bridge-remote-api") : null;
+    const next = await acquireLocalZenohRouter(h.options);
+    assert.deepEqual(h.signals, ["SIGTERM"]); assert.equal(next.role, "owner"); assert.equal(h.spawns, 2);
+    await next.close();
+    h.signals.length = 0;
+    const retained = JSON.parse(await fs.readFile(file));
+    retained.parent = { pid: 99991, startTime: "gone" }; retained.child = { pid: h.child.pid, startTime: "child" };
+    h.identities.set(h.child.pid, { pid: h.child.pid, startTime: "child" });
+    await fs.writeFile(file, JSON.stringify(retained));
+    h.dependencies.signal = async (_pid, signalName) => { h.signals.push(signalName); };
+    await assert.rejects(acquireLocalZenohRouter(h.options), /retained/);
+    assert.deepEqual(h.signals, ["SIGTERM", "SIGKILL"]);
+    assert.equal(JSON.parse(await fs.readFile(file)).token, retained.token);
+    await owner.close();
+});
+
+test("a changed hostname recovers when both ports are free, and another machine is not signaled", async (t) => {
+    const h = await harness(t);
+    const file = path.join(h.root, "router.owner.json");
+    await fs.writeFile(file, JSON.stringify(legacyOwner()));
+    h.dependencies.probe = async (_, handshake) => ({ tcp: !!handshake, websocket: !!handshake });
+    const recovered = await acquireLocalZenohRouter(h.options);
+    assert.equal(recovered.role, "owner"); assert.equal(JSON.parse(await fs.readFile(file)).hostId, HOST_ID);
+    const foreign = JSON.parse(await fs.readFile(file));
+    foreign.hostId = OTHER_HOST_ID; foreign.parent = { pid: 99991, startTime: "gone" };
+    await fs.writeFile(file, JSON.stringify(foreign));
+    h.dependencies.probe = async () => ({ tcp: true, websocket: false });
+    h.dependencies.processImage = async () => path.join(h.root, "router", "zenoh-bridge-remote-api");
+    await assert.rejects(acquireLocalZenohRouter(h.options), /another machine/);
+    assert.deepEqual(h.signals, []);
+    await recovered.close();
 });
 
 test("live owner with a reused child PID, changed pins, or dead child cannot attach", async (t) => {
@@ -182,7 +230,7 @@ function installerFixture() {
     const zipped = Object.entries(files).map(([file, bytes]) => zipSync({ [file]: bytes }));
     const archives = Object.keys(files).map((file, i) => ({ file, name: `${i}.zip`, repository: "test/test", sha256: hash(zipped[i]) }));
     const pins = { routerVersion: "1.10.2", artifacts: { "win32-x64": { archives } } };
-    return { files, zipped, pins, options: { platform: "win32", architecture: "x64", dependencies: { readPins: async () => pins, identity: async (pid) => ({ pid, startTime: "installer" }) },
+    return { files, zipped, pins, options: { platform: "win32", architecture: "x64", dependencies: { readPins: async () => pins, hostId: async () => HOST_ID, identity: async (pid) => ({ pid, startTime: "installer" }) },
         fetchArchive: async (url) => zipped[Number(url.match(/(\d)\.zip$/)[1])] } };
 }
 
@@ -222,6 +270,64 @@ test("verified legacy installation migrates without network; cancellation publis
         controller.abort(); return fixture.options.fetchArchive(...args);
     } }));
     assert.deepEqual(await fs.readdir(cancelled), []);
+});
+
+test("malformed ownership is refused before a router starts", async (t) => {
+    const h = await harness(t);
+    const file = path.join(h.root, "router.owner.json");
+    await fs.writeFile(file, "{");
+    await assert.rejects(acquireLocalZenohRouter(h.options), /malformed/);
+    await fs.writeFile(file, JSON.stringify({ kind: "cev-sim.zenoh-router-owner", version: 1, hostname: "local", hostId: "not-a-host" }));
+    await assert.rejects(acquireLocalZenohRouter(h.options), /ambiguous/);
+    assert.equal(h.spawns, 0); assert.deepEqual(h.signals, []);
+});
+
+test("installer replaces a legacy hostname lock and another machine's live pid", { timeout: 5000 }, async (t) => {
+    const root = await rootFor(t), fixture = installerFixture();
+    const directory = path.join(root, "1.10.2-win32-x64");
+    const file = `${directory}.install-owner.json`;
+    await fs.mkdir(root, { recursive: true });
+    await fs.writeFile(file, JSON.stringify({ kind: "cev-sim.zenoh-router-owner", version: 1, token: "44444444-4444-4444-4444-444444444444",
+        hostname: "MacBookPro.localdomain", parent: { pid: process.pid, startTime: "installer" }, state: "installing" }));
+    await installZenohRouter(root, fixture.options);
+    await fs.writeFile(file, JSON.stringify({ kind: "cev-sim.zenoh-router-owner", version: 1, token: "55555555-5555-5555-5555-555555555555",
+        hostname: "other.local", hostId: OTHER_HOST_ID, parent: { pid: process.pid, startTime: "installer" }, state: "installing" }));
+    await installZenohRouter(root, fixture.options);
+    await assert.rejects(fs.stat(file), { code: "ENOENT" });
+});
+
+test("host identity comes from the platform machine id", async () => {
+    const uuid = "ABCDEF12-3456-7890-ABCD-EF1234567890";
+    assert.equal(await localZenohHostId({ platform: "darwin", execute: async (file, args) => {
+        assert.equal(file, "/usr/sbin/ioreg"); assert.deepEqual(args, ["-rd1", "-c", "IOPlatformExpertDevice"]);
+        return { stdout: `"IOPlatformUUID" = "${uuid}"\n` };
+    } }), uuid.toLowerCase());
+    assert.equal(await localZenohHostId({ platform: "linux", readFile: async (file) => {
+        assert.equal(file, "/etc/machine-id"); return "0123456789abcdef0123456789abcdef\n";
+    } }), "0123456789abcdef0123456789abcdef");
+    await assert.rejects(localZenohHostId({ platform: "linux", readFile: async () => "nope" }), /machine id/);
+    assert.equal(await localZenohHostId({ platform: "win32", execute: async (file, args) => {
+        assert.ok(file.endsWith("powershell.exe")); assert.match(args.at(-1), /MachineGuid/); return { stdout: `${uuid}\r\n` };
+    } }), uuid.toLowerCase());
+});
+
+test("process image is the router executable and a missing process is empty", async () => {
+    const binary = "/home/user/.cache/cev-sim/zenoh/router/1.10.2-linux-x64/zenoh-bridge-remote-api";
+    assert.equal(await zenohProcessImage(4, { platform: "linux", readlink: async (file) => {
+        assert.equal(file, "/proc/4/exe"); return binary;
+    } }), binary);
+    assert.equal(await zenohProcessImage(4, { platform: "linux", readlink: async () => { throw Object.assign(new Error("gone"), { code: "ENOENT" }); } }), null);
+    assert.equal(await zenohProcessImage(4, { platform: "linux", readlink: async () => `${binary} (deleted)` }), null);
+    assert.equal(await zenohProcessImage(4, { platform: "darwin", execute: async (file, args) => {
+        assert.equal(file, "/bin/ps"); assert.deepEqual(args, ["-ww", "-p", "4", "-o", "command="]);
+        return { stdout: `/Users/Jane Doe/.cache/cev-sim/zenoh/router/app --config /tmp/router.json5\n` };
+    } }), "/Users/Jane Doe/.cache/cev-sim/zenoh/router/app");
+    assert.equal(await zenohProcessImage(4, { platform: "darwin", execute: async () => ({ stdout: "" }) }), null);
+    assert.equal(await zenohProcessImage(4, { platform: "win32", execute: async (file, args) => {
+        assert.ok(file.endsWith("powershell.exe")); assert.match(args.at(-1), /ProcessId=4/); assert.equal(args.at(-1).includes("4;"), false);
+        return { stdout: "C:\\Users\\Jane\\.cache\\cev-sim\\zenoh\\router\\zenohd.exe\r\n" };
+    } }), "C:\\Users\\Jane\\.cache\\cev-sim\\zenoh\\router\\zenohd.exe");
+    await assert.rejects(zenohProcessImage("4;Remove-Item", { platform: "win32", execute: async () => assert.fail("signaled") }), /Invalid/);
 });
 
 test("process birth identity is platform specific and PowerShell receives only a validated PID", async () => {

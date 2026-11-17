@@ -4,6 +4,18 @@ export const PLAN_WAYPOINTS_TOPIC = "/planning/waypoints";
 
 let points = [];
 let revision = 0;
+const listeners = new Set();
+
+function notify() {
+    for (const listener of [...listeners]) {
+        try { listener(points); } catch { /* Map subscribers cannot interrupt waypoint delivery. */ }
+    }
+}
+
+export function subscribePlanWaypoints(listener) {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+}
 
 function pointOf(entry) {
     const x = Number(entry?.x);
@@ -22,6 +34,7 @@ export function normalizePlanWaypoints(list) {
 export function setPlanWaypoints(list) {
     points = normalizePlanWaypoints(list);
     revision += 1;
+    notify();
     return points;
 }
 
@@ -37,6 +50,7 @@ export function clearPlanWaypoints() {
     if (points.length === 0) return;
     points = [];
     revision += 1;
+    notify();
 }
 
 /**

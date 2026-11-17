@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { AckermannVisualizer, controlsSnapshotInputs } from "../app/visualization/visualizers/AckermannVisualizer.js";
+import { LocalizationVisualizer } from "../app/visualization/visualizers/LocalizationVisualizer.js";
 import { buildPlanViewFrame } from "../app/spatial/planview/frame.js";
 import "../app/spatial/planview/layers/index.js";
 import { projectPlanView } from "../app/spatial/planview/project.js";
@@ -106,18 +108,22 @@ test("perception stays hidden until the layer is enabled", () => {
     assert.equal(boxes[1].stroke, PLAN_COLORS.candidate);
 });
 
-test("control arcs and localization use the autonomy snapshot", () => {
+test("control arcs and localization use cached manager primitives", () => {
+    const ackermann = new AckermannVisualizer();
+    ackermann.acceptDataUpdate(controlsSnapshotInputs({ applied: { steeringRad: 0.2 }, achieved: { steeringRad: 0.1 }, wheelbase: 2.5 }), []);
+    const output = ackermann.displayMap();
+    const localization = new LocalizationVisualizer();
+    localization.acceptDataUpdate({ position: { x: 1, y: 0, z: 0.5 } }, []);
     const projected = projectPlanView(frame({
-        controlsById: {
-            ego: { applied: { steeringRad: 0.2 }, achieved: { steeringRad: 0.1 }, wheelbase: 2.5 },
-        },
-        localization: { estimate: { position: { x: 1, z: 0.5 } } },
+        visualizationMap: { tools: { ackermann: { ready: true, visible: true, output }, localization: { ready: true, visible: true, output: localization.displayMap() } } },
     }), defaultVisibility());
     const arcs = projected.filter((primitive) => primitive.layerId === "controls");
     assert.equal(arcs.length, 2);
     assert.ok(arcs[0].points.at(-1).z < -0.05, "positive steering turns left toward world -Z");
     const estimate = projected.find((primitive) => primitive.layerId === "localization" && primitive.kind === "circle");
     assert.equal(estimate.center.x, 1);
+    ackermann.dispose();
+    localization.dispose();
 });
 
 test("the sensors group toggles wedges, and an injected signal draws a disc", () => {

@@ -67,7 +67,7 @@ test("the estimate clone is posed in place and the status box returns when it is
     overlay.updateFromRuntime(runtime(), null, { estimateVehicle: vehicle });
     const clone = overlay.group.getObjectByName("estimate-clone");
     assert.equal(clones, 1);
-    assert.equal(clone.parent, overlay.group);
+    assert.equal(clone.parent, overlay.visualizationManager.tools.localization.group);
     assert.equal(clone.position.x, 2);
     assert.equal(clone.position.y, 0.4);
     assert.equal(clone.position.z, -1);
@@ -92,7 +92,7 @@ test("the estimate clone is posed in place and the status box returns when it is
     overlay.updateFromRuntime({ lastPerception: {}, lastLocalization: {} }, null, { estimateVehicle: vehicle });
     assert.equal(clones, 1);
     assert.equal(clone.visible, false);
-    assert.equal(clone.parent, overlay.group);
+    assert.equal(clone.parent, overlay.visualizationManager.tools.localization.group);
 
     overlay.clear();
     assert.equal(overlay.group.getObjectByName("estimate-clone"), undefined);

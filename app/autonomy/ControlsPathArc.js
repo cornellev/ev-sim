@@ -6,9 +6,6 @@
  */
 
 import * as THREE from "three";
-import { vehicleForwardTangent } from "../scenarios/route/geometry.js";
-
-const UP = new THREE.Vector3(0, 1, 0);
 const DEFAULT_PATH_Y = 0.05;
 
 function finiteOr(value, fallback) {
@@ -66,27 +63,18 @@ export function updateControlsPathRibbon(geometry, _pose, steeringAngleRad, opti
     const pathY = finiteOr(options.pathY, DEFAULT_PATH_Y);
     const curvature = Math.tan(finiteOr(steeringAngleRad, 0)) / wheelbase;
 
-    const pos = new THREE.Vector3(0, pathY, 0);
-    const heading = new THREE.Vector3(1, 0, 0);
-
-    const ds = lookahead / segments;
+    const points = options.centerline ?? sampleAckermannCenterline(steeringAngleRad, { wheelbase, lookahead, segments });
     const positionAttr = geometry.getAttribute("position");
     const arr = positionAttr.array;
-    const tangent = new THREE.Vector3();
-    const leftN = new THREE.Vector3();
-    const p = new THREE.Vector3().copy(pos);
-
-    for (let i = 0; i <= segments; i += 1) {
-        tangent.copy(heading);
-        leftN.set(-tangent.z, 0, tangent.x).normalize();
-        const halfW = pathWidth * 0.5;
-        const leftP = new THREE.Vector3().copy(p).addScaledVector(leftN, +halfW);
-        const rightP = new THREE.Vector3().copy(p).addScaledVector(leftN, -halfW);
-        const base = i * 2 * 3;
-        arr[base + 0] = leftP.x; arr[base + 1] = leftP.y; arr[base + 2] = leftP.z;
-        arr[base + 3] = rightP.x; arr[base + 4] = rightP.y; arr[base + 5] = rightP.z;
-        p.addScaledVector(heading, ds);
-        heading.applyAxisAngle(UP, curvature * ds).normalize();
+    const halfWidth = pathWidth * 0.5;
+    for (let index = 0; index <= segments; index += 1) {
+        const point = points[index];
+        const angle = curvature * lookahead * index / segments;
+        const normalX = Math.sin(angle) * halfWidth;
+        const normalZ = Math.cos(angle) * halfWidth;
+        const base = index * 6;
+        arr[base] = point.x + normalX; arr[base + 1] = pathY; arr[base + 2] = point.z + normalZ;
+        arr[base + 3] = point.x - normalX; arr[base + 4] = pathY; arr[base + 5] = point.z - normalZ;
     }
     positionAttr.needsUpdate = true;
     geometry.computeVertexNormals();
@@ -123,24 +111,4 @@ export function createControlsPathRibbonGeometry(segments = 24) {
     }
     geometry.setIndex(indices);
     return geometry;
-}
-
-/** Compact arc polyline points for Analysis/Replay 2D summaries (world XZ). */
-export function sampleControlsArcPoints(pose, steeringAngleRad, options = {}) {
-    const wheelbase = Math.max(0.1, finiteOr(options.wheelbase, 1.5));
-    const lookahead = finiteOr(options.lookahead, 8);
-    const segments = Math.max(2, Math.floor(finiteOr(options.segments, 16)));
-    const curvature = Math.tan(finiteOr(steeringAngleRad, 0)) / wheelbase;
-    const yaw = finiteOr(pose?.yaw ?? pose?.rotation?.y, 0);
-    const tangent = vehicleForwardTangent(yaw);
-    const heading = new THREE.Vector3(tangent.x, 0, tangent.z);
-    const p = new THREE.Vector3(Number(pose?.position?.x) || 0, 0, Number(pose?.position?.z) || 0);
-    const ds = lookahead / segments;
-    const points = [];
-    for (let i = 0; i <= segments; i += 1) {
-        points.push({ x: p.x, y: p.y, z: p.z });
-        p.addScaledVector(heading, ds);
-        heading.applyAxisAngle(UP, curvature * ds).normalize();
-    }
-    return points;
 }

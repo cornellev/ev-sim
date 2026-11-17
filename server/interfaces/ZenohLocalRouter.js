@@ -46,6 +46,47 @@ export async function readZenohRouterPins() {
     return JSON.parse(await fs.readFile(new URL("../../native/zenoh-transport/router-artifacts.json", import.meta.url), "utf8"));
 }
 
+const HOST_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const HOST_LINUX = /^[0-9a-f]{32}$/;
+const normalizeHostId = (value) => {
+    if (typeof value !== "string") return null;
+    const id = value.trim().toLowerCase();
+    return HOST_UUID.test(id) || HOST_LINUX.test(id) ? id : null;
+};
+const powershellExe = () => path.win32.join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+const commandExecutable = (command) => {
+    const trimmed = command.trim();
+    if (!trimmed) return null;
+    if (trimmed.startsWith("\"")) {
+        const end = trimmed.indexOf("\"", 1);
+        return end > 1 ? trimmed.slice(1, end) : null;
+    }
+    const flags = trimmed.indexOf(" --");
+    return (flags > 0 ? trimmed.slice(0, flags) : trimmed).trim() || null;
+};
+
+export async function localZenohHostId({ platform = process.platform, readFile = fs.readFile, execute = exec, signal } = {}) {
+    if (platform === "linux") {
+        const id = normalizeHostId(await readFile("/etc/machine-id", "utf8"));
+        if (!id) throw fail("Cannot read the Linux machine id.");
+        return id;
+    }
+    if (platform === "darwin") {
+        const result = await execute("/usr/sbin/ioreg", ["-rd1", "-c", "IOPlatformExpertDevice"], { timeout: 5000, maxBuffer: 1024 * 1024, signal });
+        const id = normalizeHostId(result.stdout.match(/"IOPlatformUUID"\s*=\s*"([^"]+)"/)?.[1]);
+        if (!id) throw fail("Cannot read the macOS platform UUID.");
+        return id;
+    }
+    if (platform === "win32") {
+        const command = "(Get-ItemProperty -Path 'HKLM:\\SOFTWARE\\Microsoft\\Cryptography' -Name MachineGuid).MachineGuid";
+        const result = await execute(powershellExe(), ["-NoProfile", "-NonInteractive", "-Command", command], { timeout: 5000, maxBuffer: 16384, windowsHide: true, signal });
+        const id = normalizeHostId(result.stdout);
+        if (!id) throw fail("Cannot read the Windows machine GUID.");
+        return id;
+    }
+    throw fail(`Local Zenoh host identity is unavailable on ${platform}.`);
+}
+
 export async function zenohProcessIdentity(pid, { platform = process.platform, readFile = fs.readFile, execute = exec, signal } = {}) {
     if (!Number.isSafeInteger(pid) || pid < 1) throw fail("Invalid router process identity.");
     try {
@@ -60,9 +101,8 @@ export async function zenohProcessIdentity(pid, { platform = process.platform, r
             startTime = result.stdout.trim();
             if (!startTime) return null;
         } else if (platform === "win32") {
-            const executable = path.win32.join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
             const command = `$p=Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}' -ErrorAction Stop; if($p){$p.CreationDate.ToUniversalTime().Ticks.ToString()}`;
-            const result = await execute(executable, ["-NoProfile", "-NonInteractive", "-Command", command], { timeout: 5000, maxBuffer: 16384, windowsHide: true, signal });
+            const result = await execute(powershellExe(), ["-NoProfile", "-NonInteractive", "-Command", command], { timeout: 5000, maxBuffer: 16384, windowsHide: true, signal });
             startTime = result.stdout.trim();
             if (!startTime) return null;
             if (!/^\d+$/.test(startTime)) throw fail("Cannot read Windows process birth identity.");
@@ -73,6 +113,44 @@ export async function zenohProcessIdentity(pid, { platform = process.platform, r
         if (platform === "darwin" && error.code === 1 && !error.stdout?.trim()) return null;
         throw error;
     }
+}
+
+/** Executable path for an orphan check. A missing process is null; this never signals it. */
+export async function zenohProcessImage(pid, { platform = process.platform, readlink = fs.readlink, execute = exec, signal } = {}) {
+    if (!Number.isSafeInteger(pid) || pid < 1) throw fail("Invalid router process identity.");
+    try {
+        let image;
+        if (platform === "linux") {
+            image = await readlink(`/proc/${pid}/exe`);
+            if (image.endsWith(" (deleted)")) return null;
+        } else if (platform === "darwin") {
+            const result = await execute("/bin/ps", ["-ww", "-p", String(pid), "-o", "command="], { timeout: 5000, maxBuffer: 1024 * 1024, signal });
+            image = commandExecutable(result.stdout);
+            if (!image) return null;
+        } else if (platform === "win32") {
+            const command = `(Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}' -ErrorAction Stop).ExecutablePath`;
+            const result = await execute(powershellExe(), ["-NoProfile", "-NonInteractive", "-Command", command], { timeout: 5000, maxBuffer: 16384, windowsHide: true, signal });
+            image = result.stdout.trim();
+            if (!image) return null;
+        } else throw fail(`Local Zenoh process ownership is unavailable on ${platform}.`);
+        return image;
+    } catch (error) {
+        if (error.code === "ENOENT" && platform === "linux") return null;
+        if (platform === "darwin" && error.code === 1 && !error.stdout?.trim()) return null;
+        throw error;
+    }
+}
+
+function executableInRouterCache(executable, cacheRoot) {
+    if (typeof executable !== "string" || executable.length === 0) return false;
+    const fold = process.platform === "win32" ? (value) => path.resolve(value).toLowerCase() : (value) => path.resolve(value);
+    const relative = path.relative(fold(path.join(cacheRoot, "router")), fold(executable));
+    return relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+function signalRouterProcess(pid, name) {
+    try { process.kill(pid, name); }
+    catch (error) { if (error.code !== "ESRCH") throw error; }
 }
 
 async function readRegular(file, limit = 16384) {
@@ -90,9 +168,12 @@ async function readOwner(file) {
     let record;
     try { record = JSON.parse(bytes); } catch { throw fail(`Router ownership is malformed; inspect ${file}.`); }
     const identity = (value) => value && Number.isSafeInteger(value.pid) && value.pid > 0 && typeof value.startTime === "string" && value.startTime.length > 0;
+    const hostId = record.hostId == null ? null : normalizeHostId(record.hostId);
     if (record.kind !== OWNER_KIND || record.version !== 1 || typeof record.token !== "string" || !/^[a-f0-9-]{36}$/.test(record.token)
-        || record.hostname !== os.hostname() || !identity(record.parent) || (record.child != null && !identity(record.child))
+        || typeof record.hostname !== "string" || record.hostname.length === 0 || (record.hostId != null && !hostId)
+        || !identity(record.parent) || (record.child != null && !identity(record.child))
         || !["installing", "starting", "ready", "failed", "stopping"].includes(record.state)) throw fail(`Router ownership is ambiguous; inspect ${file}.`);
+    if (hostId) record.hostId = hostId;
     if (record.state !== "installing" && (!/^tcp\/127\.0\.0\.1:[1-9]\d{0,4}$/.test(record.tcp)
         || !/^ws:\/\/127\.0\.0\.1:[1-9]\d{0,4}\/$/.test(record.websocket)
         || Number(record.tcp.split(":").at(-1)) > 65535 || Number(new URL(record.websocket).port) > 65535)) {
@@ -144,16 +225,17 @@ async function createOwner(file, record) {
     }
 }
 
-async function installationLock(file, signal, lookup, deadline) {
+async function installationLock(file, signal, lookup, deadline, hostId) {
     const parent = await lookup(process.pid);
     if (!parent) throw fail("Cannot identify the router installer process.");
-    const record = { kind: OWNER_KIND, version: 1, token: randomUUID(), hostname: os.hostname(), parent, state: "installing" };
+    const record = { kind: OWNER_KIND, version: 1, token: randomUUID(), hostname: os.hostname(), hostId, parent, state: "installing" };
+    const foreign = (current) => current.hostId != null && current.hostId !== hostId;
     while (Date.now() < deadline) {
         signal?.throwIfAborted();
         if (await createOwner(file, record)) return () => removeOwned(file, record.token);
         const previous = await readOwner(file);
-        if (previous && !await matches(previous.parent, lookup)) {
-            await recoverOwner(file, previous, (current) => matches(current.parent, lookup).then((alive) => !alive));
+        if (previous && (foreign(previous) || !await matches(previous.parent, lookup))) {
+            await recoverOwner(file, previous, async (current) => foreign(current) || !await matches(current.parent, lookup));
         }
         await delay(100, undefined, { signal });
     }
@@ -191,8 +273,10 @@ export async function installZenohRouter(root, { platform = process.platform, ar
         return missing ? null : contents;
     };
     await fs.mkdir(root, { recursive: true, mode: 0o700 });
+    const hostId = normalizeHostId(await (dependencies.hostId ?? localZenohHostId)({ platform, signal }));
+    if (!hostId) throw fail("Cannot identify the local machine.");
     const unlock = await installationLock(`${directory}.install-owner.json`, signal,
-        dependencies.identity ?? zenohProcessIdentity, Date.now() + ACQUIRE_MS);
+        dependencies.identity ?? zenohProcessIdentity, Date.now() + ACQUIRE_MS, hostId);
     try {
         if (await readInstalled(directory)) return result;
         let contents = legacyRoot ? await readInstalled(path.join(path.resolve(legacyRoot), path.basename(directory))) : null;
@@ -285,7 +369,7 @@ export function zenohRouterLaunch(installed, endpoints, platform = process.platf
     return { config, args: installed.plugin ? [] : ["--ws-port", endpoints.wsAddress, "--cfg", 'mode:"router"'] };
 }
 
-/** One parent owns the child. Attached handles never signal it or delete its records. */
+/** One parent owns the child. Attached handles never signal it. A later start may stop an orphan whose parent is gone and whose executable is the cache router. */
 export async function acquireLocalZenohRouter({ env = process.env, browserConfig, zenohTransport, signal, repositoryRoot = REPOSITORY_ROOT,
     onLog = (line) => process.stderr.write(`[zenoh-router] ${line}\n`), dependencies = {} } = {}) {
     const skipped = (role) => ({ role, async close() {} });
@@ -311,23 +395,55 @@ export async function acquireLocalZenohRouter({ env = process.env, browserConfig
     const file = path.join(root, "router.owner.json");
     const parent = await lookup(process.pid);
     if (!parent) throw fail("Cannot identify the router parent process.");
-    const record = { kind: OWNER_KIND, version: 1, token: randomUUID(), hostname: os.hostname(), parent, child: null,
-        state: "starting", tcp: endpoints.tcp, websocket: endpoints.websocket, artifact: { version: pair.routerVersion, hashes } };
     const acquisition = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(dependencies.acquireMs ?? ACQUIRE_MS)]);
-    const safeRecovery = async (previous) => {
-        if (await matches(previous.parent, lookup) || await matches(previous.child, lookup)) return false;
+    const hostId = normalizeHostId(await (dependencies.hostId ?? localZenohHostId)({ platform, signal: acquisition }));
+    if (!hostId) throw fail("Cannot identify the local machine.");
+    const imageOf = dependencies.processImage ?? ((pid) => zenohProcessImage(pid, { platform, signal: acquisition }));
+    const signalProcess = dependencies.signal ?? signalRouterProcess;
+    const record = { kind: OWNER_KIND, version: 1, token: randomUUID(), hostname: os.hostname(), hostId, parent, child: null,
+        state: "starting", tcp: endpoints.tcp, websocket: endpoints.websocket, artifact: { version: pair.routerVersion, hashes } };
+    const foreignHost = (current) => current.hostId != null && current.hostId !== hostId;
+    const portsFree = async (previous) => {
         const ports = await probe({ tcp: previous.tcp, websocket: previous.websocket });
         return !ports.tcp && !ports.websocket;
+    };
+    const safeRecovery = async (previous) => {
+        if (foreignHost(previous)) return portsFree(previous);
+        if (await matches(previous.parent, lookup) || await matches(previous.child, lookup)) return false;
+        return portsFree(previous);
+    };
+    const waitDead = async (identity) => {
+        const deadline = Date.now() + (dependencies.stopMs ?? STOP_MS);
+        while (await matches(identity, lookup)) {
+            const remaining = deadline - Date.now();
+            if (remaining <= 0) return false;
+            await delay(Math.min(50, remaining), undefined, { signal: acquisition });
+        }
+        return true;
+    };
+    const reapChild = async (previous) => {
+        const identity = previous.child;
+        if (!await matches(identity, lookup)) return false;
+        const executable = await imageOf(identity.pid);
+        if (!executableInRouterCache(executable, root) || !await matches(identity, lookup)) return false;
+        await signalProcess(identity.pid, platform === "win32" ? "SIGKILL" : "SIGTERM");
+        if (await waitDead(identity)) return true;
+        await signalProcess(identity.pid, "SIGKILL");
+        if (await waitDead(identity)) return true;
+        throw fail("Owned router did not exit; its ownership record has been retained.");
     };
     while (true) {
         acquisition.throwIfAborted();
         if (await createOwner(file, record)) break;
         const previous = await readOwner(file);
         if (!previous) continue;
-        const parentAlive = await matches(previous.parent, lookup);
-        if (!parentAlive) {
-            if (!await safeRecovery(previous)) throw fail("Router owner is absent but a child or listener remains; inspect the orphan before restarting.");
+        if (foreignHost(previous)) {
+            if (!await safeRecovery(previous)) throw fail("Router ownership belongs to another machine and a listener remains; inspect it before restarting.");
             await recoverOwner(file, previous, safeRecovery);
+        } else if (!await matches(previous.parent, lookup)) {
+            if (await reapChild(previous)) await recoverOwner(file, previous, async (current) => current.token === previous.token && !await matches(current.child, lookup));
+            else if (!await safeRecovery(previous)) throw fail("Router owner is absent but a child or listener remains; inspect the orphan before restarting.");
+            else await recoverOwner(file, previous, safeRecovery);
         } else {
             if (previous.tcp !== endpoints.tcp || previous.websocket !== endpoints.websocket
                 || JSON.stringify(previous.artifact) !== JSON.stringify(record.artifact)) throw fail("A live router owner has different endpoints or artifact pins.");
@@ -385,6 +501,7 @@ export async function acquireLocalZenohRouter({ env = process.env, browserConfig
         const installed = await (dependencies.install ?? installZenohRouter)(path.join(root, "router"), {
             signal: acquisition, platform, architecture: dependencies.architecture ?? process.arch,
             legacyRoot: path.join(repositoryRoot, ".onboarding", "router"),
+            dependencies: { hostId: async () => hostId, identity: lookup },
         });
         acquisition.throwIfAborted();
         const beforeSpawn = await probe(endpoints);

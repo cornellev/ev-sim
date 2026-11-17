@@ -14,7 +14,7 @@ import {
 } from "./presentBoundWheels.js";
 import { attachVehiclePlant, resetVehiclePlant, stepVehiclePlant } from "./VehiclePlantAdapter.js";
 import { visualWheelYaws } from "../../vehicles/plan/turnGeometry.js";
-import { resetEgoPresentation, updateEgoPresentation } from "./EgoPresentation.js";
+import { updateEgoPresentation } from "./EgoPresentation.js";
 import { originMarkerShown } from "../runtimeVisibility.js";
 
 export { applyModelPlacement } from "./ModelPlacement.js";
@@ -373,7 +373,6 @@ export class ManifestVehicle extends PhysicalVehicle {
         this.displaySteeringAngle = Number(entry.steeringAngle) || 0;
         this._applyVisualSteering();
         this._updateLidarZoneTransform();
-        resetEgoPresentation(this);
     }
 
     getDeterministicState() {

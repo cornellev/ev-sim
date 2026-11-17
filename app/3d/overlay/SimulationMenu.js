@@ -219,6 +219,30 @@ export function SimulationMenu({
                                         onChange={(value) => sim?.setAutonomyOverlayEnabled?.({ controls: value })}
                                     />
                                     <MenuToggle
+                                        label="Past trajectories"
+                                        icon={<FaLayerGroup className="h-3 w-3" />}
+                                        checked={simState?.autonomyOverlay?.pastTrajectories !== false}
+                                        onChange={(value) => sim?.setAutonomyOverlayEnabled?.({ pastTrajectories: value })}
+                                    />
+                                    <MenuToggle
+                                        label="Oracle occupancy"
+                                        icon={<FaGlobe className="h-3 w-3" />}
+                                        checked={simState?.autonomyOverlay?.oracleOccupancy === true}
+                                        onChange={(value) => sim?.setAutonomyOverlayEnabled?.({ oracleOccupancy: value })}
+                                    />
+                                    <MenuToggle
+                                        label="LiDAR occupancy"
+                                        icon={<FaRadar className="h-3 w-3" />}
+                                        checked={simState?.autonomyOverlay?.lidarOccupancy === true}
+                                        onChange={(value) => sim?.setAutonomyOverlayEnabled?.({ lidarOccupancy: value })}
+                                    />
+                                    <MenuToggle
+                                        label="Imported occupancy"
+                                        icon={<FaBroadcastTower className="h-3 w-3" />}
+                                        checked={simState?.autonomyOverlay?.stackOccupancy === true}
+                                        onChange={(value) => sim?.setAutonomyOverlayEnabled?.({ stackOccupancy: value })}
+                                    />
+                                    <MenuToggle
                                         label="Sensor product panel"
                                         icon={<FaSlidersH className="h-3 w-3" />}
                                         checked={sensorPanelVisible}

@@ -1,8 +1,7 @@
 import { getRoutePolyline } from "../../scenarios/route/Route.js";
 import { buildDirectedRoadGraph, projectPointToRoadNetwork } from "../../scenarios/route/roadGraph.js";
-import { TRAIL_HISTORY_MODES } from "../spatialLogModel.js";
 import { planActorId } from "./selection.js";
-import { getPlanWaypoints, planWaypointRevision } from "./waypoints.js";
+import { clearPlanWaypoints, getPlanWaypoints, planWaypointRevision, subscribePlanWaypoints } from "./waypoints.js";
 
 const FALLBACK_BOX = Object.freeze({
     size: { x: 4.5, z: 2 },
@@ -10,9 +9,8 @@ const FALLBACK_BOX = Object.freeze({
 });
 
 const LANE_WINDOW_M = 25;
-const TRAIL_KEEP_NS = 120_000_000_000;
 
-let laneGraphCache = { key: "", graph: null };
+let laneGraphCache = { roads: null, graph: null };
 
 function finite(value, fallback = 0) {
     const parsed = Number(value);
@@ -61,58 +59,12 @@ function routePoints(route) {
     return getRoutePolyline(route).map(xz).filter((point) => Number.isFinite(point.x) && Number.isFinite(point.z));
 }
 
-function historyWindowNs(historyMode) {
-    const mode = TRAIL_HISTORY_MODES.find((entry) => entry.id === historyMode);
-    if (!mode?.windowUs) return null;
-    return mode.windowUs * 1000;
-}
-
-export function clipTrail(samples, timeNs, historyMode) {
-    const windowNs = historyWindowNs(historyMode);
-    const source = Array.isArray(samples) ? samples : [];
-    const cutoff = windowNs == null ? null : finite(timeNs) - windowNs;
-    return source
-        .filter((sample) => cutoff == null || finite(sample?.timeNs) >= cutoff)
-        .map((sample) => ({ x: finite(sample.x), z: finite(sample.z), timeNs: finite(sample.timeNs) }));
-}
-
-/**
- * Append a sample when the actor has moved. Keeps at most the longest trail window.
- * `trails` is a Map of actor id to mutable sample arrays, owned by the view.
- */
-export function appendPlanTrails(trails, vehicles, timeNs) {
-    if (!trails) return;
-    const seen = new Set();
-    const cutoff = finite(timeNs) - TRAIL_KEEP_NS;
-    vehicles.forEach((vehicle, index) => {
-        const id = actorIdOf(vehicle, index);
-        seen.add(id);
-        const position = vec(vehicle?.position);
-        const samples = trails.get(id) ?? [];
-        const last = samples.at(-1);
-        const moved = !last || Math.hypot(last.x - position.x, last.z - position.z) > 0.05;
-        if (moved) samples.push({ x: position.x, z: position.z, timeNs: finite(timeNs) });
-        while (samples.length > 1 && samples[0].timeNs < cutoff) samples.shift();
-        trails.set(id, samples);
-    });
-    for (const id of [...trails.keys()]) {
-        if (!seen.has(id)) trails.delete(id);
-    }
-}
-
-function environmentKey(environment) {
-    const roads = environment?.roads;
-    if (!roads) return "";
-    const edges = roads.edges ?? [];
-    return `${roads.geometryVersion ?? 1}:${edges.map((edge) => edge?.id).join(",")}`;
-}
-
 function roadGraphFor(environment) {
-    const key = environmentKey(environment);
-    if (!key) return null;
-    if (laneGraphCache.key === key && laneGraphCache.graph) return laneGraphCache.graph;
+    const roads = environment?.roads;
+    if (!roads) return null;
+    if (laneGraphCache.roads === roads && laneGraphCache.graph) return laneGraphCache.graph;
     const graph = buildDirectedRoadGraph(environment);
-    laneGraphCache = { key, graph };
+    laneGraphCache = { roads, graph };
     return graph;
 }
 
@@ -269,19 +221,6 @@ function sensorOf(device, vehicle, vehicleId) {
     };
 }
 
-function controlsFor(sources, actorId, timeNs) {
-    if (sources.controlsById && Object.prototype.hasOwnProperty.call(sources.controlsById, actorId)) {
-        return sources.controlsById[actorId];
-    }
-    const runtime = sources.controlRuntime;
-    if (typeof runtime?.getSnapshot !== "function") return null;
-    try {
-        return runtime.getSnapshot(actorId, { applyTimeNs: timeNs });
-    } catch {
-        return null;
-    }
-}
-
 function copyDetections(detections) {
     if (!Array.isArray(detections)) return [];
     return detections.map((detection) => ({
@@ -295,12 +234,6 @@ function copyDetections(detections) {
     }));
 }
 
-function trailSamples(trails, id) {
-    if (!trails) return [];
-    if (trails instanceof Map) return trails.get(id) ?? [];
-    return trails[id] ?? [];
-}
-
 export function emptyPlanViewFrame() {
     return {
         timeNs: 0,
@@ -311,8 +244,7 @@ export function emptyPlanViewFrame() {
         signals: [],
         lane: { points: [] },
         perception: { oracle: [], candidate: [] },
-        localization: { estimate: null },
-        controls: {},
+        visualizationMap: null,
         waypoints: [],
         waypointFrame: "global",
         waypointRevision: 0,
@@ -335,7 +267,6 @@ export function buildPlanViewFrame(sources = {}) {
     const routeProgress = Number.isFinite(Number(metrics?.["route-progress"])) ? Number(metrics["route-progress"]) : null;
     const vehicles = [];
     const sensors = [];
-    const controls = {};
 
     (sources.vehicles ?? []).forEach((vehicle, index) => {
         const id = actorIdOf(vehicle, index);
@@ -359,10 +290,7 @@ export function buildPlanViewFrame(sources = {}) {
             colliding: colliding.has(id),
             route,
             routeProgress: role === "ego" ? routeProgress : null,
-            trail: clipTrail(trailSamples(sources.trails, id), timeNs, historyMode),
         });
-        const snapshot = controlsFor(sources, id, timeNs);
-        if (snapshot) controls[id] = snapshot;
         for (const device of vehicle?.devices ?? []) {
             const sensor = sensorOf(device, vehicle, id);
             if (sensor) sensors.push(sensor);
@@ -371,8 +299,6 @@ export function buildPlanViewFrame(sources = {}) {
 
     const ego = vehicles.find((entry) => entry.role === "ego") ?? vehicles[0] ?? null;
     const perception = sources.perception ?? {};
-    const localization = sources.localization ?? {};
-    const estimate = localization.estimate?.position ? xz(localization.estimate.position) : null;
 
     return {
         timeNs,
@@ -390,18 +316,17 @@ export function buildPlanViewFrame(sources = {}) {
             oracle: copyDetections(perception.oracle?.detections3d),
             candidate: copyDetections(perception.detections3d),
         },
-        localization: { estimate },
-        controls,
+        visualizationMap: sources.visualizationMap ?? null,
         waypoints: copyWaypoints(sources),
         waypointFrame: sources.waypointFrame === "body" ? "body" : "global",
         waypointRevision: Number.isFinite(Number(sources.waypointRevision))
             ? Number(sources.waypointRevision)
-            : planWaypointRevision(),
+            : 0,
     };
 }
 
 function copyWaypoints(sources) {
-    const source = Array.isArray(sources.waypoints) ? sources.waypoints : getPlanWaypoints();
+    const source = Array.isArray(sources.waypoints) ? sources.waypoints : [];
     const points = [];
     for (const point of source) {
         const x = Number(point?.x);
@@ -423,9 +348,69 @@ export function planViewSourcesFromData(data, extras = {}) {
         metrics: scenarioSnapshot?.metrics ?? null,
         contacts: simulation?.kernel?.lastContacts?.active ?? [],
         perception: simulation?.candidateOutputRuntime?.lastPerception ?? null,
-        localization: simulation?.candidateOutputRuntime?.lastLocalization ?? null,
-        controlRuntime: simulation?.controlRuntime ?? null,
+        visualizationMap: simulation?.visualizationManager?.getMapSnapshot?.() ?? null,
+        waypoints: getPlanWaypoints(),
+        waypointRevision: planWaypointRevision(),
         timeNs: simulation?.timeNs ?? simulation?.kernel?.timeNs ?? 0,
         ...extras,
+    };
+}
+
+/** Cached remaining map data; presentation frames never trigger a source read. */
+export function createPlanViewFrameStore(data) {
+    const simulation = data?.simulation?.();
+    const document = data?.environment?.()?.getDocument?.();
+    let environment = document?.snapshot?.() ?? null;
+    const read = () => buildPlanViewFrame(planViewSourcesFromData(data, { environment }));
+    let frame = emptyPlanViewFrame();
+    if (!simulation?._visualizationStepActive) {
+        try { frame = read(); } catch { /* Wait for a completed-state notification when initial sources are unavailable. */ }
+    }
+    const listeners = new Set();
+    let cancel = null;
+
+    return {
+        getSnapshot: () => frame,
+        subscribe(listener) {
+            listeners.add(listener);
+            if (!cancel) {
+                let active = true, documentPending = false, refreshing = false;
+                let previousState = [];
+                const refresh = () => {
+                    if (!active || refreshing || simulation?._visualizationStepActive) return;
+                    refreshing = true;
+                    try {
+                        if ((simulation?.timeNs ?? simulation?.kernel?.timeNs ?? 0) < frame.timeNs) clearPlanWaypoints();
+                        frame = read();
+                        for (const notify of [...listeners]) {
+                            try { notify(); } catch { /* Map listeners cannot interrupt a transition. */ }
+                        }
+                    } catch { /* Retain the last completed frame when display sources are unavailable. */ }
+                    finally { refreshing = false; }
+                };
+                const cancelWaypoints = subscribePlanWaypoints(refresh);
+                const cancelDocument = document?.subscribe?.((snapshot) => {
+                    environment = snapshot;
+                    if (documentPending) return;
+                    documentPending = true;
+                    // SceneProjector must finish applying this edit before poses and wedges are copied.
+                    queueMicrotask(() => { documentPending = false; refresh(); });
+                });
+                const cancelSimulation = simulation?.subscribe?.((snapshot) => {
+                    if (simulation._visualizationStepActive) return;
+                    const state = [snapshot.steps, snapshot.timeNs, snapshot.activeRun?.resolvedHash,
+                        snapshot.lifecycleState, snapshot.scenario?.scenarioId, snapshot.scenario?.status, snapshot.visualizationRevision];
+                    if (state.every((value, index) => Object.is(value, previousState[index]))) return;
+                    previousState = state;
+                    refresh();
+                });
+                cancel = () => { active = false; cancelSimulation?.(); cancelDocument?.(); cancelWaypoints(); };
+                if (!simulation?.subscribe) refresh();
+            }
+            return () => {
+                listeners.delete(listener);
+                if (!listeners.size) { cancel?.(); cancel = null; }
+            };
+        },
     };
 }

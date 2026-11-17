@@ -24,10 +24,12 @@ const onSignal = () => {
     abortController.abort();
     if (!starting) void shutdown();
 };
-process.once('SIGTERM', onSignal);
-process.once('SIGINT', onSignal);
+const shutdownSignalsReady = import('./headless/shutdownSignals.js').then(({ bindShutdownSignals }) => {
+    bindShutdownSignals(process, onSignal);
+});
 
 async function start() {
+    await shutdownSignalsReady;
     if (!await require('./startup.js').startup(REPOSITORY_ROOT, process.env, abortController.signal)) throw new Error('Server preflight failed.');
     abortController.signal.throwIfAborted();
     const { acquireLocalZenohRouter, localZenohBrowserConfig, withLocalZenohTransportDefaults } = await import('./interfaces/ZenohLocalRouter.js');

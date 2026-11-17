@@ -5,7 +5,6 @@ import * as THREE from "three";
 import {
     applyControlsPathRibbonPose,
     createControlsPathRibbonGeometry,
-    sampleControlsArcPoints,
     updateControlsPathRibbon,
 } from "../app/autonomy/ControlsPathArc.js";
 
@@ -68,17 +67,4 @@ test("applyControlsPathRibbonPose lifts and pitches the local ribbon", () => {
     assert.ok(Math.abs(world.x - (10 - pathY * Math.sin(pitch))) < 1e-6);
     assert.ok(Math.abs(world.z - 2) < 1e-6);
     assert.ok(Math.abs(world.y - 0.05) > 1);
-});
-
-test("sampleControlsArcPoints uses plant-forward -sin(yaw)", () => {
-    const points = sampleControlsArcPoints(
-        { position: { x: 0, y: 0, z: 0 }, yaw: Math.PI / 2 },
-        0,
-        { lookahead: 4, segments: 4 },
-    );
-    assert.ok(Math.abs(points[0].x) < 1e-5);
-    assert.ok(Math.abs(points[0].z) < 1e-5);
-    assert.ok(Math.abs(points.at(-1).x) < 1e-5);
-    assert.ok(points.at(-1).z < 0);
-    assert.ok(Math.abs(points.at(-1).z + 4) < 1e-5);
 });

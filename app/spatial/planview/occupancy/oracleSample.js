@@ -12,6 +12,7 @@ function actorSignature(actors, resolution) {
         cell(actor.x, resolution),
         cell(actor.z, resolution),
         cell(actor.yaw, resolution),
+        actor.length, actor.width, actor.centerX, actor.centerZ,
     ].join(":")).join("|");
 }
 
