@@ -417,7 +417,9 @@ export class RunSessionController {
             throw error;
         }).finally(() => {
             this._stopPromise = null;
+            this._set({});
         });
+        this._set({});
         this.data?.simulation?.()?.pause?.();
         return this._stopPromise;
     }

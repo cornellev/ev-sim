@@ -20,6 +20,9 @@ export function deriveSimulationStatus(runState = {}, simState = {}) {
         return { label: "Render error", detail: renderProvider.diagnostic?.message || renderProvider.error?.message || "Measured camera rendering failed", tone: "rose", source: hasManifest ? "manifest" : "scene" };
     }
     if (hasManifest) {
+        if (runState.transitioning && ["ready", "running", "paused"].includes(runStatus)) {
+            return { label: "Stopping", detail: "Finalizing the run", tone: "amber", source: "manifest" };
+        }
         if ((runState.degraded || renderProvider?.state === "degraded") && runStatus === "running") {
             return { label: "Running, degraded", detail: runState.error || "Optional visual prefetch is under pressure", tone: "amber", source: "manifest" };
         }
@@ -35,7 +38,7 @@ export function deriveSimulationStatus(runState = {}, simState = {}) {
         if (TERMINAL_SUCCESS.has(runStatus)) {
             return { label: "Completed", detail: "Run finalized", tone: "emerald", source: "manifest" };
         }
-        if (["stopped", "reset", "superseded"].includes(runStatus)) {
+        if (["stopped", "reset", "superseded", "interrupted"].includes(runStatus)) {
             return { label: "Stopped", detail: "Manifest run is not advancing", tone: "zinc", source: "manifest" };
         }
         if (simulationStatus === "playing") {

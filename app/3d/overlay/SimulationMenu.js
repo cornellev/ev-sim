@@ -81,6 +81,9 @@ export function SimulationMenu({
     };
 
     const runtimeStatus = deriveSimulationStatus(runState, simState);
+    const stopActive = (runState.transitioning && ["ready", "running", "paused"].includes(runState.status))
+        || ["stopped", "interrupted", "reset", "superseded"].includes(runState.status)
+        || simState?.status === "stopped";
 
     const controls = useMemo(() => {
         const settings = data?.settings?.();
@@ -372,7 +375,7 @@ export function SimulationMenu({
                         <MenuButton
                             iconOnly
                             variant="danger"
-                            active={simState?.status === "stopped"}
+                            active={stopActive}
                             onClick={() => invokeRunControl(() => runController.stop(), () => sim?.stop())}
                             title="Stop simulation"
                             ariaLabel="Stop"

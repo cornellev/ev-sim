@@ -23,6 +23,8 @@ test("simulation status distinguishes an unloaded scene from a manifest run", ()
     });
     assert.equal(deriveSimulationStatus({ status: "idle" }, { status: "playing" }).label, "Scene running");
     assert.equal(deriveSimulationStatus({ ...manifestRun, status: "ready" }, { status: "paused" }).label, "Ready");
+    assert.equal(deriveSimulationStatus({ ...manifestRun, status: "ready", transitioning: true }, { status: "paused" }).label, "Stopping");
+    assert.equal(deriveSimulationStatus({ ...manifestRun, status: "interrupted" }, { status: "stopped" }).label, "Stopped");
     assert.equal(deriveSimulationStatus({ ...manifestRun, status: "running" }, { status: "playing" }).label, "Running");
     assert.equal(deriveSimulationStatus({ ...manifestRun, status: "running", degraded: true }, { status: "playing" }).label, "Running, degraded");
     assert.equal(deriveSimulationStatus({ ...manifestRun, status: "assertion-failed" }, { status: "stopped" }).label, "Assertion failed");

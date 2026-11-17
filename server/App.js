@@ -14,19 +14,21 @@ const cleanups = [];
 let starting = true;
 let shutdownPromise;
 const shutdown = () => shutdownPromise ??= (async () => {
-    for (const close of cleanups.reverse()) {
+    for (const close of [...cleanups].reverse()) {
         try { await close(); } catch (error) { console.error(error); process.exitCode = 1; }
     }
     // Next dev watchers can survive app.close(); application work and the owned router have finished closing.
-    process.exit(process.exitCode ?? 0);
+    process.exit(process.exitCode ?? (abortController.signal.aborted ? 130 : 0));
 })();
-const onSignal = () => {
-    abortController.abort();
-    if (!starting) void shutdown();
-};
 // The helper is ESM. Bind it before preflight so SIGINT, SIGTERM, and SIGHUP reach shutdown.
-const shutdownSignalsReady = import('./headless/shutdownSignals.js').then(({ bindShutdownSignals }) => {
-    bindShutdownSignals(process, onSignal);
+// Startup awaits do not watch the abort signal, so the handler has to exit on its own.
+const shutdownSignalsReady = import('./headless/shutdownSignals.js').then(({ bindShutdownSignals, createShutdownHandler }) => {
+    bindShutdownSignals(process, createShutdownHandler({
+        abort: abortController,
+        isStarting: () => starting,
+        shutdown: () => { void shutdown(); },
+        exit: (code) => process.exit(code),
+    }));
 });
 
 async function start() {

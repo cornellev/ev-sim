@@ -333,7 +333,10 @@ test("stop pauses immediately and waits for sensor work and logging before ackno
         addAttachment() {},
         async stop() { calls.push("log"); return log; },
     };
+    const flags = [];
+    controller.subscribe((snapshot) => flags.push(snapshot.transitioning));
     const pending = controller.stop();
+    assert.equal(flags.at(-1), true);
     assert.deepEqual(calls, ["pause"]);
     assert.equal(controller.stop(), pending, "concurrent stops share finalization");
     assert.equal(controller.getSnapshot().transitioning, true);
@@ -350,6 +353,7 @@ test("stop pauses immediately and waits for sensor work and logging before ackno
     assert.equal(result.timeNs, 40_000_000);
     assert.equal(result.logId, "log-1");
     assert.equal(controller.getSnapshot().transitioning, false);
+    assert.equal(flags.at(-1), false);
     assert.deepEqual(calls, ["pause", "finalize", "log", "stop"]);
     assert.equal(await controller.stop(), result, "repeated stop returns the existing result");
     assert.equal(calls.filter((call) => call === "finalize").length, 1);
