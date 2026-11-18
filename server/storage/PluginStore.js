@@ -19,6 +19,7 @@ import {
     collectPluginDirectory,
     parsePortablePluginFile,
 } from "../plugins/PortablePluginFile.js";
+import { fsyncDir } from "./visual-assets/atomicFs.js";
 
 const LIBRARY_KIND = "cev-sim.plugin-library";
 const LEGACY_LIBRARY_VERSION = 1;
@@ -135,15 +136,6 @@ function publicMetadata(entry) {
     return metadata;
 }
 
-async function syncDirectory(directory) {
-    const handle = await fs.open(directory, "r");
-    try {
-        await handle.sync();
-    } finally {
-        await handle.close();
-    }
-}
-
 async function writeDurable(filePath, bytes) {
     await fs.mkdir(path.dirname(filePath), { recursive: true });
     const handle = await fs.open(filePath, "wx");
@@ -227,10 +219,10 @@ export class PluginStore {
             for (const [member, bytes] of verified.fileBytes) {
                 await writeDurable(path.join(staging, "files", ...member.split("/")), bytes);
             }
-            await syncDirectory(staging);
+            await fsyncDir(staging);
             try {
                 await fs.rename(staging, destination);
-                await syncDirectory(this.casDir);
+                await fsyncDir(this.casDir);
             } catch (error) {
                 if (error.code !== "EEXIST" && error.code !== "ENOTEMPTY") throw error;
                 await this.verifyPackage(verified.resource.packageHash);
@@ -327,7 +319,7 @@ export class PluginStore {
         try {
             await writeDurable(temporary, `${JSON.stringify(document, null, 2)}\n`);
             await fs.rename(temporary, this.libraryPath);
-            await syncDirectory(this.root);
+            await fsyncDir(this.root);
         } finally {
             await fs.rm(temporary, { force: true });
         }

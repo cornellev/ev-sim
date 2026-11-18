@@ -65,6 +65,56 @@ function editManifest(entries, edit) {
     entries[0].bytes = Buffer.from(canonicalMarketplaceBytes(manifest));
 }
 
+test("MKT-17 uploads with Windows file-flush permissions", async (t) => {
+    const { source, target, manager, manifest } = await fixture(t);
+    const bytes = await archive(source, manifest);
+    const open = fs.open;
+    let flushes = 0;
+    t.mock.method(fs, "open", async (file, flags, ...args) => {
+        const handle = await open(file, flags, ...args);
+        if (path.dirname(file) === path.join(manager.root, "incoming")) {
+            const sync = handle.sync.bind(handle);
+            t.mock.method(handle, "sync", async () => {
+                flushes += 1;
+                if (flags === "r") throw Object.assign(new Error("read-only fsync"), { code: "EPERM", syscall: "fsync" });
+                await sync();
+            });
+        }
+        return handle;
+    });
+
+    const view = await manager.create(Readable.from(bytes), { contentLength: bytes.length });
+    assert.equal(view.phase, "awaiting-confirmation");
+    assert.equal(flushes, 1);
+    assert.equal(await target.getRunManifest(manifest.id), null);
+    await commit(manager, view);
+});
+
+test("MKT-17 rejects a failed upload flush, cleans intake, and accepts a retry", async (t) => {
+    const { source, target, manager, manifest } = await fixture(t);
+    const bytes = await archive(source, manifest);
+    const open = fs.open;
+    const failure = Object.assign(new Error("file-flush failure"), { code: "EIO", syscall: "fsync" });
+    const closes = [];
+    const mockedOpen = t.mock.method(fs, "open", async (file, flags, ...args) => {
+        const handle = await open(file, flags, ...args);
+        if (path.dirname(file) === path.join(manager.root, "incoming")) {
+            t.mock.method(handle, "sync", async () => { throw failure; });
+            closes.push(t.mock.method(handle, "close"));
+        }
+        return handle;
+    });
+
+    await assert.rejects(manager.create(Readable.from(bytes)), (error) => error === failure);
+    assert.equal(closes.length, 1);
+    assert.equal(closes[0].mock.callCount(), 1);
+    assert.deepEqual(await fs.readdir(path.join(manager.root, "incoming")), []);
+    assert.deepEqual((await manager.list()).entries, []);
+    assert.equal(await target.getRunManifest(manifest.id), null);
+    mockedOpen.mock.restore();
+    assert.equal((await manager.create(Readable.from(bytes))).phase, "awaiting-confirmation");
+});
+
 test("MKT-17 prepares without authoring writes, freezes bindings, and reimports intact content once", async (t) => {
     const { source, target, manager, manifest } = await fixture(t);
     const bytes = await archive(source, manifest);

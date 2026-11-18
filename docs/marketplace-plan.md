@@ -25,7 +25,7 @@ hosted private-LAN registry. It is not headless PR 13 and does not extend the
 | MKT-14: simulator publisher workspace | Implemented; acceptance pending | Focused publisher/UI gates and full Marketplace/repository tests pass; supported-Node build, repository-wide browser, hosted CI evidence pending | Unmerged |
 | MKT-15: scale, recovery, and operations | Not started | Not run | Unmerged |
 | MKT-16: candidate acceptance and release | Zero-setup prerequisite implemented; candidate acceptance not started | Focused and full Marketplace/repository tests, lint, fixtures, and release check pass; browser/build and hosted candidate evidence pending | Unmerged |
-| MKT-17: local run-template file import | Implemented; acceptance pending | 16 focused and 175 Marketplace tests pass; import browser flow passes; remaining Playwright checks skipped by request; full gates have unrelated failures; hosted CI pending | Unmerged |
+| MKT-17: local run-template file import | Implemented; acceptance pending | 52 focused and 182 Marketplace tests pass after Windows sync fix; prior import browser flow passes; Windows operator smoke check pending; full gates have unrelated failures; hosted CI pending | Unmerged |
 
 Only a merged change may be marked merged. Verification records actual commands
 and evidence; implementation status alone does not satisfy a milestone gate.
@@ -1101,6 +1101,37 @@ arm64, Node 22.22.2:
   skipped at the user's explicit request. Hosted CI and candidate acceptance
   remain pending; no merge status changes.
 
+### Windows file-sync maintenance — 2026-11-17
+
+Local file intake now uses the existing `fsyncFile` helper with read/write
+access after the upload stream closes. Windows rejects flushing a read-only
+handle with `EPERM`; this used to fail before archive verification or creation
+of an import snapshot. `JsonFileStore` and `PluginStore` now use the shared
+`fsyncDir` helper so imported authoring records and plugin ownership can publish
+without attempting an unsupported Windows directory flush. File flushes,
+atomic publication, failed-upload cleanup, and POSIX error propagation remain.
+
+- The five new regression tests reproduce Windows read-only-file and directory
+  flush failures, then pass with the fix. They also verify genuine upload-flush
+  failure propagation, handle closure, empty intake and import records,
+  successful retry, persisted JSON/plugin ownership, and POSIX directory-flush
+  failures without publishing a new cache value.
+- The focused import, template package/lifecycle, storage, plugin-store, and
+  owner-only suites passed all 52 tests on macOS arm64, Node 22.22.2.
+- `npm run test:marketplace -- --test-concurrency=4` passed all 182 tests.
+- `npm test -- --test-concurrency=4` ran 3,050 tests: 3,029 passed, 20 declared
+  skips, and one existing failure in `tests/planview-subscriptions.test.js`
+  expecting the old simulation-menu oracle-occupancy source text. All
+  characterization checks passed; no fixture files changed.
+- `npm run lint` still reports the two existing `react-hooks/refs` errors in
+  `app/3d/overlay/SimulationChrome.js` and three existing warnings. Focused
+  ESLint over the three changed production files and three test files passed
+  without errors or warnings.
+- Native Windows acceptance remains pending the operator's agreed smoke check:
+  import the original tar, confirm review, reach completion, open the imported
+  run, restart the simulator, and reimport without duplicating intact content.
+  CI is unchanged. Windows directory crash durability remains deferred.
+
 ## MKT-01 evidence ledger
 
 Baseline captured before implementation at `7a463e7` on macOS arm64, Node
@@ -1614,6 +1645,17 @@ Local evidence on 2026-09-28:
   WP-10 and milestone acceptance open.
 
 ## Decision log
+
+### 2026-11-17 — Local imports reuse portable file and directory sync helpers
+
+Local upload file flushing requires a writable handle on Windows, so intake
+uses `fsyncFile` rather than reopening the temporary tar read-only. JSON and
+plugin publication use `fsyncDir`, retaining POSIX directory flushing and the
+existing explicit Windows durability limitation. Genuine file I/O failures
+still abort intake and clean its temporary file; no blanket `EPERM` suppression
+is introduced. Native Windows verification is an operator smoke check, without
+a new CI job. No API, archive, schema, trust rule, hash, or milestone status
+changed.
 
 ### 2026-11-17 — Windows private directories grant the folder and its children
 

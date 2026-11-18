@@ -7,7 +7,7 @@ import { isDeepStrictEqual } from "node:util";
 
 import { createProtobufInterfaceResource } from "../../../app/interfaces/ProtobufRunBinding.js";
 import { ARTIFACT_VERIFICATION_ERROR_CODES as ARCHIVE_CODES, ArtifactVerificationError } from "../../artifacts/ArtifactVerification.js";
-import { fsyncDir } from "../../storage/visual-assets/atomicFs.js";
+import { fsyncDir, fsyncFile } from "../../storage/visual-assets/atomicFs.js";
 import { createRunTemplatePackageOperationExecutor } from "../ArtifactAdapters.js";
 import { assetImportOperationId } from "../AssetPackageImportPlanner.js";
 import { MARKETPLACE_ERROR_CODES as CODES, MarketplaceError, marketplaceError } from "../MarketplaceErrors.js";
@@ -196,8 +196,7 @@ export class LocalRunTemplateImportManager {
                 hash.update(chunk); callback(null, chunk);
             } }), createWriteStream(temporary, { flags: "wx", mode: 0o600 }), { signal: combined });
             if (!sizeBytes || (contentLength !== null && sizeBytes !== contentLength)) fail(CODES.DOCUMENT_INVALID, "Local import upload is incomplete.");
-            const handle = await fs.open(temporary, "r");
-            try { await handle.sync(); } finally { await handle.close(); }
+            await fsyncFile(temporary);
             const id = hash.digest("hex");
             return await this.#serial(async () => {
                 combined.throwIfAborted();

@@ -44,6 +44,48 @@ test("JsonFileStore overwrites atomically and leaves no temp files", async () =>
     assert.equal(leftovers.length, 0, "no temp files should remain after writes");
 });
 
+test("JsonFileStore publishes on Windows without opening directories for flush", async (t) => {
+    const dir = await tempDir();
+    t.after(() => fs.rm(dir, { recursive: true, force: true }));
+    const filePath = path.join(dir, "value.json");
+    const open = fs.open;
+    const flushes = [];
+    t.mock.property(process, "platform", "win32");
+    t.mock.method(fs, "open", async (file, ...args) => {
+        if (file === dir) throw Object.assign(new Error("directory fsync"), { code: "EPERM" });
+        const handle = await open(file, ...args);
+        flushes.push(t.mock.method(handle, "sync"));
+        return handle;
+    });
+
+    const store = new JsonFileStore(filePath);
+    await store.write({ version: 1 });
+    await store.write({ version: 2 });
+    assert.deepEqual(await store.read(), { version: 2 });
+    assert.deepEqual(await new JsonFileStore(filePath).read(), { version: 2 });
+    assert.deepEqual(await fs.readdir(dir), ["value.json"]);
+    assert.equal(flushes.length, 2);
+    assert.ok(flushes.every((sync) => sync.mock.callCount() === 1));
+});
+
+test("JsonFileStore propagates POSIX directory-flush failures without publishing its cache", async (t) => {
+    const dir = await tempDir();
+    t.after(() => fs.rm(dir, { recursive: true, force: true }));
+    const store = new JsonFileStore(path.join(dir, "value.json"), { fallback: { version: 0 } });
+    assert.deepEqual(await store.read(), { version: 0 });
+    const failure = Object.assign(new Error("directory-flush failure"), { code: "EIO" });
+    const close = t.mock.fn(async () => {});
+    const open = fs.open;
+    t.mock.property(process, "platform", "linux");
+    t.mock.method(fs, "open", async (file, ...args) => file === dir
+        ? { sync: async () => { throw failure; }, close }
+        : open(file, ...args));
+
+    await assert.rejects(store.write({ version: 1 }), (error) => error === failure);
+    assert.deepEqual(await store.read(), { version: 0 });
+    assert.equal(close.mock.callCount(), 1);
+});
+
 test("JsonFileStore hands out copies so callers cannot mutate the cache", async () => {
     const dir = await tempDir();
     const store = new JsonFileStore(path.join(dir, "value.json"));
