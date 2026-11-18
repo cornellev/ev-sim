@@ -10,6 +10,8 @@ import {
 import { useShortcut } from "../../ui";
 import { MenuButton } from "./ui/MenuButton";
 import { pauseSimulation, playSimulation } from "./runPlayback";
+import { getRunSessionController } from "../../simulation/RunSessionController";
+import { simulationPlaybackDisabled } from "./simulationStatus";
 
 const IDLE_MS = 2500;
 
@@ -17,6 +19,8 @@ export function PerspectiveTransport({ data, snapshot }) {
     const sim = data?.simulation?.();
     const perspectiveView = sim?.perspectiveView;
     const [simState, setSimState] = useState(() => sim?.getSnapshot?.() ?? null);
+    const [runState, setRunState] = useState(() => getRunSessionController().getSnapshot());
+    const playbackDisabled = simulationPlaybackDisabled(runState);
     const [revealed, setRevealed] = useState(true);
     const revealedRef = useRef(true);
     const hoveringRef = useRef(false);
@@ -27,6 +31,7 @@ export function PerspectiveTransport({ data, snapshot }) {
         if (!sim?.subscribe) return undefined;
         return sim.subscribe(setSimState);
     }, [sim]);
+    useEffect(() => getRunSessionController().subscribe(setRunState), []);
 
     useEffect(() => {
         const publish = (next) => {
@@ -70,6 +75,7 @@ export function PerspectiveTransport({ data, snapshot }) {
         keys: "Space",
         priority: 50,
         handler: () => {
+            if (playbackDisabled) return true;
             if (simState?.status === "playing") pauseSimulation(data);
             else playSimulation(data);
             return true;
@@ -112,6 +118,7 @@ export function PerspectiveTransport({ data, snapshot }) {
                     onClick={() => pauseSimulation(data)}
                     title="Pause simulation"
                     ariaLabel="Pause"
+                    disabled={playbackDisabled}
                 >
                     <FaPause className="h-3 w-3" />
                 </MenuButton>
@@ -122,6 +129,7 @@ export function PerspectiveTransport({ data, snapshot }) {
                     onClick={() => playSimulation(data)}
                     title="Run simulation"
                     ariaLabel="Play"
+                    disabled={playbackDisabled}
                 >
                     <FaPlay className="h-3 w-3" />
                 </MenuButton>

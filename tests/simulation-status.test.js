@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
     deriveSimulationStatus,
+    simulationPlaybackDisabled,
     formatClockMode,
     formatRenderProviderStatus,
     formatSimulationTime,
@@ -14,6 +15,14 @@ const manifestRun = {
     activeResolved: { manifest: { id: "igvc-default" }, resolvedHash: "abc" },
 };
 
+test("playback controls require a live run and stay disabled through shutdown", () => {
+    assert.equal(simulationPlaybackDisabled({ status: "idle" }), false);
+    for (const status of ["ready", "running", "paused"]) assert.equal(simulationPlaybackDisabled({ ...manifestRun, status }), false);
+    for (const status of ["preparing", "completed", "stopped", "interrupted", "error"]) assert.equal(simulationPlaybackDisabled({ ...manifestRun, status }), true);
+    assert.equal(simulationPlaybackDisabled({ ...manifestRun, status: "paused", transitioning: true }), true);
+    assert.equal(simulationPlaybackDisabled({ ...manifestRun, status: "paused", runResult: {} }), true);
+});
+
 test("simulation status distinguishes an unloaded scene from a manifest run", () => {
     assert.deepEqual(deriveSimulationStatus({ status: "idle" }, { status: "stopped" }), {
         label: "Scene loaded",
@@ -23,6 +32,8 @@ test("simulation status distinguishes an unloaded scene from a manifest run", ()
     });
     assert.equal(deriveSimulationStatus({ status: "idle" }, { status: "playing" }).label, "Scene running");
     assert.equal(deriveSimulationStatus({ ...manifestRun, status: "ready" }, { status: "paused" }).label, "Ready");
+    assert.equal(deriveSimulationStatus({ ...manifestRun, status: "ready", transitioning: true }, { status: "paused" }).label, "Stopping");
+    assert.equal(deriveSimulationStatus({ ...manifestRun, status: "interrupted" }, { status: "stopped" }).label, "Stopped");
     assert.equal(deriveSimulationStatus({ ...manifestRun, status: "running" }, { status: "playing" }).label, "Running");
     assert.equal(deriveSimulationStatus({ ...manifestRun, status: "running", degraded: true }, { status: "playing" }).label, "Running, degraded");
     assert.equal(deriveSimulationStatus({ ...manifestRun, status: "assertion-failed" }, { status: "stopped" }).label, "Assertion failed");

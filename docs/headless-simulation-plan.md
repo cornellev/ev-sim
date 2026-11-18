@@ -16,7 +16,7 @@ language-neutral API authority is
 - Current milestone: **PR 12 — implementation complete; external hardware acceptance pending**
 - Next planned milestone: **None — the numbered headless implementation roadmap is complete**
 - Default implementation/review reasoning level: **Extra High**
-- Last updated: **2026-11-07** (reviewed steering characterization v2; milestone status unchanged)
+- Last updated: **2026-11-17** (bounded browser shutdown maintenance; milestone status unchanged)
 
 Progress:
 
@@ -517,6 +517,50 @@ compared with the committed characterization.
 - [Isaac Lab reinforcement-learning architecture](https://docs.nvidia.com/learning/physical-ai/getting-started-with-isaac-lab/latest/train-your-first-robot-with-isaac-lab/02-how-isaac-lab-accelerates-reinforcement-learning.html)
 
 ## Decision log
+
+### 2026-11-17 — Coordinated 0.3.0 alpha packaging (candidate evidence pending)
+
+Bump the coordinated product version to exact SemVer `0.3.0` while keeping the
+product labeled Alpha. Runtime defaults already read `CEV_SIM_VERSION` from
+`app/version.js`. Plugin fixtures that must load on 0.1 through 0.3 use
+`engines.cevSim: ">=0.1.0 <0.4.0"`; cornering and longitudinal examples use
+`>=0.2.0 <0.4.0`; `acme.dynamics.bicycle` matches the current scaffold at
+`>=0.3.0 <0.4.0`; new scaffolds and marketplace host defaults use the
+next-minor 0.x range. Protocol 1.5, run manifest 13, run-bundle v1, SFLog v1,
+characterization fixture bytes, and semantic hash algorithms are unchanged.
+Plugin-enabled identity vectors move because the engine ranges moved,
+including the four plugin cases in `contact-host-identity.v1.json`. The
+non-plugin contact-host cases, `uiHash`, and `worldHash` stay. This is not
+headless PR 13. Hosted macOS/Linux
+parity aggregation, the full 1/8/16/32 soak and benchmark, the manual
+internal-candidate workflow (including production Playwright), and dedicated
+x64 NVIDIA / Jetson ARM64 reports remain mandatory before tagging a GitHub
+prerelease.
+
+### 2026-11-17 — Bound browser shutdown and preserve terminal results
+
+Browser run shutdown has one 15-second wall-time budget for active sensor drain,
+transport close, recording startup, uploads, and finalization. It always stops
+the engine, closes local ownership callbacks, and retains success or failure
+for repeated Stop. Required logging failure rejects shutdown with an error run
+result; optional logging failure preserves the semantic outcome with degraded
+logging and the known log ID. Pause ends stalled sensor drain with the same
+shutdown error. Interrupted captures cannot finish delivery, assertions, or
+trajectory hashing; Reset or fresh preparation is required before playback.
+
+Cancellation reaches actual sensor workers and logging requests. Epochs fence
+late replies, and unacknowledged log finalization is not retried automatically.
+The limit requires a responsive browser JavaScript thread; suspended pages
+retain the browser API's existing unknown-acknowledgement rules. Protobuf,
+manifest, backend, semantic hashes, and characterization fixtures are unchanged.
+Focused shutdown/capture suites, lint, full Node tests, and browser/direct/CLI/
+gRPC/Python parity are the maintenance checks. Playwright is skipped at the
+user's request. PR 12 external acceptance gates and milestone status are unchanged.
+
+Validation: `npm test -- --test-concurrency=4` passed 3,005 tests with 20
+explicit skips and no failures. `npm run lint` passed with three existing
+warnings. `npm run test:parity` passed all four cases across browser engine,
+direct headless session, CLI, gRPC, and Python. No fixture was regenerated.
 
 ### 2026-11-07 — Reviewed steering baseline and Python check selection
 

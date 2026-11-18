@@ -82,7 +82,7 @@ Options:
   --onboarding     Include pinned Zenoh/Protobuf dependencies and router
   -h, --help       Show this help
 
-For a reproducible release install, pass a tag such as --ref v0.2.0.
+For a reproducible release install, pass a tag such as --ref v0.3.0.
 The installer creates .env.local in the install directory. Without
 --marketplace or --no-marketplace it asks whether to enable the marketplace.
 Enter, y, or yes writes CEV_SIM_MARKETPLACE_ENABLED=1. n or no writes 0.
@@ -803,7 +803,8 @@ fi
 printf '  %sStart the workbench:%s\n' "$WHITE" "$RESET"
 printf '\n'
 printf '    %scd %s%s\n' "$CYAN" "$INSTALL_DIR" "$RESET"
-printf '    %snpm run dev%s\n' "$CYAN" "$RESET"
+printf '    %snpm run build%s\n' "$CYAN" "$RESET"
+printf '    %snpm start%s\n' "$CYAN" "$RESET"
 if [[ "$RUN_BUILD" -eq 1 ]]; then
   printf '\n'
   printf '  %snpm run build%s finished. %snpm start%s serves that build.\n' "$BOLD" "$RESET" "$BOLD" "$RESET"

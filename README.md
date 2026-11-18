@@ -14,10 +14,10 @@
 - Vehicle & sensor simulation: LiDAR, camera, IMU/GNSS/odometry, physics, telemetry, binary logging/replay, scenario authoring, and native Zenoh/Protobuf integration.
 
 > [!NOTE]
-> This is **Alpha** (`0.2.0`). The API is not stable, and the documentation is
+> This is **Alpha** (`0.3.0`). The API is not stable, and the documentation is
 > incomplete. Marketplace and configuration-gated PBR are previews. Please reach
 > out to the maintainers if you want to contribute or use this project. See
-> [CHANGELOG.md](CHANGELOG.md) for the 0.2.0 scope and migration notes.
+> [CHANGELOG.md](CHANGELOG.md) for the 0.3.0 scope and migration notes.
 >
 > The product/repository brand is **ev-sim**; npm/Python packages and CLIs use
 > the **cev-sim** name.
@@ -40,9 +40,9 @@ or use the repository `.nvmrc`.
 # latest main (development)
 curl -fsSL https://raw.githubusercontent.com/cornellev/ev-sim/main/install.sh | bash
 
-# reproducible Alpha release (once the v0.2.0 tag is published)
-curl -fsSL https://raw.githubusercontent.com/cornellev/ev-sim/v0.2.0/install.sh \
-  | bash -s -- --ref v0.2.0
+# reproducible Alpha release (once the v0.3.0 tag is published)
+curl -fsSL https://raw.githubusercontent.com/cornellev/ev-sim/v0.3.0/install.sh \
+  | bash -s -- --ref v0.3.0
 ```
 
 The installer writes the clone to `./ev-sim`, creates `.env.local`, and asks whether to enable the marketplace.

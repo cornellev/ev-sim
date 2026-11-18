@@ -1,6 +1,8 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
+import { fsyncDir } from "./visual-assets/atomicFs.js";
+
 /**
  * JsonFileStore persists a single JSON value to a single file on disk.
  *
@@ -107,10 +109,5 @@ async function flushToDisk(filePath, value) {
         await handle.close();
     }
     await fs.rename(tempPath, filePath);
-    const directory = await fs.open(path.dirname(filePath), "r");
-    try {
-        await directory.sync();
-    } finally {
-        await directory.close();
-    }
+    await fsyncDir(path.dirname(filePath));
 }

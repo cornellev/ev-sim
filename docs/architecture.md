@@ -1,11 +1,25 @@
 # Architecture
 
 Editable Marketplace run templates use
-`cev-sim.run-template-package@1`, a nonsemantic authoring transport distinct
+`cev-sim.run-template-package@1` for registry publication and `@2` for local
+file export, a nonsemantic authoring transport distinct
 from exact `cev-sim.run-bundle@1` and `cev-sim.run-package@1` artifacts. Import
 publishes the guarded authoring closure and the run manifest last. Marketplace
 release references, receipts, mappings, installed state, and preparations stay
 outside world, resolved-run, simulation, episode, and package identities.
+
+MKT-17 file intake uses `LocalRunTemplateImportManager` in
+`server/marketplace/client/LocalRunTemplateImportManager.js`, separate from
+registry installed membership, receipts, and executable provenance.
+`POST /api/marketplace/local-imports` streams a bounded raw tar into private
+staging, verifies its closure, and returns an immutable plan. Confirmation
+requires its exact hash and snapshot revision. The shared
+`createRunTemplatePackageOperationExecutor` publishes guarded authoring records;
+the local journal resumes interrupted publication without overwriting edits.
+Version 2 includes the hash-pinned Protobuf interface for Zenoh runs and permits
+plugin records without registry release references. Local plugin intake adds
+manual CAS owners and never grants capabilities or imports modules. Registry
+admission remains signed and version 1.
 
 cev-sim is a Next.js app with two main user surfaces: a visual scripting canvas and a Three.js simulation scene. Browser and headless runs share native topic contracts and connect directly to Zenoh through admitted Protobuf routes.
 
@@ -222,6 +236,32 @@ Canonical state feeds a bounded SHA-256 trajectory chain. Normalized
 received serialized bytes; the separate
 `simulationSemanticHash` excludes logging, resource/artifact policy, wall
 pacing, and presentation settings before episode identity is computed.
+
+Runtime visualization is owned by `app/visualization/`: one Ackermann,
+planned-trajectory, past-trajectory, localization, and occupancy tool serves
+both scene and map. The base and routing manager import no React, Three.js,
+DOM, or Zenoh. Concrete tools own their geometry, materials, textures, and
+appearance clones. `AutonomyOverlay` keeps perception/lane rendering and
+delegates explicit compatibility snapshots; live runtime updates preserve
+independent bindings. Vehicle presentation no longer owns steering ribbons.
+Operator objects use layer 31, disable raycasting/collision, and are excluded
+by sensor capture filtering.
+
+`LiveVisualizationSource` releases local signal and shared occupancy samples
+after each authoritative completed step. Document/UI events refresh paused
+presentation after scene projection. Its optional owned read-only Zenoh source
+uses existing descriptors, fingerprints, browser configuration, and transport;
+display subscriptions never enter the managed input/control path. Sources
+implement cancellable `subscribe(bindings, onEvent)` and `dispose()`, allowing
+future replacement without implementing replay now. Projections emit internal
+Three.js positions/orientations while preserving source frame and exact
+sequence metadata. The manager coalesces dirty display work through engine
+presentation, respects renderer leases, and publishes cached independent
+scene/map snapshots. Map consumers use subscriptions instead of visualization
+polling. Bindings, visibility, display caches, and CPU timings remain outside
+run identities and canonical state. See
+[Runtime visualization implementation](runtime-visualization-plan.md) for
+package evidence and binding examples.
 
 `app/simulation/world/WorldDescription.js` is the UI-independent world seam.
 It normalizes schema-v2, v3, and v4 environment documents into canonical
@@ -902,9 +942,13 @@ recovers pending commands through heartbeats, and executes through
 `RunSessionController`. Both status and commands default to the most recently
 interacted-with connected page. Commands retain their target after admission;
 page-specific claims and acknowledgements prevent duplicate execution.
-Browser pause/stop acknowledgements wait for active asynchronous sensor work
-to settle before reporting the clock or finalizing logs. These operational
-records do not enter manifests or simulation identity.
+Browser pause/stop acknowledgements drain active asynchronous sensor work.
+Stop shares one 15-second deadline across drain, transport and logging; Pause
+ends a stalled capture with the same shutdown error. Cancellation propagates
+to sensor workers, inline readback, and recording HTTP requests, while epochs
+fence late replies. Shutdown always stops the engine and retains the result
+or failure for repeated Stop. Interrupted steps require Reset before playback.
+These operational limits and records do not enter manifests or simulation identity.
 
 ZPB-08 production runs use native topic contracts and configured Zenoh/Protobuf
 transport. ZPB-09 deletes the orchestrator, ROS builders/codecs, encode workers, and message assets. Frozen historical contracts and shape parsing live in `server/interfaces/historical/`; explicit `RunBundleInspection` and reviewed adoption use them. Browser/kernel import-graph tests prohibit those modules in execution.
@@ -919,17 +963,23 @@ Explicit remote endpoints retain their addresses and bypass acquisition.
 Pins live in `native/zenoh-transport/router-artifacts.json` and ship in headless
 packages. Downloads, executable/plugin hashes, and installation markers are
 verified in a per-user cache independent of checkout/CWD. Complete exclusive
-owner records identify parent and child by PID plus process birth identity.
-Concurrent starts attach only after both endpoints are ready. Dead ownership
-can be recovered only when both recorded processes are dead and ports are free.
-Foreign listeners and live orphans fail; attached handles never kill a child.
-Only the spawning process terminates its child, after its own work closes.
+owner records identify parent and child by PID plus process birth identity,
+and the machine by a stable host id rather than the DHCP hostname. Concurrent
+starts attach only after both endpoints are ready. Dead ownership can be
+recovered when both recorded processes are dead and ports are free. A later
+start may stop a child whose parent is gone and whose PID, birth time, and
+cache executable match. Foreign listeners fail. Attached handles never kill a
+child whose parent is alive. Only that identified orphan, or the spawning
+process after its own work closes, terminates a router child.
 No refcount, ownership transfer, respawn, or semantic identity changes result.
 
 macOS/Linux use the standalone bridge with explicit router-mode override.
 Windows x64 uses pinned GNU zenohd and an absolute required remote-API plugin,
 with SHM disabled. Process identities use `/proc` on Linux, `ps` on macOS, and
-PowerShell CIM creation times on Windows. Windows browser startup is implemented;
+PowerShell CIM creation times on Windows. Host identity uses `/etc/machine-id`,
+`IOPlatformUUID`, and `MachineGuid` on those platforms. An orphan executable is
+read from `/proc/<pid>/exe`, `ps -ww -o command=`, or the Windows process path.
+Windows browser startup is implemented;
 native headless Zenoh remains Linux/WSL2. Windows release and live acceptance are
 deferred. Windows directory fsync is unavailable through Node; atomic exclusive
 publication and file syncing remain, with crash durability deferred.

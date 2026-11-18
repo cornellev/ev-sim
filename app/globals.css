@@ -1980,6 +1980,48 @@ html[data-perspective-view="idle"] #canvas-container canvas {
   padding: 8px;
 }
 
+.sf-popover.sf-simulation-settings {
+  display: flex;
+  flex-direction: column;
+  width: min(320px, calc(100vw - 24px));
+  min-width: 0;
+  max-height: min(680px, var(--radix-popover-content-available-height), calc(100dvh - 120px));
+  padding: 12px;
+  color: var(--slate-fg);
+  overflow: hidden;
+}
+
+.sf-popover.sf-simulation-visibility {
+  height: 320px;
+}
+
+.sf-simulation-settings__header {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--slate-border-60);
+}
+
+.sf-simulation-settings__body {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.sf-simulation-settings__category {
+  width: 100%;
+  min-height: 40px;
+  text-align: left;
+}
+
+.sf-simulation-settings__category .sf-button__content {
+  width: 100%;
+  justify-content: flex-start;
+}
+
 @keyframes sf-fade-in {
   from { opacity: 0; }
 }

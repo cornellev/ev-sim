@@ -31,13 +31,20 @@ export function occupancyScreenRect(sample, viewport, size) {
         x: sample.originX + sample.width * sample.resolutionM,
         z: sample.originZ + sample.height * sample.resolutionM,
     }, viewport, size);
-    return {
+    const rect = {
         x: near.x,
         y: near.y,
         width: far.x - near.x,
         height: far.y - near.y,
         rotationDeg: -(Number(sample.yawRad) || 0) * 180 / Math.PI,
     };
+    if (sample.corners) {
+        const [origin, across, down] = sample.corners.map((point) => worldToScreen(point, viewport, size));
+        rect.x = origin.x;
+        rect.y = origin.y;
+        rect.transform = `matrix(${(across.x - origin.x) / rect.width} ${(across.y - origin.y) / rect.width} ${(down.x - origin.x) / rect.height} ${(down.y - origin.y) / rect.height} ${origin.x} ${origin.y})`;
+    }
+    return rect;
 }
 
 export function paintOccupancyCanvas(canvas, sample) {
@@ -53,6 +60,10 @@ export function paintOccupancyCanvas(canvas, sample) {
         image = context.createImageData(width, height);
         canvas._occupancyImage = image;
     }
-    paintOccupancyRgba(sample.cells, width, height, sample.palette, image.data);
+    if (sample.rgba && canvas._occupancyRgba === sample.rgba && canvas._occupancyRevision === sample.revision) return;
+    if (sample.rgba) image.data.set(sample.rgba);
+    else paintOccupancyRgba(sample.cells, width, height, sample.encoding ?? sample.palette, image.data);
     context.putImageData(image, 0, 0);
+    canvas._occupancyRgba = sample.rgba;
+    canvas._occupancyRevision = sample.revision;
 }

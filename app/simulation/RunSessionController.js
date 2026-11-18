@@ -7,6 +7,8 @@ import { CEV_SIM_VERSION } from "../version.js";
 import { resolveRunManifest } from "./RunManifestClient.js";
 import { assertEnabledCameraRenderRuntime } from "./render/RenderSceneProviderRegistry.js";
 import { ControlOwnershipGuard } from "../autonomy/ControlOwnershipGuard.js";
+import { abortable, RUN_STOP_TIMEOUT_MS, runStopTimeout } from "./AsyncCancellation.js";
+import { requiresControlLease } from "./NativeTopicCatalog.js";
 
 function clone(value) {
     return value === undefined ? undefined : structuredClone(value);
@@ -59,6 +61,10 @@ export class RunSessionController {
         this._loggingPolicyOverride = null;
         this._speedOverride = null;
         this._stopPromise = null;
+        this._stopError = null;
+        this._stopController = null;
+        this._operationSequence = 0;
+        this._recordingStartPromise = null;
         this._unsubscribeTransport = null;
         this._pendingRunId = null;
         this._recoveryPromise = null;
@@ -151,6 +157,9 @@ export class RunSessionController {
                 const switchingEnvironment = this.snapshot.pendingResolved
                     && this.snapshot.pendingResolved.manifest.environment.id !== data.environment?.()?.environmentId;
                 if (!switchingEnvironment) {
+                    this._operationSequence += 1;
+                    this._stopController?.abort(new Error("Run shutdown was detached from the simulation."));
+                    this.ownershipGuard?.close();
                     this._launchSequence += 1;
                     this._rejectPendingPrepare(new Error("Run preparation was detached from the simulation."));
                 }
@@ -167,7 +176,7 @@ export class RunSessionController {
     async prepare(resolved, { autoplay = false, episodePhase = "start", manifestRevision = null, controlLease = null, leaseRequestedAt } = {}) {
         if (!resolved?.manifest || !resolved?.resolvedHash) throw new Error("A resolved run manifest is required.");
         if (resolved.version !== 13) throw Object.assign(new Error("Historical runs require reviewed native migration before execution."), { code: "UNSUPPORTED_CAPABILITY" });
-        const needsLease = resolved.manifest.topics?.some((topic) => topic.direction === "input" && topic.valueContract?.id === "cev.control-command" && topic.valueContract.version === 2);
+        const needsLease = requiresControlLease(resolved.manifest);
         if (needsLease && (!controlLease || autoplay)) throw new Error("Control-command@2 requires a live lease and paused preparation.");
         assertProtobufExecutionCapabilities(resolved, { target: "browser", transport: "zenoh-browser", controlOwnership: Boolean(controlLease) });
         if (controlLease && (resolved.manifest.controls?.authority !== "candidate" || controlLease.target?.vehicleId !== resolved.manifest.controls.targetVehicleId || ["inputs", "controls", "vehicles"].some((key) => resolved.manifest.clock.modules[key] === false))) throw new Error("Owned runs require enabled candidate controls on the leased vehicle.");
@@ -176,11 +185,14 @@ export class RunSessionController {
         assertEnabledCameraRenderRuntime(resolved.manifest.sensorRig?.sensors, resolved.renderScene, {
             target: "browser",
         });
+        if (this._stopPromise) await this._waitForStop();
         if (this.snapshot.activeRunId && ["running", "paused", "ready"].includes(this.snapshot.status)) {
             await this.stop({ status: "superseded" });
         }
         if (controlLease) this._beginControlOwnership(controlLease, { requestedAt: leaseRequestedAt });
         else { this.ownershipGuard?.close(); this.ownershipGuard = null; }
+        this._operationSequence += 1;
+        this._stopError = null;
         const launchSequence = ++this._launchSequence;
         const runId = `run-${new Date().toISOString().replace(/[-:.]/g, "")}-${globalThis.crypto.randomUUID()}`;
         this._pendingRunId = runId;
@@ -284,11 +296,22 @@ export class RunSessionController {
         this._set(patch);
     }
 
+    _assertLiveAction(sequence = this._operationSequence) {
+        if (sequence !== this._operationSequence) throw Object.assign(new Error("Run control was superseded."), { code: "RUN_SUPERSEDED" });
+        if (this._stopPromise || this.snapshot.status === "preparing") throw Object.assign(new Error("The run is preparing or stopping."), { code: "BUSY" });
+        if (!["ready", "running", "paused"].includes(this.snapshot.status) || this.snapshot.runResult) {
+            throw Object.assign(new Error("This run has ended; reset it first."), { code: "RUN_TERMINAL" });
+        }
+    }
+
     async play() {
         if (!this.data || !this.snapshot.activeResolved) return null;
+        const sequence = this._operationSequence;
+        this._assertLiveAction(sequence);
         if (this.ownershipGuard && !this.ownershipGuard.check()) throw new Error("A live run-bound control lease is required before resuming.");
         if (this.snapshot.transport?.state === "reconnecting") { this._resumeAfterReconnect = true; return this.getSnapshot(); }
         await this._ensureRecording();
+        this._assertLiveAction(sequence);
         this.applyRuntimeOverrides(this.snapshot.activeResolved);
         this.data.simulation?.()?.play?.();
         this._set({ status: "running" });
@@ -297,15 +320,17 @@ export class RunSessionController {
 
     _beginControlOwnership(snapshot, options) {
         this.ownershipGuard?.close();
-        this.ownershipGuard = new ControlOwnershipGuard({ onLoss: () => {
+        const guard = new ControlOwnershipGuard({ onLoss: () => {
+            if (this.ownershipGuard !== guard || this._stopPromise || !["ready", "running", "paused", "preparing"].includes(this.snapshot.status)) return;
             this._resumeAfterReconnect = false;
             this.pause().catch(() => {});
             const simulation = this.data?.simulation?.();
             simulation?.inputQueue?.reset();
-            const vehicleId = this.ownershipGuard?.lease?.vehicleId || "ego";
+            const vehicleId = guard.lease?.vehicleId || "ego";
             const stopped = simulation?.controlRuntime?.revokeOwnership(vehicleId, { timeNs: simulation.timeNs });
             if (stopped) simulation?.runtimeContext?.controls?.applySetpoints?.(new Map([[vehicleId, stopped]]));
         } });
+        this.ownershipGuard = guard;
         this.ownershipGuard.begin(snapshot, options);
     }
 
@@ -344,11 +369,23 @@ export class RunSessionController {
 
     async pause() {
         this._resumeAfterReconnect = false;
+        if (this._stopPromise || (this.snapshot.activeRunId && (!["ready", "running", "paused"].includes(this.snapshot.status) || this.snapshot.runResult))) return this.getSnapshot();
         const simulation = this.data?.simulation?.();
         const wasReady = this.snapshot.status === "ready";
+        const sequence = this._operationSequence;
         simulation?.pause?.();
         if (this.snapshot.activeRunId && !wasReady) this._set({ status: "paused" });
-        await simulation?.whenIdle?.();
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(runStopTimeout("paused sensor work")), RUN_STOP_TIMEOUT_MS);
+        try { await abortable(simulation?.whenIdle?.(), controller.signal); }
+        catch (error) {
+            if (controller.signal.aborted && !this._stopPromise && sequence === this._operationSequence && simulation === this.data?.simulation?.()) {
+                const pending = this.stop();
+                this._stopController?.abort(error);
+                await pending;
+            }
+            throw error;
+        } finally { clearTimeout(timer); }
         return this.getSnapshot();
     }
 
@@ -399,9 +436,15 @@ export class RunSessionController {
 
     async step(count = 1) {
         if (!this.data || !this.snapshot.activeResolved) return null;
+        const sequence = this._operationSequence;
+        const runId = this.snapshot.activeRunId;
+        this._assertLiveAction(sequence);
         if (this.snapshot.transport?.state === "reconnecting") throw new Error("Cannot step while Zenoh is reconnecting.");
         await this._ensureRecording();
+        this._assertLiveAction(sequence);
         await this.data.simulation?.()?.step?.(count);
+        if (this._autoFinalizing && runId === this.snapshot.activeRunId) return this.getSnapshot();
+        this._assertLiveAction(sequence);
         this._set({ status: "paused", assertionResults: this.data.simulation?.()?.assertionEngine?.snapshot?.() || [] });
         return this.getSnapshot();
     }
@@ -410,28 +453,100 @@ export class RunSessionController {
         this._cancelRecovery();
         if (this._stopPromise) return this._stopPromise;
         if (this.snapshot.runResult?.runId && this.snapshot.runResult.runId === this.snapshot.activeRunId) {
-            return Promise.resolve(this.snapshot.runResult);
+            const simulation = this.data?.simulation?.();
+            if (simulation && simulation.status !== "stopped" && simulation.lifecycleState !== "disposed") simulation.stop?.({ reset: false, dispatchEpisode: false });
+            return this._stopError ? Promise.reject(this._stopError) : Promise.resolve(this.snapshot.runResult);
         }
-        this._stopPromise = Promise.resolve().then(() => this._stop(options)).catch((error) => {
-            this._set({ status: "error", error: error.message });
-            throw error;
-        }).finally(() => {
+        const sequence = ++this._operationSequence;
+        const data = this.data;
+        const run = this.getSnapshot();
+        const context = {
+            data, run, simulation: data?.simulation?.(), recording: this.recording,
+            recordingStart: this._recordingStartPromise, guard: this.ownershipGuard,
+            loggingPolicy: this._loggingPolicyOverride ?? run.activeResolved?.manifest?.logging?.policy ?? "optional",
+            current: () => sequence === this._operationSequence && data === this.data,
+            stage: "sensor work", runResult: null,
+        };
+        const controller = this._stopController = new AbortController();
+        const timer = setTimeout(() => controller.abort(runStopTimeout(context.stage)), RUN_STOP_TIMEOUT_MS);
+        this._stopPromise = Promise.resolve().then(() => this._stop(options, context, controller.signal)).finally(() => {
+            clearTimeout(timer);
+            if (this._stopController === controller) this._stopController = null;
             this._stopPromise = null;
+            this._set({});
         });
-        this.data?.simulation?.()?.pause?.();
+        this._set({});
+        try { context.simulation?.pause?.(); } catch (error) { context.pauseError = error; }
+        clearInterval(context.guard?.timer);
         return this._stopPromise;
     }
 
-    async _stop({ status = "stopped" } = {}) {
-        if (this._pendingPrepare) {
-            this._launchSequence++;
-            this._rejectPendingPrepare(new Error("Run preparation was stopped."));
-            this._set({ pendingResolved: null });
+    async _stop({ status = "stopped" }, context, signal) {
+        const { simulation, recording } = context;
+        let failure = null;
+        try {
+            if (context.pauseError) throw context.pauseError;
+            if (this._pendingPrepare) {
+                this._launchSequence++;
+                this._rejectPendingPrepare(new Error("Run preparation was stopped."));
+                this._set({ pendingResolved: null });
+            }
+            await abortable(simulation?.whenIdle?.(), signal);
+            context.stage = "transport shutdown";
+            await abortable(context.data?.client?.()?.closeRun?.({ signal }), signal);
+            simulation?.protobufRoutes?.invalidateBindings?.();
+            context.stage = "recording startup";
+            await abortable(context.recordingStart?.catch(() => {}), signal);
+            signal.throwIfAborted();
+            if (!context.current()) throw new Error("Run shutdown was superseded.");
+            context.stage = "run finalization";
+            await this._finalizeStop({ status }, context, signal);
+        } catch (error) {
+            failure = error;
+            context.runResult = {
+                runId: context.run.activeRunId, manifestId: context.run.activeResolved?.manifest?.id ?? null,
+                resolvedHash: context.run.activeResolved?.resolvedHash ?? null,
+                step: simulation?.steps ?? 0, timeNs: simulation?.timeNs ?? 0,
+                completed: false, assertions: simulation?.assertionEngine?.snapshot?.() ?? [],
+                logId: recording.session?.id ?? null, trajectoryHash: simulation?.trajectoryHash ?? null,
+                simulationSemanticHash: simulation?.simulationSemanticHash ?? context.run.activeResolved?.simulationSemanticHash ?? null,
+                episodeHash: simulation?.episodeHash ?? null, completedAt: new Date().toISOString(),
+                ...context.runResult, status: "error", passed: false, failureReason: error.message,
+                terminationReason: error.code === "RUN_STOP_TIMEOUT" ? "shutdown-timeout" : "shutdown-failed",
+            };
+            try { simulation?.cancelPendingAdvance?.(error); } catch { /* Stop must still run if capture cleanup fails. */ }
+            if (recording.session && context.stage !== "log finalization" && !signal.aborted) {
+                try {
+                    context.stage = "incomplete log finalization";
+                    recording.addAttachment({ name: "run-results.json", mime: "application/json", bytes: JSON.stringify(context.runResult) });
+                    await abortable(recording.stop({ runResult: context.runResult, incomplete: true, loggingError: error.message }, { signal }), signal);
+                } catch { /* Preserve the original failure; partial logs remain recoverable. */ }
+            }
+            if (recording.session || context.recordingStart) {
+                try { recording.cancel?.(error); } catch { /* Preserve the original failure. */ }
+            }
+            try { context.data?.client?.()?.closeRun?.({ signal })?.catch?.(() => {}); } catch { /* Preserve the original failure. */ }
+        } finally {
+            try { context.guard?.close(); } catch (error) { failure ||= error; }
+            try { simulation?.protobufRoutes?.invalidateBindings?.(); } catch (error) { failure ||= error; }
+            try {
+                simulation?.stop?.({ reset: false, dispatchEpisode: status !== "reset" });
+            } catch (error) {
+                failure ||= error;
+            }
+            if (failure) context.runResult = { ...context.runResult, status: "error", passed: false, failureReason: failure.message };
+            if (context.current()) {
+                this._recordingRunId = null;
+                this._stopError = failure;
+                this._set({ status: context.runResult.status, assertionResults: context.runResult.assertions, runResult: context.runResult, ...(failure ? { error: failure.message } : {}) });
+            }
         }
-        const simulation = this.data?.simulation?.();
-        await simulation?.whenIdle?.();
-        await this.data?.client?.()?.closeRun?.();
-        simulation?.protobufRoutes?.invalidateBindings?.();
+        if (failure) throw failure;
+        return context.runResult;
+    }
+
+    async _finalizeStop({ status = "stopped" }, context, signal) {
+        const { simulation, recording, run } = context;
         const canFinalize = Boolean(simulation?.resolvedRun) && simulation.lifecycleState !== "disposed";
         const kernelFinalization = canFinalize ? simulation.finalize({ status }) : null;
         const finalized = kernelFinalization
@@ -476,16 +591,16 @@ export class RunSessionController {
                         ? terminalDetail
                         : (scenarioResult?.terminationReason ?? finalStatus);
         let runResult = {
-            runId: this.snapshot.activeRunId,
-            manifestId: this.snapshot.activeResolved?.manifest?.id || null,
-            resolvedHash: this.snapshot.activeResolved?.resolvedHash || null,
+            runId: run.activeRunId,
+            manifestId: run.activeResolved?.manifest?.id || null,
+            resolvedHash: run.activeResolved?.resolvedHash || null,
             simulationSemanticHash: kernelFinalization?.simulationSemanticHash
                 ?? simulation?.simulationSemanticHash
-                ?? this.snapshot.activeResolved?.simulationSemanticHash
+                ?? run.activeResolved?.simulationSemanticHash
                 ?? null,
             episodeHash: kernelFinalization?.episodeHash ?? simulation?.episodeHash ?? null,
             trajectoryHash: kernelFinalization?.trajectoryHash ?? simulation?.trajectoryHash ?? null,
-            scenarioId: this.snapshot.activeResolved?.scenario?.scenario?.id || null,
+            scenarioId: run.activeResolved?.scenario?.scenario?.id || null,
             status: finalStatus,
             completed,
             completedAt: new Date().toISOString(),
@@ -505,16 +620,18 @@ export class RunSessionController {
             },
             terminalEvent: scenarioResult?.terminalEvent ?? null,
             failureReason,
-            logId: this.recording?.session?.id ?? null,
+            logId: recording?.session?.id ?? null,
         };
-        const loggingPolicy = this._loggingPolicyOverride
-            ?? this.snapshot.activeResolved?.manifest?.logging?.policy
-            ?? "optional";
-        if (this._recordingRunId === this.snapshot.activeRunId) {
+        context.runResult = runResult;
+        const loggingPolicy = context.loggingPolicy;
+        if (this._recordingRunId === run.activeRunId || context.recordingStart) {
             if (loggingPolicy !== "disabled") {
-                this.recording.addAttachment({ name: "run-results.json", mime: "application/json", bytes: JSON.stringify(runResult) });
                 try {
-                    const metadata = await this.recording.stop({ runResult });
+                    context.stage = "log finalization";
+                    recording.addAttachment({ name: "run-results.json", mime: "application/json", bytes: JSON.stringify(runResult) });
+                    const metadata = await abortable(recording.stop({ runResult }, { signal }), signal);
+                    if (!context.current()) throw new Error("Run shutdown was superseded.");
+                    if (metadata?.incomplete && loggingPolicy === "required") throw new Error(`Required logging incomplete${metadata.loggingError ? `: ${metadata.loggingError}` : "."}`);
                     runResult = { ...runResult, logId: metadata?.id ?? runResult.logId };
                     if (metadata?.incomplete && loggingPolicy === "optional") {
                         this._set({
@@ -523,31 +640,32 @@ export class RunSessionController {
                         });
                     }
                 } catch (error) {
+                    recording.cancel?.(error);
+                    if (!context.current()) throw error;
                     if (loggingPolicy === "required") throw error;
-                    runResult = { ...runResult, logId: null };
                     this._set({ degraded: true, error: `Optional log finalization failed: ${error.message}` });
                     getTelemetryStore().emitTelemetryEvent({
                         category: "logging",
                         name: "optional-recording-finalization-failed",
                         severity: "warning",
-                        payload: { runId: this.snapshot.activeRunId, error: error.message },
+                        payload: { runId: run.activeRunId, error: error.message },
                     });
                 }
             }
-            this._recordingRunId = null;
         }
-        simulation?.stop?.({
-            reset: false,
-            dispatchEpisode: status !== "reset",
-        });
-        this._set({ status: finalStatus, assertionResults: finalized.results, runResult });
+        context.runResult = runResult;
         return runResult;
+    }
+
+    async _waitForStop(options) {
+        try { await this.stop(options); }
+        catch (error) { if (error !== this._stopError || this.data?.simulation?.()?.status !== "stopped") throw error; }
     }
 
     async reset(resolved = null, { manifestRevision = null } = {}) {
         const manifestId = resolved?.manifest?.id || this.snapshot.selectedManifestId || this.snapshot.activeResolved?.manifest?.id;
         if (!manifestId) return null;
-        await this.stop({ status: "reset" });
+        await this._waitForStop({ status: "reset" });
         const next = resolved ?? await resolveRunManifest(manifestId);
         return this.prepare(next, { autoplay: false, episodePhase: "stop", manifestRevision });
     }
@@ -609,6 +727,7 @@ export class RunSessionController {
     async _ensureRecording() {
         const resolved = this.snapshot.activeResolved;
         const runId = this.snapshot.activeRunId;
+        const sequence = this._operationSequence;
         if (!resolved || !runId || this._recordingRunId === runId) return;
         const policy = this._loggingPolicyOverride ?? resolved.manifest.logging.policy;
         if (policy === "disabled") {
@@ -627,7 +746,7 @@ export class RunSessionController {
             webglRenderer: debugInfo ? gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) : null,
         };
         try {
-            await this.recording.start(buildRecordingOptions({
+            const pending = this._recordingStartPromise ?? this.recording.start(buildRecordingOptions({
                 data: this.data,
                 store: getTelemetryStore(),
                 profile: builtInProfile(resolved.manifest.logging.profileId),
@@ -638,8 +757,13 @@ export class RunSessionController {
                 evidenceContext: this._recordingEvidenceContext,
                 haltSimulationOnError: policy === "required",
             }));
+            this._recordingStartPromise = pending;
+            try { await pending; }
+            finally { if (this._recordingStartPromise === pending) this._recordingStartPromise = null; }
+            if (sequence !== this._operationSequence) return;
             this._recordingRunId = runId;
         } catch (error) {
+            if (sequence !== this._operationSequence) throw error;
             if (policy === "required") throw error;
             this._recordingRunId = runId;
             this._set({ degraded: true, error: `Optional logging unavailable: ${error.message}` });
@@ -663,6 +787,11 @@ export class RunSessionController {
     }
 
     clear() {
+        this._operationSequence += 1;
+        this._stopController?.abort(new Error("Run shutdown was cleared."));
+        this._cancelRecovery();
+        this.ownershipGuard?.close();
+        this._stopError = null;
         this._launchSequence += 1;
         this._rejectPendingPrepare(new Error("Run preparation was cleared."));
         this._recordingEvidenceContext = null;

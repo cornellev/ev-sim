@@ -25,6 +25,7 @@ hosted private-LAN registry. It is not headless PR 13 and does not extend the
 | MKT-14: simulator publisher workspace | Implemented; acceptance pending | Focused publisher/UI gates and full Marketplace/repository tests pass; supported-Node build, repository-wide browser, hosted CI evidence pending | Unmerged |
 | MKT-15: scale, recovery, and operations | Not started | Not run | Unmerged |
 | MKT-16: candidate acceptance and release | Zero-setup prerequisite implemented; candidate acceptance not started | Focused and full Marketplace/repository tests, lint, fixtures, and release check pass; browser/build and hosted candidate evidence pending | Unmerged |
+| MKT-17: local run-template file import | Implemented; acceptance pending | 52 focused and 182 Marketplace tests pass after Windows sync fix; prior import browser flow passes; Windows operator smoke check pending; full gates have unrelated failures; hosted CI pending | Unmerged |
 
 Only a merged change may be marked merged. Verification records actual commands
 and evidence; implementation status alone does not satisfy a milestone gate.
@@ -54,7 +55,8 @@ and evidence; implementation status alone does not satisfy a milestone gate.
   grants capabilities, changes a run, or activates content.
 - Existing plugin, vehicle, run-bundle, and run-package formats remain
   authoritative. Editable templates use the separate
-  `cev-sim.run-template-package@1` authoring-closure contract; the exact
+  `cev-sim.run-template-package@1` signed registry authoring-closure contract
+  and `@2` local file contract; the exact
   run-bundle and run-package workflows and identities are unchanged.
 - Correctly resolved managed runs continue executing admitted plugin selections
   under the existing versioned plugin contract. Marketplace installation alone
@@ -971,6 +973,165 @@ accepted as substitute UI or accessibility evidence. Production UI,
 accessibility, build, hosted, soak, x64 NVIDIA, and Jetson ARM64 evidence
 remains required before MKT-16 acceptance.
 
+### MKT-17 — Local run-template file import
+
+A selected file is an unverified transfer. Verification establishes archive
+structure, exact digests and authoring closure under current destination visual
+rights. It does not establish a publisher or contact a registry. Local imports
+never create registry sources, installed membership, receipts, update tracks,
+advisory membership, or executable provenance. Local import records and mapping
+history remain nonsemantic.
+
+`RunTemplatePackage.js` retains the version-1 manifest grammar and default
+exporter behavior. `normalizeRunTemplatePackageManifest` also admits version 2,
+whose `plugins[].release` is optional and whose required `protobufInterface`
+is null for disabled Protobuf or `{interfaceHash, recordSha256, sizeBytes}` for
+Zenoh. The interface is a normalized `cev-sim.protobuf-interface` record in
+the ordinary digest-addressed records inventory; its exact hash must match the
+root run pin. Native-v13 runs require interface v2. `collectRunTemplateClosure`
+and `recheckRunTemplateSnapshot` capture and recheck those immutable bytes.
+Run Configuration requests `packageVersion: 2`; the storage API and
+`exportRunTemplatePackage` default to version 1, and
+`MarketplacePublicationPlanner` explicitly exports version 1. Registry
+`inspectRunTemplatePackageArtifact` rejects version 2; its signed
+`embeddedPlugins` inventory remains mandatory and unchanged. Historical v1
+Zenoh files require the exact interface already present on the destination.
+
+`createMarketplaceRouter` in `server/routes/marketplaceRouter.js` exposes:
+
+| Route | Contract |
+| --- | --- |
+| `POST /api/marketplace/local-imports` | One raw `application/vnd.cev-sim.run-template-package+tar` body; no compressed request encoding or multipart envelope; returns staged review |
+| `GET /api/marketplace/local-imports` | Local import summaries, separate from `/installed` |
+| `GET /api/marketplace/local-imports/:id` | Revisioned snapshot, progress, error and immutable review |
+| `POST /api/marketplace/local-imports/:id/commit` | Exact `{expectedRevision, planHash}`; returns confirmed progress with status 202 |
+| `POST /api/marketplace/local-imports/:id/resume` | `{expectedRevision}` for confirmed `needs-attention` work |
+| `POST /api/marketplace/local-imports/:id/replan` | `{expectedRevision}`; creates a new review without rolling back published authoring |
+| `POST /api/marketplace/local-imports/:id/cancel` | `{expectedRevision}`; cancels only before confirmation and removes staged work |
+
+`LocalRunTemplateImportManager.create` streams, counts and hashes into an
+exclusive owner-only temporary file. Declared and chunked uploads use
+`RUN_TEMPLATE_PACKAGE_LIMITS` and the existing bounded transfer timeout;
+disconnect, cancellation and shutdown abort active intake. No authoring writes
+occur in preparation. `prepareRunTemplatePackage` performs hostile USTAR and
+exact closure verification; `planRunTemplatePackageImport` supplies deterministic
+collision allocation and typed reference rewrites using a local mapping facade,
+without the registry receipt store. Other artifact kinds are rejected.
+
+Persistent state lives below `<dataDir>/marketplace/local-imports/<archiveSha256>`:
+
+```text
+snapshot.json                         cev-sim.local-run-template-import@1
+plans/<planHash>.json                  cev-sim.local-run-template-import-plan@1
+work/archive.tar
+work/run-template-packages/<preparationHash>/{preparation.json,generated/,…}
+```
+
+The snapshot contains `importId`, `revision`, archive digest/size/version,
+timestamps, `phase`, `planHash`, `progress`, sanitized `error`, ordered
+`completions[{operationId, operationHash, result}]`, successful `mappings` and
+`destinationManifestId`. Immutable plans contain `preparationHash`, the existing
+`adapterPlan` and a `review` with source/destination run IDs, create/reuse/rename
+mapping rows, exact plugins, interface pin, frozen binding count, requested
+capabilities, current rights, warnings and blocking issues. Internal reserved
+UUIDs and `local.run-template@0.0.0` satisfy planner identity validation only;
+they are never persisted as a registry release or installed owner.
+
+`LocalRunTemplateImportManager.commit` confirms the exact plan and revision,
+rechecks rights, durably enters `commit`, then journals each operation.
+`createRunTemplatePackageOperationExecutor` in `ArtifactAdapters.js` is shared
+with signed registry installation. Local interface publication uses
+`StorageService.putProtobufInterface` without a mutable source mapping. Plugin
+CAS publication uses `PluginStore.putPackage`; a separate replayable
+`add-local-plugin-manual-owner` operation verifies bytes, calls `addManualOwner`
+and emits the existing library notification. It retains other owners, adds no
+grants, never selects a plugin and never imports its module.
+
+Publication orders interface and plugin prerequisites, visual uses and editor
+assets, visual/environment records, vehicle assets and manifests, child-first
+scripts, scenarios, then the run manifest last. Bindings are embedded in the
+run, never written to global bindings. Resume rechecks rights and completed
+content identities; damaged staging or edited authoring stops in
+`needs-attention`. Replan preserves completed authoring and requires a new
+confirmation. Startup recovers only already confirmed work and cleans orphaned
+intake and terminal staging. The completion snapshot is durable before staging
+cleanup. Same-byte reimport reuses intact content without increasing authoring
+revisions; edited content receives deterministic `-mkt-` collision IDs.
+
+`MarketplaceClient.js`, `LibraryTab` in `MarketplaceWorkspace.js`, and
+`LocalRunTemplateImportDialog.js` provide file selection, the unverified-file
+notice, review, confirmation, polling, resume/replan and the existing
+`onOpenRunConfig` navigation. The header and empty Library state offer
+**Import package**. Imported files have a separate Library section; Discover
+remains registry-only. Current policy still governs later validation and run
+admission.
+
+Work packages WP-00–05 are implemented. Local evidence on 2026-11-17, macOS
+arm64, Node 22.22.2:
+
+- The focused command
+  `node --experimental-default-type=module --test tests/marketplace-local-import.test.js tests/marketplace-run-template-package.test.js tests/marketplace-run-template-lifecycle.test.js`
+  passed 16 tests. It covers static preparation, frozen bindings, deterministic
+  reimport and collision mapping, unchanged v1 export, fresh and missing
+  interface restoration, manual plugin ownership and owner restoration,
+  destination rights at review/confirmation/resume, hostile and substituted
+  bytes, closure failures, staged record/plan tampering, concurrent confirmation,
+  publication before a journal marker, edited partial imports, and startup
+  recovery/terminal cleanup. The local HTTP test uses no configured source,
+  forbids registry fetches, and verifies empty registry ledgers.
+- `npm run test:marketplace` passed all 175 tests, including existing signed
+  registry template admission, receipts, collection ownership and recovery.
+- `npm test -- --test-concurrency=4` ran 3,040 tests: 3,019 passed, 20 declared
+  skips, one failure in the existing `tests/planview-subscriptions.test.js`
+  source-text assertion for the separately edited simulation menu. Marketplace,
+  run-bundle/run-package and characterization checks passed.
+- `npm run lint` found two existing `react-hooks/refs` errors in the separately
+  edited `app/3d/overlay/SimulationChrome.js` and three existing warnings.
+  Focused lint over all import files passed with zero errors and the two
+  existing Marketplace `catalogEpoch` dependency warnings; final lint on the
+  manager and its new tests passed without warnings.
+- The isolated production build completed and
+  `CEV_SIM_PLAYWRIGHT_SKIP_BUILD=1 npx playwright test tests/ui/marketplace-local-import.spec.js --workers=1`
+  passed. The flow edits and exports a draft from Run Configuration, removes its
+  fixture authoring content, reviews and imports the tar with no registry,
+  restores vehicle asset bytes, opens the run, and confirms idempotent reimport
+  and unchanged registry state. The review passed Axe and an 800px layout check.
+  The existing Simple-mode Name field has a label/input ID mismatch; this test
+  uses its stable input ID. Remaining serial Marketplace Playwright checks were
+  skipped at the user's explicit request. Hosted CI and candidate acceptance
+  remain pending; no merge status changes.
+
+### Windows file-sync maintenance — 2026-11-17
+
+Local file intake now uses the existing `fsyncFile` helper with read/write
+access after the upload stream closes. Windows rejects flushing a read-only
+handle with `EPERM`; this used to fail before archive verification or creation
+of an import snapshot. `JsonFileStore` and `PluginStore` now use the shared
+`fsyncDir` helper so imported authoring records and plugin ownership can publish
+without attempting an unsupported Windows directory flush. File flushes,
+atomic publication, failed-upload cleanup, and POSIX error propagation remain.
+
+- The five new regression tests reproduce Windows read-only-file and directory
+  flush failures, then pass with the fix. They also verify genuine upload-flush
+  failure propagation, handle closure, empty intake and import records,
+  successful retry, persisted JSON/plugin ownership, and POSIX directory-flush
+  failures without publishing a new cache value.
+- The focused import, template package/lifecycle, storage, plugin-store, and
+  owner-only suites passed all 52 tests on macOS arm64, Node 22.22.2.
+- `npm run test:marketplace -- --test-concurrency=4` passed all 182 tests.
+- `npm test -- --test-concurrency=4` ran 3,050 tests: 3,029 passed, 20 declared
+  skips, and one existing failure in `tests/planview-subscriptions.test.js`
+  expecting the old simulation-menu oracle-occupancy source text. All
+  characterization checks passed; no fixture files changed.
+- `npm run lint` still reports the two existing `react-hooks/refs` errors in
+  `app/3d/overlay/SimulationChrome.js` and three existing warnings. Focused
+  ESLint over the three changed production files and three test files passed
+  without errors or warnings.
+- Native Windows acceptance remains pending the operator's agreed smoke check:
+  import the original tar, confirm review, reach completion, open the imported
+  run, restart the simulator, and reimport without duplicating intact content.
+  CI is unchanged. Windows directory crash durability remains deferred.
+
 ## MKT-01 evidence ledger
 
 Baseline captured before implementation at `7a463e7` on macOS arm64, Node
@@ -978,14 +1139,14 @@ Baseline captured before implementation at `7a463e7` on macOS arm64, Node
 
 - Existing focused package/canonicalization/simulation-hash/characterization
   selection passed 37/37.
-- Plugin package hash (current after 0.2.0 engine-range migration):
-  `5fb8ec8f4ac2176629414beaa938a48cfbe00d577e13edeae8c69806d0f0909d`.
+- Plugin package hash (current after 0.3.0 engine-range migration):
+  `569946d954a185a901757cf205aa97c7470eb7b02af9b40d8d72f9ef42f37cf8`.
 - Plugin-enabled resolved hash:
-  `9d12e58b3319c26470eb3f37314a0d8017cbae338e04f07a8214604c9532e428`.
+  `b375b9e65c9b081518adc05def72ed3b337afd9dfeeb6233e5283f6204f538d6`.
 - Plugin-enabled simulation-semantic hash:
-  `884aff41608fd8c1010a61b399b3a2e7928a15e53155e557154c42c82f94a3ed`.
+  `2eb334ccc8d5968841cf2621fbe210b3d4d90b49d449b3597dd9cb4e294f69cd`.
 - Plugin-enabled default episode hash:
-  `518c82fbba425792dd8d2150fecfb227ae6ada45f3109557586a2f4ef9e813c8`.
+  `89f98ae36ea0f4fe93bbf58c0f567aae4fd7cf04098eceea27ca56dcf1bdcdf3`.
 - Fixed vehicle-bundle hash:
   `e44e29973a958058b1726855fca84c06c444033222dbb29238a72ae9d1a60c7a`.
 - Existing run-package golden archive hash:
@@ -1484,6 +1645,61 @@ Local evidence on 2026-09-28:
   WP-10 and milestone acceptance open.
 
 ## Decision log
+
+### 2026-11-17 — Local imports reuse portable file and directory sync helpers
+
+Local upload file flushing requires a writable handle on Windows, so intake
+uses `fsyncFile` rather than reopening the temporary tar read-only. JSON and
+plugin publication use `fsyncDir`, retaining POSIX directory flushing and the
+existing explicit Windows durability limitation. Genuine file I/O failures
+still abort intake and clean its temporary file; no blanket `EPERM` suppression
+is introduced. Native Windows verification is an operator smoke check, without
+a new CI job. No API, archive, schema, trust rule, hash, or milestone status
+changed.
+
+### 2026-11-17 — Windows private directories grant the folder and its children
+
+A Windows owner-only directory now has two current-user FullControl entries:
+one for the folder itself and one inherit-only entry for new children.
+Inheritance from the parent stays removed. Package preparation treats a
+Windows `EPERM` rename as an existing destination only when that destination
+is present. No marketplace schema, trust rule, semantic hash, or milestone
+status changed.
+
+### 2026-11-17 — Windows marketplace privacy uses a current-user ACL
+
+Unix marketplace directories and secrets stay mode `0700` and `0600`. Windows
+cannot report those modes, so owner-only there means a discretionary ACL with
+inheritance removed and access granted only to the current user. The default
+connection directory is repaired on startup. An existing explicit connection
+directory or provision output parent is checked and not rewritten. No
+marketplace schema, trust rule, semantic hash, or milestone status changed.
+
+### 2026-11-17 — Widen fixture cevSim ranges for the 0.3.0 alpha line
+
+In-repo plugin packages that load on the 0.3.0 host now declare
+`engines.cevSim` as `>=0.1.0 <0.4.0`. `acme.dynamics.cornering` and
+`acme.dynamics.longitudinal` use `>=0.2.0 <0.4.0`. `acme.dynamics.bicycle`
+matches the current scaffold at `>=0.3.0 <0.4.0`. Marketplace publication
+defaults for the current host still use
+`defaultCevSimEngineRange()` (`0.3.0` → `>=0.3.0 <0.4.0`). Plugin load stays
+strict: packages that still declare `<0.3.0` fail on simulator `0.3.0`. The
+fixture change updates plugin `packageHash`/`runtimeHash` and plugin-enabled
+run identities. `uiHash`, `worldHash`, the vehicle-bundle vector, the
+run-package golden vector, and the frozen marketplace release canonical
+digest stay unchanged. Marketplace schema is unchanged.
+
+### 2026-11-17 — MKT-17 unverified local template transfer
+
+Local import has its own SHA-256-keyed journal and immutable confirmation plans;
+it does not use registry trust, installed membership, receipts or executable
+provenance. Preserve the version-1 signed registry contract and introduce
+version 2 for optional local plugin release references and the exact pinned
+Protobuf interface record. Config exports version 2; registry publication
+remains version 1. Shared guarded authoring operations preserve collisions and
+recover confirmed work. Local plugin packages gain manual owners without
+execution authority. No simulator, run-bundle, run-package, world, episode,
+trajectory or plugin package identity contract changes.
 
 ### 2026-11-04 — Writable serve renews online TUF metadata
 

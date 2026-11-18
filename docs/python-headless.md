@@ -50,7 +50,7 @@ The headless release builder emits a pure-Python wheel and sdist in the
 coordinated internal candidate artifact. Verify `release-manifest.json` /
 `SHA256SUMS`, then use
 `npm run artifacts:install -- --dist <download> --python-venv <venv>` or
-install the selected wheel directly. The matching `cev-sim@0.2.0` npm tarball
+install the selected wheel directly. The matching `cev-sim@0.3.0` npm tarball
 provides the local supervisor executable; neither package is published to a
 registry. See [Headless release and CI gates](headless-release.md) and
 [CHANGELOG.md](../CHANGELOG.md).

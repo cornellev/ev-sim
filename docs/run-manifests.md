@@ -308,14 +308,33 @@ queue ingestion boundaries. A byte-oriented verifier can check an external
 serialization remains unchanged, while v11 and v12 use JCS. See
 [Visual Layer Contracts](visual-layer.md) for the support table and byte rules.
 
-Marketplace transfer does not extend the run contracts. A marketplace run
-template carries the existing `cev-sim.run-bundle@1`; an exact run package
+Marketplace transfer does not extend the run contracts. An editable Marketplace
+template carries `cev-sim.run-template-package@1` for signed registry delivery
+or `@2` for local files; an exact run bundle remains `cev-sim.run-bundle@1`
+and an exact run package
 carries the existing `cev-sim.run-package@1`. Marketplace release metadata,
 source identity, signed-catalog tracks, installed membership, and installation
 receipts are stored separately. They do not enter run manifests, resolved
 bundles, `resolvedHash`, `simulationSemanticHash`, `episodeHash`,
 `trajectoryHash`, `worldHash`, or run-package archive identity. Importers keep
 using the existing exact-byte verification and deterministic collision rules.
+
+Run Configuration **Export template** saves the draft, then requests
+`packageVersion: 2` from
+`POST /api/storage/run-manifests/:id/template-packages/export`. Version 2
+includes the immutable, normalized Protobuf interface record when
+`protobuf.mode` is `zenoh`, with the exact `interfaceHash`, record digest and
+size; disabled Protobuf carries a null descriptor and no interface record.
+Native-v13 runs require interface v2. Version 1 and registry publication remain
+unchanged; server and `exportRunTemplatePackage` callers default to version 1.
+
+Marketplace Library **Import package** reviews either template version before
+publication. A v1 Zenoh template needs its exact interface already stored
+locally. Import freezes even empty bindings in `scripts.embeddedBindings`, sets
+`bindingSource: "embedded"`, and clears `bindingIds`; global binding documents
+are untouched. Local plugins become manual library owners without grants or
+module loading. The restored run opens through ordinary Run Configuration and
+still requires explicit validation, resolution and launch under current policy.
 
 MKT-13 adds a host-policy admission step for canonical plugin package hashes.
 Authoring resolution, direct headless construction when supplied a policy, and

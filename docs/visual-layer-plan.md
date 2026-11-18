@@ -42,7 +42,7 @@ a VIS, GOOG, or GS PR changes a contract, hash, gate, or milestone status.
 - Core assumption: **Google approval, Google-derived assets, Gaussian
   splatting, and a model service are unavailable.**
 - Default implementation/review reasoning level: **Extra High**.
-- Last updated: **2026-11-10 — WP07–WP09 explicit live rigid-body camera identity/runtime/default rollout; external visual gates remain open**.
+- Last updated: **2026-11-17 — bounded browser capture shutdown; external visual gates remain open**.
 - Implemented evidence: VIS-01, VIS-12a, VIS-02, VIS-03, VIS-04, VIS-05a, VIS-05b, VIS-06a,
   VIS-06b, VIS-07, VIS-08, VIS-09, VIS-10a, VIS-10b, VIS-11, VIS-12b,
   VIS-13a, VIS-13b, VIS-14, and VIS-16a acceptance evidence is recorded in the
@@ -2049,6 +2049,26 @@ by this plan revision.
   context to build the entire program.
 
 ## Decision log
+
+### 2026-11-17 — Cancel stalled browser capture during shutdown
+
+Browser shutdown uses a shared 15-second deadline. Expiry terminates PBR workers,
+aborts inline capture/readback and asset residency, and fences late replies.
+Inline capture restores renderer, camera, scene, and material state before
+rejecting; an injected readback's abandoned buffer is not reused. Late residency
+completion cannot report ready or mutate the replacement runtime. Interrupted
+capture publishes no partial group and requires fresh preparation before playback.
+
+Focused inline, worker, sensor-publication, and shutdown regressions verify
+cancellation and late-reply behavior. Lint, full Node tests, and headless parity
+remain integration checks; Playwright is skipped at the user's request. Visual
+contracts, hashes, backend identities, and historical fixtures remain unchanged.
+The visual-runtime NO-GO verdict and all external hardware gates remain open.
+
+Validation: the focused capture/sensor/engine suite passed 82 tests; final full
+Node verification passed 3,005 tests with 20 explicit skips. Lint had no errors
+and three existing warnings; all four headless parity cases passed. Browser
+hardware and Playwright evidence remain unverified for this maintenance change.
 
 ### 2026-11-10 — WP07–WP09 bind live object motion explicitly
 

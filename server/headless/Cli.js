@@ -2,6 +2,7 @@ import { createReadStream, promises as fs } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import readline from "node:readline";
+import { bindShutdownSignals, unbindShutdownSignals } from "./shutdownSignals.js";
 
 import { HeadlessEpisodeError } from "../../app/simulation/headless/HeadlessErrors.js";
 import { listBuiltInVehicleManifests } from "../../app/vehicles/BuiltInVehicleManifests.js";
@@ -219,10 +220,10 @@ export async function main(argv = process.argv.slice(2), io = {}) {
             };
             resolveSupervisorConfig(supervisorOptions);
             const abortController = new AbortController();
-            let stop;
-            const stopped = new Promise((resolve) => { stop = () => { abortController.abort(); resolve(); }; });
-            process.once("SIGINT", stop);
-            process.once("SIGTERM", stop);
+            let resolveStopped;
+            const stopped = new Promise((resolve) => { resolveStopped = resolve; });
+            const stop = () => { abortController.abort(); resolveStopped(); };
+            const stopHandler = bindShutdownSignals(process, stop);
             let router, running;
             try {
                 router = await (io.acquireLocalZenohRouter ?? acquireLocalZenohRouter)({ zenohTransport: config.zenohTransport, signal: abortController.signal, onLog: (line) => stderr.write(`[zenoh-router] ${line}\n`) });
@@ -239,8 +240,7 @@ export async function main(argv = process.argv.slice(2), io = {}) {
                 await stopped;
             } finally {
                 try { try { await running?.close(); } finally { await router?.close(); } } finally {
-                    process.removeListener("SIGINT", stop);
-                    process.removeListener("SIGTERM", stop);
+                    unbindShutdownSignals(process, stopHandler);
                 }
             }
             return CLI_EXIT.OK;
@@ -369,8 +369,7 @@ export async function main(argv = process.argv.slice(2), io = {}) {
         const packagePath = options.package || null;
         const abortController = new AbortController();
         const onSignal = () => abortController.abort();
-        process.once("SIGINT", onSignal);
-        process.once("SIGTERM", onSignal);
+        const signalHandler = bindShutdownSignals(process, onSignal);
         let router;
         try {
             const bundle = packagePath
@@ -447,8 +446,7 @@ export async function main(argv = process.argv.slice(2), io = {}) {
             return final.result.passed ? CLI_EXIT.OK : CLI_EXIT.SEMANTIC_FAILURE;
         } finally {
             try { await router?.close(); } finally {
-                process.removeListener("SIGINT", onSignal);
-                process.removeListener("SIGTERM", onSignal);
+                unbindShutdownSignals(process, signalHandler);
             }
         }
     } catch (error) {

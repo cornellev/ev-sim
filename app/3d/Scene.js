@@ -1056,6 +1056,11 @@ export default function TotalScene({
                 },
                 play: () => controller.play(),
                 pause: () => controller.pause(),
+                visualization: async () => ({
+                    engine: sceneData.simulation(), data: sceneData, THREE,
+                    CameraRenderProducts: (await import("./perception/CameraRenderProducts.js")).CameraRenderProducts,
+                    waypoints: await import("../spatial/planview/waypoints.js"),
+                }),
                 snapshot: () => ({
                     run: controller.getSnapshot(),
                     simulation: sceneData.simulation().getSnapshot(),

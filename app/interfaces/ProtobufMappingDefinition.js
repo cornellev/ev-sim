@@ -1,6 +1,6 @@
 import { assertProtobufName } from "./ProtobufSchema.js";
 
-export const MAPPING_OPERATIONS = Object.freeze(["quaternionYaw", "poseAtOffset", "frameTransform"]);
+export const MAPPING_OPERATIONS = Object.freeze(["quaternionYaw", "poseAtOffset", "frameTransform", "stackOccupancy"]);
 
 export function normalizeMappingDefinition(value) {
     const record = (value, keys) => {

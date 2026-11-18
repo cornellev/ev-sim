@@ -271,6 +271,7 @@ export class PluginSensorDevice {
 
     captureAt(context) {
         try {
+            context.signal?.throwIfAborted();
             const vehicleList = typeof this.vehicles === "function" ? this.vehicles() : this.vehicles;
             const frames = this.transformRuntime?.resolveCaptureFrames?.(
                 this.config,
@@ -298,6 +299,7 @@ export class PluginSensorDevice {
     }
 
     _finishCapture(raw, context) {
+        context.signal?.throwIfAborted();
         const measured = buildMeasuredRangeImage({
             buffer: raw,
             config: this.config,
@@ -318,6 +320,7 @@ export class PluginSensorDevice {
         const result = this.scene.digestCapture?.(validated)
             ?? { capture: validated, digest: lidarCaptureDigest(validated) };
         const finish = ({ capture, digest }) => {
+            context.signal?.throwIfAborted();
             this.lastCaptureDigest = digest;
             return { ...capture, rng: context.deliveryRng };
         };

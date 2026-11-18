@@ -1,6 +1,7 @@
 'use client';
 
-import { occupancyScreenRect } from "./occupancy/paint.js";
+import { useCallback } from "react";
+import { occupancyScreenRect, paintOccupancyCanvas } from "./occupancy/paint.js";
 
 function screenRadius(centerWorld, radiusM, toScreen) {
     const center = toScreen(centerWorld);
@@ -30,11 +31,15 @@ function pickableProps(primitive, onSelectActor) {
     };
 }
 
-function OccupancyImage({ sample, viewport, size, canvasRef }) {
+function OccupancyImage({ sample, viewport, size }) {
+    const { cells, width, height, rgba, revision, encoding, palette } = sample;
+    const canvasRef = useCallback((canvas) => {
+        paintOccupancyCanvas(canvas, { cells, width, height, rgba, revision, encoding, palette });
+    }, [cells, width, height, rgba, revision, encoding, palette]);
     const rect = occupancyScreenRect(sample, viewport, size);
     if (!(rect.width > 0) || !(rect.height > 0)) return null;
     const image = (
-        <foreignObject x={rect.x} y={rect.y} width={rect.width} height={rect.height} style={{ pointerEvents: "none" }}>
+        <foreignObject x={rect.transform ? 0 : rect.x} y={rect.transform ? 0 : rect.y} width={rect.width} height={rect.height} style={{ pointerEvents: "none" }}>
             <div xmlns="http://www.w3.org/1999/xhtml" style={{ width: "100%", height: "100%", pointerEvents: "none" }}>
                 <canvas
                     ref={canvasRef}
@@ -43,10 +48,9 @@ function OccupancyImage({ sample, viewport, size, canvasRef }) {
             </div>
         </foreignObject>
     );
+    if (rect.transform) return <g transform={rect.transform}>{image}</g>;
     if (!rect.rotationDeg) return image;
-    const cx = rect.x + rect.width / 2;
-    const cy = rect.y + rect.height / 2;
-    return <g transform={`rotate(${rect.rotationDeg} ${cx} ${cy})`}>{image}</g>;
+    return <g transform={`rotate(${rect.rotationDeg} ${rect.x} ${rect.y})`}>{image}</g>;
 }
 
 export function PlanViewLayers({ primitives = [], toScreen, onSelectActor, occupancy = [], viewport, size }) {
@@ -59,7 +63,6 @@ export function PlanViewLayers({ primitives = [], toScreen, onSelectActor, occup
                     sample={entry.sample}
                     viewport={viewport}
                     size={size}
-                    canvasRef={entry.canvasRef}
                 />
             ))}
             {primitives.map((primitive, index) => {

@@ -6,6 +6,8 @@ import {
     browserSimSnapshot,
 } from "./BrowserSimControl.js";
 
+const TAB_KEY = "cev-sim.browser-sim.tab";
+
 /** App-lifetime HTTP/SSE adapter. The run controller remains the lifecycle owner. */
 export class BrowserSimBridge {
     constructor({ controller, experiment, getContext, fetchImpl = (...args) => globalThis.fetch(...args), windowImpl = globalThis.window, documentImpl = globalThis.document, subscribeEvents = subscribeStorageEvents }) {
@@ -24,6 +26,7 @@ export class BrowserSimBridge {
     }
 
     start() {
+        this._claimTab();
         this.active = true;
         const interact = (event) => {
             if (!event.isTrusted) return;
@@ -41,13 +44,13 @@ export class BrowserSimBridge {
         const unsubscribeRun = this.controller.subscribe(() => this.sync());
         const unsubscribeExperiment = this.experiment?.subscribe(() => this.sync());
         let lastHeartbeat = Date.now();
-        const timer = setInterval(() => {
+        this.timer = setInterval(() => {
             if (this.controller.ownershipGuard?.lease || Date.now() - lastHeartbeat >= BROWSER_SIM_HEARTBEAT_MS) { lastHeartbeat = Date.now(); this.sync(); }
         }, 250);
         this.sync();
         return () => {
             this.active = false;
-            clearInterval(timer);
+            clearInterval(this.timer);
             unsubscribeEvents();
             unsubscribeRun();
             unsubscribeExperiment?.();
@@ -77,20 +80,36 @@ export class BrowserSimBridge {
     }
 
     async _sync(retried = false) {
+        if (this._superseded()) {
+            this._stopReplaced();
+            return;
+        }
         if (!this.registration) {
-            const registration = await this._request("/bridge/register", { snapshot: this.snapshot(), activity: this.activity, sequence: ++this.reportSequence });
-            if (!this.active) {
+            let registration;
+            try {
+                registration = await this._request("/bridge/register", {
+                    snapshot: this.snapshot(), activity: this.activity, sequence: ++this.reportSequence, tabId: this.tabId, epoch: this.epoch,
+                });
+            } catch (error) {
+                if (error.code === "BRIDGE_REPLACED" || this._superseded()) {
+                    this._stopReplaced();
+                    return;
+                }
+                throw error;
+            }
+            if (!this.active || this._superseded()) {
                 this._unregister(registration);
+                if (this._superseded()) this._stopReplaced();
                 return;
             }
             this.registration = registration;
         }
         const registration = this.registration;
         try {
-            const requestedAt = performance.now();
             const heartbeat = await this._request(`/bridge/${registration.browserId}/heartbeat`, {
                 snapshot: this.snapshot(), activity: this.activity, sequence: ++this.reportSequence,
             }, registration);
+            const requestedAt = performance.now();
             if (!this.active || this.registration !== registration) return;
             if (heartbeat.controlLease) this.controller.updateControlOwnership?.(heartbeat.controlLease, { requestedAt });
             const completed = new Set();
@@ -102,6 +121,10 @@ export class BrowserSimBridge {
             }
             if (heartbeat.command && !completed.has(heartbeat.command.commandId)) this._handle(heartbeat.command, registration);
         } catch (error) {
+            if (error.code === "BRIDGE_REPLACED" || this._superseded()) {
+                this._stopReplaced();
+                return;
+            }
             if (!retried && error.code === "BROWSER_NOT_REGISTERED" && this.registration === registration) {
                 const lease = this.controller.ownershipGuard?.lease;
                 if (lease) this.controller.updateControlOwnership?.({ ...lease, status: "lost", remainingMs: 0 });
@@ -115,6 +138,39 @@ export class BrowserSimBridge {
         }
     }
 
+    // sessionStorage survives reload in this tab only; a newer epoch belongs to the replacement.
+    _claimTab() {
+        const storage = this.windowImpl?.sessionStorage;
+        if (!storage) {
+            if (!this.tabId) this.tabId = crypto.randomUUID();
+            this.epoch = (this.epoch ?? 0) + 1;
+            return;
+        }
+        let state = null;
+        try { state = JSON.parse(storage.getItem(TAB_KEY) || "null"); } catch { state = null; }
+        if (!state || typeof state.tabId !== "string" || !state.tabId) state = { tabId: crypto.randomUUID(), epoch: 0 };
+        const epoch = Number.isSafeInteger(state.epoch) ? state.epoch : 0;
+        storage.setItem(TAB_KEY, JSON.stringify({ tabId: state.tabId, epoch: epoch + 1 }));
+        this.tabId = state.tabId;
+        this.epoch = epoch + 1;
+    }
+
+    _superseded() {
+        const storage = this.windowImpl?.sessionStorage;
+        if (!storage || this.epoch == null) return false;
+        try {
+            const state = JSON.parse(storage.getItem(TAB_KEY) || "null");
+            return state?.tabId === this.tabId && state.epoch > this.epoch;
+        } catch {
+            return false;
+        }
+    }
+
+    _stopReplaced() {
+        this.active = false;
+        clearInterval(this.timer);
+    }
+
     async _handle(summary, registration) {
         let operation = this.operations.get(summary.commandId);
         if (operation?.working || operation?.completion) return;
@@ -124,8 +180,8 @@ export class BrowserSimBridge {
         }
         operation.working = true;
         try {
-            const leaseRequestedAt = performance.now();
             const command = await this._request(`/bridge/${registration.browserId}/commands/${summary.commandId}/claim`, { claimId: operation.claimId }, registration);
+            const leaseRequestedAt = performance.now();
             if (!this.active || this.registration !== registration) return;
             let error = null;
             try {
@@ -149,8 +205,8 @@ export class BrowserSimBridge {
     async _complete(operation) {
         const { registration, commandId } = operation;
         try {
-            const requestedAt = performance.now();
             const response = await this._request(`/bridge/${registration.browserId}/commands/${commandId}/complete`, operation.completion, registration);
+            const requestedAt = performance.now();
             if (response.controlLease) this.controller.updateControlOwnership?.(response.controlLease, { requestedAt });
             this.operations.delete(commandId);
         } catch (error) {

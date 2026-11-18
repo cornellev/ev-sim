@@ -1,6 +1,6 @@
 
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
     IconPlayerPlay as FaPlay,
     IconPlayerPause as FaPause,
@@ -11,7 +11,6 @@ import {
     IconBox as FaBox,
     IconCube as FaCube,
     IconTool as FaTools,
-    IconPencil as FaEdit,
     IconCpu as FaMicrochip,
     IconWorld as FaGlobe,
     IconBroadcast as FaBroadcastTower,
@@ -21,7 +20,14 @@ import {
     IconCamera as FaCamera,
     IconView360 as FaView360,
     IconRadar as FaRadar,
+    IconEye,
+    IconChevronLeft,
+    IconChevronRight,
+    IconX,
 } from "@tabler/icons-react";
+import { Button, IconButton, PopoverSurface } from "../../ui";
+import { SIMULATION_VISIBILITY_GROUPS, focusSimulationVisibility } from "./simulationVisibility.js";
+import { applySimulationVisibilityPreference, writeSimulationVisibilityPreference } from "./simulationVisibilityPreferences.js";
 import { FlyoutPanel } from "./ui/FlyoutPanel";
 import { MenuButton } from "./ui/MenuButton";
 import { MenuToggle } from "./ui/MenuToggle";
@@ -31,10 +37,18 @@ import { RecordingPanel } from "../../logging/RecordingPanel";
 import { getRecordingController } from "../../logging/RecordingController";
 import { getRunSessionController } from "../../simulation/RunSessionController";
 import { SimulationRunStatus } from "./SimulationRunStatus";
-import { deriveSimulationStatus, formatSimulationTime } from "./simulationStatus";
-import { pauseSimulation, playSimulation } from "./runPlayback";
+import { deriveSimulationStatus, formatSimulationTime, simulationPlaybackDisabled } from "./simulationStatus";
+import { pauseSimulation, playSimulation, stopSimulation } from "./runPlayback";
 
 const SIMULATION_MENU_CONTROL_LOCK = "simulation-menu";
+const SIMULATION_POPOVER_CONTROL_LOCK = "simulation-menu-popover";
+const VISIBILITY_GROUP_ICONS = {
+    panels: FaLayerGroup,
+    autonomy: FaMicrochip,
+    roads: BiWorld,
+    occupancy: FaRadar,
+    diagnostics: FaSlidersH,
+};
 
 export function SimulationMenu({
     data,
@@ -51,11 +65,10 @@ export function SimulationMenu({
     onColliderViewportEnabledChange,
 }) {
     const [openPanel, setOpenPanel] = useState(null);
-    const [toggles, setToggles] = useState({
-        agents: true,
-        recording: false,
-        overlay: false,
-    });
+    const [visibilityGroup, setVisibilityGroup] = useState(null);
+    const visibilityBodyRef = useRef(null);
+    const categoryToFocusRef = useRef(null);
+    const visibilityKeyboardNavigationRef = useRef(false);
 
     const sim = data?.simulation?.();
 
@@ -81,6 +94,10 @@ export function SimulationMenu({
     };
 
     const runtimeStatus = deriveSimulationStatus(runState, simState);
+    const stopActive = (runState.transitioning && ["ready", "running", "paused"].includes(runState.status))
+        || ["stopped", "interrupted", "reset", "superseded"].includes(runState.status)
+        || simState?.status === "stopped";
+    const playbackDisabled = simulationPlaybackDisabled(runState);
 
     const controls = useMemo(() => {
         const settings = data?.settings?.();
@@ -92,12 +109,166 @@ export function SimulationMenu({
 
     useEffect(() => () => controls.enable(), [controls]);
 
-    const setToggle = (key, value) => {
-        setToggles((prev) => ({ ...prev, [key]: value }));
+    useEffect(() => {
+        if (openPanel !== "engine" && openPanel !== "visibility") return;
+        const settings = data?.settings?.();
+        settings?.disableControls?.(SIMULATION_POPOVER_CONTROL_LOCK);
+        return () => {
+            settings?.enableControls?.(SIMULATION_POPOVER_CONTROL_LOCK);
+            controls.enable();
+        };
+    }, [openPanel, data, controls]);
+
+    useEffect(() => {
+        if (openPanel !== "visibility") return;
+        focusSimulationVisibility(
+            visibilityBodyRef.current,
+            visibilityKeyboardNavigationRef.current,
+            visibilityGroup ? null : categoryToFocusRef.current ?? SIMULATION_VISIBILITY_GROUPS[0].id,
+        );
+        categoryToFocusRef.current = null;
+    }, [openPanel, visibilityGroup]);
+
+    const changePopover = (panel, open) => {
+        if (panel === "visibility") {
+            setVisibilityGroup(null);
+            categoryToFocusRef.current = null;
+        }
+        setOpenPanel((current) => open ? panel : current === panel ? null : current);
+        if (!open) controls.enable();
     };
 
     const togglePanel = (panel) => {
         setOpenPanel((current) => (current === panel ? null : panel));
+    };
+
+    const setVisibility = (key, value) => {
+        const enabled = value === true;
+        writeSimulationVisibilityPreference({ [key]: enabled });
+        applySimulationVisibilityPreference(sim, runController, { [key]: enabled });
+    };
+
+    const visibilityOptions = {
+        vehicleHierarchy: (
+            <MenuToggle
+                label="Vehicle hierarchy"
+                icon={<FaLayerGroup className="h-3 w-3" />}
+                checked={vehicleOverlayVisible}
+                onChange={(value) => onVehicleOverlayVisibleChange?.(value)}
+            />
+        ),
+        sensorPanel: (
+            <MenuToggle
+                label="Sensor product panel"
+                icon={<FaSlidersH className="h-3 w-3" />}
+                checked={sensorPanelVisible}
+                onChange={(value) => onSensorPanelVisibleChange?.(value)}
+            />
+        ),
+        oracle: (
+            <MenuToggle
+                label="Oracle overlays"
+                icon={<FaLayerGroup className="h-3 w-3" />}
+                checked={simState?.autonomyOverlay?.oracle !== false}
+                onChange={(value) => setVisibility("oracle", value)}
+            />
+        ),
+        candidate: (
+            <MenuToggle
+                label="Candidate overlays"
+                icon={<FaBroadcastTower className="h-3 w-3" />}
+                checked={simState?.autonomyOverlay?.candidate !== false}
+                onChange={(value) => setVisibility("candidate", value)}
+            />
+        ),
+        ekf: (
+            <MenuToggle
+                label="EKF estimate"
+                icon={<FaMicrochip className="h-3 w-3" />}
+                checked={simState?.autonomyOverlay?.ekf !== false}
+                onChange={(value) => setVisibility("ekf", value)}
+            />
+        ),
+        estimateClone: (
+            <MenuToggle
+                label="Estimate clone"
+                icon={<FaCube className="h-3 w-3" />}
+                checked={simState?.autonomyOverlay?.estimateClone !== false}
+                onChange={(value) => setVisibility("estimateClone", value)}
+            />
+        ),
+        lanes: (
+            <MenuToggle
+                label="Lane overlays"
+                icon={<FaGlobe className="h-3 w-3" />}
+                checked={simState?.autonomyOverlay?.lanes !== false}
+                onChange={(value) => setVisibility("lanes", value)}
+            />
+        ),
+        controls: (
+            <MenuToggle
+                label="Control arcs"
+                icon={<FaSlidersH className="h-3 w-3" />}
+                checked={simState?.autonomyOverlay?.controls !== false}
+                onChange={(value) => setVisibility("controls", value)}
+            />
+        ),
+        pastTrajectories: (
+            <MenuToggle
+                label="Past trajectories"
+                icon={<FaLayerGroup className="h-3 w-3" />}
+                checked={simState?.autonomyOverlay?.pastTrajectories !== false}
+                onChange={(value) => setVisibility("pastTrajectories", value)}
+            />
+        ),
+        oracleOccupancy: (
+            <MenuToggle
+                label="Oracle occupancy"
+                icon={<FaGlobe className="h-3 w-3" />}
+                checked={simState?.autonomyOverlay?.oracleOccupancy === true}
+                onChange={(value) => setVisibility("oracleOccupancy", value)}
+            />
+        ),
+        lidarOccupancy: (
+            <MenuToggle
+                label="LiDAR occupancy"
+                icon={<FaRadar className="h-3 w-3" />}
+                checked={simState?.autonomyOverlay?.lidarOccupancy === true}
+                onChange={(value) => setVisibility("lidarOccupancy", value)}
+            />
+        ),
+        stackOccupancy: (
+            <MenuToggle
+                label="Imported occupancy"
+                icon={<FaBroadcastTower className="h-3 w-3" />}
+                checked={simState?.autonomyOverlay?.stackOccupancy === true}
+                onChange={(value) => setVisibility("stackOccupancy", value)}
+            />
+        ),
+        scenarioDiagnostics: (
+            <MenuToggle
+                label="Scenario diagnostics"
+                icon={<FaLayerGroup className="h-3 w-3" />}
+                checked={!!simState?.scenarioDiagnostics?.enabled}
+                onChange={(value) => setVisibility("scenarioDiagnostics", value)}
+            />
+        ),
+        sensorMarkers: (
+            <MenuToggle
+                label="Sensor markers"
+                icon={<FaBroadcastTower className="h-3 w-3" />}
+                checked={simState?.debugVisuals?.sensorMarkers !== false}
+                onChange={(value) => setVisibility("sensorMarkers", value)}
+            />
+        ),
+        originMarker: (
+            <MenuToggle
+                label="Origin marker"
+                icon={<FaCube className="h-3 w-3" />}
+                checked={simState?.debugVisuals?.originMarker !== false}
+                onChange={(value) => setVisibility("originMarker", value)}
+            />
+        ),
     };
 
     return (<>
@@ -115,156 +286,13 @@ export function SimulationMenu({
                 onPointerCancel={controls.enable}
                 onPointerLeave={controls.enable}
             >
-                {openPanel && (
+                {(openPanel === "views" || openPanel === "recording") && (
                     <div className="absolute bottom-[calc(100%+10px)] right-0">
-                        {openPanel === "engine" && (
-                            <FlyoutPanel
-                                title="Engine Settings"
-                                subtitle="Master simulation runtime behavior"
-                            >
-                                <PanelSection title="Runtime">
-                                    <MenuToggle
-                                        label="Physics Engine"
-                                        icon={<FaMicrochip className="h-3 w-3" />}
-                                        checked={!!simState?.modules?.physics}
-                                        onChange={(v) => sim?.setPhysicsEnabled(v)}
-                                    />
-                                    <MenuToggle
-                                        label="Real-Time Clock"
-                                        icon={<FaBroadcastTower className="h-3 w-3" />}
-                                        checked={!!simState?.realtime}
-                                        onChange={(v) => sim?.setRealtime(v)}
-                                    />
-                                    <MenuToggle
-                                        label="Deterministic Mode"
-                                        icon={<FaLayerGroup className="h-3 w-3" />}
-                                        checked={!!simState?.deterministic}
-                                        onChange={(v) => sim?.setDeterministic(v)}
-                                    />
-                                </PanelSection>
-                            </FlyoutPanel>
-                        )}
-
-                        {openPanel === "modules" && (
-                            <FlyoutPanel
-                                title="Module Visibility"
-                                subtitle="Global systems for any simulation type"
-                            >
-                                <PanelSection title="Core Modules">
-                                    {/* TODO: implement agents! */}
-                                    <MenuToggle
-                                        label="Agents"
-                                        icon={<FaCube className="h-3 w-3" />}
-                                        checked={toggles.agents}
-                                        onChange={(v) => setToggle("agents", v)}
-                                    />
-                                    <MenuToggle
-                                        label="Environment"
-                                        icon={<FaGlobe className="h-3 w-3" />}
-                                        checked={!!simState?.modules?.environment}
-                                        onChange={(v) => sim?.setModule("environment", v)}
-                                    />
-                                    <MenuToggle
-                                        label="Sensors"
-                                        icon={<FaBroadcastTower className="h-3 w-3" />}
-                                        checked={!!simState?.modules?.sensors}
-                                        onChange={(v) => sim?.setModule("sensors", v)}
-                                    />
-                                    <MenuToggle
-                                        label="Scripting"
-                                        icon={<FaDatabase className="h-3 w-3" />}
-                                        checked={!!simState?.modules?.scripting}
-                                        onChange={(v) => sim?.setModule("scripting", v)}
-                                    />
-                                    <MenuToggle
-                                        label="Scenario diagnostics"
-                                        icon={<FaLayerGroup className="h-3 w-3" />}
-                                        checked={!!simState?.scenarioDiagnostics?.enabled}
-                                        onChange={(value) => sim?.setScenarioDiagnosticsEnabled?.(value)}
-                                    />
-                                    <MenuToggle
-                                        label="Oracle overlays"
-                                        icon={<FaLayerGroup className="h-3 w-3" />}
-                                        checked={simState?.autonomyOverlay?.oracle !== false}
-                                        onChange={(value) => sim?.setAutonomyOverlayEnabled?.({ oracle: value })}
-                                    />
-                                    <MenuToggle
-                                        label="Candidate overlays"
-                                        icon={<FaBroadcastTower className="h-3 w-3" />}
-                                        checked={simState?.autonomyOverlay?.candidate !== false}
-                                        onChange={(value) => sim?.setAutonomyOverlayEnabled?.({ candidate: value })}
-                                    />
-                                    <MenuToggle
-                                        label="EKF estimate"
-                                        icon={<FaMicrochip className="h-3 w-3" />}
-                                        checked={simState?.autonomyOverlay?.ekf !== false}
-                                        onChange={(value) => sim?.setAutonomyOverlayEnabled?.({ ekf: value })}
-                                    />
-                                    <MenuToggle
-                                        label="Estimate clone"
-                                        icon={<FaCube className="h-3 w-3" />}
-                                        checked={simState?.autonomyOverlay?.estimateClone !== false}
-                                        onChange={(value) => sim?.setAutonomyOverlayEnabled?.({ estimateClone: value })}
-                                    />
-                                    <MenuToggle
-                                        label="Lane overlays"
-                                        icon={<FaGlobe className="h-3 w-3" />}
-                                        checked={simState?.autonomyOverlay?.lanes !== false}
-                                        onChange={(value) => sim?.setAutonomyOverlayEnabled?.({ lanes: value })}
-                                    />
-                                    <MenuToggle
-                                        label="Controls arcs"
-                                        icon={<FaSlidersH className="h-3 w-3" />}
-                                        checked={simState?.autonomyOverlay?.controls !== false}
-                                        onChange={(value) => sim?.setAutonomyOverlayEnabled?.({ controls: value })}
-                                    />
-                                    <MenuToggle
-                                        label="Sensor product panel"
-                                        icon={<FaSlidersH className="h-3 w-3" />}
-                                        checked={sensorPanelVisible}
-                                        onChange={(value) => onSensorPanelVisibleChange?.(value)}
-                                    />
-                                    <MenuToggle
-                                        label="Sensor markers"
-                                        icon={<FaBroadcastTower className="h-3 w-3" />}
-                                        checked={simState?.debugVisuals?.sensorMarkers !== false}
-                                        onChange={(value) => sim?.setDebugVisuals?.({ sensorMarkers: value })}
-                                    />
-                                    <MenuToggle
-                                        label="Origin marker"
-                                        icon={<FaCube className="h-3 w-3" />}
-                                        checked={simState?.debugVisuals?.originMarker !== false}
-                                        onChange={(value) => sim?.setDebugVisuals?.({ originMarker: value })}
-                                    />
-                                </PanelSection>
-                            </FlyoutPanel>
-                        )}
-
                         {openPanel === "views" && (
                             <FlyoutPanel
                                 title="Operator Views"
                                 subtitle="Give yourself a different perspective!"
                             >
-                                {/* <PanelSection title="Tools">
-                                    <div className="grid grid-cols-2 gap-1.5">
-                                        <MenuButton compact title="Open sensor viewer and inspector" className="justify-start">
-                                            <FaSlidersH className="h-3 w-3" />
-                                            PhysicsView
-                                        </MenuButton>
-                                        <MenuButton compact title="Open vehicle viewer, editor, and inspector" className="justify-start">
-                                            <FaEdit className="h-3 w-3" />
-                                            AutoShop
-                                        </MenuButton>
-                                        <MenuButton compact title="Open world view editor and viewer" className="justify-start">
-                                            <BiWorld className="h-3 w-3" />
-                                            WorldEdit
-                                        </MenuButton>
-                                        <MenuButton compact title="Change to simulation view" className="justify-start">
-                                            <BiWorld className="h-3 w-3" />
-                                            SimView
-                                        </MenuButton>
-                                    </div>
-                                </PanelSection> */}
                                 <PanelSection title="Views">
                                     <div className="grid grid-cols-2 gap-1.5">
                                         <MenuButton
@@ -325,6 +353,7 @@ export function SimulationMenu({
                             onClick={() => playSimulation(data)}
                             title="Run simulation"
                             ariaLabel="Play"
+                            disabled={playbackDisabled}
                         >
                             <FaPlay className="h-3 w-3" />
                         </MenuButton>
@@ -334,6 +363,7 @@ export function SimulationMenu({
                             onClick={() => pauseSimulation(data)}
                             title="Pause simulation"
                             ariaLabel="Pause"
+                            disabled={playbackDisabled}
                         >
                             <FaPause className="h-3 w-3" />
                         </MenuButton>
@@ -342,14 +372,15 @@ export function SimulationMenu({
                             onClick={() => invokeRunControl(() => runController.step(), () => sim?.step())}
                             title="Advance one simulation step"
                             ariaLabel="Step"
+                            disabled={playbackDisabled}
                         >
                             <FaStepForward className="h-3 w-3" />
                         </MenuButton>
                         <MenuButton
                             iconOnly
                             variant="danger"
-                            active={simState?.status === "stopped"}
-                            onClick={() => invokeRunControl(() => runController.stop(), () => sim?.stop())}
+                            active={stopActive}
+                            onClick={() => stopSimulation(data)}
                             title="Stop simulation"
                             ariaLabel="Stop"
                         >
@@ -361,6 +392,7 @@ export function SimulationMenu({
                                 onClick={() => invokeRunControl(() => runController.reset(), () => {})}
                                 title="Finalize and reset simulation"
                                 ariaLabel="Reset"
+                                disabled={runState.transitioning}
                             >
                                 <FaRestore className="h-3 w-3" />
                             </MenuButton>
@@ -394,24 +426,135 @@ export function SimulationMenu({
                     <div className="h-7 w-px bg-zinc-700/80" />
 
                     <div className="flex items-center gap-1 rounded-[var(--radius)] border border-zinc-700/80 bg-zinc-900/80 p-1">
-                        <MenuButton
-                            iconOnly
-                            active={openPanel === "engine"}
-                            onClick={() => togglePanel("engine")}
-                            title="Open engine settings"
-                            ariaLabel="Engine settings"
+                        <PopoverSurface
+                            open={openPanel === "engine"}
+                            onOpenChange={(open) => changePopover("engine", open)}
+                            side="top"
+                            align="end"
+                            collisionPadding={12}
+                            className="sf-simulation-settings"
+                            aria-label="Engine settings"
+                            trigger={(
+                                <IconButton label="Engine settings" tooltip="Open engine settings" variant="default" active={openPanel === "engine"}>
+                                    <FaSlidersH className="h-3 w-3" />
+                                </IconButton>
+                            )}
                         >
-                            <FaSlidersH className="h-3 w-3" />
-                        </MenuButton>
-                        <MenuButton
-                            iconOnly
-                            active={openPanel === "modules"}
-                            onClick={() => togglePanel("modules")}
-                            title="Open module visibility settings"
-                            ariaLabel="Modules"
+                            <header className="sf-simulation-settings__header">
+                                <h2 className="flex-1 text-[13px] font-semibold">Engine Settings</h2>
+                                <IconButton label="Close engine settings" tooltip={false} onClick={() => changePopover("engine", false)}>
+                                    <IconX size={14} aria-hidden="true" />
+                                </IconButton>
+                            </header>
+                            <div className="sf-simulation-settings__body">
+                                <PanelSection title="Runtime">
+                                    <MenuToggle
+                                        label="Physics Engine"
+                                        icon={<FaMicrochip className="h-3 w-3" />}
+                                        checked={!!simState?.modules?.physics}
+                                        onChange={(v) => sim?.setPhysicsEnabled(v)}
+                                    />
+                                    <MenuToggle
+                                        label="Real-Time Clock"
+                                        icon={<FaBroadcastTower className="h-3 w-3" />}
+                                        checked={!!simState?.realtime}
+                                        onChange={(v) => sim?.setRealtime(v)}
+                                    />
+                                    <MenuToggle
+                                        label="Deterministic Mode"
+                                        icon={<FaLayerGroup className="h-3 w-3" />}
+                                        checked={!!simState?.deterministic}
+                                        onChange={(v) => sim?.setDeterministic(v)}
+                                    />
+                                </PanelSection>
+                                <PanelSection title="Enabled systems">
+                                    <p className="mb-2 text-[11px] text-[var(--slate-muted)]">These switches change execution, not visibility.</p>
+                                    <MenuToggle
+                                        label="Environment"
+                                        icon={<FaGlobe className="h-3 w-3" />}
+                                        checked={!!simState?.modules?.environment}
+                                        onChange={(v) => sim?.setModule("environment", v)}
+                                    />
+                                    <MenuToggle
+                                        label="Sensors"
+                                        icon={<FaBroadcastTower className="h-3 w-3" />}
+                                        checked={!!simState?.modules?.sensors}
+                                        onChange={(v) => sim?.setModule("sensors", v)}
+                                    />
+                                    <MenuToggle
+                                        label="Scripting"
+                                        icon={<FaDatabase className="h-3 w-3" />}
+                                        checked={!!simState?.modules?.scripting}
+                                        onChange={(v) => sim?.setModule("scripting", v)}
+                                    />
+                                </PanelSection>
+                            </div>
+                        </PopoverSurface>
+                        <PopoverSurface
+                            open={openPanel === "visibility"}
+                            onOpenChange={(open) => changePopover("visibility", open)}
+                            side="top"
+                            align="start"
+                            collisionPadding={12}
+                            className="sf-simulation-settings sf-simulation-visibility"
+                            aria-label={visibilityGroup?.title ?? "Visibility"}
+                            trigger={(
+                                <IconButton
+                                    label="Visibility"
+                                    tooltip="Open visibility settings"
+                                    variant="default"
+                                    active={openPanel === "visibility"}
+                                    onClick={(event) => { visibilityKeyboardNavigationRef.current = event.detail === 0; }}
+                                >
+                                    <IconEye className="h-3 w-3" />
+                                </IconButton>
+                            )}
                         >
-                            <FaCube className="h-3 w-3" />
-                        </MenuButton>
+                            <header className="sf-simulation-settings__header">
+                                {visibilityGroup && (
+                                    <Button
+                                        size="compact"
+                                        variant="ghost"
+                                        aria-label="Back to visibility"
+                                        onClick={(event) => {
+                                            visibilityKeyboardNavigationRef.current = event.detail === 0;
+                                            categoryToFocusRef.current = visibilityGroup.id;
+                                            setVisibilityGroup(null);
+                                        }}
+                                    >
+                                        <IconChevronLeft size={14} aria-hidden="true" />
+                                        Back
+                                    </Button>
+                                )}
+                                <h2 className="min-w-0 flex-1 text-[13px] font-semibold">{visibilityGroup?.title ?? "Visibility"}</h2>
+                                <IconButton label="Close visibility" tooltip={false} onClick={() => changePopover("visibility", false)}>
+                                    <IconX size={14} aria-hidden="true" />
+                                </IconButton>
+                            </header>
+                            <div ref={visibilityBodyRef} tabIndex={-1} className="sf-simulation-settings__body space-y-1.5">
+                                {visibilityGroup ? visibilityGroup.options.map((optionId) => (
+                                    <div key={optionId}>{visibilityOptions[optionId]}</div>
+                                )) : SIMULATION_VISIBILITY_GROUPS.map((group) => {
+                                    const Icon = VISIBILITY_GROUP_ICONS[group.id];
+                                    return (
+                                        <Button
+                                            key={group.id}
+                                            variant="ghost"
+                                            className="sf-simulation-settings__category"
+                                            data-visibility-category={group.id}
+                                            onClick={(event) => {
+                                                visibilityKeyboardNavigationRef.current = event.detail === 0;
+                                                setVisibilityGroup(group);
+                                            }}
+                                        >
+                                            <Icon size={14} aria-hidden="true" className="text-[var(--slate-muted)]" />
+                                            {group.title}
+                                            <IconChevronRight size={14} aria-hidden="true" className="ml-auto text-[var(--slate-muted)]" />
+                                        </Button>
+                                    );
+                                })}
+                            </div>
+                        </PopoverSurface>
                         <MenuButton
                             iconOnly
                             active={openPanel === "views"}

@@ -1,6 +1,10 @@
 const TERMINAL_FAILURES = new Set(["assertion-failed", "error"]);
 const TERMINAL_SUCCESS = new Set(["completed"]);
 
+export function simulationPlaybackDisabled(runState = {}) {
+    return Boolean(runState.transitioning || (runState.activeRunId && (runState.runResult || !["ready", "running", "paused"].includes(runState.status))));
+}
+
 export function deriveSimulationStatus(runState = {}, simState = {}) {
     const hasManifest = Boolean(runState.activeResolved && runState.activeRunId);
     const runStatus = String(runState.status || "idle");
@@ -20,6 +24,9 @@ export function deriveSimulationStatus(runState = {}, simState = {}) {
         return { label: "Render error", detail: renderProvider.diagnostic?.message || renderProvider.error?.message || "Measured camera rendering failed", tone: "rose", source: hasManifest ? "manifest" : "scene" };
     }
     if (hasManifest) {
+        if (runState.transitioning && ["ready", "running", "paused"].includes(runStatus)) {
+            return { label: "Stopping", detail: "Finalizing the run", tone: "amber", source: "manifest" };
+        }
         if ((runState.degraded || renderProvider?.state === "degraded") && runStatus === "running") {
             return { label: "Running, degraded", detail: runState.error || "Optional visual prefetch is under pressure", tone: "amber", source: "manifest" };
         }
@@ -35,7 +42,7 @@ export function deriveSimulationStatus(runState = {}, simState = {}) {
         if (TERMINAL_SUCCESS.has(runStatus)) {
             return { label: "Completed", detail: "Run finalized", tone: "emerald", source: "manifest" };
         }
-        if (["stopped", "reset", "superseded"].includes(runStatus)) {
+        if (["stopped", "reset", "superseded", "interrupted"].includes(runStatus)) {
             return { label: "Stopped", detail: "Manifest run is not advancing", tone: "zinc", source: "manifest" };
         }
         if (simulationStatus === "playing") {

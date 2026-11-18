@@ -1,10 +1,18 @@
 # Simulator Plugin Roadmap
 
 MKT-11 run-template packages may carry exact plugin package records as static
-authoring prerequisites. Marketplace import publishes those records only to
+authoring prerequisites. Signed registry import publishes those records only to
 `PluginStore` CAS. It does not add Plugin Library membership, marketplace
 ownership, grants, activation, or module loading. Signed `embeddedPlugins`
 entries bind each package to an already admitted same-registry plugin release.
+
+MKT-17 local file import is a separate unverified authoring transfer.
+`cev-sim.run-template-package@2` permits omitted plugin release references;
+the exact packaged resources still pass `verifyPluginPackage` before
+`PluginStore.putPackage` and `addManualOwner`. Existing manual and Marketplace
+owners are retained. This path does not select or load a plugin, grant
+capabilities, or add registry installed membership or executable provenance.
+Run validation and admission continue applying current plugin policy.
 
 This document is the implementation authority for simulator plugins. The
 `PLG-*` program is separate from the headless, visual-layer (`VIS-*`), and
@@ -626,15 +634,16 @@ foundation deliberately has no production simulator capabilities and cannot
 admit plugins to managed runs.
 
 The fixed fixture vectors are `packageHash`
-`5fb8ec8f4ac2176629414beaa938a48cfbe00d577e13edeae8c69806d0f0909d`,
+`569946d954a185a901757cf205aa97c7470eb7b02af9b40d8d72f9ef42f37cf8`,
 `runtimeHash`
-`42654d815b24b61dbf836d861b84c83a3be9c0193ed67ef5fc8b79a36cbff232`,
+`25a185f8ccbbc5a4e8c3d3c57d8cce06e449c33669c739e4e3faaf740b4157fb`,
 and `uiHash`
 `aae5470e2dbb18c3a70cd222d70aa83063fbda998b7636c8b84652ae0400823d`.
 The previous `packageHash`/`runtimeHash` pair belonged to
-`engines.cevSim: ">=0.1.0 <0.2.0"` and was intentionally superseded when
-fixtures widened to `>=0.1.0 <0.3.0` for the 0.2.0 alpha line; `uiHash` and
-`worldHash` stayed unchanged.
+`engines.cevSim: ">=0.1.0 <0.3.0"` and was intentionally superseded when
+fixtures widened to `>=0.1.0 <0.4.0` for the 0.3.0 alpha line; `uiHash` and
+`worldHash` stayed unchanged. The 2026-10-03 note records the earlier
+`<0.2.0` widening.
 The full-suite loopback run was necessary because sandboxed local listening
 causes the existing HTTP tests to fail with `EPERM`; the elevated acceptance
 run completed without failures.
@@ -762,6 +771,32 @@ change the outstanding PR-12 hosted, soak, NVIDIA x64, or Jetson ARM64 gates.
 | Identity / distribution | Characterization, lint, soak, dist | `npm run fixtures:headless`; `git diff --exit-code -- tests/fixtures/headless/characterization.v1.json`; `npm run lint`; `npm test`; `npm run test:python`; `npm run lint:python`; `npm run proto:python`; `npm run build`; `npm run test:soak:quick`; `npm run dist:headless`; `npm run dist:verify`; `git diff --check` | Characterization unchanged. ESLint 0 errors, one pre-existing `MapSurface.js` warning. Node 1,582 passed, 0 failed, 4 existing skips. Python 69/69; Ruff and generated-Protobuf checks passed. Production Next.js build passed. Quick soak passed (`protocol` 1.4). Dist verify passed, including installed-worker/plugin `node:dgram` exclusion. Whitespace check passed. Artifact digests: npm `6b51acaa1d30650b703bea584b265bb7f5290e9f60e10c293af069497ddf4b27`, wheel `736545a3b617474d35c44b5e818c651da4deb27a52ac2067647ee3c1ed606def`, sdist `d7e2d2515dd3e066d2b8fb8d710e0800b16daff0f6814dc05b5064f8e4bc80e2` |
 
 ## Decision log
+
+### 2026-11-17 — 0.3.0 engine-range migration
+
+Bundled examples and fixtures that must load on 0.1 through 0.3 use
+`engines.cevSim: ">=0.1.0 <0.4.0"`. `acme.dynamics.cornering` and
+`acme.dynamics.longitudinal` use `>=0.2.0 <0.4.0`. The committed
+`acme.dynamics.bicycle` package matches the current scaffold at
+`>=0.3.0 <0.4.0`. New scaffolds and marketplace host defaults use the
+next-minor 0.x range (`0.3.0` → `>=0.3.0 <0.4.0`). Plugin loading stays
+strict: a package that still declares `<0.3.0` is rejected by simulator
+`0.3.0`. Widening the fixture range changes `packageHash` and `runtimeHash`
+(and therefore plugin-enabled `resolvedHash` / simulation / episode
+identities) while leaving `uiHash` and `worldHash` unchanged. The four plugin
+cases in `contact-host-identity.v1.json` move with the plant fixture; the
+non-plugin cases stay. Current fixture vectors are `packageHash`
+`569946d954a185a901757cf205aa97c7470eb7b02af9b40d8d72f9ef42f37cf8` and
+`runtimeHash`
+`25a185f8ccbbc5a4e8c3d3c57d8cce06e449c33669c739e4e3faaf740b4157fb`.
+
+### 2026-11-17 — Local template plugin ownership
+
+MKT-17 imports exact plugin bytes from an unverified local template as manual
+Plugin Library owners. Signed MKT-11 registry templates keep CAS-only
+prerequisites and the exact signed `embeddedPlugins` inventory. Local file
+intake does not authorize execution or change plugin package, resolved-run,
+or episode identity. Acceptance is recorded in `docs/marketplace-plan.md`.
 
 - **2026-11-10 — Shared physical parameters and contact host 3.** Standard
   `dynamic-bicycle-v1` / `contact-bicycle-v1` plants accept optional vehicle

@@ -3,11 +3,10 @@ import test from "node:test";
 
 import { sampleAckermannCenterline } from "../app/autonomy/ControlsPathArc.js";
 import {
-    appendPlanTrails,
     buildPlanViewFrame,
-    clipTrail,
     planViewSourcesFromData,
 } from "../app/spatial/planview/frame.js";
+import { appendPlanTrails, clipTrail } from "../app/visualization/trajectoryHistory.js";
 
 function vehicle(id, position, extra = {}) {
     return {

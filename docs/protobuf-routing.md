@@ -157,18 +157,28 @@ not acquire or download a router.
 `CEV_SIM_ZENOH_ROUTER=off` opts out when a test or manually started router owns
 the ports. An explicit browser file or TCP connect list with another endpoint
 also skips automatic startup and keeps the supplied addresses. Invalid explicit
-configuration is an error. Foreign listeners, live orphans, changed process
-identities, and ambiguous owner files are refused; no foreign process is killed
-and no alternate port is selected. The TCP override `CEV_SIM_ZENOH_TCP_PORT`
-accepts 1–65535 except 10000. The Rust stack keeps port 7447 unless its own
-`CEV_ZENOH_ENDPOINT` is set. Leave the default port unless changing both sides.
+configuration is an error. Owner records store a stable machine id: Linux
+`/etc/machine-id`, macOS `IOPlatformUUID`, or Windows `MachineGuid`. A DHCP
+hostname change does not make a record ambiguous. Legacy records without a
+machine id remain readable. A record from another machine is deleted only when
+its recorded ports are closed; a listener on those ports is left in place.
+Foreign listeners, changed process identities, and ambiguous owner files are
+refused, and no alternate port is selected. When the parent is gone, a later
+start may stop the recorded child if its PID, birth time, and executable path
+all match the cache router. No other process is killed. The TCP override
+`CEV_SIM_ZENOH_TCP_PORT` accepts 1–65535 except 10000. The Rust stack keeps
+port 7447 unless its own `CEV_ZENOH_ENDPOINT` is set. Leave the default port
+unless changing both sides.
 
-There is no router respawn or ownership transfer. POSIX shutdown sends the
-owned child SIGTERM, waits up to five seconds, then escalates to SIGKILL.
-Windows terminates the owned child handle. Records are removed only after
-confirmed child exit. If the child dies, browser sessions pause and retry;
-headless required publication fails as infrastructure. Restart the owner and
-Rust sessions to recover.
+There is no ownership transfer between a live parent and a new process. POSIX
+shutdown sends the owned child SIGTERM, waits up to five seconds, then
+escalates to SIGKILL. `SIGINT`, `SIGTERM`, and `SIGHUP` stay installed for the
+server, supervisor, and external-realtime command, so a repeated interrupt
+continues that shutdown instead of abandoning the child. Windows terminates
+the owned child handle. Records are removed only after confirmed child exit.
+If the child dies, browser sessions pause and retry; headless required
+publication fails as infrastructure. Restart the owner and Rust sessions to
+recover.
 
 Values remain native until `ProtobufRouteRuntime` applies the admitted mapping and
 encodes wire bytes. Capture metadata supplies frame, integer simulation time, and

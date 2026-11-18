@@ -59,7 +59,13 @@ const Command = z.object({
     }
 });
 const Sequence = z.number().int().nonnegative().safe();
-const Report = z.object({ snapshot: Snapshot, activity: Sequence, sequence: Sequence });
+const Report = z.object({
+    snapshot: Snapshot,
+    activity: Sequence,
+    sequence: Sequence,
+    tabId: Id.optional(),
+    epoch: Sequence.optional(),
+});
 const Completion = z.object({
     claimId: Id,
     sequence: Sequence,
@@ -93,6 +99,12 @@ export class BrowserSimService {
     register(input) {
         const report = parse(Report, input);
         this._expire();
+        // A reload registers before its DELETE. The same sessionStorage tab replaces immediately.
+        if (report.tabId) {
+            const current = [...this.browsers.values()].find((browser) => browser.tabId === report.tabId);
+            if (current && (report.epoch ?? 0) < current.epoch) throw browserSimError("BRIDGE_REPLACED", "This tab already has a newer bridge.");
+            if (current) this._remove(current);
+        }
         if (this.browsers.size >= this.maxBrowsers) {
             const stale = [...this.browsers.values()].find((browser) => !this._connected(browser));
             if (stale) this.browsers.delete(stale.browserId);
@@ -101,6 +113,8 @@ export class BrowserSimService {
         const browser = {
             browserId: randomUUID(),
             token: randomUUID(),
+            tabId: report.tabId ?? null,
+            epoch: report.epoch ?? 0,
             registeredOrder: ++this.sequence,
             lastSeenAt: this.now(),
             activity: 0,
@@ -131,9 +145,7 @@ export class BrowserSimService {
 
     unregister(browserId, token) {
         const browser = this._authenticate(browserId, token);
-        browser.lastSeenAt = this.now() - BROWSER_SIM_TIMEOUT_MS;
-        this._expire();
-        this.browsers.delete(browserId);
+        this._remove(browser);
         return { browserId };
     }
 
@@ -282,6 +294,12 @@ export class BrowserSimService {
             if (command.state !== "accepted") return;
             this._finishUnavailable(command, "failed", error.code ?? "MANIFEST_RESOLUTION_FAILED", error.message);
         }
+    }
+
+    _remove(browser) {
+        browser.lastSeenAt = this.now() - BROWSER_SIM_TIMEOUT_MS;
+        this._expire();
+        this.browsers.delete(browser.browserId);
     }
 
     _connected(browser) {

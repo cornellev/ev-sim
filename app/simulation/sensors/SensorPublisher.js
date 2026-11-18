@@ -10,6 +10,7 @@ import { validateNativeTopicValue } from "../NativeTopicContracts.js";
 import { isHeavyValue } from "../../scripting/runtime/SignalStore.js";
 import { estimatePayloadBytes } from "../TopicInputQueue.js";
 import { buildNativeDiagnostics } from "./NativeSensorProducts.js";
+import { abortable } from "../AsyncCancellation.js";
 
 const DEFAULT_MAX_QUEUE_BYTES = 64 * 1024 * 1024;
 
@@ -128,6 +129,7 @@ export class SensorPublisher {
     }
 
     reset({ resetSeed = null, seed = null } = {}) {
+        this._captureGeneration = (this._captureGeneration ?? 0) + 1;
         const nextSeed = resetSeed ?? seed;
         if (nextSeed !== null && nextSeed !== undefined) this.seed = String(nextSeed);
         for (const frame of this.queue) this.device.releaseObservation?.(frame.observation);
@@ -225,6 +227,7 @@ export class SensorPublisher {
     }
 
     dispose() {
+        this._captureGeneration += 1;
         for (const frame of this.queue) this.device.releaseObservation?.(frame.observation);
         this.queue = [];
         this.queuedBytes = 0;
@@ -335,21 +338,29 @@ export class SensorPublisher {
         browserSimulationPerformance.recordSensorState(this.config.id, this.health, undefined, this.intentionalFrameDrops, this.completedCaptureAttempts);
     }
 
-    async updateAsync(clock) {
+    async updateAsync(clock, { signal = null } = {}) {
+        signal?.throwIfAborted();
+        const generation = this._captureGeneration;
         this._initializeSchedule(clock);
         try {
             while (clock.step >= this.nextCaptureStep) {
-                const context = this._captureContext(clock);
+                const context = { ...this._captureContext(clock), signal };
                 if (!context.skip) {
                     try {
                         this.health.captureAttempts += 1;
                         const captureStartNs = this._time();
-                        const captured = await this.device.captureAt?.(context);
+                        const captured = await abortable(this.device.captureAt?.(context), signal);
+                        if (signal?.aborted || generation !== this._captureGeneration) {
+                            this.device.releaseObservation?.(captured?.observation);
+                            throw signal?.reason ?? Object.assign(new Error("Sensor capture was superseded."), {
+                                code: "SENSOR_CAPTURE_CANCELLED", infrastructureFailure: true,
+                            });
+                        }
                         const frame = this._acceptCapture(captured, context, captureStartNs, {
                             allowOwnershipTransfer: true,
                         });
                     } catch (error) {
-                        if (error?.infrastructureFailure || this.pluginStrict) throw error;
+                        if (signal?.aborted || error?.infrastructureFailure || this.pluginStrict) throw error;
                         this._event("capture-failed", "error", {
                             sampleIndex: context.sampleIndex,
                             reason: error.message,

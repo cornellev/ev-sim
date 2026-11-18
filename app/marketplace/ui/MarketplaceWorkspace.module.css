@@ -745,6 +745,31 @@
     accent-color: var(--market-accent);
 }
 
+.templateFile {
+    display: grid;
+    justify-items: start;
+    gap: 8px;
+    min-width: 0;
+    color: var(--slate-fg-2);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.35;
+}
+
+.templateFile .fileButton {
+    font-weight: 400;
+}
+
+.templateFile .fileButton:focus-within {
+    outline: 2px solid var(--slate-ring);
+    outline-offset: 1px;
+}
+
+.templateFile:has(input:disabled) .fileButton {
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
 .planRelease {
     margin-top: 10px;
     border: 1px solid var(--market-line);

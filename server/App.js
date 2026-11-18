@@ -14,20 +14,25 @@ const cleanups = [];
 let starting = true;
 let shutdownPromise;
 const shutdown = () => shutdownPromise ??= (async () => {
-    for (const close of cleanups.reverse()) {
+    for (const close of [...cleanups].reverse()) {
         try { await close(); } catch (error) { console.error(error); process.exitCode = 1; }
     }
     // Next dev watchers can survive app.close(); application work and the owned router have finished closing.
-    process.exit(process.exitCode ?? 0);
+    process.exit(process.exitCode ?? (abortController.signal.aborted ? 130 : 0));
 })();
-const onSignal = () => {
-    abortController.abort();
-    if (!starting) void shutdown();
-};
-process.once('SIGTERM', onSignal);
-process.once('SIGINT', onSignal);
+// The helper is ESM. Bind it before preflight so SIGINT, SIGTERM, and SIGHUP reach shutdown.
+// Startup awaits do not watch the abort signal, so the handler has to exit on its own.
+const shutdownSignalsReady = import('./headless/shutdownSignals.js').then(({ bindShutdownSignals, createShutdownHandler }) => {
+    bindShutdownSignals(process, createShutdownHandler({
+        abort: abortController,
+        isStarting: () => starting,
+        shutdown: () => { void shutdown(); },
+        exit: (code) => process.exit(code),
+    }));
+});
 
 async function start() {
+    await shutdownSignalsReady;
     if (!await require('./startup.js').startup(REPOSITORY_ROOT, process.env, abortController.signal)) throw new Error('Server preflight failed.');
     abortController.signal.throwIfAborted();
     const { acquireLocalZenohRouter, localZenohBrowserConfig, withLocalZenohTransportDefaults } = await import('./interfaces/ZenohLocalRouter.js');
@@ -208,8 +213,11 @@ async function start() {
     cleanups.push(() => new Promise((resolve, reject) => httpServer.close((error) => error && error.code !== 'ERR_SERVER_NOT_RUNNING' ? reject(error) : resolve())));
     await new Promise((resolve, reject) => { httpServer.once('listening', resolve); httpServer.once('error', reject); });
     abortController.signal.throwIfAborted();
-    console.log(`> Ready on http://${httpSecurity.bindHost}:${PORT}`);
-    console.log(`> MCP endpoint: http://${httpSecurity.bindHost}:${PORT}/mcp`);
+
+    require('./startup.js').printLogo();
+
+    console.log(`>> Ready on http://${httpSecurity.bindHost}:${PORT}`);
+    console.log(`>> MCP endpoint: http://${httpSecurity.bindHost}:${PORT}/mcp`);
 }
 start().catch((error) => {
     if (!abortController.signal.aborted) { console.error(error); process.exitCode = 1; }

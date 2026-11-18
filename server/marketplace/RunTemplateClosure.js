@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { createProtobufInterfaceResource } from "../../app/interfaces/ProtobufRunBinding.js";
 
 import { collectScenarioScriptIds, normalizeScenario, stripScenarioMetadata } from "../../app/scenarios/ScenarioDocument.js";
 import { getGraphScriptReferences } from "../../app/scripting/GraphDocument.js";
@@ -145,7 +146,7 @@ function addPluginLock(locks, lock, path) {
     locks.set(lock.pluginId, { ...current, ...next });
 }
 
-async function collectPlugins(storageService, manifest, vehicles, scripts, releaseRefs) {
+async function collectPlugins(storageService, manifest, vehicles, scripts, releaseRefs, packageVersion) {
     const locks = new Map();
     for (const lock of effectivePluginLocks(manifest.plugins)) addPluginLock(locks, lock, "manifest.plugins");
     for (const { manifest: vehicle } of vehicles.values()) {
@@ -184,7 +185,7 @@ async function collectPlugins(storageService, manifest, vehicles, scripts, relea
             ]));
             if (unique.size === 1) release = [...unique.values()][0];
         }
-        if (!release) invalid(`Plugin package ${lock.packageHash} requires one exact marketplace release reference.`, "plugins");
+        if (!release && packageVersion === 1) invalid(`Plugin package ${lock.packageHash} requires one exact marketplace release reference.`, "plugins");
         const resourceRecord = record(verified.resource);
         plugins.push({
             pluginId: verified.document.id,
@@ -255,7 +256,9 @@ export async function collectRunTemplateClosure({
     manifestId,
     expectedRevision,
     pluginReleaseRefs = [],
+    packageVersion = 1,
 } = {}) {
+    if (![1, 2].includes(packageVersion)) invalid("Unsupported run-template package version.");
     const storedManifest = await storageService.getRunManifest(manifestId);
     if (!storedManifest || !Number.isSafeInteger(storedManifest.revision) || storedManifest.revision < 1) {
         invalid(`Saved run manifest "${manifestId}" was not found.`, "root");
@@ -317,7 +320,14 @@ export async function collectRunTemplateClosure({
         storageService,
         environmentId,
     });
-    const plugins = await collectPlugins(storageService, manifest, vehicles.custom, scripts, pluginReleaseRefs);
+    const plugins = await collectPlugins(storageService, manifest, vehicles.custom, scripts, pluginReleaseRefs, packageVersion);
+    const protobufInterface = packageVersion === 2 && manifest.protobuf.mode === "zenoh"
+        ? createProtobufInterfaceResource(await storageService.getProtobufInterface(manifest.protobuf.interfaceHash), manifest.protobuf.interfaceHash)
+        : null;
+    if (protobufInterface && manifest.version === 13 && protobufInterface.document.version !== 2) {
+        invalid("Native run templates require Protobuf interface version 2.", "protobuf.interfaceHash");
+    }
+    const interfaceRecord = protobufInterface ? record(protobufInterface.document) : null;
 
     const rootRecord = record(storedManifest);
     const scenarioRecords = normalizedScenario ? [{
@@ -352,6 +362,7 @@ export async function collectRunTemplateClosure({
         ...[...vehicles.custom.values()].map((entry) => entry.record),
         ...scriptRecords.map((entry) => entry.record),
         ...plugins.map((entry) => entry.record),
+        ...(interfaceRecord ? [interfaceRecord] : []),
     ]);
     const blobs = mergeBlobs([
         ...(environment?.blobs ?? []),
@@ -363,6 +374,9 @@ export async function collectRunTemplateClosure({
     ]);
     return Object.freeze({
         storedManifest,
+        packageVersion,
+        protobufInterface,
+        interfaceRecord,
         manifest,
         rootRecord,
         scenarioRecords,
@@ -392,6 +406,10 @@ export async function collectRunTemplateClosure({
 export const captureRunTemplateSnapshot = collectRunTemplateClosure;
 
 export async function recheckRunTemplateSnapshot({ storageService, captured }) {
+    if (captured.protobufInterface) {
+        const current = createProtobufInterfaceResource(await storageService.getProtobufInterface(captured.protobufInterface.hash), captured.protobufInterface.hash);
+        if (record(current.document).sha256 !== captured.interfaceRecord.sha256) conflict("Protobuf interface changed while its template was captured.");
+    }
     const currentManifest = await storageService.getRunManifest(captured.manifest.id);
     if (!currentManifest || currentManifest.revision !== captured.storedManifest.revision
         || record(currentManifest).sha256 !== captured.rootRecord.sha256) conflict("Run manifest changed while its template was captured.");

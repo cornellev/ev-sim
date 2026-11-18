@@ -214,6 +214,7 @@ export function createStorageRouter(service, { githubUrdf = null } = {}) {
                 manifestId: req.params.id,
                 expectedRevision: parseExpectedRevision(req.body?.expectedRevision),
                 pluginReleaseRefs: req.body?.pluginReleaseRefs ?? [],
+                packageVersion: req.body?.packageVersion ?? 1,
                 signal: req.signal,
             });
             res.status(200).set({

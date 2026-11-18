@@ -7,6 +7,7 @@ import { KEYBOARD_DRIVE_SPEED_MPS } from "../app/simulation/keyboardDrive.js";
 import { createDefaultRunManifest } from "../app/simulation/RunManifest.js";
 import { TopicInputQueue } from "../app/simulation/TopicInputQueue.js";
 import { PhysicsEngine, sweepAabb } from "../app/physics/PhysicsEngine.js";
+import { runStopTimeout } from "../app/simulation/AsyncCancellation.js";
 
 function harness(options = {}) {
     const calls = [];
@@ -60,7 +61,9 @@ function harness(options = {}) {
         earthTilesManager: () => null,
         skyManager: () => null,
     };
-    return { engine: new SimulationEngine(data, options), data, store, runtime, vehicle, calls, vehicleConfigurations, keysDown };
+    const engine = new SimulationEngine(data, options);
+    engine.render();
+    return { engine, data, store, runtime, vehicle, calls, vehicleConfigurations, keysDown };
 }
 
 function resolved(manifest) {
@@ -101,6 +104,60 @@ test("CPU-only asynchronous sensors keep one step in flight, present while pendi
     release(); await drained;
     assert.equal(engine.status, "paused");
     assert.equal(engine.steps, 1);
+    engine.dispose();
+});
+
+test("Stop freezes the clock even when capture, presentation, or episode cleanup fails", () => {
+    for (const target of ["cancelPendingAdvance", "_clearVisualizationSource"]) {
+        const { engine } = harness();
+        engine.kernel.play();
+        const original = engine[target];
+        engine[target] = () => { throw new Error("cleanup failed"); };
+        assert.throws(() => engine.stop({ reset: false }), /cleanup failed/);
+        assert.equal(engine.status, "stopped");
+        engine[target] = original;
+        engine.dispose();
+    }
+    const { engine } = harness();
+    engine.kernel.play();
+    const dispatch = engine.kernel._dispatchEpisodePhase;
+    engine.kernel._dispatchEpisodePhase = () => { throw new Error("stop script failed"); };
+    assert.throws(() => engine.stop({ reset: false }), /stop script failed/);
+    assert.equal(engine.status, "stopped");
+    engine.kernel._dispatchEpisodePhase = dispatch;
+    engine.dispose();
+});
+
+test("forced cancellation releases a stuck step and late sensor completion cannot finish or publish it", async () => {
+    const { engine, data, calls } = harness();
+    const devices = data.devices();
+    devices.requiresAsyncCapture = true;
+    let finish;
+    devices.updateAsync = () => new Promise((resolve) => { finish = resolve; });
+    engine.setModule("assertions", false);
+    engine.kernel.play();
+    engine._pendingFrameNs = engine.stepNs;
+    engine._launchAsyncAdvance();
+    await Promise.resolve();
+    const step = engine.steps;
+    engine.pause();
+    engine.cancelPendingAdvance(runStopTimeout("sensor work"));
+    await engine.whenIdle();
+    engine.stop({ reset: false });
+    assert.equal(engine.status, "stopped");
+    assert.equal(calls.includes("delivery"), false);
+    assert.equal(engine.lastStepPhases.includes("assertions"), false);
+    engine.reset();
+    const phases = [...engine.lastStepPhases];
+    finish();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(engine.steps, 0);
+    assert.deepEqual(engine.lastStepPhases, phases);
+    assert.equal(calls.includes("delivery"), false);
+    assert.equal(step, 1, "motion/clock from an unfinished step are not fabricated as rolled back");
+    devices.updateAsync = async () => {};
+    await engine.step();
+    assert.equal(engine.steps, 1, "fresh work is not blocked by the abandoned sensor promise");
     engine.dispose();
 });
 

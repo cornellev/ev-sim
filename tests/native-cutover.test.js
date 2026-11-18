@@ -57,6 +57,7 @@ test("new planning bundles use a native template and explicit historical templat
 test("ownership loss pauses browser and headless execution before optional control ports", () => {
     let paused = 0;
     const controller = new RunSessionController();
+    controller.snapshot.status = "ready";
     controller.pause = async () => { paused++; };
     controller.data = { simulation: () => ({ inputQueue: { reset() { throw new Error("port failed"); } } }) };
     controller._beginControlOwnership({ leaseId: "lease", runId: null, remainingMs: 750, status: "active", mode: "autonomous", target: { vehicleId: "ego" } });

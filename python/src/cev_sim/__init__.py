@@ -117,7 +117,7 @@ __all__ = [
     "load_run_package",
 ]
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 if "CevSim-v0" not in registry:
     register(id="CevSim-v0", entry_point="cev_sim.env:CevSimEnv")

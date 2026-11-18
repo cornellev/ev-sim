@@ -21,6 +21,7 @@ import {
     MarketplaceError,
     marketplaceError,
 } from "./MarketplaceErrors.js";
+import { assertOwnerOnly, protectOwnerOnly } from "./registry/OwnerOnly.js";
 import { DEFAULT_STAGING_GRACE_MS } from "./registry/RegistryLayout.js";
 import { assertEnrollmentConfig, MarketplaceRegistryService } from "./registry/RegistryService.js";
 import { MarketplaceRegistryStore } from "./registry/RegistryStore.js";
@@ -187,6 +188,7 @@ async function writeExclusive(filePath, bytes, { mode = 0o600 } = {}) {
     } finally {
         await handle.close();
     }
+    if ((mode & 0o077) === 0) await protectOwnerOnly(filePath, { directory: false });
 }
 
 function errorExit(error, signal) {
@@ -319,11 +321,18 @@ async function execute(parsed, signal, { stdout }) {
             const publisherId = namespaces[0];
             const output = path.resolve(options.output);
             const outputParent = path.dirname(output);
+            const outputParentBefore = await fs.lstat(outputParent).then((stat) => stat, (error) => error.code === "ENOENT" ? null : Promise.reject(error));
             await fs.mkdir(outputParent, { recursive: true, mode: 0o700 });
+            if (!outputParentBefore) await protectOwnerOnly(outputParent, { directory: true });
             const outputParentStat = await fs.lstat(outputParent);
-            if (!outputParentStat.isDirectory() || outputParentStat.isSymbolicLink() || (outputParentStat.mode & 0o077) !== 0) {
-                throw usage("publisher provision requires an owner-only output parent directory.");
-            }
+            await assertOwnerOnly(outputParent, outputParentStat, {
+                directory: true,
+                fail: (cause) => {
+                    const error = usage("publisher provision requires an owner-only output parent directory.");
+                    if (cause) error.cause = cause;
+                    return error;
+                },
+            });
             if (await fs.lstat(output).then(() => true, (error) => error.code === "ENOENT" ? false : Promise.reject(error))) {
                 throw usage("publisher provision refuses to overwrite --output.");
             }
@@ -361,6 +370,7 @@ async function execute(parsed, signal, { stdout }) {
             const temporary = `${output}.tmp-${process.pid}-${Date.now()}`;
             await fs.mkdir(temporary, { mode: 0o700 });
             try {
+                await protectOwnerOnly(temporary, { directory: true });
                 const credential = assertCredentialDocument({
                     kind: MARKETPLACE_CREDENTIAL_KIND,
                     version: MARKETPLACE_CLIENT_DOCUMENT_VERSION,

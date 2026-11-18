@@ -4,6 +4,7 @@ import "./lane.js";
 import "./route.js";
 import "./waypoints.js";
 import "./trails.js";
+import "./plannedTrajectory.js";
 import "./perception.js";
 import "./controls.js";
 import "./localization.js";

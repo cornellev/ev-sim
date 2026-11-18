@@ -7,6 +7,11 @@ const numeric = new Set(["double", "float", "int32", "uint32", "int64", "uint64"
 const vectorShape = { fields: { x: { type: "double" }, y: { type: "double" }, z: { type: "double" } } };
 const quaternionShape = { fields: { ...vectorShape.fields, w: { type: "double" } } };
 const poseShape = { fields: { position: vectorShape, orientation: quaternionShape } };
+const onboardingGridShape = { fields: {
+    origin: { fields: { x: { type: "double" }, y: { type: "double" } } },
+    resolution_m: { type: "double" }, width: { type: "uint32" }, height: { type: "uint32" },
+    weights: { item: { type: "uint32" }, length: null },
+} };
 const metadataShape = { fields: Object.fromEntries(["simTimeNs", "captureTimeNs", "deliveryTimeNs", "captureStep", "actualDeliveryStep", "sequenceId"].map((name) => [name, { type: "uint64" }])) };
 Object.assign(metadataShape.fields, { frameId: { type: "string" }, runId: { type: "string" } });
 const inboundMetadataShape = { fields: { runId: { type: "string" }, frameId: { type: "string" }, captureTimeNs: { type: "timeNs" }, sequenceId: { type: "uint64" } }, optional: ["runId", "frameId", "captureTimeNs", "sequenceId"] };
@@ -117,6 +122,9 @@ export function compileMapping(admittedRoute, { resolvedRun = {}, runId = "run" 
             } else if (entry.operation === "poseAtOffset") {
                 if (!compatible(from.shape, poseShape) || !args.offsetFrom || !compatible(args.offsetFrom.shape, vectorShape)) throw new Error("Pose offset requires a pose and offset vector.");
                 result = poseShape;
+            } else if (entry.operation === "stackOccupancy") {
+                if (Object.keys(args).length || !compatible(onboardingGridShape, from.shape)) throw new Error("Occupancy requires an onboarding grid.");
+                result = getNativeTopicContract("cev.occupancy").shape;
             } else if (!args.fromFrame || !args.toFrame || !compatible(args.fromFrame.shape, poseShape) || !compatible(args.toFrame.shape, poseShape)
                 || (!compatible(from.shape, poseShape) && !compatible(from.shape, vectorShape))) throw new Error("Frame transform requires a point/pose and two bound poses.");
         }

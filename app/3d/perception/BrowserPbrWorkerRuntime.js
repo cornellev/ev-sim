@@ -4,6 +4,7 @@ import { createOwnedCaptureScene, assertVisualCaptureInput } from "../environmen
 import { browserSimulationPerformance } from "../../simulation/performance/BrowserSimulationPerformance.js";
 import { LIVE_CAMERA_OBJECT_MOTION, CameraObjectPoseTracker } from "../../simulation/render/CameraObjectMotion.js";
 import { cameraSceneDetections } from "../../simulation/render/CameraObjectTruth.js";
+import { abortable } from "../../simulation/AsyncCancellation.js";
 
 const PROVIDER = Object.freeze({ id: "pbr-mesh", version: 1 });
 
@@ -312,21 +313,21 @@ export class BrowserPbrWorkerRuntime {
         }, () => {});
     }
 
-    async captureCamera({ captureInput, enabled, cameraId = "camera" } = {}) {
+    async captureCamera({ captureInput, enabled, cameraId = "camera", signal = null } = {}) {
         if (!this.ready) throw this._failure || infrastructureError(new Error("PBR capture worker is not ready."));
         if (this.objectMotion === LIVE_CAMERA_OBJECT_MOTION || captureInput?.version === 2) {
             assertVisualCaptureInput(captureInput, { sceneHandle: this.captureSceneHandle });
         }
         const generation = this.generation;
         const captureEpoch = this.captureEpoch;
-        const result = await this._enqueue("capture", {
+        const result = await abortable(this._enqueue("capture", {
             generation: this.generation,
             request: {
                 id: String(cameraId),
                 captureInput,
                 products: { ...enabled },
             },
-        });
+        }), signal);
         if (generation !== this.generation || captureEpoch !== this.captureEpoch) {
             throw infrastructureError(new Error("PBR worker capture was superseded."), "PBR_CAPTURE_SUPERSEDED");
         }
@@ -360,6 +361,12 @@ export class BrowserPbrWorkerRuntime {
         this.applyRigidBodyPoses([]);
         if (!this.ready) return;
         this._enqueue("reset", { generation: this.generation }).catch(() => {});
+    }
+
+    cancelCaptures(error) {
+        this.generation += 1;
+        this._handleWorkerFailure(error);
+        this._terminateWorker();
     }
 
     _terminateWorker() {

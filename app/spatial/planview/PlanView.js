@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { IconCurrentLocation, IconLayersIntersect, IconRadar2 } from "@tabler/icons-react";
 
 import ScenarioMapViewport from "../../scenarios/ui/ScenarioMapViewport.js";
@@ -12,70 +12,15 @@ import { listPlanLayers } from "./registry.js";
 import { getPlanSelection, setPlanSelection, subscribePlanSelection } from "./selection.js";
 import { defaultVisibility, isGroupVisible, toggleGroup, toggleLayer } from "./visibility.js";
 import { PlanViewLayers } from "./PlanViewLayers.js";
-import { paintOccupancyCanvas } from "./occupancy/paint.js";
-import { PlanOccupancySampler } from "./occupancy/oracleSample.js";
-import { PlanLidarSampler } from "./occupancy/lidarSample.js";
-import { occupancyImportStatus } from "./occupancy/stackImport.js";
 import { usePlanViewFrame } from "./usePlanViewFrame.js";
 import styles from "./PlanView.module.css";
 
 const OCCUPANCY_LAYERS = [
-    { id: "oracle-occupancy", label: "Oracle occupancy" },
-    { id: "lidar-occupancy", label: "Lidar occupancy" },
-    { id: "stack-occupancy", label: "Stack occupancy" },
+    { id: "oracle-occupancy", channel: "oracle", label: "Oracle occupancy" },
+    { id: "lidar-occupancy", channel: "lidar", label: "Lidar occupancy" },
+    { id: "stack-occupancy", channel: "stack", label: "Stack occupancy" },
 ];
-
-function occupancySources(data) {
-    const simulation = data?.simulation?.();
-    const kernel = simulation?.kernel;
-    const resolvedRun = kernel?.resolvedRun ?? null;
-    const vehicles = data?.vehicles?.()?.vehicles ?? [];
-    const egoId = resolvedRun?.manifest?.controls?.targetVehicleId || "ego";
-    const egoVehicle = vehicles.find((vehicle) => (vehicle.telemetryId || vehicle.id) === egoId) ?? vehicles[0] ?? null;
-    return {
-        description: resolvedRun?.world?.description ?? data?.environment?.()?.worldDescription ?? null,
-        vehicles,
-        resolvedRun,
-        obstacles: kernel?.context?.episodeOverlay?.toObstacles?.() ?? [],
-        ego: egoVehicle ? { x: Number(egoVehicle.position?.x) || 0, z: Number(egoVehicle.position?.z) || 0 } : null,
-        runtime: simulation?.candidateOutputRuntime ?? null,
-    };
-}
-
-function useOccupancyLayer() {
-    const canvasRef = useRef(null);
-    const sampleRef = useRef(null);
-    const placeKey = useRef("");
-    const [place, setPlace] = useState(null);
-    const [generation, setGeneration] = useState(0);
-    const push = useCallback((sample) => {
-        sampleRef.current = sample;
-        if (!sample) {
-            if (placeKey.current) {
-                placeKey.current = "";
-                setPlace(null);
-            }
-            return;
-        }
-        const key = [sample.originX, sample.originZ, sample.width, sample.height, sample.resolutionM, sample.yawRad || 0].join(":");
-        if (key !== placeKey.current) {
-            placeKey.current = key;
-            setPlace({
-                originX: sample.originX,
-                originZ: sample.originZ,
-                width: sample.width,
-                height: sample.height,
-                resolutionM: sample.resolutionM,
-                yawRad: sample.yawRad || 0,
-            });
-        }
-        if (sample.changed) setGeneration((value) => value + 1);
-    }, []);
-    useLayoutEffect(() => {
-        if (place) paintOccupancyCanvas(canvasRef.current, sampleRef.current);
-    }, [place, generation]);
-    return { canvasRef, place, push };
-}
+const TOOL_LAYERS = { controls: "ackermann", trails: "trajectoryPast", localization: "localization", "planned-trajectory": "plannedTrajectory" };
 
 export function PlanView({ data }) {
     const [visibility, setVisibility] = useState(() => defaultVisibility());
@@ -94,57 +39,38 @@ export function PlanView({ data }) {
         return document.subscribe((snapshot) => setEnvironment(snapshot));
     }, [data]);
 
-    const frame = usePlanViewFrame(data, { environment, historyMode, selectedActorId, waypointFrame });
-    const primitives = useMemo(() => projectPlanView(frame, visibility), [frame, visibility]);
+    const frame = usePlanViewFrame(data, { historyMode, selectedActorId, waypointFrame });
+    const manager = data?.simulation?.()?.visualizationManager;
+    const visualizationMap = frame.visualizationMap;
+    const layerVisibility = useMemo(() => ({ ...visibility, ...Object.fromEntries(Object.entries(TOOL_LAYERS)
+        .filter(([, toolId]) => visualizationMap.tools[toolId])
+        .map(([layerId, toolId]) => [layerId, visualizationMap.tools[toolId].visible])) }), [visibility, visualizationMap]);
+    const primitives = useMemo(() => projectPlanView(frame, layerVisibility), [frame, layerVisibility]);
     const ego = frame.vehicles.find((actor) => actor.role === "ego") ?? frame.vehicles[0] ?? null;
     const sensorsOn = isGroupVisible(visibility, "sensors");
-    const oracleOn = visibility["oracle-occupancy"] === true;
-    const lidarOn = visibility["lidar-occupancy"] === true;
-    const stackOn = visibility["stack-occupancy"] === true;
-    const { canvasRef: oracleCanvas, place: oraclePlace, push: pushOracle } = useOccupancyLayer();
-    const { canvasRef: lidarCanvas, place: lidarPlace, push: pushLidar } = useOccupancyLayer();
-    const { canvasRef: stackCanvas, place: stackPlace, push: pushStack } = useOccupancyLayer();
-    const oracleSampler = useRef(null);
-    const lidarSampler = useRef(null);
-    const stackSeen = useRef(null);
-    const [stackMessage, setStackMessage] = useState("");
+    const occupancyTool = visualizationMap.tools.occupancy;
+    const occupancyVisibility = Object.fromEntries(OCCUPANCY_LAYERS.map(({ id, channel }) => [channel,
+        (occupancyTool?.visible ?? true) && (occupancyTool?.layerVisibility[channel] ?? visibility[id] === true)]));
+    const oracleOn = occupancyVisibility.oracle;
+    const lidarOn = occupancyVisibility.lidar;
+    const stackOn = occupancyVisibility.stack;
+    const grids = occupancyTool?.visible ? occupancyTool.output?.grids : null;
+    const oracleGrid = oracleOn ? grids?.oracle : null;
+    const lidarGrid = lidarOn ? grids?.lidar : null;
+    const stackGrid = stackOn ? grids?.stack : null;
+    const stackMessage = occupancyTool?.output?.stackMessage || (occupancyTool?.status === "error" ? occupancyTool.message : "");
 
     useEffect(() => {
-        if (!oracleOn && !lidarOn && !stackOn) return undefined;
-        if (!oracleSampler.current) oracleSampler.current = new PlanOccupancySampler();
-        if (!lidarSampler.current) lidarSampler.current = new PlanLidarSampler();
-        let raf = 0;
-        const tick = () => {
-            raf = requestAnimationFrame(tick);
-            const sources = occupancySources(data);
-            if (oracleOn) {
-                // shortcut: samples on the UI thread; move the oracle fill to a worker if a new tile hitch shows up
-                pushOracle(oracleSampler.current.sample(sources));
-            }
-            if (lidarOn) pushLidar(lidarSampler.current.sample(sources));
-            if (stackOn) {
-                const status = occupancyImportStatus(sources.resolvedRun);
-                setStackMessage(status.configured ? "" : status.message);
-                const imported = status.configured && sources.runtime?.lastOccupancy?.status === "ok"
-                    ? sources.runtime.lastOccupancy
-                    : null;
-                if (imported && imported !== stackSeen.current) {
-                    stackSeen.current = imported;
-                    pushStack({ ...imported, changed: true });
-                } else if (!imported) {
-                    stackSeen.current = null;
-                    pushStack(null);
-                }
-            }
-        };
-        raf = requestAnimationFrame(tick);
-        return () => cancelAnimationFrame(raf);
-    }, [data, oracleOn, lidarOn, stackOn, pushOracle, pushLidar, pushStack]);
+        if (!manager?.entries.has("occupancy")) return;
+        for (const { channel } of OCCUPANCY_LAYERS) {
+            if (manager.tools.occupancy.layerVisibility.map[channel] === undefined) manager.setLayerVisible("occupancy", channel, "map", false);
+        }
+    }, [manager]);
 
     const occupancy = [
-        oracleOn && oraclePlace ? { key: "oracle", sample: oraclePlace, canvasRef: oracleCanvas } : null,
-        lidarOn && lidarPlace ? { key: "lidar", sample: lidarPlace, canvasRef: lidarCanvas } : null,
-        stackOn && stackPlace ? { key: "stack", sample: stackPlace, canvasRef: stackCanvas } : null,
+        oracleGrid ? { key: "oracle", sample: oracleGrid } : null,
+        lidarGrid ? { key: "lidar", sample: lidarGrid } : null,
+        stackGrid ? { key: "stack", sample: stackGrid } : null,
     ].filter(Boolean);
 
     return (
@@ -196,8 +122,12 @@ export function PlanView({ data }) {
                         <label key={layer.id} className={styles.layerToggle}>
                             <input
                                 type="checkbox"
-                                checked={visibility[layer.id] !== false}
-                                onChange={() => setVisibility((current) => toggleLayer(current, layer.id))}
+                                checked={layerVisibility[layer.id] !== false}
+                                onChange={() => {
+                                    const toolId = TOOL_LAYERS[layer.id];
+                                    if (manager?.entries.has(toolId)) manager.setVisible(toolId, "map", layerVisibility[layer.id] === false);
+                                    else setVisibility((current) => toggleLayer(current, layer.id));
+                                }}
                             />
                             <span>{layer.label}</span>
                         </label>
@@ -206,11 +136,14 @@ export function PlanView({ data }) {
                         <label key={layer.id} className={styles.layerToggle}>
                             <input
                                 type="checkbox"
-                                checked={visibility[layer.id] === true}
+                                checked={occupancyVisibility[layer.channel]}
                                 onChange={() => {
-                                    const turningOff = visibility[layer.id] === true;
-                                    setVisibility((current) => ({ ...current, [layer.id]: current[layer.id] !== true }));
-                                    if (layer.id === "stack-occupancy" && turningOff) setStackMessage("");
+                                    const visible = !occupancyVisibility[layer.channel];
+                                    if (manager?.entries.has("occupancy")) {
+                                        manager.setLayerVisible("occupancy", layer.channel, "map", visible);
+                                        if (visible) manager.setVisible("occupancy", "map", true);
+                                    }
+                                    else setVisibility((current) => ({ ...current, [layer.id]: visible }));
                                 }}
                             />
                             <span>{layer.label}</span>

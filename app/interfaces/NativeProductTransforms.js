@@ -30,6 +30,41 @@ export function frameTransform(value, from, to) {
     return { x: position.x + offset.x, y: position.y + offset.y, z: position.z + offset.z };
 }
 
+const MAX_OCCUPANCY_CELLS = 1_000_000;
+
+/** Onboarding grid: planning +y is scene −Z, and cost paint treats only 1 as blocked. */
+export function stackOccupancy(grid) {
+    const width = grid?.width;
+    const height = grid?.height;
+    const resolution = grid?.resolution_m;
+    const origin = grid?.origin;
+    const weights = grid?.weights;
+    const cells = Number.isInteger(width) && Number.isInteger(height) ? width * height : NaN;
+    if (!Number.isInteger(width) || width < 1 || !Number.isInteger(height) || height < 1
+        || !Number.isSafeInteger(cells) || cells > MAX_OCCUPANCY_CELLS
+        || typeof resolution !== "number" || !(resolution > 0)
+        || typeof origin?.x !== "number" || typeof origin?.y !== "number"
+        || ![origin.x, origin.y].every(Number.isFinite)
+        || !Array.isArray(weights) || weights.length !== cells) {
+        throw new Error("Occupancy grid dimensions, resolution, origin, or storage are invalid.");
+    }
+    const data = new Uint8Array(cells);
+    for (let row = 0; row < height; row++) {
+        const source = (height - 1 - row) * width;
+        for (let col = 0; col < width; col++) {
+            const weight = weights[source + col];
+            if (typeof weight !== "number" || !Number.isInteger(weight) || weight < 0 || weight > 0xffffffff) {
+                throw new Error("Occupancy weights must be unsigned 32-bit integers.");
+            }
+            data[row * width + col] = weight >= 128 ? 1 : 0;
+        }
+    }
+    return {
+        data, width, height, resolutionM: resolution, encoding: "cost",
+        origin: { x: origin.x, y: 0, z: -(origin.y + height * resolution) },
+    };
+}
+
 export function applyNativeOperation(operation, value, args) {
     if (operation === "poseAtOffset") return poseAtOffset(value, args.offsetFrom);
     if (operation === "frameTransform") return frameTransform(value, args.fromFrame, args.toFrame);
@@ -37,6 +72,7 @@ export function applyNativeOperation(operation, value, args) {
         assertRigidPose({ position: { x: 0, y: 0, z: 0 }, orientation: value });
         return quaternionToEuler(value).z;
     }
+    if (operation === "stackOccupancy") return stackOccupancy(value);
     throw new Error(`Unavailable native operation ${operation}.`);
 }
 

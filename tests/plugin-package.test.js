@@ -13,8 +13,8 @@ test("plugin hashes are stable across enumeration and isolate package/runtime/UI
         runtimeHash: forward.runtimeHash,
         uiHash: forward.uiHash,
     }, {
-        packageHash: "5fb8ec8f4ac2176629414beaa938a48cfbe00d577e13edeae8c69806d0f0909d",
-        runtimeHash: "42654d815b24b61dbf836d861b84c83a3be9c0193ed67ef5fc8b79a36cbff232",
+        packageHash: "569946d954a185a901757cf205aa97c7470eb7b02af9b40d8d72f9ef42f37cf8",
+        runtimeHash: "25a185f8ccbbc5a4e8c3d3c57d8cce06e449c33669c739e4e3faaf740b4157fb",
         uiHash: "aae5470e2dbb18c3a70cd222d70aa83063fbda998b7636c8b84652ae0400823d",
     });
     const reverse = createPluginPackage(Object.fromEntries(Object.entries(files).reverse()));
@@ -55,11 +55,20 @@ test("plugin document and engine compatibility fail explicitly", async () => {
     const verified = verifyPluginPackage(resource);
     assert.doesNotThrow(() => assertPluginCompatibility(verified.document, { pluginApi: 1, simulatorVersion: "0.1.0" }));
     assert.doesNotThrow(() => assertPluginCompatibility(verified.document, { pluginApi: 1, simulatorVersion: "0.2.0" }));
+    assert.doesNotThrow(() => assertPluginCompatibility(verified.document, { pluginApi: 1, simulatorVersion: "0.3.0" }));
+    assert.throws(() => assertPluginCompatibility(verified.document, { pluginApi: 1, simulatorVersion: "0.4.0" }), (error) => error.code === "PLUGIN_COMPATIBILITY");
     assert.throws(() => assertPluginCompatibility(verified.document, { pluginApi: 1, simulatorVersion: "1.0.0" }), (error) => error.code === "PLUGIN_COMPATIBILITY");
     assert.throws(
         () => assertPluginCompatibility(
             { ...verified.document, engines: { cevSim: ">=0.1.0 <0.2.0" } },
             { pluginApi: 1, simulatorVersion: "0.2.0" },
+        ),
+        (error) => error.code === "PLUGIN_COMPATIBILITY",
+    );
+    assert.throws(
+        () => assertPluginCompatibility(
+            { ...verified.document, engines: { cevSim: ">=0.1.0 <0.3.0" } },
+            { pluginApi: 1, simulatorVersion: "0.3.0" },
         ),
         (error) => error.code === "PLUGIN_COMPATIBILITY",
     );

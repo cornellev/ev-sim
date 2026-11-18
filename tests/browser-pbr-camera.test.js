@@ -15,6 +15,7 @@ import {
 } from "../app/3d/environment/visual/VisualCapturePipeline.js";
 import { sanitizeMeasuredAppearanceObject } from "../app/3d/environment/visual/VisualLayerMaterializer.js";
 import { resolvedPbrRun } from "./helpers/pbrResolved.js";
+import { runStopTimeout } from "../app/simulation/AsyncCancellation.js";
 
 function fakeMaterializer(options) {
     const status = {
@@ -76,6 +77,35 @@ test("inline PBR renderer lease remains blocked for a genuinely asynchronous rea
     await readback;
     assert.equal(runtime.presentationBlocked, false);
     assert.deepEqual(availability, [true, false, true]);
+    runtime.dispose();
+});
+
+test("shutdown cancels stalled inline residency and fences its late ready status", async () => {
+    let finishResidency;
+    let disposed = false;
+    const vehicle = { telemetryId: "ego", position: new THREE.Vector3(), rotation: new THREE.Euler() };
+    const runtime = new BrowserPbrRenderRuntime({
+        renderer: {},
+        vehicles: () => [vehicle],
+        assetClient: { async validateClosure() {} },
+        materializerFactory(options) {
+            const materializer = fakeMaterializer(options);
+            materializer.updateInterest = () => new Promise((resolve) => { finishResidency = () => resolve({ status: "ready", residency: materializer.residencySnapshot() }); });
+            materializer.dispose = () => { disposed = true; };
+            return materializer;
+        },
+    });
+    await runtime.prepare(resolvedPbrRun());
+    const pending = runtime.prepareCapture();
+    const error = runStopTimeout("sensor residency");
+    runtime.cancelCaptures(error);
+    await assert.rejects(pending, (failure) => failure.code === error.code);
+    assert.equal(disposed, true);
+    const status = runtime.status;
+    finishResidency();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(runtime.status, status);
+    assert.equal(runtime.ready, false);
     runtime.dispose();
 });
 

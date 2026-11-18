@@ -4,6 +4,7 @@ import * as THREE from "three";
 
 import { AlignedCaptureProducts, captureRightsForRole } from "../app/3d/environment/visual/AlignedCaptureProducts.js";
 import { evaluateVisualSourcePolicy } from "../app/simulation/visual/VisualLayer.js";
+import { runStopTimeout } from "../app/simulation/AsyncCancellation.js";
 import {
     assertAlignedCapturePassSets,
     assertCaptureProductBuffer,
@@ -345,6 +346,52 @@ test("aligned renderer publishes visual and separate analytic products atomicall
     assert.equal(renderer.autoClear, true);
     assert.equal(renderer.xr.enabled, true);
     assert.equal(renderer.shadowMap.enabled, true);
+    aligned.dispose();
+});
+
+test("shutdown abort restores inline capture before a stalled readback returns", async () => {
+    const state = scenes();
+    const { visualPassSet } = passSets(state);
+    const renderer = new FakeRenderer();
+    const camera = new THREE.PerspectiveCamera();
+    const originalTarget = {};
+    renderer.setRenderTarget(originalTarget);
+    const originalCamera = JSON.stringify(camera.toJSON());
+    const originalScene = JSON.stringify(state.visualScene.toJSON());
+    let lateBuffer;
+    let completeReadback;
+    const aligned = new AlignedCaptureProducts({
+        renderer, camera, visualSceneHandle: state.visualHandle,
+        authorizeSourceUse: async () => {},
+        readback: (_renderer, _target, buffer) => {
+            lateBuffer = buffer;
+            return new Promise((resolve) => { completeReadback = resolve; });
+        },
+    });
+    const controller = new AbortController();
+    const pending = aligned.capture({
+        visualPassSet,
+        visualRenderables: new Map([["occluder-mesh", state.occluder], ["target-mesh", state.target]]),
+        signal: controller.signal,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.ok(completeReadback, "capture must be awaiting the injected readback");
+    const error = runStopTimeout("sensor capture");
+    controller.abort(error);
+    await assert.rejects(pending, (failure) => failure === error);
+    assert.equal(renderer.getRenderTarget(), originalTarget);
+    assert.equal(JSON.stringify(camera.toJSON()), originalCamera);
+    assert.equal(JSON.stringify(state.visualScene.toJSON()), originalScene);
+    assert.equal(renderer.xr.enabled, true);
+    assert.equal(renderer.shadowMap.enabled, true);
+    const replacement = aligned._acquireBuffer(lateBuffer.constructor, lateBuffer.length);
+    assert.notEqual(replacement, lateBuffer);
+    lateBuffer.fill(123);
+    completeReadback();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(replacement[0], 0);
+    assert.equal(renderer.getRenderTarget(), originalTarget);
+    assert.equal(JSON.stringify(camera.toJSON()), originalCamera);
     aligned.dispose();
 });
 

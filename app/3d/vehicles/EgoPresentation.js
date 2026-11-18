@@ -4,13 +4,6 @@ import { CameraFollower } from "../tools/CameraFollower";
 import { LiDAR3d } from "../devices/LiDAR3d";
 import { StereoCamera } from "../devices/StereoCamera";
 
-const WHEELBASE = new Unit(49, Unit.Type.INCH).getValue(Unit.Type.METER);
-const LOOKAHEAD = 15;
-const SEGMENTS = 80;
-const PATH_WIDTH = 1;
-const PATH_Y = 0.02;
-const UP = new THREE.Vector3(0, 1, 0);
-
 function distancePointToSegmentXZ(point, a, b) {
     const abx = b.x - a.x;
     const abz = b.z - a.z;
@@ -72,133 +65,6 @@ function isPointNearbyLane(point, lanePoints, laneHalfWidth, nearbyThreshold) {
     return minDist <= nearbyThreshold && Math.abs(point.y - nearestLaneY) <= maxVerticalDelta;
 }
 
-export function makePathGradientTexture({
-    width = 256,
-    height = 4,
-    color = 0xff0000,
-    startAlpha = 0.7,
-    fadeStart = 0.6,
-    endAlpha = 0.0,
-} = {}) {
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-
-    const ctx = canvas.getContext("2d");
-
-    const c = new THREE.Color(color);
-    const r = Math.round(c.r * 255);
-    const g = Math.round(c.g * 255);
-    const b = Math.round(c.b * 255);
-
-    const grad = ctx.createLinearGradient(0, 0, width, 0);
-    grad.addColorStop(0.0, `rgba(${r},${g},${b},${startAlpha})`);
-    grad.addColorStop(fadeStart, `rgba(${r},${g},${b},${startAlpha})`);
-    grad.addColorStop(1.0, `rgba(${r},${g},${b},${endAlpha})`);
-
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, width, height);
-
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.wrapS = THREE.ClampToEdgeWrapping;
-    tex.wrapT = THREE.ClampToEdgeWrapping;
-    tex.minFilter = THREE.LinearFilter;
-    tex.magFilter = THREE.LinearFilter;
-    tex.generateMipmaps = false;
-    tex.needsUpdate = true;
-    return tex;
-}
-
-export function createPathRibbonMesh() {
-    const vertCount = (SEGMENTS + 1) * 2;
-    const positions = new Float32Array(vertCount * 3);
-    const uvs = new Float32Array(vertCount * 2);
-
-    for (let i = 0; i <= SEGMENTS; i++) {
-        const u = i / SEGMENTS;
-        const uvBase = i * 2 * 2;
-        uvs[uvBase + 0] = u; uvs[uvBase + 1] = 0;
-        uvs[uvBase + 2] = u; uvs[uvBase + 3] = 1;
-    }
-
-    const indices = new (vertCount > 65535 ? Uint32Array : Uint16Array)(SEGMENTS * 6);
-    let k = 0;
-    for (let i = 0; i < SEGMENTS; i++) {
-        const a = 2 * i;
-        const b = 2 * i + 1;
-        const c = 2 * (i + 1);
-        const d = 2 * (i + 1) + 1;
-
-        indices[k++] = a; indices[k++] = b; indices[k++] = d;
-        indices[k++] = a; indices[k++] = d; indices[k++] = c;
-    }
-
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3).setUsage(THREE.DynamicDrawUsage));
-    geometry.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
-    geometry.setIndex(new THREE.BufferAttribute(indices, 1));
-    geometry.computeVertexNormals();
-
-    const gradientTex = makePathGradientTexture({
-        color: 0x6ae5a3,
-        startAlpha: 0.6,
-        fadeStart: 0.6,
-        endAlpha: 0.0,
-    });
-
-    const material = new THREE.MeshBasicMaterial({
-        map: gradientTex,
-        color: 0xffffff,
-        transparent: true,
-        side: THREE.DoubleSide,
-        depthWrite: false,
-    });
-
-    const mesh = new THREE.Mesh(geometry, material);
-    mesh.renderOrder = 999;
-    return mesh;
-}
-
-export function updatePathRibbonGeometry(geometry, carObject3D, steeringAngleRad) {
-    const curvature = Math.tan(steeringAngleRad) / WHEELBASE;
-
-    const pos = new THREE.Vector3();
-    pos.y = PATH_Y;
-
-    const heading = new THREE.Vector3(0, 0, 1);
-    heading.y = 0;
-    heading.normalize();
-
-    const ds = LOOKAHEAD / SEGMENTS;
-
-    const positionAttr = geometry.getAttribute("position");
-    const arr = positionAttr.array;
-
-    const tangent = new THREE.Vector3();
-    const leftN = new THREE.Vector3();
-    const p = new THREE.Vector3().copy(pos);
-
-    for (let i = 0; i <= SEGMENTS; i++) {
-        tangent.copy(heading);
-        leftN.set(-tangent.z, 0, tangent.x).normalize();
-
-        const halfW = PATH_WIDTH * 0.5;
-        const leftP = new THREE.Vector3().copy(p).addScaledVector(leftN, +halfW);
-        const rightP = new THREE.Vector3().copy(p).addScaledVector(leftN, -halfW);
-
-        const base = i * 2 * 3;
-        arr[base + 0] = leftP.x; arr[base + 1] = leftP.y; arr[base + 2] = leftP.z;
-        arr[base + 3] = rightP.x; arr[base + 4] = rightP.y; arr[base + 5] = rightP.z;
-
-        p.addScaledVector(heading, ds);
-        heading.applyAxisAngle(UP, curvature * ds).normalize();
-    }
-
-    positionAttr.needsUpdate = true;
-    geometry.computeVertexNormals();
-    geometry.computeBoundingSphere();
-}
-
 function setupPlaygroundDevices(vehicle) {
     if (vehicle.vehicleManifestId === "igvc-car") {
         const lidar = new LiDAR3d(
@@ -241,11 +107,6 @@ function setupPlaygroundDevices(vehicle) {
 
     vehicle.addDevice(lidar);
     vehicle.addDevice(stereoCamera);
-}
-
-function renderPath(vehicle) {
-    if (!vehicle.path) return;
-    updatePathRibbonGeometry(vehicle.path.geometry, vehicle.sceneObject, vehicle.displaySteeringAngle ?? vehicle.steeringAngle ?? 0);
 }
 
 function updateLaneMeshVisibility(vehicle) {
@@ -293,7 +154,7 @@ function updateLaneMeshVisibility(vehicle) {
 }
 
 /**
- * Playground-only presentation: path ribbon, chase camera, WASD gate, and the
+ * Playground-only presentation: chase camera, WASD gate, and the
  * historical BigCar / IGVCCar device construction.
  */
 export function attachEgoPresentation(vehicle, options = {}) {
@@ -308,19 +169,10 @@ export function attachEgoPresentation(vehicle, options = {}) {
         setupPlaygroundDevices(vehicle);
     }
 
-    if (vehicle.sceneObject) {
-        const curve = createPathRibbonMesh();
-        curve.rotation.y = Math.PI / 2;
-        vehicle.sceneObject.add(curve);
-        vehicle.path = curve;
-    }
-
     vehicle.disableControls = function disableControls() {
         this.controlsEnabled = false;
-        if (this.path) this.path.visible = false;
     };
 
-    vehicle.renderPath = () => renderPath(vehicle);
     vehicle.updateLaneMeshVisibility = () => updateLaneMeshVisibility(vehicle);
     vehicle._egoPresentation = true;
 
@@ -338,12 +190,6 @@ export function attachEgoPresentation(vehicle, options = {}) {
 
 export function updateEgoPresentation(vehicle, deltaTime) {
     if (!vehicle?._egoPresentation) return;
-    renderPath(vehicle);
     updateLaneMeshVisibility(vehicle);
     vehicle.follower?.updateCamera(vehicle.sceneObject, deltaTime);
-}
-
-export function resetEgoPresentation(vehicle) {
-    if (!vehicle?._egoPresentation) return;
-    if (vehicle.path) renderPath(vehicle);
 }

@@ -11,14 +11,15 @@ import path from "node:path";
 import { createRequire } from "node:module";
 
 import { MARKETPLACE_ERROR_CODES, marketplaceError } from "../MarketplaceErrors.js";
+import { assertOwnerOnly, protectOwnerOnly } from "./OwnerOnly.js";
 import { lstatOrNull, readRegularBytes, writeExclusiveDurable } from "./RegistryFs.js";
 
 export const TUF_KEY_TYPE = "ed25519";
 export const TUF_KEY_SCHEME = "ed25519";
 const { canonicalize } = createRequire(import.meta.url)("@tufjs/canonical-json");
 
-function invalid(message, filePath = null) {
-    return marketplaceError(MARKETPLACE_ERROR_CODES.CONFIG_INVALID, message, { path: filePath });
+function invalid(message, filePath = null, cause = null) {
+    return marketplaceError(MARKETPLACE_ERROR_CODES.CONFIG_INVALID, message, { path: filePath, cause });
 }
 
 async function assertOutsideRegistry(filePath, registryRoot) {
@@ -71,7 +72,11 @@ export async function loadPrivateKey(filePath, { requirePrivateMode = true, regi
         throw error;
     });
     if (!stat.isFile() || stat.isSymbolicLink()) throw invalid("TUF private key must be a regular non-symlink file.", filePath);
-    if (requirePrivateMode && (stat.mode & 0o077) !== 0) throw invalid("TUF private key permissions must not grant group or other access.", filePath);
+    if (requirePrivateMode) {
+        await assertOwnerOnly(filePath, stat, {
+            fail: (cause) => invalid("TUF private key permissions must not grant group or other access.", filePath, cause),
+        });
+    }
     try {
         const key = createPrivateKey(await readRegularBytes(filePath, { maxBytes: 64 * 1024 }));
         if (key.asymmetricKeyType !== "ed25519") throw invalid("TUF private key is not Ed25519.", filePath);
@@ -87,8 +92,17 @@ export async function ensurePrivateKey(filePath, { registryRoot = null } = {}) {
     await assertOutsideRegistry(resolved, registryRoot);
     const existing = await lstatOrNull(resolved);
     if (!existing) {
-        await fs.mkdir(path.dirname(resolved), { recursive: true, mode: 0o700 });
+        const parent = path.dirname(resolved);
+        const parentExisted = await lstatOrNull(parent);
+        await fs.mkdir(parent, { recursive: true, mode: 0o700 });
         await assertOutsideRegistry(resolved, registryRoot);
+        if (!parentExisted) {
+            await protectOwnerOnly(parent, { directory: true });
+            await assertOwnerOnly(parent, await fs.lstat(parent), {
+                directory: true,
+                fail: (cause) => invalid("TUF private key permissions must not grant group or other access.", parent, cause),
+            });
+        }
         await writeExclusiveDurable(resolved, generatePrivateKey());
     }
     return Object.freeze({ path: resolved, privateKey: await loadPrivateKey(resolved, { registryRoot }) });

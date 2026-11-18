@@ -39,6 +39,7 @@ import { MarketplaceArtifactStore } from "./MarketplaceArtifactStore.js";
 import { createMarketplaceHostProfile, evaluateMarketplaceCompatibility } from "./MarketplaceCompatibility.js";
 import { MarketplaceInstalledStore } from "./MarketplaceInstalledStore.js";
 import { MarketplaceInstallJobManager } from "./MarketplaceInstallJobManager.js";
+import { LocalRunTemplateImportManager } from "./LocalRunTemplateImportManager.js";
 import { MarketplaceInstallOwnershipStore } from "./MarketplaceInstallOwnershipStore.js";
 import { MarketplaceInstallPlanner } from "./MarketplaceInstallPlanner.js";
 import { MarketplacePolicyStore } from "./MarketplacePolicyStore.js";
@@ -207,6 +208,7 @@ export class MarketplaceService {
         planner,
         transactionCoordinator,
         jobManager,
+        localImportManager,
         adapterRegistry,
         policyStore,
         provenanceStore,
@@ -238,6 +240,7 @@ export class MarketplaceService {
         this.planner = planner;
         this.transactionCoordinator = transactionCoordinator;
         this.jobManager = jobManager;
+        this.localImportManager = localImportManager;
         this.adapterRegistry = adapterRegistry;
         this.policyStore = policyStore;
         this.provenanceStore = provenanceStore;
@@ -418,6 +421,9 @@ export class MarketplaceService {
             planner,
             transactionCoordinator,
             jobManager,
+            localImportManager: storageService && editorAssetStore && visualAssetStore ? new LocalRunTemplateImportManager(dataDir, {
+                storageService, pluginStore: resolvedPluginStore, editorAssetStore, visualAssetStore, publishPluginLibraryChange, now,
+            }) : null,
             adapterRegistry: resolvedAdapterRegistry,
             policyStore,
             provenanceStore,
@@ -445,6 +451,7 @@ export class MarketplaceService {
         const recoveredTransactions = await transactionCoordinator.recoverPending();
         ownershipStore.verifyAgainstInstalled(await ownershipStore.snapshot(), await installedStore.snapshot());
         await jobManager.recover(recoveredTransactions);
+        await service.localImportManager?.recover();
         if (publishJobManager) {
             await publisherSecretStore.recover(publisherProfileStore.snapshot().profiles.map((profile) => profile.secretRef));
             await publishingIdentityManager.reconcileAll();
@@ -1470,6 +1477,19 @@ export class MarketplaceService {
         });
     }
 
+    #localImports() {
+        this.#assertOpen();
+        if (!this.localImportManager) throw marketplaceError(MARKETPLACE_ERROR_CODES.INCOMPATIBLE, "Local import requires authoring stores.");
+        return this.localImportManager;
+    }
+    createLocalRunTemplateImport(input, options) { return this.#localImports().create(input, options); }
+    listLocalRunTemplateImports() { return this.#localImports().list(); }
+    getLocalRunTemplateImport(id) { return this.#localImports().get(id); }
+    commitLocalRunTemplateImport(id, input) { return this.#localImports().commit(id, input); }
+    resumeLocalRunTemplateImport(id, revision) { return this.#localImports().resume(id, revision); }
+    replanLocalRunTemplateImport(id, revision) { return this.#localImports().replan(id, revision); }
+    cancelLocalRunTemplateImport(id, revision) { return this.#localImports().cancel(id, revision); }
+
     async #jobView(job) {
         return Object.freeze({
             job,
@@ -1688,6 +1708,7 @@ export class MarketplaceService {
     async close() {
         if (this.#closed) return;
         this.#closed = true;
+        await this.localImportManager?.close();
         for (const controller of this.#controllers) controller.abort();
         await this.publishJobManager?.close();
         await this.jobManager.close();

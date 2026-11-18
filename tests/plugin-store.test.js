@@ -23,6 +23,35 @@ function marketplaceOwner(sourceId = "123e4567-e89b-12d3-a456-426614174001", ove
     };
 }
 
+test("PluginStore publishes CAS and manual ownership without Windows directory flushes", async (t) => {
+    const { root, store } = await temporaryStore(t);
+    const resource = await pluginFixtureResource();
+    const open = fs.open;
+    const flushes = [];
+    t.mock.property(process, "platform", "win32");
+    t.mock.method(fs, "open", async (file, ...args) => {
+        const handle = await open(file, ...args);
+        if ((await handle.stat()).isDirectory()) {
+            await handle.close();
+            throw Object.assign(new Error("directory fsync"), { code: "EPERM" });
+        }
+        flushes.push(t.mock.method(handle, "sync"));
+        return handle;
+    });
+
+    await store.putPackage(resource);
+    await store.addManualOwner(resource.packageHash);
+    const restored = new PluginStore(root);
+    assert.equal((await restored.verifyPackage(resource.packageHash)).resource.packageHash, resource.packageHash);
+    const snapshot = await restored.snapshotWithOwners();
+    assert.equal(snapshot.revision, 1);
+    assert.deepEqual(snapshot.packages[0].ownership, { manual: true, marketplace: [] });
+    await restored.addManualOwner(resource.packageHash);
+    assert.equal((await restored.snapshotWithOwners()).revision, 1);
+    assert.ok(flushes.filter((sync) => sync.mock.callCount() === 1).length > 1);
+    assert.deepEqual(await fs.readdir(store.stagingDir), []);
+});
+
 test("PluginStore publishes immutable CAS bytes and revisions library membership", async (t) => {
     const { store } = await temporaryStore(t);
     const resource = await pluginFixtureResource();

@@ -385,6 +385,15 @@ If the 16 MiB client queue is full:
 
 Stop unsubscribes, emits `logging/recording-stopped`, writes a final checkpoint, flushes remaining records, waits for the upload chain, then `POST /sessions/:id/finalize`.
 
+Browser run shutdown shares a 15-second deadline with sensor drain and transport
+close; standalone recording Stop uses 15 seconds. Expiry aborts recording HTTP
+requests and retry delays, clears capture subscriptions and queued memory, and
+fences late responses from the next session. Required logging failures stop the
+engine and fail the run. Optional logging failures retain its semantic outcome
+with degraded logging and the known log ID. When time remains, shutdown attempts
+an incomplete finalize. An unacknowledged finalize is never retried automatically;
+already uploaded `.partial` data remains under the existing server recovery rules.
+
 The server flushes any pending chunk, appends `INDX` + locator, renames `.partial` → `.sflog`, and updates the sidecar. Finalize payload may mark `incomplete` when the client dropped samples, had an upload error, or the caller passed `incomplete: true`. Optional run logging treats incomplete finalize as degraded rather than fatal.
 
 ## Recording profiles

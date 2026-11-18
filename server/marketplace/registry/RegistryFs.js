@@ -7,6 +7,7 @@ import {
     openRegularFile,
 } from "../../storage/visual-assets/atomicFs.js";
 import { MARKETPLACE_ERROR_CODES, marketplaceError } from "../MarketplaceErrors.js";
+import { protectOwnerOnly } from "./OwnerOnly.js";
 import { REGISTRY_DIRECTORY_MODE, REGISTRY_FILE_MODE } from "./RegistryLayout.js";
 
 function hostile(nodePath, message) {
@@ -32,12 +33,12 @@ export async function ensureDirectory(nodePath) {
     const existing = await lstatOrNull(nodePath);
     if (existing) {
         if (!existing.isDirectory() || existing.isSymbolicLink()) throw hostile(nodePath, "Registry path is not a directory");
-        await fs.chmod(nodePath, REGISTRY_DIRECTORY_MODE);
+        await protectOwnerOnly(nodePath, { directory: true });
         return;
     }
     await fs.mkdir(nodePath, { recursive: true, mode: REGISTRY_DIRECTORY_MODE });
     await requireDirectory(nodePath);
-    await fs.chmod(nodePath, REGISTRY_DIRECTORY_MODE);
+    await protectOwnerOnly(nodePath, { directory: true });
 }
 
 export async function ensureDirectoryWithin(root, nodePath) {
@@ -56,7 +57,7 @@ export async function ensureDirectoryWithin(root, nodePath) {
             await fs.mkdir(current, { mode: REGISTRY_DIRECTORY_MODE });
             await fsyncDir(path.dirname(current));
         }
-        await fs.chmod(current, REGISTRY_DIRECTORY_MODE);
+        await protectOwnerOnly(current, { directory: true });
     }
 }
 
@@ -79,9 +80,9 @@ export async function writeExclusiveDurable(filePath, rawBytes) {
         created = true;
         await writeAll(handle, bytes);
         await handle.sync();
-        await handle.chmod(REGISTRY_FILE_MODE);
         await handle.close();
         handle = null;
+        await protectOwnerOnly(filePath, { directory: false });
         await fsyncDir(path.dirname(filePath));
     } catch (error) {
         await handle?.close().catch(() => {});
@@ -164,7 +165,7 @@ export async function publishImmutableFile(stagedPath, destinationPath, sha256, 
         await fs.rm(stagedPath, { force: true });
         return false;
     }
-    await fs.chmod(destinationPath, REGISTRY_FILE_MODE);
+    await protectOwnerOnly(destinationPath, { directory: false });
     await fs.rm(stagedPath, { force: true });
     await fsyncDir(path.dirname(destinationPath));
     return true;

@@ -15,16 +15,17 @@ export async function listLogs() {
     return (await assertOk(await fetch(BASE_URL), "Log catalog load")).json();
 }
 
-export async function createLogSession(metadata) {
+export async function createLogSession(metadata, { signal } = {}) {
     const response = await fetch(`${BASE_URL}/sessions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(metadata),
+        signal,
     });
     return (await assertOk(response, "Log session creation")).json();
 }
 
-export async function uploadLogBatch(id, sequence, batch) {
+export async function uploadLogBatch(id, sequence, batch, { signal } = {}) {
     const response = await fetch(`${BASE_URL}/sessions/${encodeURIComponent(id)}/batches`, {
         method: "POST",
         headers: {
@@ -34,15 +35,17 @@ export async function uploadLogBatch(id, sequence, batch) {
             "X-SFLog-End-Us": String(batch.endUs),
         },
         body: batch.bytes,
+        signal,
     });
     return (await assertOk(response, "Log batch upload")).json();
 }
 
-export async function finalizeLogSession(id, patch = {}) {
+export async function finalizeLogSession(id, patch = {}, { signal } = {}) {
     const response = await fetch(`${BASE_URL}/sessions/${encodeURIComponent(id)}/finalize`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(patch),
+        signal,
     });
     return (await assertOk(response, "Log finalization")).json();
 }

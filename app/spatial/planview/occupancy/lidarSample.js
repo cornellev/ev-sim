@@ -15,6 +15,21 @@ function lidarDevices(vehicles) {
     return found;
 }
 
+function calibrationFields(calibration) {
+    const layout = calibration.scanLayout;
+    return [calibration, layout, calibration.azimuth, calibration.elevation,
+        ...[calibration.azimuth, calibration.elevation].flatMap((axis) => [axis?.startDeg, axis?.endDeg, axis?.stepDeg]),
+        ...(layout?.azimuthsDeg ?? []), ...(layout?.channels ?? []).flatMap((channel) => [channel.elevationDeg, channel.azimuthOffsetDeg])];
+}
+
+function deviceFields({ vehicle, device }, resolvedRun) {
+    const box = (resolvedRun?.vehicles || []).find((entry) => entry.actorId === (vehicle.telemetryId || vehicle.id))?.manifest?.boundingBox;
+    return [vehicle, device, device.buff, device.buffGeneration, device.config.pose,
+        ...calibrationFields(device.config.calibration),
+        ...[vehicle.position, vehicle.rotation, device.config.pose.position, device.config.pose.rotation, box?.center, box?.size]
+            .flatMap((value) => [value?.x, value?.y, value?.z, value?.w, value?.order])];
+}
+
 /** Latest manifest-lidar range images, projected into the published window. */
 export class PlanLidarSampler {
     constructor({ resolutionM = OCCUPANCY_RESOLUTION_M, cells = OCCUPANCY_CELLS } = {}) {
@@ -32,8 +47,8 @@ export class PlanLidarSampler {
         if (devices.length === 0) return null;
         const snapped = snapWindowOrigin(ego.x, ego.z, this.resolutionM, this.cells);
         const origin = `${snapped.originCol}:${snapped.originRow}`;
-        const buffs = devices.map(({ device }) => device.buffGeneration ?? device.buff);
-        if (this.last && origin === this.origin && buffs.length === this.buffs.length && buffs.every((buff, index) => buff === this.buffs[index])) {
+        const buffs = devices.flatMap((entry) => deviceFields(entry, resolvedRun));
+        if (this.last && origin === this.origin && buffs.length === this.buffs.length && buffs.every((buff, index) => Object.is(buff, this.buffs[index]))) {
             return { ...this.last, changed: false };
         }
         const sparse = [];
