@@ -20,7 +20,7 @@ import { TopicContractRouter } from "../app/simulation/TopicContractRouter.js";
 import { TopicInputQueue } from "../app/simulation/TopicInputQueue.js";
 import { SignalStore } from "../app/scripting/runtime/SignalStore.js";
 import { createDefaultRunManifest as createNativeRunManifest } from "../app/simulation/RunManifest.js";
-import { topicFromNativeContract } from "../app/simulation/NativeTopicCatalog.js";
+import { requiresControlLease, topicFromNativeContract } from "../app/simulation/NativeTopicCatalog.js";
 import { buildNativeOdometry } from "../app/simulation/sensors/NativeSensorProducts.js";
 const command = () => ({ runId: "test", mode: "velocity", sequence: "1", captureTimeNs: 0, deadlineNs: 100_000_000, frameId: "base_link", speedMps: 0, steeringRad: 0, accelerationMps2: 0, jerkMps3: 0, steeringRateRadps: 0 });
 
@@ -247,4 +247,13 @@ test("stale inbound controls without fallback are rejected", () => {
     }, { applyStep: 3, applyTimeNs: 5_000_000, arrivalTimeNs: 1_000_000 });
     assert.equal(stale.ok, false);
     assert.equal(stale.code, "stale");
+});
+
+test("requiresControlLease is true only for an input control-command version 2 topic", () => {
+    const command = topicFromNativeContract("controls-command");
+    const leased = { ...command, valueContract: { ...command.valueContract, version: 2 } };
+    assert.equal(requiresControlLease({ topics: [leased] }), true);
+    assert.equal(requiresControlLease({ topics: [command] }), false);
+    assert.equal(requiresControlLease({ topics: [{ ...leased, direction: "output" }] }), false);
+    assert.equal(requiresControlLease(null), false);
 });

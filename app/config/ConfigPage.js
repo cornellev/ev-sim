@@ -35,7 +35,7 @@ import {
     RUN_MANIFEST_VERSION,
     validateRunManifest,
 } from "../simulation/RunManifest.js";
-import { AUTHORITY_MODES, PRODUCER_NAMESPACES, listNativeTopicDefinitions, topicFromNativeContract } from "../simulation/NativeTopicCatalog.js";
+import { AUTHORITY_MODES, PRODUCER_NAMESPACES, listNativeTopicDefinitions, requiresControlLease, topicFromNativeContract } from "../simulation/NativeTopicCatalog.js";
 import {
     changeRunManifestId,
     createRunManifest,
@@ -972,6 +972,8 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
             else applyManifestDocument(result.manifest.id, result.manifest);
         })} />;
 
+    const leasedLaunch = requiresControlLease(draft);
+
     return (
         <AuthoringModeProvider advanced>
         <main className="fixed inset-0 z-[1] overflow-hidden bg-[var(--slate-bg)] text-[var(--slate-fg)]">
@@ -1002,7 +1004,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
                         <Action compact icon={<IconDownload size={14} stroke={1.75} />} label="Export template" onClick={exportTemplate} disabled={!draft || busy} />
                         <Action compact danger icon={<IconTrash size={14} stroke={1.75} />} label="Delete" onClick={requestDelete} disabled={!draft || busy} />
                     </div>
-                    <Action primary icon={<IconPlayerPlay size={14} stroke={1.75} />} label="Launch" onClick={launch} disabled={!draft || busy || jsonBlocked} />
+                    <Action primary icon={<IconPlayerPlay size={14} stroke={1.75} />} label="Launch" onClick={launch} disabled={!draft || busy || jsonBlocked || leasedLaunch} tooltip={leasedLaunch ? "Launch is disabled because an external controller starts this run." : undefined} />
                 </div>
             </header>
 
@@ -3152,7 +3154,7 @@ function Toggle({ label, description, value, onChange, disabled = false }) {
     return <SharedSwitch label={label} description={description} checked={value} onCheckedChange={onChange} disabled={disabled} />;
 }
 
-function Action({ icon, label, onClick, disabled = false, primary = false, danger = false, compact = false, align = "center", className }) {
+function Action({ icon, label, onClick, disabled = false, primary = false, danger = false, compact = false, align = "center", className, tooltip }) {
     const variant = primary ? "primary" : danger ? "danger" : "default";
     return (
         <Button
@@ -3160,6 +3162,7 @@ function Action({ icon, label, onClick, disabled = false, primary = false, dange
             disabled={disabled}
             size={compact ? "compact" : "default"}
             style={align === "start" ? { justifyContent: "flex-start" } : undefined}
+            tooltip={tooltip}
             variant={variant}
             onClick={() => Promise.resolve(onClick?.()).catch(() => {})}
         >

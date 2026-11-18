@@ -8,6 +8,7 @@ import { resolveRunManifest } from "./RunManifestClient.js";
 import { assertEnabledCameraRenderRuntime } from "./render/RenderSceneProviderRegistry.js";
 import { ControlOwnershipGuard } from "../autonomy/ControlOwnershipGuard.js";
 import { abortable, RUN_STOP_TIMEOUT_MS, runStopTimeout } from "./AsyncCancellation.js";
+import { requiresControlLease } from "./NativeTopicCatalog.js";
 
 function clone(value) {
     return value === undefined ? undefined : structuredClone(value);
@@ -175,7 +176,7 @@ export class RunSessionController {
     async prepare(resolved, { autoplay = false, episodePhase = "start", manifestRevision = null, controlLease = null, leaseRequestedAt } = {}) {
         if (!resolved?.manifest || !resolved?.resolvedHash) throw new Error("A resolved run manifest is required.");
         if (resolved.version !== 13) throw Object.assign(new Error("Historical runs require reviewed native migration before execution."), { code: "UNSUPPORTED_CAPABILITY" });
-        const needsLease = resolved.manifest.topics?.some((topic) => topic.direction === "input" && topic.valueContract?.id === "cev.control-command" && topic.valueContract.version === 2);
+        const needsLease = requiresControlLease(resolved.manifest);
         if (needsLease && (!controlLease || autoplay)) throw new Error("Control-command@2 requires a live lease and paused preparation.");
         assertProtobufExecutionCapabilities(resolved, { target: "browser", transport: "zenoh-browser", controlOwnership: Boolean(controlLease) });
         if (controlLease && (resolved.manifest.controls?.authority !== "candidate" || controlLease.target?.vehicleId !== resolved.manifest.controls.targetVehicleId || ["inputs", "controls", "vehicles"].some((key) => resolved.manifest.clock.modules[key] === false))) throw new Error("Owned runs require enabled candidate controls on the leased vehicle.");

@@ -44,6 +44,10 @@ export function defaultNativeManifestTopics() { return defaultIds.map((id) => to
 
 export function isControlsCommandTopic(topic) { return topic?.valueContract?.id === "cev.control-command"; }
 
+export function requiresControlLease(manifest) {
+    return manifest?.topics?.some((topic) => topic.direction === "input" && isControlsCommandTopic(topic) && topic.valueContract.version === 2) === true;
+}
+
 export const PRODUCER_NAMESPACES = Object.freeze([
     "simulator",
     "candidate",
