@@ -9,6 +9,22 @@ import { canonicalMarketplaceBytes, parseMarketplaceJsonBytes } from "./Marketpl
 const SHA256 = /^[a-f0-9]{64}$/u;
 const STAGING_NAME = /^e[0-9]{6}$/u;
 
+export function isRenameCollision(error, destinationExists) {
+    return error?.code === "EEXIST" || error?.code === "ENOTEMPTY" || (error?.code === "EPERM" && destinationExists === true);
+}
+
+export async function preparationRenameCollided(error, destination) {
+    if (isRenameCollision(error, false)) return true;
+    if (error?.code !== "EPERM") return false;
+    try {
+        await fs.lstat(destination);
+    } catch (statError) {
+        if (statError?.code === "ENOENT") return false;
+        throw statError;
+    }
+    return true;
+}
+
 function invalid(message) {
     throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, message);
 }

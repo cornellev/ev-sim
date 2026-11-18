@@ -34,7 +34,7 @@ import { RUN_TEMPLATE_PACKAGE_LIMITS } from "./MarketplaceContract.js";
 import { MARKETPLACE_ERROR_CODES, marketplaceError } from "./MarketplaceErrors.js";
 import { assertMarketplaceId, assertReleaseVersion } from "./MarketplaceFormats.js";
 import { canonicalMarketplaceBytes, hashMarketplaceBytes } from "./MarketplaceJson.js";
-import { createPackagePreparationIndex, readPackagePreparation } from "./PackagePreparation.js";
+import { createPackagePreparationIndex, preparationRenameCollided, readPackagePreparation } from "./PackagePreparation.js";
 import { collectRunTemplateClosure, recheckRunTemplateSnapshot } from "./RunTemplateClosure.js";
 
 export const RUN_TEMPLATE_PACKAGE_KIND = "cev-sim.run-template-package";
@@ -878,7 +878,7 @@ export async function prepareRunTemplatePackage({ archivePath, workDirectory, li
     try {
         await fs.rename(verified.stagingDir, destination);
     } catch (error) {
-        if (error.code !== "EEXIST" && error.code !== "ENOTEMPTY") throw error;
+        if (!await preparationRenameCollided(error, destination)) throw error;
         const existing = await fs.readFile(path.join(destination, "preparation.json"));
         if (!existing.equals(bytes)) invalid("Existing run-template preparation does not match the verified artifact.");
         await verified.cleanup();

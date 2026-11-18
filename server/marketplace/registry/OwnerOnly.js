@@ -38,17 +38,17 @@ if ([string]::IsNullOrWhiteSpace($path)) { throw 'Windows owner-only path is mis
 $acl = Get-Acl -LiteralPath $path
 $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
 $rights = [System.Security.AccessControl.FileSystemRights]::FullControl
-$inheritance = if ($env:CEV_SIM_OWNER_ONLY_DIRECTORY -eq '1') {
-    [System.Security.AccessControl.InheritanceFlags]'ObjectInherit, ContainerInherit'
-} else {
-    [System.Security.AccessControl.InheritanceFlags]::None
-}
-$propagation = [System.Security.AccessControl.PropagationFlags]::None
 $type = [System.Security.AccessControl.AccessControlType]::Allow
-$rule = New-Object System.Security.AccessControl.FileSystemAccessRule($identity, $rights, $inheritance, $propagation, $type)
+$noneInherit = [System.Security.AccessControl.InheritanceFlags]::None
+$nonePropagate = [System.Security.AccessControl.PropagationFlags]::None
 $acl.SetAccessRuleProtection($true, $false)
 foreach ($existing in @($acl.Access)) { [void]$acl.RemoveAccessRuleAll($existing) }
-$acl.AddAccessRule($rule)
+$acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($identity, $rights, $noneInherit, $nonePropagate, $type)))
+if ($env:CEV_SIM_OWNER_ONLY_DIRECTORY -eq '1') {
+    $childInherit = [System.Security.AccessControl.InheritanceFlags]'ObjectInherit, ContainerInherit'
+    $inheritOnly = [System.Security.AccessControl.PropagationFlags]::InheritOnly
+    $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($identity, $rights, $childInherit, $inheritOnly, $type)))
+}
 Set-Acl -LiteralPath $path -AclObject $acl
 `;
 

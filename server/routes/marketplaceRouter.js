@@ -601,7 +601,7 @@ export function createMarketplaceRouter(service, {
     router.use((error, request, response, _next) => {
         const publicError = publicMarketplaceError(error);
         const route = request.route?.path ?? "unmatched";
-        const source = error?.code === publicError.code ? "" : ` from ${[error?.name, error?.code].filter(Boolean).join(" ")}`;
+        const source = error?.code === publicError.code ? "" : ` from ${[error?.name, error?.code, error?.syscall].filter(Boolean).join(" ")}`;
         logger.error?.(`[marketplace] ${request.method} ${route} ${publicError.code}${source}`);
         response.status(statusFor(publicError)).json({
             error: {

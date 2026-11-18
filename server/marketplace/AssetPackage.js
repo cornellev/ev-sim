@@ -27,6 +27,7 @@ import {
 import {
     createPackagePreparationIndex,
     packagePreparationHash,
+    preparationRenameCollided,
     readPackagePreparation,
 } from "./PackagePreparation.js";
 
@@ -576,7 +577,7 @@ export async function prepareAssetPackage({ archivePath, workDirectory, limits, 
     try {
         await fs.rename(verified.stagingDir, destination);
     } catch (error) {
-        if (error.code !== "EEXIST" && error.code !== "ENOTEMPTY") throw error;
+        if (!await preparationRenameCollided(error, destination)) throw error;
         const existing = await fs.readFile(path.join(destination, "preparation.json"));
         if (!existing.equals(indexBytes)) invalid("Existing asset-package preparation does not match the verified artifact.");
         await verified.cleanup();

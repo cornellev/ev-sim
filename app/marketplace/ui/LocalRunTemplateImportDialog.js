@@ -70,7 +70,10 @@ export default function LocalRunTemplateImportDialog({ initialImport, onClose, o
     return <DialogSurface open onOpenChange={(open) => { if (!open) close(); }} title="Import package" description="Review a run template shared as a file before creating editable content." className={styles.installDialog} footer={footer}>
         <div className={styles.installFlow}>
             <StatusMessage tone="warning" title="Unverified file">This file is not registry-signed. Its contents are checked locally. Import does not run plugins.</StatusMessage>
-            {!view && <label>Run-template tar<input type="file" accept=".tar" aria-label="Run-template tar" disabled={busy} onChange={choose} /></label>}
+            {!view && <label className={styles.templateFile}>
+                <span>Run-template tar</span>
+                <span className={styles.fileButton}>Choose file<input type="file" accept=".tar,application/vnd.cev-sim.run-template-package+tar" aria-label="Run-template tar" disabled={busy} onChange={choose} /></span>
+            </label>}
             <div role="status" aria-live="polite">{busy && !view ? "Uploading and verifying package…" : phase === "commit" ? "Importing editable content…" : phase === "complete" ? "Import complete" : ""}</div>
             {error && <StatusMessage tone="danger" title="Import failed">{error}</StatusMessage>}
             {view && <>

@@ -44,6 +44,7 @@ import {
 import {
     createPackagePreparationIndex,
     packagePreparationHash,
+    preparationRenameCollided,
     readPackagePreparation,
 } from "./PackagePreparation.js";
 
@@ -561,7 +562,7 @@ export async function prepareEnvironmentPackage({ archivePath, workDirectory, li
     try {
         await fs.rename(verified.stagingDir, destination);
     } catch (error) {
-        if (error.code !== "EEXIST" && error.code !== "ENOTEMPTY") throw error;
+        if (!await preparationRenameCollided(error, destination)) throw error;
         const existing = await fs.readFile(path.join(destination, "preparation.json"));
         if (!existing.equals(bytes)) invalid("Existing environment-package preparation does not match the verified artifact.");
         await verified.cleanup();

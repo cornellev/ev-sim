@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { isRenameCollision } from "../server/marketplace/PackagePreparation.js";
 import {
     aclIsOwnerOnly,
     aclReportIsOwnerOnly,
@@ -21,6 +22,8 @@ test("owner-only ACL admits only the current user", () => {
     assert.equal(aclIsOwnerOnly([allow(USER.toLowerCase(), 1), allow(USER, 2)], USER), true);
     assert.equal(aclIsOwnerOnly([allow(USER, 0x80000000)], USER), true);
     assert.equal(aclIsOwnerOnly([allow(EVERYONE, 2032127, 2), allow(USER, 1)], USER), true);
+    assert.equal(aclIsOwnerOnly([allow(USER, 2032127), allow(USER, 2032127, 2)], USER), true);
+    assert.equal(aclIsOwnerOnly([allow(USER, 2032127, 2)], USER), false);
     assert.equal(aclIsOwnerOnly([allow(USER, 2032127), allow(EVERYONE, 1)], USER), false);
     assert.equal(aclIsOwnerOnly([allow(USER, 1), { sid: USER, type: 1, rights: 1, propagation: 0 }], USER), false);
     assert.equal(aclIsOwnerOnly([allow(USER, 2)], USER), false);
@@ -83,6 +86,15 @@ test("Windows owner-only check reads the ACL and does not follow a symlink", asy
         queryAcl: async () => { throw probe; },
         fail: (cause) => Object.assign(new Error("probe"), { cause }),
     }), (error) => error.cause === probe);
+});
+
+test("Windows rename EPERM is a collision only when the destination exists", () => {
+    const denied = { code: "EPERM" };
+    assert.equal(isRenameCollision({ code: "EEXIST" }, false), true);
+    assert.equal(isRenameCollision({ code: "ENOTEMPTY" }, false), true);
+    assert.equal(isRenameCollision(denied, true), true);
+    assert.equal(isRenameCollision(denied, false), false);
+    assert.equal(isRenameCollision({ code: "EACCES" }, true), false);
 });
 
 test("Windows protect is applied once per path", async () => {

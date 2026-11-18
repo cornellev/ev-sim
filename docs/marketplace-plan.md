@@ -1615,6 +1615,15 @@ Local evidence on 2026-09-28:
 
 ## Decision log
 
+### 2026-11-17 — Windows private directories grant the folder and its children
+
+A Windows owner-only directory now has two current-user FullControl entries:
+one for the folder itself and one inherit-only entry for new children.
+Inheritance from the parent stays removed. Package preparation treats a
+Windows `EPERM` rename as an existing destination only when that destination
+is present. No marketplace schema, trust rule, semantic hash, or milestone
+status changed.
+
 ### 2026-11-17 — Windows marketplace privacy uses a current-user ACL
 
 Unix marketplace directories and secrets stay mode `0700` and `0600`. Windows
