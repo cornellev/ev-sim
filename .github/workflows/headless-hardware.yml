@@ -31,10 +31,11 @@ jobs:
             role: jetson-arm64
     runs-on: [self-hosted, "${{ matrix.runner }}"]
     timeout-minutes: 90
-    env:
-      CARGO_HOME: ${{ runner.temp }}/cev-zenoh-cargo
-      RUSTUP_HOME: ${{ runner.temp }}/cev-zenoh-rustup
     steps:
+      - name: Isolate Rust toolchain directories
+        run: |
+          echo "CARGO_HOME=$RUNNER_TEMP/cev-zenoh-cargo" >> "$GITHUB_ENV"
+          echo "RUSTUP_HOME=$RUNNER_TEMP/cev-zenoh-rustup" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
