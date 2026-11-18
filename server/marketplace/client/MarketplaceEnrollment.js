@@ -6,6 +6,7 @@ import { MARKETPLACE_ERROR_CODES, marketplaceError } from "../MarketplaceErrors.
 import { assertMarketplaceId, assertSha256 } from "../MarketplaceFormats.js";
 import { canonicalMarketplaceBytes } from "../MarketplaceJson.js";
 import { publisherKeyId } from "../PublisherSignatures.js";
+import { protectOwnerOnly } from "../registry/OwnerOnly.js";
 import { lstatOrNull, writeExclusiveDurable } from "../registry/RegistryFs.js";
 import {
     assertCredentialDocument,
@@ -146,6 +147,7 @@ export async function writeEnrollmentBundle({
     const temporary = path.join(connectionsDirectory, `.${directoryName}.${randomUUID()}.tmp`);
     await fs.mkdir(temporary, { mode: 0o700 });
     try {
+        await protectOwnerOnly(temporary, { directory: true });
         await writeExclusiveDurable(path.join(temporary, "connection.json"), canonicalMarketplaceBytes(connection));
         await writeExclusiveDurable(path.join(temporary, "read-credential.json"), canonicalMarketplaceBytes(credential));
         await writeExclusiveDurable(path.join(temporary, "publisher.token"), Buffer.from(writeToken));

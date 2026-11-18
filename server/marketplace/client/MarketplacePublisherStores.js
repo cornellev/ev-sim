@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { publisherKeyId } from "../PublisherSignatures.js";
 import { MARKETPLACE_ERROR_CODES, marketplaceError } from "../MarketplaceErrors.js";
+import { assertOwnerOnly } from "../registry/OwnerOnly.js";
 import {
     atomicReplaceDurable,
     ensureDirectory,
@@ -33,8 +34,8 @@ function conflict(expectedRevision, currentRevision, noun) {
     return error;
 }
 
-function recovery(message, pathName = null) {
-    return marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, message, { path: pathName });
+function recovery(message, pathName = null, cause = null) {
+    return marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, message, { path: pathName, cause });
 }
 
 function clone(value) {
@@ -192,9 +193,9 @@ export class MarketplacePublisherSecretStore {
     async read(secretRef) {
         const filePath = this.#path(secretRef);
         const stat = await lstatOrNull(filePath);
-        if (!stat?.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0) {
-            throw recovery("Publisher secret must be an owner-only regular file.", filePath);
-        }
+        await assertOwnerOnly(filePath, stat, {
+            fail: (cause) => recovery("Publisher secret must be an owner-only regular file.", filePath, cause),
+        });
         return readCanonical(filePath, assertPublisherSecretDocument, 96 * 1024);
     }
 

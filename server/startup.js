@@ -16,6 +16,22 @@ async function checkInternet(signal) {
     return true;
 }
 
+function printLogo() {
+    console.log(
+    "\n==================================="
+    )
+    
+    console.log(`                         _
+   ___ _   __      _____(_)___ ___
+  / _ \\ | / /_____/ ___/ / __ \`__ \\
+ /  __/ |/ /_____(__  ) / / / / / /
+ \\___/|___/     /____/_/_/ /_/ /_/ `)
+    
+    console.log(
+        "\n===================================\n"
+    )
+}
+
 async function startup(directoryRoot, env, signal) {
     if (!(await checkInternet(signal))) {
         console.warn(
@@ -28,20 +44,6 @@ async function startup(directoryRoot, env, signal) {
             '[WARNING] This is an early development build of ev-sim. \nIt is not intended for large scale usage and may contain bugs or incomplete features.\n\nPlease use at your own risk.'
         )
     }
-    
-    console.log(
-        "\n==================================="
-    )
-    
-    console.log(`                         _
-   ___ _   __      _____(_)___ ___
-  / _ \\ | / /_____/ ___/ / __ \`__ \\
- /  __/ |/ /_____(__  ) / / / / / /
- \\___/|___/     /____/_/_/ /_/ /_/ `)
-    
-    console.log(
-        "\n===================================\n"
-    )
 
     console.log(">> Starting ev-sim server... <<\n");
 
@@ -92,8 +94,6 @@ async function startup(directoryRoot, env, signal) {
     console.log("Environment variables are valid.\n");
 
 
-
-
     console.log("Startup checks complete.");
 
     console.log("\n>> Server startup complete. <<\n");
@@ -104,4 +104,5 @@ async function startup(directoryRoot, env, signal) {
 
 module.exports = {
     startup,
+    printLogo
 }

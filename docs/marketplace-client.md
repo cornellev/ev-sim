@@ -79,8 +79,11 @@ owner-only `connection.json`:
 {"kind":"cev-sim.marketplace-connection","version":1,"origin":"https://marketplace.example/","displayName":"Company Marketplace","trustedRootSha256":"<64 lowercase hex>","readCredentialFile":"read-credential.json","autoApprovePublisherIds":["com.example.publisher"],"publishingIdentities":[{"name":"Product Team","publisherId":"com.example.publisher","writeTokenFile":"publisher.token","privateKeyFile":"publisher.pk8.pem","default":true,"defaults":{"track":"stable","license":"Apache-2.0"}}]}
 ```
 
-The connection directory and bundle directories must be mode `0700`; every
-document and secret must be a nonsymlink regular file with mode `0600`.
+The connection directory and bundle directories must be mode `0700` on Unix;
+every document and secret must be a nonsymlink regular file with mode `0600`.
+Windows uses the same owner-only rule as a discretionary ACL: inheritance is
+removed and only the current user is granted access. Node's emulated file mode
+is not used on Windows.
 Referenced files are direct bundle children. Origins are canonical and unique;
 configured identities are unique and exactly one is default when identities
 exist. Invalid permissions, links, paths, pins, keys, shapes, or duplicates
@@ -159,7 +162,9 @@ receipts/sha256/<receiptHash>.json
 transactions/<transactionId>/{journal.json,writes/,completions/<operationId>.json}
 ```
 
-Directories use mode `0700`; files use mode `0600`. Credential documents are
+Directories use mode `0700` and files use mode `0600` on Unix. On Windows those
+nodes are private when their discretionary ACL grants access only to the current
+user and inherited entries are removed. Credential documents are
 immutable and may contain a bounded bearer token, private CA bundle, and
 optional client certificate/private key. The fixed-origin Node transport uses
 that material directly for HTTPS/mTLS; it is never projected into source,

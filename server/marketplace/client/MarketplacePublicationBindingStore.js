@@ -9,6 +9,7 @@ import {
 } from "../MarketplaceFormats.js";
 import { MARKETPLACE_ERROR_CODES, marketplaceError } from "../MarketplaceErrors.js";
 import { canonicalMarketplaceBytes, parseMarketplaceJsonBytes } from "../MarketplaceJson.js";
+import { assertOwnerOnly } from "../registry/OwnerOnly.js";
 import { atomicReplaceDurable, ensureDirectory, lstatOrNull, readRegularBytes, writeExclusiveDurable } from "../registry/RegistryFs.js";
 import { marketplaceClientPaths } from "./MarketplaceClientLayout.js";
 
@@ -72,9 +73,9 @@ export class MarketplacePublicationBindingStore {
         await ensureDirectory(paths.publisher);
         const existing = await lstatOrNull(paths.publicationBindings);
         if (!existing) await writeExclusiveDurable(paths.publicationBindings, canonicalMarketplaceBytes(emptyDocument()));
-        else if (!existing.isFile() || existing.isSymbolicLink() || (existing.mode & 0o077) !== 0) {
-            invalid("Marketplace publication bindings must be an owner-only regular file.");
-        }
+        else await assertOwnerOnly(paths.publicationBindings, existing, {
+            fail: (cause) => marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Marketplace publication bindings must be an owner-only regular file.", { cause }),
+        });
         const store = new MarketplacePublicationBindingStore(paths, emptyDocument(), now);
         store.document = await store.#read();
         return store;

@@ -3,6 +3,7 @@ import { createPrivateKey } from "node:crypto";
 import path from "node:path";
 
 import { MARKETPLACE_ERROR_CODES, marketplaceError } from "../MarketplaceErrors.js";
+import { assertOwnerOnly, protectOwnerOnly } from "../registry/OwnerOnly.js";
 import { lstatOrNull, readRegularBytes } from "../registry/RegistryFs.js";
 import { assertCredentialDocument, marketplaceClientPaths, parseLocalDocument } from "./MarketplaceClientLayout.js";
 import { parseMarketplaceConnectionDocument } from "./MarketplaceConnectionDocuments.js";
@@ -17,9 +18,10 @@ function configError(message, pathName = null, cause = null) {
 
 async function requirePrivateDirectory(directory) {
     const stat = await lstatOrNull(directory);
-    if (!stat?.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0) {
-        throw configError("Marketplace connection bundle must be an owner-only regular directory.", directory);
-    }
+    await assertOwnerOnly(directory, stat, {
+        directory: true,
+        fail: (cause) => configError("Marketplace connection bundle must be an owner-only regular directory.", directory, cause),
+    });
 }
 
 async function readPrivateFile(bundleDirectory, relativePath, { maxBytes = MAX_SECRET_BYTES, utf8 = false } = {}) {
@@ -27,9 +29,9 @@ async function readPrivateFile(bundleDirectory, relativePath, { maxBytes = MAX_S
     const relative = path.relative(bundleDirectory, filePath);
     if (relative.startsWith("..") || path.isAbsolute(relative)) throw configError("Marketplace connection file escapes its bundle.", filePath);
     const stat = await lstatOrNull(filePath);
-    if (!stat?.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0) {
-        throw configError("Marketplace connection file must be an owner-only regular file.", filePath);
-    }
+    await assertOwnerOnly(filePath, stat, {
+        fail: (cause) => configError("Marketplace connection file must be an owner-only regular file.", filePath, cause),
+    });
     const bytes = await readRegularBytes(filePath, { maxBytes });
     return utf8 ? bytes.toString("utf8") : bytes;
 }
@@ -95,8 +97,8 @@ export class MarketplaceConnectionPolicy {
         if (!exists) {
             if (directory) throw configError("Configured Marketplace connection directory does not exist.", resolved);
             await fs.mkdir(resolved, { recursive: true, mode: 0o700 });
-            await fs.chmod(resolved, 0o700);
         }
+        if (!directory) await protectOwnerOnly(resolved, { directory: true });
         await requirePrivateDirectory(resolved);
         const entries = [];
         for (const dirent of await fs.readdir(resolved, { withFileTypes: true })) {

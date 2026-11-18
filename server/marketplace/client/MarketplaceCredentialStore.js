@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 
 import { MARKETPLACE_ERROR_CODES, marketplaceError } from "../MarketplaceErrors.js";
+import { assertOwnerOnly } from "../registry/OwnerOnly.js";
 import {
     ensureDirectory,
     lstatOrNull,
@@ -19,8 +20,8 @@ import {
     parseLocalDocument,
 } from "./MarketplaceClientLayout.js";
 
-function recovery(message, pathName = null) {
-    return marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, message, { path: pathName });
+function recovery(message, pathName = null, cause = null) {
+    return marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, message, { path: pathName, cause });
 }
 
 export class MarketplaceCredentialStore {
@@ -57,9 +58,9 @@ export class MarketplaceCredentialStore {
         if (credentialRef === null || credentialRef === undefined) return null;
         const filePath = credentialPath(this.paths, credentialRef);
         const stat = await lstatOrNull(filePath);
-        if (!stat?.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0) {
-            throw recovery("Marketplace credential must be an owner-only regular file.", filePath);
-        }
+        await assertOwnerOnly(filePath, stat, {
+            fail: (cause) => recovery("Marketplace credential must be an owner-only regular file.", filePath, cause),
+        });
         const bytes = await readRegularBytes(filePath, { maxBytes: 16 * 1024 });
         const document = parseLocalDocument(bytes, assertCredentialDocument);
         const canonical = localDocumentBytes(document, assertCredentialDocument);

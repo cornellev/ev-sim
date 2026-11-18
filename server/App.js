@@ -213,8 +213,11 @@ async function start() {
     cleanups.push(() => new Promise((resolve, reject) => httpServer.close((error) => error && error.code !== 'ERR_SERVER_NOT_RUNNING' ? reject(error) : resolve())));
     await new Promise((resolve, reject) => { httpServer.once('listening', resolve); httpServer.once('error', reject); });
     abortController.signal.throwIfAborted();
-    console.log(`> Ready on http://${httpSecurity.bindHost}:${PORT}`);
-    console.log(`> MCP endpoint: http://${httpSecurity.bindHost}:${PORT}/mcp`);
+
+    require('./startup.js').printLogo();
+
+    console.log(`>> Ready on http://${httpSecurity.bindHost}:${PORT}`);
+    console.log(`>> MCP endpoint: http://${httpSecurity.bindHost}:${PORT}/mcp`);
 }
 start().catch((error) => {
     if (!abortController.signal.aborted) { console.error(error); process.exitCode = 1; }

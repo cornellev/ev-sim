@@ -1615,6 +1615,15 @@ Local evidence on 2026-09-28:
 
 ## Decision log
 
+### 2026-11-17 — Windows marketplace privacy uses a current-user ACL
+
+Unix marketplace directories and secrets stay mode `0700` and `0600`. Windows
+cannot report those modes, so owner-only there means a discretionary ACL with
+inheritance removed and access granted only to the current user. The default
+connection directory is repaired on startup. An existing explicit connection
+directory or provision output parent is checked and not rewritten. No
+marketplace schema, trust rule, semantic hash, or milestone status changed.
+
 ### 2026-11-17 — Widen fixture cevSim ranges for the 0.3.0 alpha line
 
 In-repo plugin packages that load on the 0.3.0 host now declare

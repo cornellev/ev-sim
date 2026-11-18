@@ -104,9 +104,12 @@ Reachability of the HTTPS port is the enrollment boundary. Revoke a key with
 does not offer URL enrollment. It atomically generates one Ed25519 key pair,
 registers the publisher and active key, creates
 a read token and publisher-scoped write token, and writes a mode-`0700` client
-connection bundle containing mode-`0600` documents and secrets. The first
+connection bundle containing mode-`0600` documents and secrets. On Windows the
+bundle directory and secret files instead receive a current-user discretionary
+ACL with inheritance removed. The first
 namespace is the publisher ID. The output parent must be owner-only and the
-command refuses to overwrite an existing bundle. It prints identifiers and the
+command refuses to overwrite an existing bundle. An output parent that already
+exists is checked and not rewritten. It prints identifiers and the
 output path, never token or private-key material.
 
 `publisher grant-namespace` adds namespaces to an existing publisher and to
