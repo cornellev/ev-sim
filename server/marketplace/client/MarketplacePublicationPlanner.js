@@ -180,6 +180,7 @@ export class MarketplacePublicationArtifactBuilder {
                 throw conflict("Run configuration changed after the publication draft was created.");
             }
             await writeExportedArchive(outputPath, (output) => exportRunTemplatePackage({
+                packageVersion: 1,
                 storageService: this.storageService,
                 manifestId: selection.manifestId,
                 expectedRevision: selection.expectedRevision,

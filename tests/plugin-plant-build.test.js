@@ -21,7 +21,7 @@ function document() {
         api: 1,
         id: "acme.dynamics",
         version: "1.0.0",
-        engines: { cevSim: ">=0.1.0 <0.3.0" },
+        engines: { cevSim: ">=0.1.0 <0.4.0" },
         capabilities: ["plant.step"],
         units: [],
         systems: [],

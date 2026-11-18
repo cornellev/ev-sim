@@ -10,6 +10,7 @@ import { getTelemetryStore } from "../telemetry/TelemetryRuntime.js";
 import { CEV_SIM_VERSION } from "../version.js";
 import { SAFE_LOG_BATCH_BYTES, TARGET_LOG_BATCH_BYTES } from "./LogLimits.js";
 import { isHeavyValue } from "../scripting/runtime/SignalStore.js";
+import { abortable, abortableDelay, RUN_STOP_TIMEOUT_MS, runStopTimeout } from "../simulation/AsyncCancellation.js";
 
 const FLUSH_INTERVAL_MS = 250;
 const DEFAULT_MAX_QUEUE_BYTES = 16 * 1024 * 1024;
@@ -22,15 +23,17 @@ const HTTP_LOG_TRANSPORT = Object.freeze({
     finalize: finalizeLogSession,
 });
 
-async function uploadWithRetry(transport, id, sequence, batch) {
+async function uploadWithRetry(transport, id, sequence, batch, signal) {
     let lastError;
     for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt += 1) {
         try {
-            return await transport.appendBatch(id, sequence, batch);
+            signal?.throwIfAborted();
+            return await abortable(transport.appendBatch(id, sequence, batch, { signal }), signal);
         } catch (error) {
             lastError = error;
+            if (signal?.aborted) throw signal.reason;
             if (attempt === RETRY_DELAYS_MS.length) break;
-            await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));
+            await abortableDelay(RETRY_DELAYS_MS[attempt], signal);
         }
     }
     throw lastError;
@@ -109,6 +112,8 @@ export class RecordingController {
         this._flushTimer = null;
         this._heavyFlushEncoder = null;
         this._uploadChain = Promise.resolve();
+        this._ioController = new AbortController();
+        this._stopPromise = null;
         this._lastValues = new Map();
         this._lastSamples = new Map();
         this._ruleCache = new Map();
@@ -194,6 +199,9 @@ export class RecordingController {
 
     async start(options = {}) {
         if (this.status !== "idle" && this.status !== "error") throw new Error("A log recording is already active.");
+        if (this._stopPromise) throw new Error("A log recording is still stopping.");
+        this._ioController.abort(new Error("Recording session was replaced."));
+        const io = this._ioController = new AbortController();
         this.status = "starting";
         this.error = null;
         this.profile = normalizeProfile(options.profile || DEFAULT_REPLAY_PROFILE);
@@ -201,7 +209,7 @@ export class RecordingController {
             ?? (this.profile.mode === "replay-safe");
         this._emit();
         try {
-            const created = await this.transport.createSession({
+            const created = await abortable(this.transport.createSession({
                 name: options.name,
                 environmentId: options.environmentId,
                 simulator: options.simulator,
@@ -215,7 +223,8 @@ export class RecordingController {
                 resolvedHash: options.resolvedHash || null,
                 provenance: options.provenance || null,
                 evidence: options.evidence || null,
-            });
+            }, { signal: io.signal }), io.signal);
+            io.signal.throwIfAborted();
             this.session = created.metadata;
             this.session.id = created.id;
             this.encoder = new SFLogBatchEncoder();
@@ -253,6 +262,7 @@ export class RecordingController {
             this._emit();
             return created;
         } catch (error) {
+            if (io !== this._ioController || io.signal.aborted) throw error;
             this.status = "error";
             this.error = error.message;
             this._clearCaptureState();
@@ -369,10 +379,14 @@ export class RecordingController {
         }
     }
 
+    _pauseOnError() {
+        if (this.haltSimulationOnError && this._simulation?.status !== "stopped" && this._simulation?.lifecycleState !== "finalized") this._simulation?.pause?.();
+    }
+
     _enqueueBatch(batch) {
         if (this.queuedBytes + batch.bytes.byteLength > this.maxQueueBytes) {
             if (this.haltSimulationOnError) {
-                this._simulation?.pause?.();
+                this._pauseOnError();
                 this.error = "Recording paused the simulation because the backend queue is full.";
                 this.status = "error";
                 this._clearCaptureState();
@@ -384,24 +398,29 @@ export class RecordingController {
             return false;
         }
         const sequence = this.sequence++;
+        const io = this._ioController;
+        const session = this.session;
         this.queuedBytes += batch.bytes.byteLength;
         this._emit();
         this._uploadChain = this._uploadChain
             .then(async () => {
-                const result = await uploadWithRetry(this.transport, this.session.id, sequence, batch);
+                const result = await uploadWithRetry(this.transport, session.id, sequence, batch, io.signal);
+                if (io !== this._ioController || io.signal.aborted) return;
                 this.bytesWritten = result.bytesWritten;
                 this.queuedBytes = Math.max(0, this.queuedBytes - batch.bytes.byteLength);
                 if (this.status === "recording" && this._pendingBytes() === 0) this._flushTotalBytes = 0;
                 this._emit();
             })
             .catch((error) => {
+                if (io !== this._ioController || io.signal.aborted) throw error;
                 this.error = error.message;
                 this.status = "error";
                 this._clearCaptureState();
-                if (this.haltSimulationOnError) this._simulation?.pause?.();
+                this._pauseOnError();
                 this._emit();
                 throw error;
             });
+        this._uploadChain.catch(() => {});
         return true;
     }
 
@@ -421,7 +440,7 @@ export class RecordingController {
             this.error = error.message;
             this.status = "error";
             this._clearCaptureState();
-            if (this.haltSimulationOnError) this._simulation?.pause?.();
+            this._pauseOnError();
             this._emit();
         }
     }
@@ -432,8 +451,44 @@ export class RecordingController {
         return true;
     }
 
-    async stop(finalizePatch = {}) {
-        if (!this.session || !["recording", "error"].includes(this.status)) return null;
+    cancel(error) {
+        this._ioController.abort(error);
+        clearInterval(this._flushTimer);
+        this._flushTimer = null;
+        this._unsubscribe?.();
+        this._unsubscribe = null;
+        this._heavyFlushEncoder = null;
+        this._clearCaptureState();
+        this.session = null;
+        this.encoder = null;
+        this.startedAt = null;
+        this.status = "error";
+        this.error = error.message;
+        this._emit();
+    }
+
+    stop(finalizePatch = {}, { signal = null } = {}) {
+        if (this._stopPromise) return this._stopPromise;
+        if (!this.session || !["recording", "error"].includes(this.status)) return Promise.resolve(null);
+        const io = this._ioController;
+        const cancel = () => { if (io === this._ioController) this.cancel(signal.reason); };
+        let timer;
+        if (signal) {
+            if (signal.aborted) cancel();
+            else signal.addEventListener("abort", cancel, { once: true });
+        } else timer = setTimeout(() => this.cancel(runStopTimeout("log finalization")), RUN_STOP_TIMEOUT_MS);
+        const pending = Promise.resolve().then(() => this._stop(finalizePatch, io)).finally(() => {
+            clearTimeout(timer);
+            signal?.removeEventListener("abort", cancel);
+            if (this._stopPromise === pending) this._stopPromise = null;
+        });
+        this._stopPromise = pending;
+        return pending;
+    }
+
+    async _stop(finalizePatch, io) {
+        io.signal.throwIfAborted();
+        const session = this.session;
         this.status = "stopping";
         this._flushTotalBytes = this._pendingBytes();
         this._emit();
@@ -457,15 +512,17 @@ export class RecordingController {
         try {
             let uploadError = null;
             try {
-                await this._uploadChain;
+                await abortable(this._uploadChain, io.signal);
             } catch (error) {
                 uploadError = error;
             }
-            const metadata = await this.transport.finalize(this.session.id, {
+            io.signal.throwIfAborted();
+            const metadata = await abortable(this.transport.finalize(session.id, {
                 ...finalizePatch,
                 incomplete: Boolean(finalizePatch.incomplete || this.error || this.droppedSamples || uploadError),
                 loggingError: uploadError?.message || finalizePatch.loggingError || null,
-            });
+            }, { signal: io.signal }), io.signal);
+            io.signal.throwIfAborted();
             this.status = "idle";
             this.session = null;
             this.encoder = null;
@@ -476,6 +533,7 @@ export class RecordingController {
             if (uploadError && this.haltSimulationOnError) throw uploadError;
             return metadata;
         } catch (error) {
+            if (io !== this._ioController || io.signal.aborted) throw error;
             this.status = "error";
             this.error = error.message;
             this._clearCaptureState();

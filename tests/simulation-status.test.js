@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
     deriveSimulationStatus,
+    simulationPlaybackDisabled,
     formatClockMode,
     formatRenderProviderStatus,
     formatSimulationTime,
@@ -13,6 +14,14 @@ const manifestRun = {
     activeRunId: "run-test",
     activeResolved: { manifest: { id: "igvc-default" }, resolvedHash: "abc" },
 };
+
+test("playback controls require a live run and stay disabled through shutdown", () => {
+    assert.equal(simulationPlaybackDisabled({ status: "idle" }), false);
+    for (const status of ["ready", "running", "paused"]) assert.equal(simulationPlaybackDisabled({ ...manifestRun, status }), false);
+    for (const status of ["preparing", "completed", "stopped", "interrupted", "error"]) assert.equal(simulationPlaybackDisabled({ ...manifestRun, status }), true);
+    assert.equal(simulationPlaybackDisabled({ ...manifestRun, status: "paused", transitioning: true }), true);
+    assert.equal(simulationPlaybackDisabled({ ...manifestRun, status: "paused", runResult: {} }), true);
+});
 
 test("simulation status distinguishes an unloaded scene from a manifest run", () => {
     assert.deepEqual(deriveSimulationStatus({ status: "idle" }, { status: "stopped" }), {

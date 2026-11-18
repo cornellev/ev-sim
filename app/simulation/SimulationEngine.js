@@ -30,6 +30,7 @@ import { OccupancyVisualizer } from "../visualization/visualizers/OccupancyVisua
 import { rep103ToThreeVector } from "../autonomy/CoordinateFrames.js";
 import { planActorId } from "../spatial/planview/selection.js";
 import { LiveVisualizationSource } from "../visualization/sources/LiveVisualizationSource.js";
+import { abortable } from "./AsyncCancellation.js";
 import { vehiclesLeafPath } from "../scripting/runtime/SignalPaths.js";
 
 const KERNEL_PROPERTIES = [
@@ -123,6 +124,8 @@ export class SimulationEngine {
         this.renderRuntime = null;
         this.renderProviderStatus = null;
         this._asyncAdvanceTail = Promise.resolve();
+        this._captureController = new AbortController();
+        this._asyncAdvanceCount = 0;
         this._advanceInFlight = null;
         this._advanceGeneration = 0;
         this._pendingFrameNs = 0;
@@ -793,6 +796,7 @@ export class SimulationEngine {
 
     dispose() {
         if (this.kernel.lifecycleState === "disposed") return;
+        this.cancelPendingAdvance();
         this.perspectiveView?.exit?.();
         detachPerspectiveView(this.perspectiveView);
         this.stopLoop();
@@ -887,18 +891,33 @@ export class SimulationEngine {
         return this.getSnapshot();
     }
 
-    stop({ reset = true, dispatchEpisode = true } = {}) {
-        this._clearVisualizationSource();
+    cancelPendingAdvance(error = Object.assign(new Error("Simulation work was cancelled."), {
+        code: "SIMULATION_CANCELLED", infrastructureFailure: true, requiresReset: true,
+    })) {
         this._advanceGeneration += 1;
-        this._pendingFrameNs = 0;
-        this._clearDueAdvance();
-        this._invalidatePendingPresentation();
-        this.accumulator = 0;
-        this.accumulatorNs = 0;
-        this._resetPacingState();
-        if (reset) this.frames = 0;
-        this._keyboardDrive = createKeyboardDriveState();
-        this.kernel.stop({ reset, dispatchEpisode });
+        this._captureController.abort(error);
+        this._captureController = new AbortController();
+        if (this._asyncAdvanceCount > 0) {
+            if (error.requiresReset && this.resolvedRun && this.lifecycleState !== "finalized") this.kernel.lifecycleState = "failed";
+            try { this.data?.devices?.()?.cancelCaptures?.(error); }
+            finally { this.renderRuntime?.cancelCaptures?.(error); }
+        }
+    }
+
+    stop({ reset = true, dispatchEpisode = true } = {}) {
+        try {
+            this.cancelPendingAdvance();
+            this._clearVisualizationSource();
+            this._advanceGeneration += 1;
+            this._pendingFrameNs = 0;
+            this._clearDueAdvance();
+            this._invalidatePendingPresentation();
+            this.accumulator = 0;
+            this.accumulatorNs = 0;
+            this._resetPacingState();
+            if (reset) this.frames = 0;
+            this._keyboardDrive = createKeyboardDriveState();
+        } finally { this.kernel.stop({ reset, dispatchEpisode }); }
         this._bindLiveVisualizationSource();
         this.autonomyOverlay?.disposeEstimateClone?.();
         if (reset) this.autonomyOverlay?.clear?.();
@@ -909,6 +928,7 @@ export class SimulationEngine {
     }
 
     reset(episodeSpec = null) {
+        this.cancelPendingAdvance();
         this._clearVisualizationSource();
         this._advanceGeneration += 1;
         this._pendingFrameNs = 0;
@@ -929,7 +949,7 @@ export class SimulationEngine {
 
     step(count = 1) {
         if (this._usesAsyncSensors()) {
-            return this._serializeAsyncAdvance(() => this._stepAsync(count));
+            return this._serializeAsyncAdvance((signal) => this._stepAsync(count, signal));
         }
         let source;
         try {
@@ -942,10 +962,11 @@ export class SimulationEngine {
         this._emit();
     }
 
-    async _stepAsync(count) {
+    async _stepAsync(count, signal) {
         let source;
         try {
             await this.kernel.stepAsync(count, {
+                signal,
                 beforeStep: () => { this._visualizationStepActive = true; source = this.liveVisualizationSource; this._submitKeyboardDrive(); },
                 afterStep: (dt) => this._updatePresentationAfterStep(dt, source),
             });
@@ -955,7 +976,10 @@ export class SimulationEngine {
     }
 
     _serializeAsyncAdvance(operation) {
-        const pending = this._asyncAdvanceTail.then(operation, operation);
+        const signal = this._captureController.signal;
+        this._asyncAdvanceCount += 1;
+        const advance = () => { signal.throwIfAborted(); return abortable(operation(signal), signal); };
+        const pending = this._asyncAdvanceTail.then(advance, advance).finally(() => { this._asyncAdvanceCount -= 1; });
         this._asyncAdvanceTail = pending.catch(() => {});
         return pending;
     }
@@ -1162,6 +1186,7 @@ export class SimulationEngine {
     }
 
     clearRun() {
+        this.cancelPendingAdvance();
         this._clearVisualizationSource();
         this.stopLoop();
         this._keyboardDrive = createKeyboardDriveState();
@@ -1216,9 +1241,9 @@ export class SimulationEngine {
         const frameNs = this._pendingFrameNs;
         this._pendingFrameNs = 0;
         const generation = this._advanceGeneration;
-        const pending = this._serializeAsyncAdvance(() => {
+        const pending = this._serializeAsyncAdvance((signal) => {
             if (generation !== this._advanceGeneration) return;
-            return this._advanceSimulationAsync(frameNs / 1e9);
+            return this._advanceSimulationAsync(frameNs / 1e9, signal);
         });
         this._advanceInFlight = pending;
         pending.then(() => {
@@ -1401,7 +1426,7 @@ export class SimulationEngine {
         } finally { this._visualizationStepActive = false; }
     }
 
-    async _advanceSimulationAsync(frameDt) {
+    async _advanceSimulationAsync(frameDt, signal) {
         const generation = this._advanceGeneration;
         const scaledDt = frameDt * this.speed;
         const frameStartMs = this.realtime ? this._nowMs() : 0;
@@ -1409,7 +1434,7 @@ export class SimulationEngine {
         const pacingStartNs = this.timeNs;
         const pacingStartSteps = this.steps;
         if (!this.deterministic) {
-            await this._fixedStepAsync(scaledDt);
+            await this._fixedStepAsync(scaledDt, signal);
             if (generation === this._advanceGeneration) this._recordPacingWindow(pacingStartNs, pacingStartMs, pacingStartSteps);
             return;
         }
@@ -1422,7 +1447,7 @@ export class SimulationEngine {
         let subSteps = 0;
         while (this.accumulatorNs >= this.stepNs && subSteps < this.maxSubSteps) {
             const previousStep = this.steps;
-            const shouldContinue = await this._fixedStepAsync(this.fixedDt);
+            const shouldContinue = await this._fixedStepAsync(this.fixedDt, signal);
             if (this.steps > previousStep) this.accumulatorNs -= this.stepNs;
             this.accumulator = this.accumulatorNs / 1e9;
             subSteps += 1;
@@ -1433,13 +1458,14 @@ export class SimulationEngine {
         if (generation === this._advanceGeneration) this._recordPacingWindow(pacingStartNs, pacingStartMs, pacingStartSteps);
     }
 
-    async _fixedStepAsync(dt) {
+    async _fixedStepAsync(dt, signal = this._captureController.signal) {
         const source = this.liveVisualizationSource;
         this._visualizationStepActive = true;
         const previousStep = this.steps;
         try {
             this._submitKeyboardDrive();
-            const shouldContinue = await this.kernel.advanceStepAsync(dt);
+            const shouldContinue = await this.kernel.advanceStepAsync(dt, { signal });
+            signal?.throwIfAborted();
             if (this.steps > previousStep) this._updatePresentationAfterStep(dt, source);
             return shouldContinue;
         } finally { this._visualizationStepActive = false; }

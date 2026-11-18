@@ -69,8 +69,8 @@ calibration and an optional fixed rear-wheel pair. Available binding values are
 for vehicle mounts or `poseInMap` for map mounts. Ambiguous or
 incompatible geometry fails compilation. `derived` entries have an ID and one
 fixed operation; later entries/fields can read `derived.<id>`. The only operations
-are `quaternionYaw`, `poseAtOffset` (`offsetFrom`) and `frameTransform`
-(`fromFrame`,`toFrame`). Poses require finite coordinates and unit quaternions.
+are `quaternionYaw`, `poseAtOffset` (`offsetFrom`), `frameTransform`
+(`fromFrame`,`toFrame`), and `stackOccupancy` (an onboarding `Grid` becomes one `cev.occupancy` value). Poses require finite coordinates and unit quaternions.
 `run.*` reads frozen resolved fields; execution hashes are unavailable.
 No adapter registry, expressions, source evaluation or dynamic imports exist
 in this native mapping path.

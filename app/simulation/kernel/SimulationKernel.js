@@ -4,6 +4,7 @@ import { assertResolvedContactHosts } from "../vehicles/ContactHostContract.js";
 import { ControlRuntime } from "../../autonomy/ControlRuntime.js";
 import { getBuiltInVehicleManifest } from "../../vehicles/BuiltInVehicleManifests.js";
 import { AssertionEngine } from "../AssertionEngine.js";
+import { abortable } from "../AsyncCancellation.js";
 import { GoalPublisher } from "../GoalPublisher.js";
 import { createLocalizationTruthPublisher } from "../LocalizationTruthPublisher.js";
 import { TopicContractRouter } from "../TopicContractRouter.js";
@@ -203,6 +204,7 @@ export class SimulationKernel {
     }
 
     play() {
+        if (this.lifecycleState === "failed") throw new Error("Cannot play a failed episode; reset it first.");
         if (this.lifecycleState === "disposed") {
             throw new Error("Cannot play a disposed simulation kernel.");
         }
@@ -225,15 +227,18 @@ export class SimulationKernel {
     }
 
     stop({ reset = true, dispatchEpisode = true } = {}) {
-        if (reset) this.reset(null, { episodePhase: "stop" });
-        else if (dispatchEpisode !== false) {
-            this.context.episodeOverlay?.clear?.();
-            this._dispatchEpisodePhase("stop");
-            this._applyEpisodeOverlayProducts();
+        try {
+            if (reset) this.reset(null, { episodePhase: "stop" });
+            else if (dispatchEpisode !== false) {
+                this.context.episodeOverlay?.clear?.();
+                this._dispatchEpisodePhase("stop");
+                this._applyEpisodeOverlayProducts();
+            }
+        } finally {
+            this.status = "stopped";
+            this._episodeStartArmed = false;
+            this.emitLifecycle("stop", { reset });
         }
-        this.status = "stopped";
-        this._episodeStartArmed = false;
-        this.emitLifecycle("stop", { reset });
     }
 
     reset(episodeSpec = null, { episodePhase = "start" } = {}) {
@@ -335,13 +340,14 @@ export class SimulationKernel {
         return shouldContinue;
     }
 
-    async stepAsync(count = 1, { afterStep = null, beforeStep = null } = {}) {
+    async stepAsync(count = 1, { afterStep = null, beforeStep = null, signal = null } = {}) {
         this.status = "paused";
         let shouldContinue = true;
         for (let index = 0; index < count; index += 1) {
+            signal?.throwIfAborted();
             const previousStep = this.steps;
             beforeStep?.();
-            shouldContinue = await this.advanceStepAsync(this.fixedDt);
+            shouldContinue = await this.advanceStepAsync(this.fixedDt, { signal });
             if (this.steps > previousStep) afterStep?.(this.fixedDt, this.getSnapshot());
             if (shouldContinue === false) break;
         }
@@ -591,7 +597,9 @@ export class SimulationKernel {
         this.pendingAcceptedActions.push(cloneSnapshot(action));
     }
 
-    advanceStep(dt = this.fixedDt, { asyncSensors = false } = {}) {
+    advanceStep(dt = this.fixedDt, { asyncSensors = false, signal = null } = {}) {
+        signal?.throwIfAborted();
+        if (this.lifecycleState === "failed") throw new Error("Cannot step a failed episode; reset it first.");
         if (this.lifecycleState === "disposed") {
             throw new Error("Cannot step a disposed simulation kernel.");
         }
@@ -708,13 +716,14 @@ export class SimulationKernel {
             this.context.devices.applyRigidBodyPoses?.(this.context.physics.rigidBodyPoses?.());
             if (this.modules.sensors) {
                 return asyncSensors && this.context.devices.updateAsync
-                    ? this.context.devices.updateAsync(dt, { step: this.steps, timeNs: this.timeNs })
+                    ? this.context.devices.updateAsync(dt, { step: this.steps, timeNs: this.timeNs }, { signal })
                     : this.context.devices.update(dt, { step: this.steps, timeNs: this.timeNs });
             }
             return null;
         });
 
         const finishStep = () => {
+            signal?.throwIfAborted();
             phase("delivery", () => {
                 const clock = { step: this.steps, timeNs: this.timeNs };
                 this.context.devices.deliver(clock);
@@ -779,11 +788,11 @@ export class SimulationKernel {
             if (this.resolvedRun) this.lifecycleState = "stepping";
             return shouldContinue;
         };
-        return sensorUpdate?.then ? sensorUpdate.then(finishStep) : finishStep();
+        return sensorUpdate?.then ? abortable(sensorUpdate, signal).then(finishStep) : finishStep();
     }
 
-    async advanceStepAsync(dt = this.fixedDt) {
-        return this.advanceStep(dt, { asyncSensors: true });
+    async advanceStepAsync(dt = this.fixedDt, { signal = null } = {}) {
+        return this.advanceStep(dt, { asyncSensors: true, signal });
     }
 
     _applyQueuedInputs(step) {

@@ -527,6 +527,9 @@ export async function inspectRunTemplatePackageArtifact(adapter, rawHandle, cont
         limits: context.limits,
         signal: context.signal,
     });
+    if (inspection.version !== adapter.contract.version) {
+        throw marketplaceError(MARKETPLACE_ERROR_CODES.UNSUPPORTED_SCHEMA, "Registry run-template installation requires package version 1.");
+    }
     if (inspection.archiveSha256 !== handle.sha256 || inspection.archiveSizeBytes !== handle.sizeBytes) {
         throw marketplaceError(MARKETPLACE_ERROR_CODES.ARTIFACT_HASH_MISMATCH, "Run-template package identity does not match its descriptor.");
     }
@@ -1104,12 +1107,7 @@ export function createEnvironmentPackageLifecycleAdapter({
     });
 }
 
-export function createRunTemplatePackageLifecycleAdapter({
-    storageService, pluginStore, editorAssetStore, visualAssetStore, receiptStore,
-} = {}) {
-    if (!storageService || !pluginStore || !editorAssetStore || !visualAssetStore || !receiptStore) {
-        throw new TypeError("Run-template lifecycle adapter requires storage, plugin, editor, visual, and receipt stores.");
-    }
+export function createRunTemplatePackageOperationExecutor({ storageService, pluginStore, editorAssetStore, visualAssetStore }) {
     const requirePlannedOperation = (adapterPlan, operation) => {
         const planned = adapterPlan?.operations?.find((entry) => entry.operationId === operation?.operationId);
         if (!planned || !isDeepStrictEqual(planned, operation)) {
@@ -1216,37 +1214,8 @@ export function createRunTemplatePackageLifecycleAdapter({
         throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, `Unknown run-template environment operation ${operation.kind}.`);
     };
 
-    return defineArtifactAdapter({
-        id: "run-template@1",
-        contentKind: "run-template",
-        inspect: inspectRunTemplatePackageArtifact,
-        validateInspection: validateRunTemplatePluginInventory,
-        receiptResourceKinds: [
-            "editor-asset-revision", "environment", "run-manifest", "run-template-plugin-package",
-            "scenario", "script-binding", "vehicle", "visual-script",
-        ],
-        async plan(_adapter, { release, artifactHandle, context }) {
-            if (!context.workDirectory) throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Run-template planning requires durable job work storage.");
-            const prepared = await prepareRunTemplatePackage({
-                archivePath: artifactHandle.path,
-                workDirectory: context.workDirectory,
-                signal: context.signal,
-            });
-            if (prepared.verified.archiveSha256 !== artifactHandle.sha256) {
-                throw marketplaceError(MARKETPLACE_ERROR_CODES.ARTIFACT_HASH_MISMATCH, "Prepared run-template package changed after inspection.");
-            }
-            return planRunTemplatePackageImport({
-                verified: prepared.verified,
-                preparation: prepared,
-                storageService,
-                editorAssetStore,
-                visualAssetStore,
-                receiptStore,
-                release,
-                context,
-            });
-        },
-        async commit(_adapter, { operation, adapterPlan, context }) {
+    return {
+        async commit({ operation, adapterPlan, context }) {
             operation = requirePlannedOperation(adapterPlan, operation);
             const preparation = await readRunTemplatePackagePreparation({
                 workDirectory: context.workDirectory,
@@ -1296,9 +1265,49 @@ export function createRunTemplatePackageLifecycleAdapter({
             }
             throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, `Unknown run-template operation ${operation.kind}.`);
         },
-        async recover(adapter, input) {
-            return adapter.commit(input);
+        async recover(input) { return this.commit(input); },
+    };
+}
+
+export function createRunTemplatePackageLifecycleAdapter({
+    storageService, pluginStore, editorAssetStore, visualAssetStore, receiptStore,
+} = {}) {
+    if (!storageService || !pluginStore || !editorAssetStore || !visualAssetStore || !receiptStore) {
+        throw new TypeError("Run-template lifecycle adapter requires storage, plugin, editor, visual, and receipt stores.");
+    }
+    const executor = createRunTemplatePackageOperationExecutor({ storageService, pluginStore, editorAssetStore, visualAssetStore });
+    return defineArtifactAdapter({
+        id: "run-template@1",
+        contentKind: "run-template",
+        inspect: inspectRunTemplatePackageArtifact,
+        validateInspection: validateRunTemplatePluginInventory,
+        receiptResourceKinds: [
+            "editor-asset-revision", "environment", "run-manifest", "run-template-plugin-package",
+            "scenario", "script-binding", "vehicle", "visual-script",
+        ],
+        async plan(_adapter, { release, artifactHandle, context }) {
+            if (!context.workDirectory) throw marketplaceError(MARKETPLACE_ERROR_CODES.RECOVERY_REQUIRED, "Run-template planning requires durable job work storage.");
+            const prepared = await prepareRunTemplatePackage({
+                archivePath: artifactHandle.path,
+                workDirectory: context.workDirectory,
+                signal: context.signal,
+            });
+            if (prepared.verified.archiveSha256 !== artifactHandle.sha256) {
+                throw marketplaceError(MARKETPLACE_ERROR_CODES.ARTIFACT_HASH_MISMATCH, "Prepared run-template package changed after inspection.");
+            }
+            return planRunTemplatePackageImport({
+                verified: prepared.verified,
+                preparation: prepared,
+                storageService,
+                editorAssetStore,
+                visualAssetStore,
+                receiptStore,
+                release,
+                context,
+            });
         },
+        async commit(_adapter, input) { return executor.commit(input); },
+        async recover(_adapter, input) { return executor.recover(input); },
         async createReceipt(_adapter, { adapterPlan }) {
             return { mappings: adapterPlan.mappings };
         },

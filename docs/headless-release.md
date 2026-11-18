@@ -109,15 +109,20 @@ hardware reports remain mandatory external candidate evidence before a tagged
 GitHub prerelease; this document does not claim that those hosted/hardware
 gates have run for `0.2.0`.
 
+The 2026-11-17 source line is `0.3.0`. That packaging bump widens in-repo plugin
+engine ranges and does not change protocol `1.5`, run manifest `13`, run bundle
+`1`, SFLog `1`, or characterization bytes. The same hosted, soak, Playwright,
+NVIDIA, and Jetson gates remain mandatory before a tagged GitHub prerelease.
+
 ## Internal artifacts
 
 `npm run dist:headless` stages a release-ready package without changing the
 private browser application package. It emits:
 
 ```text
-cev-sim-0.2.0.tgz
-cev_sim-0.2.0-py3-none-any.whl
-cev_sim-0.2.0.tar.gz
+cev-sim-0.3.0.tgz
+cev_sim-0.3.0-py3-none-any.whl
+cev_sim-0.3.0.tar.gz
 release-manifest.json
 SHA256SUMS
 ```
@@ -153,11 +158,11 @@ GitHub OIDC and provenance, not long-lived tokens.
 
 | Component | Candidate version | Compatibility |
 | --- | --- | --- |
-| npm CLI/worker | `cev-sim@0.2.0` | Node `>=22.22.2 <23`; Linux/macOS x64/ARM64 |
-| Python adapter | `cev-sim==0.2.0` | Python `>=3.10,<3.14`; pure Python wheel and sdist |
+| npm CLI/worker | `cev-sim@0.3.0` | Node `>=22.22.2 <23`; Linux/macOS x64/ARM64 |
+| Python adapter | `cev-sim==0.3.0` | Python `>=3.10,<3.14`; pure Python wheel and sdist |
 | Headless protocol | `1.5` | Server accepts historical JSON clients through `1.5`; package admission requires configured Unix protocol `1.4` |
-| Run manifest / bundle | `11` / `1` | Unchanged by the 0.2.0 packaging bump; release metadata now tracks `RUN_MANIFEST_VERSION` |
-| SFLog | `1` | Unchanged by the 0.2.0 packaging bump |
+| Run manifest / bundle | `13` / `1` | Unchanged by the 0.3.0 packaging bump; release metadata tracks `RUN_MANIFEST_VERSION` |
+| SFLog | `1` | Unchanged by the 0.3.0 packaging bump |
 
 `release:check` enforces coordinated root package, plugin, `app/version.js`,
 Python project, and Python runtime versions; MCP advertisement of

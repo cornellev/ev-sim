@@ -4,6 +4,7 @@ import test from "node:test";
 import { buildNativeCameraInfo, buildNativeImage, buildNativePoints } from "../app/simulation/sensors/NativeSensorProducts.js";
 import { flipRows } from "../app/3d/environment/visual/VisualCapturePipeline.js";
 import { SensorPublisher, normalizeCaptureResult } from "../app/3d/devices/SensorPublisher.js";
+import { runStopTimeout } from "../app/simulation/AsyncCancellation.js";
 
 test("camera rows are flipped to top-left order", () => {
     const bottomUp = new Uint8Array([
@@ -73,6 +74,22 @@ test("sensor RNG streams are stable per seed, sensor id, and sample index", () =
     assert.deepEqual(samplesFor(42, "front"), samplesFor(42, "front"));
     assert.notDeepEqual(samplesFor(42, "front"), samplesFor(43, "front"));
     assert.notDeepEqual(samplesFor(42, "front"), samplesFor(42, "rear"));
+});
+
+test("cancelled capture cannot enqueue or deliver a late product after reset", async () => {
+    let finish;
+    const device = { telemetryId: "sensor", captureAt: () => new Promise((resolve) => { finish = resolve; }), getParent: () => null };
+    const publisher = new SensorPublisher(device, { id: "sensor", rateHz: 10, phaseNs: 0, latency: {}, maxQueueFrames: 4 }, { seed: 42, topics: [] });
+    const abort = new AbortController();
+    const rejected = assert.rejects(publisher.updateAsync({ step: 6, timeNs: 100_000_002 }, { signal: abort.signal }), { code: "RUN_STOP_TIMEOUT" });
+    abort.abort(runStopTimeout("sensor work"));
+    await rejected;
+    publisher.reset();
+    const state = publisher.getDeterministicState();
+    finish({ messages: [], observation: { data: Uint8Array.of(99) } });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(publisher.queue.length, 0);
+    assert.deepEqual(publisher.getDeterministicState(), state);
 });
 
 test("publisher capture results can delay GPU sample timestamps by one period", () => {

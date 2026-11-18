@@ -3,6 +3,7 @@ import path from "node:path";
 import { pipeline } from "node:stream/promises";
 
 import { compareUtf8 } from "../../app/math/compareUtf8.js";
+import { createProtobufInterfaceResource } from "../../app/interfaces/ProtobufRunBinding.js";
 import { collectAssetInstanceReferences } from "../../app/editor-assets/EditorAssetContract.js";
 import { presentStoredEnvironment } from "../../app/3d/environment/EnvironmentManifestPolicy.js";
 import { createBuiltInIGVCEnvironmentManifest } from "../../app/3d/igvc/IGVCEnvironmentDocument.js";
@@ -184,11 +185,12 @@ function normalizeScripts(value) {
     return entries;
 }
 
-function normalizePlugins(value) {
+function normalizePlugins(value, packageVersion) {
     const entries = dense(value, "$manifest.plugins").map((entry, index) => {
         const field = `$manifest.plugins.${index}`;
         exactKeys(entry, [
-            "pluginId", "version", "packageHash", "runtimeHash", "recordSha256", "sizeBytes", "release",
+            "pluginId", "version", "packageHash", "runtimeHash", "recordSha256", "sizeBytes",
+            ...(packageVersion === 1 || Object.hasOwn(entry, "release") ? ["release"] : []),
         ], field);
         return {
             pluginId: portableId(entry.pluginId, `${field}.pluginId`),
@@ -197,7 +199,7 @@ function normalizePlugins(value) {
             runtimeHash: digest(entry.runtimeHash, `${field}.runtimeHash`),
             recordSha256: digest(entry.recordSha256, `${field}.recordSha256`),
             sizeBytes: nonNegative(entry.sizeBytes, `${field}.sizeBytes`),
-            release: releaseRef(entry.release, `${field}.release`),
+            ...(Object.hasOwn(entry, "release") ? { release: releaseRef(entry.release, `${field}.release`) } : {}),
         };
     });
     sortedUnique(entries, (entry) => entry.pluginId, "$manifest.plugins");
@@ -208,8 +210,9 @@ export function normalizeRunTemplatePackageManifest(value) {
     exactKeys(value, [
         "kind", "version", "root", "environmentClosure", "scenarios", "vehicles", "scripts",
         "bindings", "plugins", "builtIns", "contracts",
+        ...(value?.version === 2 ? ["protobufInterface"] : []),
     ], "$manifest");
-    if (value.kind !== RUN_TEMPLATE_PACKAGE_KIND || value.version !== RUN_TEMPLATE_PACKAGE_VERSION) {
+    if (value.kind !== RUN_TEMPLATE_PACKAGE_KIND || ![1, 2].includes(value.version)) {
         invalid(`Expected ${RUN_TEMPLATE_PACKAGE_KIND}@${RUN_TEMPLATE_PACKAGE_VERSION}.`, "$manifest.kind");
     }
     exactKeys(value.bindings, ["recordSha256", "sizeBytes", "bindingIds"], "$manifest.bindings");
@@ -238,7 +241,7 @@ export function normalizeRunTemplatePackageManifest(value) {
     sortedUnique(contracts, (entry) => `${entry.kind}\0${String(entry.version).padStart(16, "0")}`, "$manifest.contracts");
     return {
         kind: RUN_TEMPLATE_PACKAGE_KIND,
-        version: RUN_TEMPLATE_PACKAGE_VERSION,
+        version: value.version,
         root: normalizeRoot(value.root),
         environmentClosure: value.environmentClosure === null ? null : normalizeEnvironmentPackageManifest(value.environmentClosure),
         scenarios: normalizeScenarios(value.scenarios),
@@ -249,9 +252,20 @@ export function normalizeRunTemplatePackageManifest(value) {
             sizeBytes: nonNegative(value.bindings.sizeBytes, "$manifest.bindings.sizeBytes"),
             bindingIds,
         },
-        plugins: normalizePlugins(value.plugins),
+        plugins: normalizePlugins(value.plugins, value.version),
+        ...(value.version === 2 ? { protobufInterface: normalizeInterfaceDescriptor(value.protobufInterface) } : {}),
         builtIns,
         contracts,
+    };
+}
+
+function normalizeInterfaceDescriptor(value) {
+    if (value === null) return null;
+    exactKeys(value, ["interfaceHash", "recordSha256", "sizeBytes"], "$manifest.protobufInterface");
+    return {
+        interfaceHash: digest(value.interfaceHash, "$manifest.protobufInterface.interfaceHash"),
+        recordSha256: digest(value.recordSha256, "$manifest.protobufInterface.recordSha256"),
+        sizeBytes: nonNegative(value.sizeBytes, "$manifest.protobufInterface.sizeBytes"),
     };
 }
 
@@ -260,6 +274,7 @@ function contractsFor(captured) {
     const add = (kind, version) => contracts.set(`${kind}\0${version}`, { kind, version });
     add(captured.manifest.kind, captured.manifest.version);
     add(captured.bindingManifest.kind, captured.bindingManifest.version);
+    if (captured.protobufInterface) add(captured.protobufInterface.document.kind, captured.protobufInterface.document.version);
     if (captured.environment) add(captured.environment.manifest.kind, captured.environment.manifest.version);
     for (const entry of captured.scenarioRecords) add(entry.scenario.kind, entry.scenario.version);
     for (const { manifest } of captured.vehicles.custom.values()) add(manifest.kind, manifest.version);
@@ -275,7 +290,7 @@ function contractsFor(captured) {
 function packageManifest(captured) {
     return normalizeRunTemplatePackageManifest({
         kind: RUN_TEMPLATE_PACKAGE_KIND,
-        version: RUN_TEMPLATE_PACKAGE_VERSION,
+        version: captured.packageVersion,
         root: {
             manifestId: captured.manifest.id,
             revision: captured.storedManifest.revision,
@@ -319,10 +334,15 @@ function packageManifest(captured) {
             runtimeHash: entry.runtimeHash,
             recordSha256: entry.recordSha256,
             sizeBytes: entry.sizeBytes,
-            release: entry.release,
+            ...(entry.release ? { release: entry.release } : {}),
         })),
         builtIns: captured.builtIns,
         contracts: contractsFor(captured),
+        ...(captured.packageVersion === 2 ? { protobufInterface: captured.protobufInterface ? {
+            interfaceHash: captured.protobufInterface.hash,
+            recordSha256: captured.interfaceRecord.sha256,
+            sizeBytes: captured.interfaceRecord.bytes.length,
+        } : null } : {}),
     });
 }
 
@@ -341,11 +361,12 @@ export async function exportRunTemplatePackage({
     manifestId,
     expectedRevision,
     pluginReleaseRefs = [],
+    packageVersion = 1,
     output = null,
     signal,
 } = {}) {
     signal = optionalAbortSignal(signal);
-    const captured = await collectRunTemplateClosure({ storageService, manifestId, expectedRevision, pluginReleaseRefs });
+    const captured = await collectRunTemplateClosure({ storageService, manifestId, expectedRevision, pluginReleaseRefs, packageVersion });
     await recheckRunTemplateSnapshot({ storageService, captured });
     const manifest = packageManifest(captured);
     const manifestBytes = Buffer.from(canonicalMarketplaceBytes(manifest));
@@ -408,6 +429,7 @@ function expectedDescriptors(manifest) {
     const recordDigests = new Set([
         manifest.root.recordSha256,
         manifest.bindings.recordSha256,
+        ...(manifest.protobufInterface ? [manifest.protobufInterface.recordSha256] : []),
         ...environmentRecordDigests(manifest.environmentClosure),
         ...manifest.scenarios.map((entry) => entry.recordSha256),
         ...manifest.vehicles.map((entry) => entry.recordSha256),
@@ -732,10 +754,23 @@ async function verifyStagedRunTemplate(archive, limits) {
     const runValidation = validateRunManifest(root, { sensorRegistry });
     if (!runValidation.ok) invalid(`Run manifest is invalid: ${runValidation.issues[0]?.message ?? "unknown error"}.`);
     assertStaticClosure({ manifest, root, scenarios, vehicles, scripts, bindings, plugins, environment });
+    let protobufInterface = null;
+    if (manifest.version === 2) {
+        if ((root.protobuf.mode === "zenoh") !== Boolean(manifest.protobufInterface)) invalid("Protobuf interface closure does not match the run selection.");
+        if (manifest.protobufInterface) {
+            const descriptor = manifest.protobufInterface;
+            if (descriptor.interfaceHash !== root.protobuf.interfaceHash) invalid("Protobuf interface descriptor does not match the run pin.");
+            protobufInterface = createProtobufInterfaceResource(parseCanonicalRecord(
+                recordBytes.get(descriptor.recordSha256), descriptor.recordSha256, descriptor.sizeBytes, "Protobuf interface",
+            ), descriptor.interfaceHash);
+            if (root.version === 13 && protobufInterface.document.version !== 2) invalid("Native run templates require Protobuf interface version 2.");
+        }
+    }
     const actualContracts = new Map();
     const addContract = (kind, version) => actualContracts.set(`${kind}\0${version}`, { kind, version });
     addContract(root.kind, root.version);
     addContract(bindings.kind, bindings.version);
+    if (protobufInterface) addContract(protobufInterface.document.kind, protobufInterface.document.version);
     if (manifest.environmentClosure) addContract(manifest.environmentClosure.kind, manifest.environmentClosure.version);
     for (const scenario of scenarios.values()) addContract(scenario.kind, scenario.version);
     for (const vehicle of vehicles.values()) addContract(vehicle.kind, vehicle.version);
@@ -755,6 +790,7 @@ async function verifyStagedRunTemplate(archive, limits) {
         stagingDir: archive.stagingDir,
         entries: Object.freeze(archive.entries.map((entry) => Object.freeze({ ...entry }))),
         root,
+        protobufInterface,
         environment,
         environmentVerified,
         scenarios,
@@ -817,7 +853,7 @@ export async function inspectRunTemplatePackage({ archivePath, stagingRoot, limi
             pluginId: entry.pluginId,
             packageHash: entry.packageHash,
             runtimeHash: entry.runtimeHash,
-            release: structuredClone(entry.release),
+            ...(entry.release ? { release: structuredClone(entry.release) } : {}),
         })),
     });
     if (!retainStaging) await verified.cleanup();

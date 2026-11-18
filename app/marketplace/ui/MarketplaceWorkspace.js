@@ -18,6 +18,7 @@ import {
     createMarketplaceInstallPlan,
     getMarketplaceItem,
     getMarketplaceLibrary,
+    listLocalRunTemplateImports,
     listMarketplaceInstalled,
     listMarketplaceAdvisories,
     getMarketplacePolicy,
@@ -50,6 +51,7 @@ import {
     TextInput,
     WorkspaceFrame,
 } from "../../ui";
+import LocalRunTemplateImportDialog from "./LocalRunTemplateImportDialog.js";
 import MarketplacePaneSplitter from "./MarketplacePaneSplitter.js";
 import SafeMarketplaceMarkdown, { MARKETPLACE_ACTION_LABELS } from "./SafeMarketplaceMarkdown.js";
 import PublishTab from "./publish/PublishTabStreamlined.js";
@@ -863,13 +865,15 @@ function SecurityTab() {
 
 function LibraryTab({ onOpenEnvironment, onOpenRunConfig, onOpenDiscover }) {
     const [library, setLibrary] = useState(null);
+    const [localImports, setLocalImports] = useState([]);
+    const [localImport, setLocalImport] = useState(undefined);
     const [libraryQuery, setLibraryQuery] = useState("");
     const [libraryKind, setLibraryKind] = useState("");
     const [error, setError] = useState(null);
     const [removing, setRemoving] = useState(null);
     const [installTarget, setInstallTarget] = useState(null);
-    const load = useCallback(() => getMarketplaceLibrary().then((value) => {
-        setLibrary(value); setError(null);
+    const load = useCallback(() => Promise.all([getMarketplaceLibrary(), listLocalRunTemplateImports()]).then(([value, imports]) => {
+        setLibrary(value); setLocalImports(imports.entries.filter((entry) => entry.phase !== "cancelled")); setError(null);
     }).catch((caught) => setError(marketplaceApiErrorMessage(caught))), []);
     useEffect(() => { const timer = setTimeout(load, 0); return () => clearTimeout(timer); }, [load]);
     const reviewUpdate = async (entry) => {
@@ -907,14 +911,15 @@ function LibraryTab({ onOpenEnvironment, onOpenRunConfig, onOpenDiscover }) {
         return (!needle || haystack.includes(needle)) && (!libraryKind || entry.contentKind === libraryKind);
     }).sort((left, right) => Number(Boolean(right.update)) - Number(Boolean(left.update))
         || left.displayName.localeCompare(right.displayName));
+    const visibleImports = localImports.filter((entry) => (!libraryKind || libraryKind === "run-template") && (!needle || (entry.name + " " + entry.destinationManifestId).toLocaleLowerCase("en-US").includes(needle)));
     return <div className={styles.sources}>
-        <header className={styles.sourcesHeader}><div><h2>Library</h2><p>{updateCount ? `${updateCount} ${updateCount === 1 ? "update" : "updates"}` : "Installed content and verified updates."}</p></div><Button size="compact" onClick={load}><IconRefresh size={14} aria-hidden="true" /> Refresh</Button></header>
+        <header className={styles.sourcesHeader}><div><h2>Library</h2><p>{updateCount ? `${updateCount} ${updateCount === 1 ? "update" : "updates"}` : "Installed content and verified updates."}</p></div><div className={styles.sourceActions}><Button onClick={() => setLocalImport(null)}>Import package</Button><Button size="compact" onClick={load}><IconRefresh size={14} aria-hidden="true" /> Refresh</Button></div></header>
         <div className={styles.libraryToolbar}>
             <div className={styles.searchBox}><IconSearch size={15} aria-hidden="true" /><input aria-label="Search library" value={libraryQuery} onChange={(event) => setLibraryQuery(event.target.value)} placeholder="Search installed content" /></div>
             <NativeSelect aria-label="Library kind" value={libraryKind} onChange={(event) => setLibraryKind(event.target.value)}><option value="">All kinds</option>{CONTENT_KINDS.map((kind) => <option key={kind} value={kind}>{displayKind(kind)}</option>)}</NativeSelect>
         </div>
         {error && <StatusMessage tone="danger" title="Library operation failed">{error}</StatusMessage>}
-        {library.entries.length === 0 ? <div className={styles.emptyHero}><IconCloudOff size={30} aria-hidden="true" /><h2>Your library is empty</h2><p>Content appears here after you install it from Discover.</p><Button onClick={onOpenDiscover}>Browse Discover</Button></div> : visible.length === 0 ? <AsyncState status="empty" title="No matching installed content" detail="Change the library search or kind filter." /> : <ul className={styles.libraryList}>{visible.map((entry) => {
+        {library.entries.length === 0 && localImports.length === 0 ? <div className={styles.emptyHero}><IconCloudOff size={30} aria-hidden="true" /><h2>Your library is empty</h2><p>Install from Discover or import a shared run-template file.</p><Button onClick={onOpenDiscover}>Browse Discover</Button><Button onClick={() => setLocalImport(null)}>Import package</Button></div> : visible.length === 0 && visibleImports.length === 0 ? <AsyncState status="empty" title="No matching library content" detail="Change the library search or kind filter." /> : visible.length > 0 && <ul className={styles.libraryList}>{visible.map((entry) => {
             const environment = entry.mappings.find((mapping) => mapping.resourceKind === "environment");
             const run = entry.mappings.find((mapping) => mapping.resourceKind === "run-manifest");
             const direct = entry.owners.some((owner) => owner.kind === "direct");
@@ -930,6 +935,8 @@ function LibraryTab({ onOpenEnvironment, onOpenRunConfig, onOpenDiscover }) {
                 </div>
             </article></li>;
         })}</ul>}
+        {visibleImports.length > 0 && <section><h3>Imported from files</h3><ul className={styles.libraryList}>{visibleImports.map((entry) => <li key={entry.importId}><article className={styles.libraryRow}><div><h2>{entry.name}</h2><p className={styles.muted}>Unverified file · {entry.phase}</p><Button size="compact" onClick={() => setLocalImport(entry)}>{entry.phase === "complete" ? "View import" : "Review import"}</Button>{entry.phase === "complete" && <Button size="compact" onClick={() => onOpenRunConfig?.(entry.destinationManifestId)}>Open run configuration</Button>}</div></article></li>)}</ul></section>}
+        {localImport !== undefined && <LocalRunTemplateImportDialog initialImport={localImport} onClose={() => { setLocalImport(undefined); load(); }} onOpenRunConfig={onOpenRunConfig} />}
         <InstallDialog target={installTarget} onClose={() => setInstallTarget(null)} onInstalled={() => { setInstallTarget(null); load(); }} onOpenEnvironment={onOpenEnvironment} onOpenRunConfig={onOpenRunConfig} />
         <DialogSurface open={Boolean(removing)} onOpenChange={(open) => !open && setRemoving(null)} title={removing?.collection ? "Remove collection" : "Remove installation"} description="This removes the direct owner only. Collection and authored content are preserved while another owner remains." footer={<><Button onClick={() => setRemoving(null)}>Cancel</Button><Button variant="danger" onClick={remove}>Remove</Button></>}>
             <StatusMessage tone="warning" title={removing ? `${removing.itemId}@${removing.releaseVersion}` : "Exact release"}>Other direct or collection owners keep a member installed. Last-owner removal updates Marketplace visibility but retains immutable receipts, cached artifacts, CAS bytes, visual roots, and authored content.</StatusMessage>

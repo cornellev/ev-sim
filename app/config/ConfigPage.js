@@ -916,6 +916,7 @@ export default function ConfigPage({ onLaunch, onOpenWorkspace, initialManifestI
     const exportTemplate = () => perform(async () => {
         const current = dirty ? await save() : saved;
         const archive = await exportRunTemplatePackage(current.id, {
+            packageVersion: 2,
             expectedRevision: current.revision,
         });
         downloadBlob(`${current.id}.run-template.tar`, archive);

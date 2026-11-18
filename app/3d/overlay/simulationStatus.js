@@ -1,6 +1,10 @@
 const TERMINAL_FAILURES = new Set(["assertion-failed", "error"]);
 const TERMINAL_SUCCESS = new Set(["completed"]);
 
+export function simulationPlaybackDisabled(runState = {}) {
+    return Boolean(runState.transitioning || (runState.activeRunId && (runState.runResult || !["ready", "running", "paused"].includes(runState.status))));
+}
+
 export function deriveSimulationStatus(runState = {}, simState = {}) {
     const hasManifest = Boolean(runState.activeResolved && runState.activeRunId);
     const runStatus = String(runState.status || "idle");

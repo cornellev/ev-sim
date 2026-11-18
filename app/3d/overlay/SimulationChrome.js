@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { SimulationMenu } from "./SimulationMenu";
 import { SimulationCleanupOverlay } from "./SimulationCleanupOverlay";
 import { VisualPreviewDiagnostic } from "./VisualPreviewDiagnostic";
@@ -9,14 +9,43 @@ import { SensorProductPanel } from "./SensorProductPanel";
 import { ControlsHud } from "./ControlsHud";
 import { PerspectiveTransport } from "./PerspectiveTransport";
 import { PlanView } from "../../spatial/planview/PlanView.js";
+import { getRunSessionController } from "../../simulation/RunSessionController";
 import { useShortcut } from "../../ui";
+import {
+    applySimulationVisibilityPreference,
+    panelVisibilityForLayout,
+    readSimulationVisibilityPreference,
+    writeSimulationVisibilityPreference,
+} from "./simulationVisibilityPreferences.js";
 
 const INACTIVE_PERSPECTIVE = Object.freeze({ active: false, locked: false, label: "" });
 
+function viewportIsCompact() {
+    try {
+        return globalThis.window?.matchMedia?.("(max-width: 1023px)")?.matches === true;
+    } catch {
+        return false;
+    }
+}
+
+function rememberedPanels() {
+    const stored = readSimulationVisibilityPreference();
+    return {
+        vehicleHierarchy: stored.vehicleHierarchy !== false,
+        sensorPanel: stored.sensorPanel !== false,
+    };
+}
+
 export function SimulationChrome({ data, onOpenReplay }) {
-    const [vehicleOverlayVisible, setVehicleOverlayVisible] = useState(true);
-    const [sensorPanelVisible, setSensorPanelVisible] = useState(true);
-    const [compact, setCompact] = useState(false);
+    const preferredPanelsRef = useRef(null);
+    if (preferredPanelsRef.current === null) preferredPanelsRef.current = rememberedPanels();
+    const [compact, setCompact] = useState(viewportIsCompact);
+    const [vehicleOverlayVisible, setVehicleOverlayVisible] = useState(
+        () => panelVisibilityForLayout(viewportIsCompact(), preferredPanelsRef.current).vehicleHierarchy,
+    );
+    const [sensorPanelVisible, setSensorPanelVisible] = useState(
+        () => panelVisibilityForLayout(viewportIsCompact(), preferredPanelsRef.current).sensorPanel,
+    );
     const [viewMode, setViewMode] = useState("3d");
     const [lidarViewportEnabled, setLidarViewportEnabled] = useState(false);
     const [colliderViewportEnabled, setColliderViewportEnabled] = useState(false);
@@ -26,14 +55,22 @@ export function SimulationChrome({ data, onOpenReplay }) {
     useEffect(() => {
         const query = window.matchMedia("(max-width: 1023px)");
         const sync = () => {
-            setCompact(query.matches);
-            setVehicleOverlayVisible(!query.matches);
-            setSensorPanelVisible(!query.matches);
+            const nextCompact = query.matches;
+            setCompact(nextCompact);
+            const panels = panelVisibilityForLayout(nextCompact, preferredPanelsRef.current);
+            setVehicleOverlayVisible(panels.vehicleHierarchy);
+            setSensorPanelVisible(panels.sensorPanel);
         };
         sync();
         query.addEventListener("change", sync);
         return () => query.removeEventListener("change", sync);
     }, []);
+
+    useEffect(() => {
+        const simulation = data?.simulation?.();
+        if (!simulation) return;
+        applySimulationVisibilityPreference(simulation, getRunSessionController(), readSimulationVisibilityPreference());
+    }, [data]);
 
     useEffect(() => {
         if (!perspectiveView?.subscribe) return undefined;
@@ -81,6 +118,14 @@ export function SimulationChrome({ data, onOpenReplay }) {
         },
     });
 
+    const rememberPanel = (key, value) => {
+        const enabled = value === true;
+        preferredPanelsRef.current = { ...preferredPanelsRef.current, [key]: enabled };
+        writeSimulationVisibilityPreference({ [key]: enabled });
+        if (key === "vehicleHierarchy") setVehicleOverlayVisible(enabled);
+        else setSensorPanelVisible(enabled);
+    };
+
     if (!data) return null;
 
     if (perspective.active) {
@@ -110,9 +155,9 @@ export function SimulationChrome({ data, onOpenReplay }) {
             <SimulationMenu
                 data={data}
                 vehicleOverlayVisible={vehicleOverlayVisible}
-                onVehicleOverlayVisibleChange={setVehicleOverlayVisible}
+                onVehicleOverlayVisibleChange={(value) => rememberPanel("vehicleHierarchy", value)}
                 sensorPanelVisible={sensorPanelVisible}
-                onSensorPanelVisibleChange={setSensorPanelVisible}
+                onSensorPanelVisibleChange={(value) => rememberPanel("sensorPanel", value)}
                 onOpenReplay={onOpenReplay}
                 viewMode={viewMode}
                 onViewModeChange={setViewMode}

@@ -17,3 +17,8 @@ export function pauseSimulation(data) {
     const runController = getRunSessionController();
     return invokeRunControl(data, () => runController.pause(), (sim) => sim?.pause());
 }
+
+export function stopSimulation(data) {
+    const runController = getRunSessionController();
+    return invokeRunControl(data, () => runController.stop(), (sim) => sim?.stop());
+}

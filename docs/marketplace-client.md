@@ -6,6 +6,44 @@ enabled when `CEV_SIM_MARKETPLACE_ENABLED` is absent, empty, `1`, or `true`.
 When disabled, `server/App.js` does not construct the service, mount
 `/api/marketplace`, create marketplace storage, or make registry requests.
 
+## Local template files
+
+Marketplace Library also accepts local run-template files without a registry.
+This is an unverified transfer; the local verifier checks structure, digests,
+closure and destination visual rights, and does not identify a publisher.
+**Import package** stages one tar, shows create/reuse/rename mappings and plugin
+prerequisites, then requires confirmation before authoring publication. Completed
+files appear separately under **Imported from files** and open through Run
+Configuration. Imported plugin bytes become manual Library owners without
+grants, activation, module loading or registry executable provenance. Current
+policy still governs subsequent run admission.
+
+The local API uses a raw
+`application/vnd.cev-sim.run-template-package+tar` body at
+`POST /api/marketplace/local-imports`; JSON, multipart and compressed bodies are
+not accepted. Uploads stream under the frozen `RUN_TEMPLATE_PACKAGE_LIMITS`,
+including chunked requests, and disconnects cancel staging. `GET` on that
+collection returns summaries; `GET /:id` returns the snapshot and review.
+`POST /:id/commit` requires `{expectedRevision, planHash}` and returns progress
+with status 202. `resume`, `replan` and `cancel` each require `{expectedRevision}`.
+Cancel is available before confirmation; partial publication is retained and
+recovered, never rolled back. Replan needs another confirmation. Restart resumes
+confirmed work only. Rights are checked again at confirmation and resume.
+
+Config **Export template** saves the draft and exports
+`cev-sim.run-template-package@2`. It includes a Zenoh run's exact immutable
+Protobuf interface and permits plugin records without a Marketplace release.
+Historical `@1` files still import, but require a Zenoh interface already on
+the destination and retain their required plugin release grammar. Registry
+publication continues exporting and admitting `@1` with signed
+`embeddedPlugins`; local `@2` files cannot bypass that registry contract.
+
+Local records are keyed by archive SHA-256 and do not participate in Discover,
+updates, yanks or registry advisory membership. Reimporting intact bytes is
+idempotent. Destination edits produce deterministic collision IDs and a new
+review. Imported bindings are frozen in the run even when empty; global
+binding documents are untouched.
+
 ## Trust workflow
 
 The ordinary flow is `POST /api/marketplace/sources/connect` with only
@@ -95,6 +133,11 @@ executable-provenance.json
 plans/sha256/<planHash>.json
 jobs/<jobId>/{snapshot.json,work/}
 jobs/<jobId>/work/asset-packages/<preparationHash>/{preparation.json,generated/}
+local-imports/incoming/<uploadId>.tar
+local-imports/<archiveSha256>/snapshot.json
+local-imports/<archiveSha256>/plans/<planHash>.json
+local-imports/<archiveSha256>/work/archive.tar
+local-imports/<archiveSha256>/work/run-template-packages/<preparationHash>/
 publisher/
   profiles.json
   secrets/<secretRef>.json

@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { abortable } from "../../../simulation/AsyncCancellation.js";
 
 import {
     applyProjectionToThreeCamera,
@@ -1055,7 +1056,7 @@ export class AlignedCaptureProducts {
         const buffer = this._acquireBuffer(ArrayType, target.width * target.height * 4);
         try {
             if (this.readback) {
-                await this.readback(this.renderer, target, buffer, { signal, textureIndex: attachmentIndex });
+                await abortable(this.readback(this.renderer, target, buffer, { signal, textureIndex: attachmentIndex }), signal);
                 if (this._captureTimings) {
                     this._captureTimings.readbackBytes += Number(buffer.byteLength) || 0;
                 }
@@ -1080,7 +1081,8 @@ export class AlignedCaptureProducts {
                 }
             }
         } catch (error) {
-            this._releaseBuffer(buffer);
+            // An injected readback may still write after abort; never recycle its buffer.
+            if (!signal?.aborted) this._releaseBuffer(buffer);
             throw error;
         }
         abortIfRequested(signal);
@@ -1524,7 +1526,7 @@ export class AlignedCaptureProducts {
         }
         if (visual) {
             assertOwnedCaptureScene(this.visualSceneHandle, { role: visual.captureInput.scene.role });
-            await this._authorize(visual, signal);
+            await abortable(this._authorize(visual, signal), signal);
         }
         if (analytic) assertOwnedCaptureScene(this.analyticSceneHandle, { role: "analytic-truth" });
         abortIfRequested(signal);

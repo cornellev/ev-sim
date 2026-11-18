@@ -87,7 +87,12 @@ test("scaffold rejects reserved plugin ids", () => {
 test("scaffold and marketplace defaults use next-minor ranges on 0.x hosts", () => {
     assert.equal(defaultCevSimEngineRange("0.1.0"), ">=0.1.0 <0.2.0");
     assert.equal(defaultCevSimEngineRange("0.2.0"), ">=0.2.0 <0.3.0");
+    assert.equal(defaultCevSimEngineRange("0.3.0"), ">=0.3.0 <0.4.0");
     assert.equal(defaultCevSimEngineRange("1.2.3"), ">=1.0.0 <2.0.0");
+    assert.equal(
+        scaffoldPluginFiles({ id: "acme.demo", simulatorVersion: "0.3.0" }).document.engines.cevSim,
+        ">=0.3.0 <0.4.0",
+    );
     assert.equal(
         scaffoldPluginFiles({ id: "acme.demo", simulatorVersion: "0.2.0" }).document.engines.cevSim,
         ">=0.2.0 <0.3.0",

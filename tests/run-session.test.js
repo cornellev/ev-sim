@@ -3,11 +3,13 @@ import test from "node:test";
 
 import { createDefaultRunManifest } from "../app/simulation/RunManifest.js";
 import { RunSessionController } from "../app/simulation/RunSessionController.js";
+import { RUN_STOP_TIMEOUT_MS } from "../app/simulation/AsyncCancellation.js";
 
 function controllerFor(policy, start) {
     const controller = new RunSessionController();
     const manifest = createDefaultRunManifest({ logging: { policy, profileId: "simulation-run-full-sensors" } });
     controller.snapshot.activeRunId = "run-test";
+    controller.snapshot.status = "paused";
     controller.snapshot.activeResolved = {
         version: 13,
         manifest,
@@ -97,7 +99,7 @@ test("optional log finalization failures degrade rather than fail a completed ru
     const result = await controller.stop({ status: "completed" });
     assert.equal(result.completed, true);
     assert.equal(result.passed, true);
-    assert.equal(result.logId, null);
+    assert.equal(result.logId, "log-pending");
     assert.equal(controller.snapshot.degraded, true);
     assert.match(controller.snapshot.error, /Optional log finalization failed/);
 });
@@ -405,4 +407,176 @@ test("a timed-out preparation cannot launch later when preflight eventually fini
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(applied, false);
     assert.equal(controller.getSnapshot().status, "error");
+});
+
+function stoppingController(policy = "disabled") {
+    const controller = controllerFor(policy, async () => {});
+    const calls = [];
+    const simulation = {
+        status: "playing", lifecycleState: "prepared", resolvedRun: controller.snapshot.activeResolved,
+        steps: 3, timeNs: 60_000_000, trajectoryHash: "last-completed-step",
+        assertionEngine: { snapshot: () => [] },
+        pause() { this.status = "paused"; calls.push("pause"); },
+        play() { this.status = "playing"; calls.push("play"); },
+        async whenIdle() {},
+        finalize() { this.lifecycleState = "finalized"; calls.push("finalize"); return { assertions: [] }; },
+        stop(options) { this.status = "stopped"; calls.push(["stop", options]); },
+        async applyRunManifest() { this.status = "paused"; this.lifecycleState = "prepared"; this.steps = 0; },
+        cancelPendingAdvance(error) { calls.push(error.code); },
+    };
+    controller.data.simulation = () => simulation;
+    controller.recording = { attachSimulation() {}, cancel() {} };
+    return { controller, simulation, calls };
+}
+
+function stopDeadline(t) {
+    const original = globalThis.setTimeout;
+    const deadlines = [];
+    t.mock.method(globalThis, "setTimeout", (callback, ms, ...args) => {
+        if (ms !== RUN_STOP_TIMEOUT_MS) return original(callback, ms, ...args);
+        deadlines.push(callback);
+        return 0;
+    });
+    return deadlines;
+}
+
+test("ended runs ignore Pause and lease loss, reject playback, and repair a stale paused clock", async () => {
+    const { controller, simulation, calls } = stoppingController();
+    controller._beginControlOwnership({ leaseId: "lease", status: "active", mode: "autonomous", remainingMs: 750, target: { vehicleId: "ego" } });
+    const guard = controller.ownershipGuard;
+    const result = await controller.stop();
+    assert.equal(guard.lease, null);
+    const count = calls.length;
+    await controller.pause();
+    guard.onLoss({ reason: "lease-expired" });
+    assert.equal(calls.length, count);
+    assert.equal(controller.getSnapshot().status, "stopped");
+    await assert.rejects(controller.play(), { code: "RUN_TERMINAL" });
+    await assert.rejects(controller.step(), { code: "RUN_TERMINAL" });
+    simulation.pause();
+    assert.equal(await controller.stop(), result);
+    assert.equal(simulation.status, "stopped");
+    assert.equal(calls.filter((call) => call === "finalize").length, 1);
+    assert.deepEqual(calls.at(-1), ["stop", { reset: false, dispatchEpisode: false }]);
+});
+
+test("required logging failures stop the engine, retain evidence and failure, and allow reset", async () => {
+    const { controller, simulation } = stoppingController("required");
+    const error = new Error("storage offline");
+    controller._recordingRunId = "run-test";
+    controller.recording = { session: { id: "failed-log" }, addAttachment() {}, attachSimulation() {}, async stop() { throw error; }, cancel() {} };
+    await assert.rejects(controller.stop(), (failure) => failure === error);
+    assert.equal(simulation.status, "stopped");
+    assert.equal(controller.getSnapshot().transitioning, false);
+    assert.equal(controller.getSnapshot().runResult.logId, "failed-log");
+    assert.equal(controller.getSnapshot().runResult.passed, false);
+    await controller.pause();
+    await assert.rejects(controller.stop(), (failure) => failure === error);
+    const fresh = await controller.reset(controller.snapshot.activeResolved);
+    assert.equal(fresh.status, "ready");
+    assert.notEqual(fresh.activeRunId, "run-test");
+});
+
+test("a stalled sensor drain shares one deadline, stops, and retains the incomplete-step evidence", async (t) => {
+    const deadlines = stopDeadline(t);
+    const { controller, simulation, calls } = stoppingController();
+    simulation.whenIdle = () => new Promise(() => {});
+    const pending = controller.stop();
+    const rejected = assert.rejects(pending, (error) => error.code === "RUN_STOP_TIMEOUT" && /sensor work/.test(error.message));
+    assert.equal(controller.stop(), pending);
+    await Promise.resolve();
+    assert.equal(deadlines.length, 1);
+    await assert.rejects(controller.play(), { code: "BUSY" });
+    await assert.rejects(controller.step(), { code: "BUSY" });
+    deadlines[0]();
+    await rejected;
+    assert.equal(simulation.status, "stopped");
+    assert.equal(controller.getSnapshot().transitioning, false);
+    assert.equal(controller.getSnapshot().runResult.completed, false);
+    assert.equal(controller.getSnapshot().runResult.trajectoryHash, "last-completed-step");
+    assert.equal(controller.getSnapshot().runResult.terminationReason, "shutdown-timeout");
+    assert.ok(calls.includes("RUN_STOP_TIMEOUT"));
+    assert.ok(!calls.includes("finalize"));
+});
+
+for (const policy of ["optional", "required"]) {
+    test(`${policy} stalled log finalization uses the remaining shutdown budget`, async (t) => {
+        const deadlines = stopDeadline(t);
+        const { controller, simulation } = stoppingController(policy);
+        let finishCapture;
+        let finishLog;
+        simulation.whenIdle = () => new Promise((resolve) => { finishCapture = resolve; });
+        controller._recordingRunId = "run-test";
+        controller.recording = { session: { id: "partial-log" }, addAttachment() {}, stop() { return new Promise((resolve) => { finishLog = resolve; }); }, cancel() {} };
+        const pending = controller.stop({ status: "completed" });
+        const settled = policy === "required" ? assert.rejects(pending, { code: "RUN_STOP_TIMEOUT" }) : pending;
+        await Promise.resolve();
+        finishCapture();
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.equal(deadlines.length, 1, "logging must not restart the timeout");
+        deadlines[0]();
+        await settled;
+        const snapshot = controller.getSnapshot();
+        assert.equal(simulation.status, "stopped");
+        assert.equal(snapshot.transitioning, false);
+        assert.equal(snapshot.runResult.logId, "partial-log");
+        assert.equal(snapshot.status, policy === "required" ? "error" : "completed");
+        assert.equal(snapshot.degraded, policy === "optional");
+        finishLog({ id: "late-log" });
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.deepEqual(controller.getSnapshot(), snapshot);
+    });
+}
+
+test("a stalled transport close stops the engine and reports its shutdown stage", async (t) => {
+    const deadlines = stopDeadline(t);
+    const { controller, simulation } = stoppingController();
+    controller.data.client = () => ({ closeRun: () => new Promise(() => {}) });
+    const rejected = assert.rejects(controller.stop(), (error) => error.code === "RUN_STOP_TIMEOUT" && /transport/.test(error.message));
+    await new Promise((resolve) => setImmediate(resolve));
+    deadlines[0]();
+    await rejected;
+    assert.equal(simulation.status, "stopped");
+});
+
+test("a stalled Pause acknowledgement ends the run instead of keeping the browser API busy forever", async (t) => {
+    const deadlines = stopDeadline(t);
+    const { controller, simulation } = stoppingController();
+    simulation.whenIdle = () => new Promise(() => {});
+    const rejected = assert.rejects(controller.pause(), { code: "RUN_STOP_TIMEOUT" });
+    deadlines[0]();
+    await rejected;
+    assert.equal(simulation.status, "stopped");
+    assert.equal(controller.getSnapshot().transitioning, false);
+    assert.equal(controller.getSnapshot().status, "error");
+});
+
+test("delayed recording startup cannot resume a stopped or replacement run", async (t) => {
+    const deadlines = stopDeadline(t);
+    const { controller, simulation, calls } = stoppingController("required");
+    let finishStart;
+    controller.recording = { start: () => new Promise((resolve) => { finishStart = resolve; }), cancel() {} };
+    const playRejected = assert.rejects(controller.play(), { code: "RUN_SUPERSEDED" });
+    const stopRejected = assert.rejects(controller.stop(), { code: "RUN_STOP_TIMEOUT" });
+    await new Promise((resolve) => setImmediate(resolve));
+    deadlines[0]();
+    await stopRejected;
+    finishStart({ id: "late-session" });
+    await playRejected;
+    assert.equal(simulation.status, "stopped");
+    assert.ok(!calls.includes("play"));
+});
+
+test("clearing during shutdown fences the old completion without skipping its physical stop", async (t) => {
+    const deadlines = stopDeadline(t);
+    const { controller, simulation } = stoppingController();
+    simulation.whenIdle = () => new Promise(() => {});
+    const rejected = assert.rejects(controller.stop(), /cleared/);
+    await Promise.resolve();
+    controller.clear();
+    await rejected;
+    assert.equal(simulation.status, "stopped");
+    assert.equal(controller.getSnapshot().status, "idle");
+    assert.equal(controller.getSnapshot().runResult, null);
+    assert.equal(deadlines.length, 1);
 });

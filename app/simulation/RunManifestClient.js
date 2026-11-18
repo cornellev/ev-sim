@@ -49,10 +49,11 @@ export function exportRunManifest(id) {
     return storageGet(`${collection}/${encodeURIComponent(id)}/export`);
 }
 
-export function exportRunTemplatePackage(id, { expectedRevision, pluginReleaseRefs = [] } = {}) {
+export function exportRunTemplatePackage(id, { expectedRevision, pluginReleaseRefs = [], packageVersion = 1 } = {}) {
     return storagePostBinary(`${collection}/${encodeURIComponent(id)}/template-packages/export`, {
         expectedRevision,
         pluginReleaseRefs,
+        packageVersion,
     }, { accept: "application/vnd.cev-sim.run-template-package+tar" });
 }
 

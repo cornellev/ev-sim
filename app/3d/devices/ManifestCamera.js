@@ -316,7 +316,8 @@ export class ManifestCamera extends Device {
         return messages;
     }
 
-    async _captureAlignedAt({ captureTimeNs, sampleIndex, rng }) {
+    async _captureAlignedAt({ captureTimeNs, sampleIndex, rng, signal = null }) {
+        signal?.throwIfAborted();
         const data = this.getParent()?.getParent?.();
         const renderer = data?.renderer;
         const scene = data?.scene;
@@ -375,6 +376,7 @@ export class ManifestCamera extends Device {
         let captured;
         try {
             captured = await this.renderRuntime.captureCamera({
+                signal: signal ? AbortSignal.any([signal, this.renderRuntime.controller?.signal].filter(Boolean)) : this.renderRuntime.controller?.signal,
                 captureInput: this.lastCaptureInput,
                 enabled: this._enabledProducts(),
                 renderProducts: this.renderProducts,
@@ -386,6 +388,7 @@ export class ManifestCamera extends Device {
                 browserSimulationPerformance.now() - captureStart,
             );
         }
+        signal?.throwIfAborted();
         return this._buildMessages({
             captureTimeNs,
             sampleIndex,
@@ -395,9 +398,9 @@ export class ManifestCamera extends Device {
         }, captured);
     }
 
-    captureAt({ captureTimeNs, sampleIndex, rng }) {
+    captureAt({ captureTimeNs, sampleIndex, rng, signal = null }) {
         if (this.captureMode === CORRECTED_VISUAL_CAPTURE_MODE) {
-            return this._captureAlignedAt({ captureTimeNs, sampleIndex, rng });
+            return this._captureAlignedAt({ captureTimeNs, sampleIndex, rng, signal });
         }
         const data = this.getParent()?.getParent?.();
         const renderer = data?.renderer;

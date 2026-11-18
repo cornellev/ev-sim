@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { abortable } from "../../simulation/AsyncCancellation.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 
 import {
@@ -491,17 +492,22 @@ export class BrowserPbrRenderRuntime {
         }
     }
 
-    async prepareCapture({ devices = [], vehicles = this._vehicles() } = {}) {
+    async prepareCapture({ devices = [], vehicles = this._vehicles(), signal = this.controller?.signal } = {}) {
+        signal?.throwIfAborted();
         if (!this.ready) throw infrastructureError(new Error("PBR render runtime is not ready."));
+        const generation = this.generation;
+        const captureEpoch = this.captureEpoch;
         this._updateActors(vehicles);
         const positions = devices
             .filter((device) => device?.renderRuntime === this)
             .map(capturePosition);
         try {
-            const materializerStatus = await this.materializer.updateInterest({
+            const materializerStatus = await abortable(this.materializer.updateInterest({
                 positions: positions.length > 0 ? positions : [{ x: 0, y: 0, z: 0 }],
                 requiredChunkIds: this.objectRequiredChunkIds,
-            });
+            }), signal);
+            this._throwIfStale(generation);
+            if (captureEpoch !== this.captureEpoch) throw infrastructureError(new Error("PBR residency was reset."), "PBR_CAPTURE_SUPERSEDED");
             if (materializerStatus.status === "error") {
                 throw new Error(materializerStatus.error?.message || "Required PBR residency failed.");
             }
@@ -519,12 +525,13 @@ export class BrowserPbrRenderRuntime {
             this._setReadyStatus({ streaming: true });
         } catch (error) {
             const failure = infrastructureError(error, "PBR_REQUIRED_RESIDENCY_FAILED");
-            this._setStatus("error", failure);
+            if (generation === this.generation && captureEpoch === this.captureEpoch) this._setStatus("error", failure);
             throw failure;
         }
     }
 
     async captureCamera({ captureInput, enabled, renderProducts, signal = this.controller?.signal } = {}) {
+        signal?.throwIfAborted();
         if (!this.ready) throw infrastructureError(new Error("PBR render runtime is not ready."));
         const generation = this.generation;
         const captureEpoch = this.captureEpoch;
@@ -558,13 +565,13 @@ export class BrowserPbrRenderRuntime {
                 products: [...analyticProducts, "validity"],
                 bindings: this.analyticBindings,
             }) : null;
-            const captured = await renderProducts.captureAlignedProducts({
+            const captured = await abortable(renderProducts.captureAlignedProducts({
                 visualPassSet,
                 visualRenderables: new Map(),
                 analyticPassSet,
                 analyticRenderables: this.analyticRenderables,
                 signal,
-            });
+            }), signal);
             this._throwIfStale(generation);
             if (captureEpoch !== this.captureEpoch) throw infrastructureError(new Error("PBR capture was reset."), "PBR_CAPTURE_SUPERSEDED");
             for (const [name, durationMs] of Object.entries(
@@ -594,6 +601,13 @@ export class BrowserPbrRenderRuntime {
             if (generation === this.generation && captureEpoch === this.captureEpoch) this._setStatus("error", failure);
             throw failure;
         }
+    }
+
+    cancelCaptures(error) {
+        this.captureEpoch += 1;
+        this.controller?.abort(error);
+        this.materializer?.dispose();
+        this._setStatus("error", error);
     }
 
     dispose({ preserveListeners = false } = {}) {

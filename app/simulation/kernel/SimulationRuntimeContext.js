@@ -289,9 +289,9 @@ export function createSimulationRuntimeContext(options = {}) {
             update(dt, clock) {
                 return manager(options.devices)?.update?.(dt, clock);
             },
-            updateAsync(dt, clock) {
+            updateAsync(dt, clock, runtimeOptions) {
                 const target = manager(options.devices);
-                return target?.updateAsync ? target.updateAsync(dt, clock) : target?.update?.(dt, clock);
+                return target?.updateAsync ? target.updateAsync(dt, clock, runtimeOptions) : target?.update?.(dt, clock);
             },
             deliver(clock) {
                 const result = manager(options.devices)?.deliver?.(clock);

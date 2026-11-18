@@ -161,6 +161,24 @@ test("prepareCapture and capture are posted back to back without awaiting replie
     runtime.dispose({ immediate: true });
 });
 
+test("shutdown cancellation terminates stalled PBR requests and fences late replies", async () => {
+    const worker = manualWorker();
+    let terminations = 0;
+    worker.terminate = () => { terminations++; };
+    const runtime = await preparedManualRuntime(worker);
+    const error = Object.assign(new Error("shutdown timeout"), { code: "RUN_STOP_TIMEOUT", infrastructureFailure: true });
+    const captured = runtime.captureCamera({ cameraId: "camera", captureInput: {}, enabled: { rgb: true } });
+    const rejected = assert.rejects(captured, { code: "RUN_STOP_TIMEOUT" });
+    runtime.cancelCaptures(error);
+    await rejected;
+    assert.equal(terminations, 1);
+    assert.equal(runtime.pending.size, 0);
+    worker.reply(worker.calls.at(-1), true, { aligned: true, rgb: Uint8Array.of(9), status: { state: "ready" } });
+    assert.equal(runtime.status.state, "error");
+    assert.equal(runtime.ready, false);
+    runtime.dispose({ immediate: true });
+});
+
 test("a failed prepareCapture reply fails the run on the next call", async () => {
     const worker = manualWorker();
     const runtime = await preparedManualRuntime(worker);

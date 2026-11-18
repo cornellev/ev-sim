@@ -1,6 +1,6 @@
 import express from "express";
 
-import { MARKETPLACE_LIMITS, MARKETPLACE_PREVIEW_MEDIA_TYPES } from "../marketplace/MarketplaceContract.js";
+import { MARKETPLACE_LIMITS, MARKETPLACE_PREVIEW_MEDIA_TYPES, MARKETPLACE_ARTIFACTS, RUN_TEMPLATE_PACKAGE_LIMITS } from "../marketplace/MarketplaceContract.js";
 import { MARKETPLACE_ERROR_CODES, marketplaceError } from "../marketplace/MarketplaceErrors.js";
 import { publicMarketplaceError } from "../marketplace/MarketplaceRouteErrors.js";
 
@@ -114,7 +114,7 @@ export function createMarketplaceRouter(service, {
         next();
     });
     router.use((request, response, next) => {
-        if (request.method === "POST" && /^\/publisher\/drafts\/[^/]+\/previews$/u.test(request.path)) {
+        if (request.method === "POST" && (request.path === "/local-imports" || /^\/publisher\/drafts\/[^/]+\/previews$/u.test(request.path))) {
             next();
             return;
         }
@@ -125,6 +125,46 @@ export function createMarketplaceRouter(service, {
         exactQuery(request, []);
         response.json(service.status());
     }));
+
+    router.post("/local-imports", handler(async (request, response) => {
+        exactQuery(request, []);
+        if (request.headers["content-type"] !== MARKETPLACE_ARTIFACTS["run-template"].mediaType) invalid("$.mediaType", "expected a run-template tar");
+        if (request.headers["content-encoding"] && request.headers["content-encoding"] !== "identity") invalid("$.contentEncoding", "compressed uploads are not supported");
+        const declared = request.headers["content-length"];
+        if (declared !== undefined && (!/^(?:0|[1-9][0-9]*)$/u.test(declared) || !Number.isSafeInteger(Number(declared)) || Number(declared) > RUN_TEMPLATE_PACKAGE_LIMITS.archiveBytes)) {
+            throw marketplaceError(MARKETPLACE_ERROR_CODES.LIMIT_EXCEEDED, "Local import upload exceeds the archive limit.");
+        }
+        const controller = new AbortController();
+        const abort = () => { if (!response.writableEnded) controller.abort(); };
+        request.once("aborted", abort);
+        response.once("close", abort);
+        try {
+            const result = await service.createLocalRunTemplateImport(request, { contentLength: declared === undefined ? null : Number(declared), signal: controller.signal });
+            response.status(201).json(result);
+        } finally { request.off("aborted", abort); response.off("close", abort); }
+    }));
+    router.get("/local-imports", handler(async (request, response) => {
+        exactQuery(request, []);
+        response.json(await service.listLocalRunTemplateImports());
+    }));
+    router.get("/local-imports/:id", handler(async (request, response) => {
+        exactQuery(request, []);
+        response.json(await service.getLocalRunTemplateImport(request.params.id));
+    }));
+    router.post("/local-imports/:id/commit", handler(async (request, response) => {
+        exactQuery(request, []);
+        const body = exactBody(request.body, ["expectedRevision", "planHash"]);
+        bodyRevision(body.expectedRevision);
+        response.status(202).json(await service.commitLocalRunTemplateImport(request.params.id, body));
+    }));
+    for (const [action, method] of [["resume", "resumeLocalRunTemplateImport"], ["replan", "replanLocalRunTemplateImport"], ["cancel", "cancelLocalRunTemplateImport"]]) {
+        router.post("/local-imports/:id/" + action, handler(async (request, response) => {
+            exactQuery(request, []);
+            const body = exactBody(request.body, ["expectedRevision"]);
+            bodyRevision(body.expectedRevision);
+            response.json(await service[method](request.params.id, body.expectedRevision));
+        }));
+    }
 
     router.get("/publisher/inventory", handler(async (request, response) => {
         response.json(await service.listPublicationInventory(exactQuery(request, [

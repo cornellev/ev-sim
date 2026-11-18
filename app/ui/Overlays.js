@@ -56,12 +56,12 @@ export function DialogSurface({
     );
 }
 
-export function PopoverSurface({ trigger, children, open, onOpenChange, align = "start", sideOffset = 7, className }) {
+export function PopoverSurface({ trigger, children, open, onOpenChange, align = "start", side = "bottom", sideOffset = 7, className, ...props }) {
     return (
         <Popover.Root open={open} onOpenChange={onOpenChange}>
             <Popover.Trigger asChild>{trigger}</Popover.Trigger>
             <Popover.Portal>
-                <Popover.Content className={cx("sf-popover", className)} align={align} sideOffset={sideOffset}>
+                <Popover.Content className={cx("sf-popover", className)} align={align} side={side} sideOffset={sideOffset} {...props}>
                     {children}
                 </Popover.Content>
             </Popover.Portal>

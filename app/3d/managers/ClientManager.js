@@ -1,5 +1,6 @@
 import { ZenohBrowserTransport } from "../../client/ZenohBrowserTransport.js";
 import { assertProtobufExecutionCapabilities, bindProtobufRunKeys, planProtobufRouteAdmission } from "../../interfaces/ProtobufRunBinding.js";
+import { abortable } from "../../simulation/AsyncCancellation.js";
 
 export class ClientManager {
     constructor(data, { transportFactory = (options) => new ZenohBrowserTransport(options), fetchImpl = (...args) => fetch(...args) } = {}) {
@@ -75,13 +76,16 @@ export class ClientManager {
         for (const listener of this.transportListeners) listener(snapshot);
     }
 
-    async closeRun({ runId = null } = {}) {
+    async closeRun({ runId = null, signal = null } = {}) {
         if (runId && this._nativeRun?.runId !== runId) return;
+        const transport = this.transport;
         this._nativeRun = null;
         this._routeRuntime?.invalidateBindings();
         this._routeRuntime = null;
-        await this.transport?.close();
-        this._transportState({ state: "disabled", lastError: null, diagnostics: {} });
+        await abortable(transport?.close(), signal);
+        if (this.transport === transport && !this._nativeRun) {
+            this._transportState({ state: "disabled", lastError: null, diagnostics: {} });
+        }
     }
 
     async preflight(resolved, { runId = resolved?.manifest?.id } = {}) {

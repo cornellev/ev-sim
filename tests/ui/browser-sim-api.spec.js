@@ -103,10 +103,15 @@ test("HTTP lifecycle starts, pauses with a stable clock, resumes, stops, and res
         const stopped = await command(request, { action: "stop", runId, browserId });
         expect(stopped.snapshot.status).toBe("stopped");
         expect(stopped.snapshot.runResult.runId).toBe(runId);
+        for (const name of ["Play", "Pause", "Step"]) await expect(page.getByRole("button", { name, exact: true })).toBeDisabled();
+        await expect(page.getByRole("button", { name: "Reset", exact: true })).toBeEnabled();
+        const repeated = await command(request, { action: "stop", runId, browserId });
+        expect(repeated.snapshot.runResult).toEqual(stopped.snapshot.runResult);
         const reset = await command(request, { action: "reset", runId, browserId });
         expect(reset.snapshot.status).toBe("ready");
         expect(reset.snapshot.timeNs).toBe("0");
         expect(reset.snapshot.runId).not.toBe(runId);
+        await expect(page.getByRole("button", { name: "Play", exact: true })).toBeEnabled();
         await command(request, { action: "stop", runId: reset.snapshot.runId, browserId });
 
         const created = await request.post("/api/storage/environments", { data: { id: environmentId, name: "Browser API reset world" } });
@@ -127,6 +132,55 @@ test("HTTP lifecycle starts, pauses with a stable clock, resumes, stops, and res
         const environment = await (await request.get(`/api/storage/environments/${environmentId}`)).json();
         if (environment?.revision) await request.delete(`/api/storage/environments/${environmentId}`, { params: { expectedRevision: environment.revision } });
         await request.put("/api/storage/settings/activeEnvironmentId", { data: { value: "igvc" } });
+    }
+});
+
+test("stalled sensor shutdown reports failure, unlocks Reset, and fences the late capture", async ({ page, request }) => {
+    test.setTimeout(90_000);
+    const browserId = await registerPage(page, request);
+    const manifestId = await saveManifest(request);
+    try {
+        const started = await command(request, { action: "start", manifestId, browserId, autoplay: false });
+        const runId = started.snapshot.runId;
+        await page.evaluate(() => {
+            const engine = window.clientHandler.data.simulation();
+            const devices = window.clientHandler.data.devices();
+            const update = devices.updateAsync;
+            Object.defineProperty(devices, "requiresAsyncCapture", { configurable: true, value: true });
+            devices.updateAsync = () => new Promise((resolve) => { window.__finishStalledCapture = resolve; });
+            window.__restoreCapture = () => { devices.updateAsync = update; delete devices.requiresAsyncCapture; };
+            engine.step().catch((error) => { window.__captureError = error.code; });
+        });
+        await page.waitForFunction(() => window.__finishStalledCapture);
+        const accepted = await (await request.post(`${base}/commands`, { data: { action: "stop", runId, browserId } })).json();
+        await expect(page.getByLabel("Simulation run status")).toContainText("Stopping");
+        for (const name of ["Play", "Pause", "Step", "Reset"]) await expect(page.getByRole("button", { name, exact: true })).toBeDisabled();
+        let receipt;
+        await expect.poll(async () => {
+            receipt = await (await request.get(`${base}/commands/${accepted.commandId}`)).json();
+            return receipt.state;
+        }, { timeout: 30_000 }).toBe("failed");
+        expect(receipt.error.code).toBe("RUN_STOP_TIMEOUT");
+        expect(receipt.snapshot.status).toBe("error");
+        expect(receipt.snapshot.transitioning).toBe(false);
+        expect(receipt.snapshot.runResult.passed).toBe(false);
+        expect(await page.evaluate(() => window.clientHandler.data.simulation().status)).toBe("stopped");
+        await expect(page.getByRole("button", { name: "Reset", exact: true })).toBeEnabled();
+        await page.evaluate(() => window.__restoreCapture());
+        const reset = await command(request, { action: "reset", runId, browserId });
+        expect(reset.snapshot.status).toBe("ready");
+        expect(reset.snapshot.timeNs).toBe("0");
+        await page.evaluate(() => window.__finishStalledCapture());
+        await page.waitForTimeout(100);
+        const state = await (await request.get(`${base}/status`, { params: { browserId } })).json();
+        expect(state.status).toBe("ready");
+        expect(state.runId).toBe(reset.snapshot.runId);
+        expect(state.timeNs).toBe("0");
+        expect(await page.evaluate(() => window.__captureError)).toBe("RUN_STOP_TIMEOUT");
+        await command(request, { action: "stop", runId: reset.snapshot.runId, browserId });
+    } finally {
+        await page.evaluate(() => window.__restoreCapture?.());
+        await request.delete(`/api/storage/run-manifests/${manifestId}`);
     }
 });
 

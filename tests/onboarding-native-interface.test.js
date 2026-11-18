@@ -22,7 +22,10 @@ test("shipped onboarding mappings retain resolved calibration, exact headers, le
     const source = await storage.resolveRunManifest(manifest.id, manifest);
     const plan = planNativeRunMigration({ manifest, targetInterfaceResource: resource, resolvedRun: source,
         topicContracts: { "controls-command": { id: "cev.control-command", version: 2 } },
-        additionalTopics: [{ id: "planning-path", name: "/planning/path", direction: "input", producer: "candidate", authority: "candidate", valueContract: { id: "cev.path", version: 1 } }],
+        additionalTopics: [
+            { id: "planning-path", name: "/planning/path", direction: "input", producer: "candidate", authority: "candidate", valueContract: { id: "cev.path", version: 1 } },
+            { id: "planning-occupancy", name: "/planning/occupancy", direction: "input", producer: "candidate", authority: "candidate", valueContract: { id: "cev.occupancy", version: 1 } },
+        ],
     });
     assert.equal(plan.ok, true, JSON.stringify(plan.blocked));
     const native = applyNativeRunMigration(plan, { expectedRevision: 0 }).manifest;
@@ -55,4 +58,12 @@ test("shipped onboarding mappings retain resolved calibration, exact headers, le
     const pathValue = { header: { ...wire.header, frame_id: "map" }, path: { points: [{ x: 1, y: 2 }] } };
     assert.deepEqual(applyMapping(pathRoute.compiled, { value: pathValue }), { points: [{ x: 1, y: 2, z: 0 }] });
     assert.deepEqual(applyInboundMetadata(pathRoute.compiled, { value: pathValue }), { runId: "actual-run", frameId: "map", sequenceId: wire.header.sequence, captureTimeNs: 100 });
+    const mapRoute = get("map");
+    const mapWire = { header: { ...wire.header, frame_id: "map" }, grid: { origin: { x: -3.6, y: -3 }, resolution_m: 0.1, width: 2, height: 2, weights: [0, 255, 200, 0] } };
+    const occupancy = applyMapping(mapRoute.compiled, { value: decodeMessage(mapRoute.entry.messageType, encodeMessage(mapRoute.entry.messageType, mapWire)) });
+    assert.equal(occupancy.encoding, "cost");
+    assert.equal(occupancy.resolutionM, 0.1);
+    assert.deepEqual(occupancy.origin, { x: -3.6, y: 0, z: 2.8 });
+    assert.deepEqual([...occupancy.data], [1, 0, 0, 1]);
+    assert.throws(() => applyMapping(mapRoute.compiled, { value: { ...decodeMessage(mapRoute.entry.messageType, encodeMessage(mapRoute.entry.messageType, mapWire)), grid: { ...mapWire.grid, weights: [0] } } }), /storage/);
 });

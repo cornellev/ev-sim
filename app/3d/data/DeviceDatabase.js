@@ -8,6 +8,7 @@ import { BrowserCpuLidarRuntime } from "../devices/BrowserCpuLidarRuntime.js";
 import { SensorPublisher as BrowserSensorPublisher } from "../devices/SensorPublisher.js";
 import { browserSimulationPerformance } from "../../simulation/performance/BrowserSimulationPerformance.js";
 import { setRigidBodyLidarPoses } from "../editor/projection/rigidBodyLidarSolids.js";
+import { abortable } from "../../simulation/AsyncCancellation.js";
 
 function summarizeMeasurementState(state) {
     if (state == null) return null;
@@ -46,6 +47,7 @@ export class DeviceDatabase extends Database {
         this.devices = [];
         this.renderRuntime = null;
         this.pluginSensorScene = null;
+        this._captureGeneration = 0;
         browserSimulationPerformance.recordCpuLidarRuntime();
 
         this.loopDisabled = false; // set to true to disable automatic execution loop (for manual control in tests, etc.)
@@ -157,6 +159,7 @@ export class DeviceDatabase extends Database {
     }
 
     configureFromManifest(sensorRig = {}, options = {}) {
+        this._captureGeneration += 1;
         this.renderRuntime = options.renderRuntime ?? null;
         const previous = this.devices.filter((device) => device.manifestManaged);
         for (const device of previous) {
@@ -237,6 +240,7 @@ export class DeviceDatabase extends Database {
     }
 
     resetSchedule(runtimeOptions = {}) {
+        this._captureGeneration += 1;
         setRigidBodyLidarPoses(this.parent, []);
         this.renderRuntime?.reset?.();
         this.pluginSensorScene?.reset();
@@ -271,7 +275,15 @@ export class DeviceDatabase extends Database {
         }
     }
 
-    async updateAsync(dt, clock = null) {
+    cancelCaptures() {
+        this._captureGeneration += 1;
+        this.pluginSensorScene?.dispose();
+        for (const device of this.devices) device.contractPublisher?.dispose?.();
+    }
+
+    async updateAsync(dt, clock = null, { signal = null } = {}) {
+        signal?.throwIfAborted();
+        const generation = this._captureGeneration;
         if (this.loopDisabled) return;
         const updateStart = browserSimulationPerformance.now();
         const ordered = [...this.devices].sort((left, right) => String(left.telemetryId || "").localeCompare(String(right.telemetryId || "")));
@@ -293,18 +305,23 @@ export class DeviceDatabase extends Database {
         }
         try {
             if (this.renderRuntime && clock) {
-                await this.renderRuntime.prepareCapture({
+                await abortable(this.renderRuntime.prepareCapture({
                     devices: ordered,
                     vehicles: this.parent?.vehicles?.()?.vehicles || [],
                     clock,
-                });
+                    signal,
+                }), signal);
             }
             for (const device of ordered) {
+                signal?.throwIfAborted();
+                if (generation !== this._captureGeneration) throw Object.assign(new Error("Device capture was superseded."), { code: "SENSOR_CAPTURE_CANCELLED", infrastructureFailure: true });
                 if (device.enabled && device.contractPublisher && clock) {
-                    await device.contractPublisher.updateAsync(clock);
+                    await device.contractPublisher.updateAsync(clock, { signal });
                 } else if (device.enabled && !device.contractPublisher) {
-                    await device.execute(dt);
+                    await abortable(device.execute(dt, { signal }), signal);
                 }
+                signal?.throwIfAborted();
+                if (generation !== this._captureGeneration) throw Object.assign(new Error("Device capture was superseded."), { code: "SENSOR_CAPTURE_CANCELLED", infrastructureFailure: true });
                 this._publishDevice(device, clock);
             }
         } catch (error) {
@@ -312,8 +329,8 @@ export class DeviceDatabase extends Database {
                 "deviceDatabaseUpdate",
                 browserSimulationPerformance.now() - updateStart,
             );
-            for (const [publisher, checkpoint] of checkpoints) {
-                publisher.discardEnqueued?.(checkpoint);
+            if (generation === this._captureGeneration) {
+                for (const [publisher, checkpoint] of checkpoints) publisher.discardEnqueued?.(checkpoint);
             }
             throw error;
         }
@@ -375,6 +392,7 @@ export class DeviceDatabase extends Database {
     }
 
     disposeRun() {
+        this._captureGeneration += 1;
         setRigidBodyLidarPoses(this.parent, []);
         const runVehicles = new Set(this.parent?.vehicles?.()?.vehicles || []);
         for (const device of [...this.devices]) {

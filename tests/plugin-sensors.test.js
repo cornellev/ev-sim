@@ -221,7 +221,7 @@ test("PLG-05 rejects invalid grants and explicit layouts while preserving legacy
         api: 1,
         id: "test.legacy",
         version: "1.0.0",
-        engines: { cevSim: ">=0.1.0 <0.3.0" },
+        engines: { cevSim: ">=0.1.0 <0.4.0" },
         entry: { runtime: "runtime/index.js" },
         capabilities: [],
         units: [],

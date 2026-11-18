@@ -57,7 +57,7 @@ Submit a JSON object with `action` and the following action-specific fields:
 | `start` | Required `manifestId`; optional `autoplay` defaults to `true`. Resolve the saved manifest once, prepare that exact snapshot, and play. `false` leaves it ready at step zero. |
 | `pause` | Required `runId`. Freeze the current episode after active sensor work settles. Pausing a ready run leaves it ready. |
 | `resume` | Required `runId`. Play a ready/paused episode; an already-running episode is unchanged. |
-| `stop` | Required `runId`. Pause immediately, wait for active sensor work, finalize assertions/results and SFLog, and retain the actual terminal status. Repeated stops return the existing result. |
+| `stop` | Required `runId`. Pause immediately, drain active sensor work, finalize assertions/results and SFLog, and stop the engine within a shared 15-second shutdown budget. Repeated stops retain the existing result or failure. |
 | `reset` | Required `runId`. Resolve the latest saved revision of that run's manifest, finalize the old run if needed, and prepare a fresh run at zero without autoplay. Resolution failure leaves the current run intact. |
 
 All actions accept optional `browserId` and `requestId`. `runId` guards against
@@ -82,6 +82,22 @@ state before execution. Invalid JSON command fields return HTTP `400`
 command receipt's `error: { code, message }`.
 
 ### Acknowledgements and recovery
+
+Stop uses one 15-second wall-time deadline across sensor drain, transport close,
+recording startup, uploads, and log finalization. A stalled stage reports
+`RUN_STOP_TIMEOUT`; the engine is stopped and `transitioning` clears. Required
+logging failure produces an error result with `passed: false`. Optional logging
+failure preserves the simulation result and marks logging degraded. Known log
+IDs remain available for partial-log inspection. Repeated Stop does not retry
+finalization, dispatch another episode stop, or erase the failure.
+
+Pause also bounds its sensor drain at 15 seconds. If capture cannot settle,
+it ends the run with a shutdown error. Canceled captures cannot complete their
+delivery/assertion/hash phase, and an interrupted episode requires Reset or
+fresh preparation before playback. Play, Pause, and Step are disabled during
+shutdown and after a terminal result; Reset becomes available once shutdown
+settles. Timers require a responsive browser JavaScript thread; suspension or
+a blocked thread can still delay acknowledgement under the `unknown` rules below.
 
 Receipts have `commandId`, `browserId`, `action`, `state`, `createdAt`,
 `updatedAt`, `error`, and `snapshot`. States are `accepted`, `running`,

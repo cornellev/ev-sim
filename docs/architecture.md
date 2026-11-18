@@ -1,11 +1,25 @@
 # Architecture
 
 Editable Marketplace run templates use
-`cev-sim.run-template-package@1`, a nonsemantic authoring transport distinct
+`cev-sim.run-template-package@1` for registry publication and `@2` for local
+file export, a nonsemantic authoring transport distinct
 from exact `cev-sim.run-bundle@1` and `cev-sim.run-package@1` artifacts. Import
 publishes the guarded authoring closure and the run manifest last. Marketplace
 release references, receipts, mappings, installed state, and preparations stay
 outside world, resolved-run, simulation, episode, and package identities.
+
+MKT-17 file intake uses `LocalRunTemplateImportManager` in
+`server/marketplace/client/LocalRunTemplateImportManager.js`, separate from
+registry installed membership, receipts, and executable provenance.
+`POST /api/marketplace/local-imports` streams a bounded raw tar into private
+staging, verifies its closure, and returns an immutable plan. Confirmation
+requires its exact hash and snapshot revision. The shared
+`createRunTemplatePackageOperationExecutor` publishes guarded authoring records;
+the local journal resumes interrupted publication without overwriting edits.
+Version 2 includes the hash-pinned Protobuf interface for Zenoh runs and permits
+plugin records without registry release references. Local plugin intake adds
+manual CAS owners and never grants capabilities or imports modules. Registry
+admission remains signed and version 1.
 
 cev-sim is a Next.js app with two main user surfaces: a visual scripting canvas and a Three.js simulation scene. Browser and headless runs share native topic contracts and connect directly to Zenoh through admitted Protobuf routes.
 
@@ -928,9 +942,13 @@ recovers pending commands through heartbeats, and executes through
 `RunSessionController`. Both status and commands default to the most recently
 interacted-with connected page. Commands retain their target after admission;
 page-specific claims and acknowledgements prevent duplicate execution.
-Browser pause/stop acknowledgements wait for active asynchronous sensor work
-to settle before reporting the clock or finalizing logs. These operational
-records do not enter manifests or simulation identity.
+Browser pause/stop acknowledgements drain active asynchronous sensor work.
+Stop shares one 15-second deadline across drain, transport and logging; Pause
+ends a stalled capture with the same shutdown error. Cancellation propagates
+to sensor workers, inline readback, and recording HTTP requests, while epochs
+fence late replies. Shutdown always stops the engine and retains the result
+or failure for repeated Stop. Interrupted steps require Reset before playback.
+These operational limits and records do not enter manifests or simulation identity.
 
 ZPB-08 production runs use native topic contracts and configured Zenoh/Protobuf
 transport. ZPB-09 deletes the orchestrator, ROS builders/codecs, encode workers, and message assets. Frozen historical contracts and shape parsing live in `server/interfaces/historical/`; explicit `RunBundleInspection` and reviewed adoption use them. Browser/kernel import-graph tests prohibit those modules in execution.

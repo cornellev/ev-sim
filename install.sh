@@ -82,7 +82,7 @@ Options:
   --onboarding     Include pinned Zenoh/Protobuf dependencies and router
   -h, --help       Show this help
 
-For a reproducible release install, pass a tag such as --ref v0.2.0.
+For a reproducible release install, pass a tag such as --ref v0.3.0.
 The installer creates .env.local in the install directory. Without
 --marketplace or --no-marketplace it asks whether to enable the marketplace.
 Enter, y, or yes writes CEV_SIM_MARKETPLACE_ENABLED=1. n or no writes 0.

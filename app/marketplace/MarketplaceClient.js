@@ -196,6 +196,28 @@ export function getMarketplaceLibrary({ signal } = {}) {
     return requestJson("/api/marketplace/library", { signal });
 }
 
+export function createLocalRunTemplateImport(file, { signal } = {}) {
+    return requestRaw("/api/marketplace/local-imports", { method: "POST", body: file, contentType: "application/vnd.cev-sim.run-template-package+tar", signal });
+}
+export function listLocalRunTemplateImports({ signal } = {}) {
+    return requestJson("/api/marketplace/local-imports", { signal });
+}
+export function getLocalRunTemplateImport(id, { signal } = {}) {
+    return requestJson("/api/marketplace/local-imports/" + encodeURIComponent(id), { signal });
+}
+export function commitLocalRunTemplateImport(id, expectedRevision, planHash, { signal } = {}) {
+    return requestJson("/api/marketplace/local-imports/" + encodeURIComponent(id) + "/commit", { method: "POST", body: { expectedRevision, planHash }, signal });
+}
+export function resumeLocalRunTemplateImport(id, expectedRevision, { signal } = {}) {
+    return requestJson("/api/marketplace/local-imports/" + encodeURIComponent(id) + "/resume", { method: "POST", body: { expectedRevision }, signal });
+}
+export function replanLocalRunTemplateImport(id, expectedRevision, { signal } = {}) {
+    return requestJson("/api/marketplace/local-imports/" + encodeURIComponent(id) + "/replan", { method: "POST", body: { expectedRevision }, signal });
+}
+export function cancelLocalRunTemplateImport(id, expectedRevision, { signal } = {}) {
+    return requestJson("/api/marketplace/local-imports/" + encodeURIComponent(id) + "/cancel", { method: "POST", body: { expectedRevision }, signal });
+}
+
 export function listMarketplaceUpdates({ track = "stable", signal } = {}) {
     const query = new URLSearchParams({ track });
     return requestJson(`/api/marketplace/updates?${query}`, { signal });
