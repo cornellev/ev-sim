@@ -772,6 +772,14 @@ change the outstanding PR-12 hosted, soak, NVIDIA x64, or Jetson ARM64 gates.
 
 ## Decision log
 
+### 2026-11-21 — 0.3.2 scaffold range
+
+New scaffolds and marketplace host defaults use `>=0.3.2 <0.4.0`. The committed
+`acme.dynamics.bicycle` package matches that scaffold. Other in-repo plugin
+ranges stay as published for `0.3.0` and already admit `0.3.2`. The plant
+fixture stays on `>=0.1.0 <0.4.0`, so its `packageHash` and `runtimeHash` stay.
+Plugin loading stays strict for the current host.
+
 ### 2026-11-17 — 0.3.0 engine-range migration
 
 Bundled examples and fixtures that must load on 0.1 through 0.3 use

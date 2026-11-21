@@ -1,6 +1,6 @@
 {
   "name": "cev-sim",
-  "version": "0.3.0",
+  "version": "0.3.2",
   "private": true,
   "license": "Apache-2.0",
   "engines": {
@@ -67,7 +67,7 @@
     "@grpc/grpc-js": "1.14.5",
     "@grpc/proto-loader": "0.8.1",
     "@jax-js/jax": "^0.1.9",
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@noble/hashes": "^2.4.0",
     "@phosphor-icons/react": "^2.1.10",
     "@sparkjsdev/spark": "^0.1.10",
@@ -86,7 +86,7 @@
     "fflate": "0.8.3",
     "gltf-validator": "2.0.0-dev.3.10",
     "leaflet": "^1.9.4",
-    "next": "^16.3.6",
+    "next": "^16.4.6",
     "noisejs": "^2.1.0",
     "postprocessing": "^6.39.1",
     "protobufjs": "7.6.6",
@@ -95,7 +95,7 @@
     "react-dom": "19.2.3",
     "react-markdown": "10.1.0",
     "semver": "7.7.3",
-    "sharp": "^0.35.4",
+    "sharp": "^0.35.5",
     "spdx-expression-parse": "4.0.0",
     "three": "^0.182.0",
     "three-mesh-bvh": "^0.9.8",
@@ -103,7 +103,7 @@
     "uplot": "^1.6.32",
     "vmath": "^1.4.8",
     "ws": "^8.21.3",
-    "zod": "^4.4.3"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.12.1",

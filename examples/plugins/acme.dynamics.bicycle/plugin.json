@@ -4,7 +4,7 @@
   "id": "acme.dynamics.bicycle",
   "version": "1.0.0",
   "engines": {
-    "cevSim": ">=0.3.0 <0.4.0"
+    "cevSim": ">=0.3.2 <0.4.0"
   },
   "capabilities": [
     "plant.step"

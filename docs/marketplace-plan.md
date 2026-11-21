@@ -1675,6 +1675,14 @@ connection directory is repaired on startup. An existing explicit connection
 directory or provision output parent is checked and not rewritten. No
 marketplace schema, trust rule, semantic hash, or milestone status changed.
 
+### 2026-11-21 — Host default range follows 0.3.2
+
+Marketplace publication defaults for the current host use
+`defaultCevSimEngineRange()` (`0.3.2` → `>=0.3.2 <0.4.0`).
+`acme.dynamics.bicycle` matches that scaffold. Other in-repo plugin ranges stay
+as published for `0.3.0`. Marketplace schema, trust rules, and the frozen
+release canonical digest stay unchanged.
+
 ### 2026-11-17 — Widen fixture cevSim ranges for the 0.3.0 alpha line
 
 In-repo plugin packages that load on the 0.3.0 host now declare

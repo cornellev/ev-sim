@@ -114,15 +114,22 @@ engine ranges and does not change protocol `1.5`, run manifest `13`, run bundle
 `1`, SFLog `1`, or characterization bytes. The same hosted, soak, Playwright,
 NVIDIA, and Jetson gates remain mandatory before a tagged GitHub prerelease.
 
+The 2026-11-21 source line is `0.3.2`. New scaffolds use `>=0.3.2 <0.4.0`, and
+`examples/plugins/acme.dynamics.bicycle` matches that scaffold. Other in-repo
+plugin engine ranges stay as published for `0.3.0`. Protocol `1.5`, run
+manifest `13`, run bundle `1`, SFLog `1`, characterization bytes, and the plant
+fixture stay. The same hosted, soak, Playwright, NVIDIA, and Jetson gates
+remain mandatory before a tagged GitHub prerelease.
+
 ## Internal artifacts
 
 `npm run dist:headless` stages a release-ready package without changing the
 private browser application package. It emits:
 
 ```text
-cev-sim-0.3.0.tgz
-cev_sim-0.3.0-py3-none-any.whl
-cev_sim-0.3.0.tar.gz
+cev-sim-0.3.2.tgz
+cev_sim-0.3.2-py3-none-any.whl
+cev_sim-0.3.2.tar.gz
 release-manifest.json
 SHA256SUMS
 ```
@@ -167,11 +174,11 @@ list without writing. Then run `npm run release:check`.
 
 | Component | Candidate version | Compatibility |
 | --- | --- | --- |
-| npm CLI/worker | `cev-sim@0.3.0` | Node `>=22.22.2 <23`; Linux/macOS x64/ARM64 |
-| Python adapter | `cev-sim==0.3.0` | Python `>=3.10,<3.14`; pure Python wheel and sdist |
+| npm CLI/worker | `cev-sim@0.3.2` | Node `>=22.22.2 <23`; Linux/macOS x64/ARM64 |
+| Python adapter | `cev-sim==0.3.2` | Python `>=3.10,<3.14`; pure Python wheel and sdist |
 | Headless protocol | `1.5` | Server accepts historical JSON clients through `1.5`; package admission requires configured Unix protocol `1.4` |
-| Run manifest / bundle | `13` / `1` | Unchanged by the 0.3.0 packaging bump; release metadata tracks `RUN_MANIFEST_VERSION` |
-| SFLog | `1` | Unchanged by the 0.3.0 packaging bump |
+| Run manifest / bundle | `13` / `1` | Unchanged by the 0.3.2 packaging bump; release metadata tracks `RUN_MANIFEST_VERSION` |
+| SFLog | `1` | Unchanged by the 0.3.2 packaging bump |
 
 `release:check` enforces coordinated root package, plugin, `app/version.js`,
 Python project, and Python runtime versions; MCP advertisement of

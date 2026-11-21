@@ -27,7 +27,14 @@ jobs:
     timeout-minutes: 90
     steps:
       - name: Install build tools
-        run: apt-get update && apt-get install -y build-essential pkg-config curl ca-certificates git python3
+        run: |
+          sed -i \
+            -e 's|http://deb.debian.org|http://archive.debian.org|g' \
+            -e 's|http://security.debian.org|http://archive.debian.org|g' \
+            -e '/bullseye-updates/d' \
+            /etc/apt/sources.list
+          printf 'Acquire::Check-Valid-Until "false";\n' > /etc/apt/apt.conf.d/99no-check-valid-until
+          apt-get update && apt-get install -y build-essential pkg-config curl ca-certificates git python3
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:

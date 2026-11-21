@@ -3,6 +3,63 @@
 All notable changes to cev-sim / ev-sim are documented here. The product remains
 **Alpha** while the SemVer line is `0.x`.
 
+## [0.3.2] — 2026-11-21 (Alpha)
+
+### Guarantees
+
+- Coordinated product version `0.3.2` across npm (`cev-sim`), Python (`cev-sim`),
+  agent `plugin.json`, MCP advertisement, and `app/version.js`. `0.3.2` is the
+  next coordinated package version after `0.3.0`.
+- Headless protocol **1.5**, run manifest **v13**, run bundle **v1**, and SFLog
+  **v1** stay at their current contracts. This packaging bump does not change
+  them. Characterization tapes stay byte-stable.
+- Other in-repo plugin `engines.cevSim` ranges stay as published for `0.3.0`
+  and already admit `0.3.2`. The plant fixture, characterization tapes, and
+  plugin-free hashes stay.
+- Internal artifacts, once built: `cev-sim-0.3.2.tgz`,
+  `cev_sim-0.3.2-py3-none-any.whl`, `cev_sim-0.3.2.tar.gz`,
+  `release-manifest.json`, `SHA256SUMS`.
+- Registry publication to npm/PyPI remains **disabled**.
+
+### Changed
+
+- New plugin scaffolds and marketplace host defaults on this host emit
+  `>=0.3.2 <0.4.0`. `examples/plugins/acme.dynamics.bicycle` matches that
+  scaffold. Other in-repo plugin ranges stay as published for `0.3.0`.
+- Browser control leases use a 5-second TTL. A command rejects a lease that is
+  already bound to a run or has no time remaining, and reported remaining time
+  is capped by the browser watchdog.
+- On Windows, marketplace credential, registry, and package files use an
+  owner-only ACL. Node reports every Windows directory as mode `0777`, so the
+  DACL is the privacy boundary.
+- Run Configuration disables Launch when the draft has a `control-command` v2
+  input, and the control explains that an external controller starts that run.
+
+### Migration
+
+1. Install from tag `v0.3.2` once published, or from internal candidate artifacts:
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/cornellev/ev-sim/v0.3.2/install.sh \
+     | bash -s -- --ref v0.3.2
+   ```
+2. Plugin packages that already include `0.3.2` in `engines.cevSim` keep
+   loading. New packages should declare `>=0.3.2 <0.4.0`, or a wider range
+   that still includes `0.3.2` such as `>=0.1.0 <0.4.0`. Simulator `0.3.2`
+   rejects a range that stops before `0.3.2`.
+
+### Explicit non-goals
+
+- Public npm/PyPI publish, headless PR 13, distributed scheduling, TLS/auth,
+  native WebGPU dependency, Python simulation kernel, deterministic branch
+  replay, rewriting characterization tapes, or the Zenoh transport crate version.
+
+### Candidate evidence still required before GitHub prerelease
+
+- Hosted macOS/Linux semantic parity aggregation
+- Full 1/8/16/32 soak and benchmark on the candidate workflow
+- Dedicated x64 NVIDIA and Jetson ARM64 rendered-sensor reports
+- Internal-candidate production-browser Playwright UI/a11y job on main
+
 ## [0.3.0] — 2026-11-17 (Alpha)
 
 ### Guarantees
