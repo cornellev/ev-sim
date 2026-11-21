@@ -153,7 +153,11 @@ test("paused independent displays redraw all five tools, preserve comparison lay
     expect(after.ribbonVersions).toEqual(before.ribbonVersions);
     expect(after.history).toBeGreaterThan(before.history);
 
-    await page.getByRole("button", { name: "Layers", exact: true }).click();
+    const statusBox = await page.getByRole("banner", { name: "Simulation run status" }).boundingBox();
+    const layersButton = page.getByRole("button", { name: "Layers", exact: true });
+    const layersBox = await layersButton.boundingBox();
+    expect(layersBox.y).toBeGreaterThan(statusBox.y + statusBox.height - 1);
+    await layersButton.click();
     const layers = page.getByRole("group", { name: "Map layers" });
     await layers.getByRole("checkbox", { name: "Stack occupancy" }).uncheck();
     await expect(page.locator("[data-plan-view] canvas")).toHaveCount(2);

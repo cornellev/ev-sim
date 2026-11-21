@@ -17,6 +17,9 @@ export function deriveSimulationStatus(runState = {}, simState = {}) {
     if (TERMINAL_FAILURES.has(runStatus) || runState.error && runStatus === "error") {
         return { label: runStatus === "assertion-failed" ? "Assertion failed" : "Run error", detail: runState.error || "The run stopped with an error", tone: "rose", source: hasManifest ? "manifest" : "scene" };
     }
+    if (hasManifest && !runState.transitioning && runState.controlOwnershipState === "lost") {
+        return { label: "Controller disconnected", detail: "Rebind a controller and resume, or stop and relaunch the run", tone: "amber", source: "manifest" };
+    }
     if (runState.transport?.state === "reconnecting") {
         return { label: "Reconnecting…", detail: "Restoring the Zenoh connection", tone: "amber", source: "manifest" };
     }
@@ -26,6 +29,9 @@ export function deriveSimulationStatus(runState = {}, simState = {}) {
     if (hasManifest) {
         if (runState.transitioning && ["ready", "running", "paused"].includes(runStatus)) {
             return { label: "Stopping", detail: "Finalizing the run", tone: "amber", source: "manifest" };
+        }
+        if (runState.controlOwnershipState === "checking" || runState.controlOwnershipState === "backgrounded") {
+            return { label: "Checking controller", detail: "The run is paused until the controller is verified", tone: "amber", source: "manifest" };
         }
         if ((runState.degraded || renderProvider?.state === "degraded") && runStatus === "running") {
             return { label: "Running, degraded", detail: runState.error || "Optional visual prefetch is under pressure", tone: "amber", source: "manifest" };

@@ -7,11 +7,26 @@
     background: #09090b;
 }
 
-.toolbar {
+.toolbarAnchor {
     position: absolute;
     top: 12px;
     left: 320px;
     z-index: 3;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    pointer-events: none;
+}
+
+/* SimulationRunStatus occupies this corner from the md breakpoint up. */
+@media (min-width: 768px) {
+    .toolbarAnchor {
+        top: 104px;
+    }
+}
+
+.toolbar {
     display: flex;
     align-items: center;
     gap: 8px;
@@ -23,10 +38,6 @@
 }
 
 .layers {
-    position: absolute;
-    top: 56px;
-    left: 320px;
-    z-index: 3;
     display: grid;
     grid-template-columns: repeat(2, minmax(140px, 1fr));
     gap: 4px 16px;

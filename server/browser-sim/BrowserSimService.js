@@ -22,6 +22,7 @@ const Snapshot = z.object({
     stepNs: Nanoseconds.default("0"),
     degraded: z.boolean().default(false),
     error: z.string().max(4096).nullable().default(null),
+    controlOwnershipState: z.enum(["backgrounded", "checking", "lost"]).nullable().default(null),
     transitioning: z.boolean().default(false),
     experimentActive: z.boolean().default(false),
     navigationBlocked: z.boolean().default(false),
@@ -319,6 +320,9 @@ export class BrowserSimService {
     }
 
     _status(browser) {
+        const snapshot = browser.snapshot;
+        const owned = browser.controlLeaseId && ["ready", "running", "paused"].includes(snapshot.status);
+        const lease = owned ? this.controlOwnership.forTarget({ kind: "browser", id: browser.browserId, vehicleId: browser.controlVehicleId }) : null;
         return {
             browserId: browser.browserId,
             connected: this._connected(browser),
@@ -326,7 +330,9 @@ export class BrowserSimService {
             lastInteractionAt: browser.lastInteractionAt === null ? null : new Date(browser.lastInteractionAt).toISOString(),
             interactionOrder: browser.interactionOrder,
             commandId: browser.commandId,
-            ...browser.snapshot,
+            ...snapshot,
+            controlOwnershipState: owned && (lease?.leaseId !== browser.controlLeaseId || lease?.runId !== snapshot.runId)
+                ? "lost" : snapshot.controlOwnershipState,
         };
     }
 

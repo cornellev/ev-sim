@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ControlOwnershipService } from "../server/interfaces/ControlOwnershipService.js";
-import { ControlOwnershipGuard } from "../app/autonomy/ControlOwnershipGuard.js";
+import { BROWSER_CONTROL_LEASE_TTL_MS, ControlOwnershipGuard } from "../app/autonomy/ControlOwnershipGuard.js";
 import { ControlRuntime } from "../app/autonomy/ControlRuntime.js";
 
 const target = { kind: "browser", id: "tab", vehicleId: "ego" };
@@ -18,16 +18,26 @@ test("ownership is bounded, explicit, run-bound, and expiry cannot be renewed", 
     assert.equal(Object.hasOwn(service.status(grant.leaseId), "tokenHash"), false);
     service.bindRun(grant.leaseId, grant.token, { target: { vehicleId: "ego", id: "tab", kind: "browser" }, runId: "run", resolvedHash: "hash" });
     assert.throws(() => service.bindRun(grant.leaseId, grant.token, { target, runId: "other", resolvedHash: "hash" }), /another run/);
-    now = 500;
+    assert.equal(grant.remainingMs, 5_000);
+    now = 4_750;
     assert.equal(service.status(grant.leaseId).remainingMs, 250);
-    assert.equal(service.renew(grant.leaseId, grant.token).remainingMs, 750);
-    now = 1250;
+    assert.equal(service.renew(grant.leaseId, grant.token).remainingMs, 5_000);
+    now = 9_750;
     assert.equal(service.status(grant.leaseId).status, "expired");
     assert.equal(lost.length, 1);
     assert.throws(() => service.renew(grant.leaseId, grant.token), /ended/);
     const next = service.acquire({ target });
     assert.notEqual(next.leaseId, grant.leaseId);
     service.close();
+});
+
+test("headless ownership still expires after 750 ms", () => {
+    let now = 0;
+    const service = new ControlOwnershipService({ now: () => now, startTimer: false });
+    const lease = service.acquire({ target: { ...target, kind: "headless" } });
+    assert.equal(lease.remainingMs, 750);
+    now = 750;
+    assert.equal(service.status(lease.leaseId).status, "expired");
 });
 
 test("local watchdog clears delayed controls and does not resume from a late status reply", () => {
@@ -55,18 +65,42 @@ test("local watchdog clears delayed controls and does not resume from a late sta
     guard.close();
 });
 
-test("a lease receipt extends the window from the time it arrives", () => {
+test("slow or reordered replies do not extend past or shorten verified ownership", () => {
     let now = 0;
     const guard = new ControlOwnershipGuard({ now: () => now, startTimer: false });
     const snapshot = { leaseId: "lease", runId: "run", status: "active", mode: "autonomous", remainingMs: 750, target };
     guard.attach(snapshot);
-    now = 500;
-    assert.equal(guard.update({ ...snapshot, remainingMs: 750 }, { requestedAt: now }), true);
-    now = 1200;
+    now = 600;
+    assert.equal(guard.update(snapshot, { requestedAt: 500 }), true);
+    assert.equal(guard.update(snapshot, { requestedAt: 300 }), true);
+    now = 1249;
     assert.equal(guard.check(), true);
     now = 1250;
     assert.equal(guard.check(), false);
     guard.close();
+});
+
+test("a hidden browser needs a fresh foreground reply and cannot revive a lost lease", () => {
+    let now = 0;
+    const guard = new ControlOwnershipGuard({ ttlMs: BROWSER_CONTROL_LEASE_TTL_MS, now: () => now, startTimer: false });
+    const snapshot = { leaseId: "lease", runId: "run", status: "active", mode: "drive-test", remainingMs: 5_000, target };
+    guard.attach(snapshot, { startTimeNs: 10 });
+    guard.suspend(100);
+    now = 20_000;
+    assert.equal(guard.check(), false);
+    assert.equal(guard.lost, false);
+    guard.recheck();
+    assert.equal(guard.update(snapshot, { requestedAt: 19_999, foreground: true }), false);
+    assert.equal(guard.update(snapshot), false);
+    assert.equal(guard.update(snapshot, { foreground: true }), true);
+    assert.equal(guard.validate(command("lease", { captureTimeNs: 100 }), { applyTimeNs: 101 }).code, "control-lease-command-stale");
+    assert.equal(guard.validate(command("lease", { captureTimeNs: 101 }), { applyTimeNs: 101 }).ok, true);
+    assert.equal(guard.validate(command("lease", { captureTimeNs: 1_000_000_010, deadlineNs: 1_000_000_010 }), { applyTimeNs: 1_000_000_010 }).code, "control-lease-drive-test");
+    guard.suspend();
+    guard.recheck();
+    now += 5_000;
+    assert.equal(guard.update(snapshot, { foreground: true }), false);
+    assert.equal(guard.lost, true);
 });
 
 test("observe cannot actuate and drive-test ends after one simulation second", () => {

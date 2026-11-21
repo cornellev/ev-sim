@@ -460,6 +460,52 @@ test("ended runs ignore Pause and lease loss, reject playback, and repair a stal
     assert.deepEqual(calls.at(-1), ["stop", { reset: false, dispatchEpisode: false }]);
 });
 
+test("returning to an owned run resumes only after fresh verification, and honors a manual pause", async (t) => {
+    const controller = controllerFor("disabled");
+    let now = 0;
+    const actions = [];
+    const simulation = {
+        timeNs: 100,
+        play() { actions.push("play"); },
+        pause() { actions.push("pause"); },
+        inputQueue: { reset() { actions.push("flush"); } },
+        controlRuntime: { revokeOwnership() { actions.push("neutral"); } },
+    };
+    controller.data.simulation = () => simulation;
+    const lease = { leaseId: "lease", runId: null, status: "active", mode: "autonomous", remainingMs: 5_000, target: { vehicleId: "ego" } };
+    controller._beginControlOwnership(lease, { requestedAt: 0 });
+    controller.ownershipGuard.now = () => now;
+    t.after(() => controller.ownershipGuard.close());
+    const bound = { ...lease, runId: "run-test" };
+    assert.equal(controller.updateControlOwnership(bound), true);
+    await controller.play();
+    controller.setControlVisibility(true);
+    assert.deepEqual(actions, ["play", "pause", "flush", "neutral"]);
+    assert.equal(controller.getSnapshot().controlOwnershipState, "backgrounded");
+    now = 20_000;
+    controller.setControlVisibility(false);
+    assert.equal(controller.getSnapshot().controlOwnershipState, "checking");
+    assert.equal(controller.updateControlOwnership(bound, { requestedAt: now - 100, foreground: true }), false);
+    await assert.rejects(controller.step(), { code: "CONTROL_LEASE_CHECKING" });
+    assert.equal(controller.updateControlOwnership(bound, { foreground: true }), true);
+    await new Promise(setImmediate);
+    assert.equal(controller.getSnapshot().status, "running");
+    assert.equal(controller.getSnapshot().activeRunId, "run-test");
+    await controller.pause();
+    controller.setControlVisibility(true);
+    controller.setControlVisibility(false);
+    assert.equal(controller.updateControlOwnership(bound, { foreground: true }), true);
+    await new Promise(setImmediate);
+    assert.equal(controller.getSnapshot().status, "paused");
+    assert.equal(actions.filter((action) => action === "play").length, 2);
+    controller.setControlVisibility(true);
+    controller.setControlVisibility(false);
+    assert.equal(controller.updateControlOwnership({ ...bound, status: "expired", remainingMs: 0 }, { foreground: true }), false);
+    assert.equal(controller.getSnapshot().controlOwnershipState, "lost");
+    assert.equal(controller.updateControlOwnership(bound, { foreground: true }), false);
+    await assert.rejects(controller.play(), { code: "CONTROL_LEASE_LOST" });
+});
+
 test("required logging failures stop the engine, retain evidence and failure, and allow reset", async () => {
     const { controller, simulation } = stoppingController("required");
     const error = new Error("storage offline");

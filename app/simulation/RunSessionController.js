@@ -6,7 +6,7 @@ import { getTelemetryStore } from "../telemetry/TelemetryRuntime.js";
 import { CEV_SIM_VERSION } from "../version.js";
 import { resolveRunManifest } from "./RunManifestClient.js";
 import { assertEnabledCameraRenderRuntime } from "./render/RenderSceneProviderRegistry.js";
-import { ControlOwnershipGuard } from "../autonomy/ControlOwnershipGuard.js";
+import { BROWSER_CONTROL_LEASE_TTL_MS, ControlOwnershipGuard } from "../autonomy/ControlOwnershipGuard.js";
 import { abortable, RUN_STOP_TIMEOUT_MS, runStopTimeout } from "./AsyncCancellation.js";
 import { requiresControlLease } from "./NativeTopicCatalog.js";
 
@@ -64,6 +64,9 @@ export class RunSessionController {
         this._stopError = null;
         this._stopController = null;
         this._operationSequence = 0;
+        this._playSequence = 0;
+        this._controlHidden = false;
+        this._resumeAfterVisibility = false;
         this._recordingStartPromise = null;
         this._unsubscribeTransport = null;
         this._pendingRunId = null;
@@ -77,7 +80,10 @@ export class RunSessionController {
 
     getSnapshot() {
         // Shallow copy: activeResolved / pendingResolved stay by reference (immutable after prepare).
-        return { ...this.snapshot, transitioning: Boolean(this._pendingPrepare || this._stopPromise) };
+        const guard = this.ownershipGuard;
+        const controlOwnershipState = !guard?.lease ? null : guard.lost ? "lost"
+            : guard.holdUntil === Infinity ? "backgrounded" : guard.holdUntil !== null ? "checking" : null;
+        return { ...this.snapshot, controlOwnershipState, transitioning: Boolean(this._pendingPrepare || this._stopPromise) };
     }
 
     subscribe(listener) {
@@ -307,31 +313,71 @@ export class RunSessionController {
     async play() {
         if (!this.data || !this.snapshot.activeResolved) return null;
         const sequence = this._operationSequence;
+        const playSequence = this._playSequence;
         this._assertLiveAction(sequence);
-        if (this.ownershipGuard && !this.ownershipGuard.check()) throw new Error("A live run-bound control lease is required before resuming.");
+        this._assertControlOwnership();
         if (this.snapshot.transport?.state === "reconnecting") { this._resumeAfterReconnect = true; return this.getSnapshot(); }
         await this._ensureRecording();
         this._assertLiveAction(sequence);
+        this._assertControlOwnership();
+        if (playSequence !== this._playSequence) return this.getSnapshot();
         this.applyRuntimeOverrides(this.snapshot.activeResolved);
         this.data.simulation?.()?.play?.();
         this._set({ status: "running" });
         return this.getSnapshot();
     }
 
+    _assertControlOwnership() {
+        if (this.ownershipGuard?.lease && !this.ownershipGuard.check()) {
+            const checking = !this.ownershipGuard.lost && this.ownershipGuard.holdUntil !== null;
+            throw Object.assign(new Error(checking ? "Waiting to verify control ownership." : "A live run-bound control lease is required."), {
+                code: checking ? "CONTROL_LEASE_CHECKING" : "CONTROL_LEASE_LOST",
+            });
+        }
+    }
+
     _beginControlOwnership(snapshot, options) {
         this.ownershipGuard?.close();
-        const guard = new ControlOwnershipGuard({ onLoss: () => {
+        this._resumeAfterVisibility = false;
+        const guard = new ControlOwnershipGuard({ ttlMs: BROWSER_CONTROL_LEASE_TTL_MS, onLoss: () => {
             if (this.ownershipGuard !== guard || this._stopPromise || !["ready", "running", "paused", "preparing"].includes(this.snapshot.status)) return;
-            this._resumeAfterReconnect = false;
             this.pause().catch(() => {});
-            const simulation = this.data?.simulation?.();
-            simulation?.inputQueue?.reset();
-            const vehicleId = guard.lease?.vehicleId || "ego";
-            const stopped = simulation?.controlRuntime?.revokeOwnership(vehicleId, { timeNs: simulation.timeNs });
-            if (stopped) simulation?.runtimeContext?.controls?.applySetpoints?.(new Map([[vehicleId, stopped]]));
+            this._set({});
+            this._clearOwnedMotion(guard.lease.vehicleId, "control-lease-lost");
         } });
         this.ownershipGuard = guard;
         this.ownershipGuard.begin(snapshot, options);
+        if (this._controlHidden) guard.suspend();
+    }
+
+    _clearOwnedMotion(vehicleId, code) {
+        const simulation = this.data?.simulation?.();
+        simulation?.inputQueue?.reset();
+        const stopped = simulation?.controlRuntime?.revokeOwnership(vehicleId, { timeNs: simulation.timeNs, code });
+        if (stopped) simulation?.runtimeContext?.controls?.applySetpoints?.(new Map([[vehicleId, stopped]]));
+    }
+
+    setControlVisibility(hidden) {
+        if (hidden === this._controlHidden) return;
+        this._controlHidden = hidden;
+        const guard = this.ownershipGuard;
+        if (!guard?.lease || guard.lost || this._stopPromise) return;
+        if (hidden) {
+            const simulation = this.data?.simulation?.();
+            guard.suspend(guard.lease.runId ? simulation?.timeNs : undefined);
+            this._playSequence++;
+            const wasRunning = this.snapshot.status === "running";
+            this._resumeAfterVisibility ||= wasRunning || this._resumeAfterReconnect;
+            this._resumeAfterReconnect = false;
+            if (this.snapshot.activeRunId) {
+                simulation?.pause?.();
+                this._clearOwnedMotion(guard.lease.vehicleId, "control-lease-checking");
+            }
+            this._set(wasRunning ? { status: "paused" } : {});
+        } else {
+            guard.recheck();
+            this._set({});
+        }
     }
 
     updateControlOwnership(snapshot, options = {}) {
@@ -343,7 +389,27 @@ export class RunSessionController {
             this._installControlOwnership();
             return true;
         }
-        return guard.update(snapshot, options);
+        const wasHeld = guard.holdUntil !== null;
+        const accepted = guard.update(snapshot, options);
+        if (wasHeld && accepted && guard.holdUntil === null) {
+            this._set({});
+            if (this._resumeAfterVisibility) {
+                const simulation = this.data?.simulation?.();
+                const sequence = this._operationSequence;
+                const playSequence = this._playSequence;
+                Promise.resolve(simulation?.whenIdle?.()).then(() => {
+                    if (!this._resumeAfterVisibility || sequence !== this._operationSequence || playSequence !== this._playSequence
+                        || guard !== this.ownershipGuard || !guard.check()) return;
+                    this._resumeAfterVisibility = false;
+                    return this.play();
+                }).catch((error) => {
+                    if (sequence === this._operationSequence && playSequence === this._playSequence && !guard.lost) {
+                        this._set({ status: "error", error: error.message });
+                    }
+                });
+            }
+        }
+        return accepted;
     }
 
     rebindControlOwnership(snapshot, options = {}) {
@@ -369,6 +435,8 @@ export class RunSessionController {
 
     async pause() {
         this._resumeAfterReconnect = false;
+        this._resumeAfterVisibility = false;
+        this._playSequence++;
         if (this._stopPromise || (this.snapshot.activeRunId && (!["ready", "running", "paused"].includes(this.snapshot.status) || this.snapshot.runResult))) return this.getSnapshot();
         const simulation = this.data?.simulation?.();
         const wasReady = this.snapshot.status === "ready";
@@ -439,9 +507,11 @@ export class RunSessionController {
         const sequence = this._operationSequence;
         const runId = this.snapshot.activeRunId;
         this._assertLiveAction(sequence);
+        this._assertControlOwnership();
         if (this.snapshot.transport?.state === "reconnecting") throw new Error("Cannot step while Zenoh is reconnecting.");
         await this._ensureRecording();
         this._assertLiveAction(sequence);
+        this._assertControlOwnership();
         await this.data.simulation?.()?.step?.(count);
         if (this._autoFinalizing && runId === this.snapshot.activeRunId) return this.getSnapshot();
         this._assertLiveAction(sequence);
@@ -451,6 +521,7 @@ export class RunSessionController {
 
     stop(options = {}) {
         this._cancelRecovery();
+        this._resumeAfterVisibility = false;
         if (this._stopPromise) return this._stopPromise;
         if (this.snapshot.runResult?.runId && this.snapshot.runResult.runId === this.snapshot.activeRunId) {
             const simulation = this.data?.simulation?.();
@@ -719,7 +790,11 @@ export class RunSessionController {
                 if (this._resumeAfterReconnect) await this.play();
                 return;
             }
-        }).catch((error) => { if (current()) this._set({ status: "error", error: error.message }); })
+        }).catch((error) => {
+            if (current() && !["CONTROL_LEASE_CHECKING", "CONTROL_LEASE_LOST"].includes(error.code)) {
+                this._set({ status: "error", error: error.message });
+            }
+        })
             .finally(() => { if (this._recoveryPromise === recovery) this._recoveryPromise = null; });
         this._recoveryPromise = recovery;
     }
@@ -791,6 +866,7 @@ export class RunSessionController {
         this._stopController?.abort(new Error("Run shutdown was cleared."));
         this._cancelRecovery();
         this.ownershipGuard?.close();
+        this._resumeAfterVisibility = false;
         this._stopError = null;
         this._launchSequence += 1;
         this._rejectPendingPrepare(new Error("Run preparation was cleared."));

@@ -119,7 +119,9 @@ the importer does not infer routes, frames, units or control authority.
 The onboarding command@2 interface requires the existing control lease. The
 launcher acquires and renews that lease every 250 ms, prepares the saved run
 paused with its credentials, obtains the actual run ID, then explicitly resumes
-it. See [browser-sim-api.md](browser-sim-api.md). The lease expires after 750 ms.
+it. Browser leases expire after five seconds; headless leases expire after
+750 ms. An owned browser run pauses while hidden and confirms the same owner
+before continuing on return. See [browser-sim-api.md](browser-sim-api.md).
 Starting the router alone does not grant control authority. Partial Rust stacks
 send only their available products; missing commands use the existing stale
 command stop rule and are not a router failure.
