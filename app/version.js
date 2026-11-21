@@ -1,7 +1,7 @@
 /**
  * Coordinated product version for browser and headless runtimes.
  * Must stay equal to package.json, plugin.json, and the Python package version.
- * Enforced by `npm run release:check`.
+ * Change it with `npm run version:bump`. `npm run release:check` enforces the match.
  */
 export const CEV_SIM_VERSION = "0.3.0";
 

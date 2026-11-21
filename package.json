@@ -42,6 +42,7 @@
     "dist:headless": "node --experimental-default-type=module scripts/build-headless-dist.mjs",
     "dist:verify": "node --experimental-default-type=module scripts/verify-headless-dist.mjs",
     "release:check": "node --experimental-default-type=module scripts/release-check.mjs",
+    "version:bump": "node --experimental-default-type=module scripts/bump-version.mjs",
     "host:validate": "node --experimental-default-type=module scripts/validate-headless-host.mjs",
     "artifacts:install": "node --experimental-default-type=module scripts/install-headless-artifacts.mjs",
     "test:python": "python3 -m pytest python/tests",

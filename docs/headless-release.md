@@ -154,6 +154,15 @@ Registry publication remains disabled. A future registry release should use
 [PyPI trusted publishing](https://docs.pypi.org/trusted-publishers/) with
 GitHub OIDC and provenance, not long-lived tokens.
 
+## Bumping the product version
+
+`npm run version:bump -- <version>` rewrites the coordinated version in
+`package.json`, `package-lock.json`, `plugin.json`, `app/version.js`,
+`python/pyproject.toml`, and `python/src/cev_sim/__init__.py`. It does not
+commit or tag. The command prints the docs and plugin engine ranges that still
+need a hand edit. `npm run version:bump -- <version> --dry-run` prints that
+list without writing. Then run `npm run release:check`.
+
 ## Compatibility
 
 | Component | Candidate version | Compatibility |
