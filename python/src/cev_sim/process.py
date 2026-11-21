@@ -13,6 +13,8 @@ from collections import deque
 from pathlib import Path
 from typing import TextIO
 
+import psutil
+
 from .config import MIN_PROTOCOL_MINOR, PROTOCOL_MAJOR, SupervisorLaunch
 from .errors import CevSimLaunchError
 
@@ -111,6 +113,7 @@ class OwnedSupervisor:
         self.target: str | None = None
         self._stderr: deque[str] = deque(maxlen=100)
         self._stderr_thread: threading.Thread | None = None
+        self._descendants: list[int] = []
 
     @property
     def stderr_tail(self) -> str:
@@ -159,6 +162,7 @@ class OwnedSupervisor:
             line = self._readline(self.process.stdout, self.configuration.startup_timeout_s)
             record = json.loads(line)
             self._validate_record(record)
+            self._snapshot_descendants()
             self.target = f"unix:{record['address']}"
             return self.target
         except Exception as error:
@@ -171,6 +175,10 @@ class OwnedSupervisor:
 
     def close(self) -> None:
         process = self.process
+        if process is not None and process.poll() is None:
+            self._snapshot_descendants()
+        descendants = self._descendants
+        self._descendants = []
         self.process = None
         if process is not None:
             was_running = process.poll() is None
@@ -189,6 +197,7 @@ class OwnedSupervisor:
                 if not self._wait_for_process_group_exit(process.pid, self.configuration.shutdown_grace_s):
                     self._signal_process_group(process, signal.SIGKILL)
                     self._wait_for_process_group_exit(process.pid, self.configuration.kill_grace_s)
+        self._reap_descendants(descendants)
         for stream in (process.stdout if process else None, process.stderr if process else None):
             stream and stream.close()
         if self._stderr_thread is not None:
@@ -244,6 +253,59 @@ class OwnedSupervisor:
             or record.get("address") != str(self.socket_path)
         ):
             raise CevSimLaunchError(f"Incompatible supervisor listener record: {record!r}")
+
+    def _snapshot_descendants(self) -> None:
+        process = self.process
+        if process is None or process.pid is None:
+            return
+        try:
+            children = psutil.Process(process.pid).children(recursive=True)
+        except psutil.Error:
+            return
+        seen = set(self._descendants)
+        for child in children:
+            if child.pid not in seen:
+                self._descendants.append(child.pid)
+                seen.add(child.pid)
+
+    def _reap_descendants(self, pids: list[int]) -> None:
+        if os.name != "posix" or not pids:
+            return
+        pending: list[int] = []
+        for pid in pids:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                continue
+            except PermissionError:
+                pass
+            pending.append(pid)
+        pending = self._wait_for_pids(pending, self.configuration.shutdown_grace_s)
+        for pid in pending:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+        self._wait_for_pids(pending, self.configuration.kill_grace_s)
+
+    @staticmethod
+    def _pid_alive(pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
+    @classmethod
+    def _wait_for_pids(cls, pids: list[int], timeout: float) -> list[int]:
+        deadline = time.monotonic() + timeout
+        alive = [pid for pid in pids if cls._pid_alive(pid)]
+        while alive and time.monotonic() < deadline:
+            time.sleep(0.01)
+            alive = [pid for pid in alive if cls._pid_alive(pid)]
+        return alive
 
     @staticmethod
     def _signal_process_group(process: subprocess.Popen[str], requested: signal.Signals) -> None:

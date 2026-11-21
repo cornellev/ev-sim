@@ -518,6 +518,20 @@ compared with the committed characterization.
 
 ## Decision log
 
+### 2026-11-21 — Coordinated 0.3.2 alpha packaging (candidate evidence pending)
+
+Bump the coordinated product version to exact SemVer `0.3.2` while keeping the
+product labeled Alpha. `0.3.2` is the next coordinated package version after
+`0.3.0`. New scaffolds and marketplace host defaults use `>=0.3.2 <0.4.0`.
+`examples/plugins/acme.dynamics.bicycle` matches that scaffold. Other in-repo
+plugin `engines.cevSim` ranges stay as published for `0.3.0` and already admit
+`0.3.2`. Protocol 1.5, run manifest 13, run-bundle v1, SFLog v1, the plant
+fixture, and characterization fixture bytes are unchanged.
+This is not headless PR 13. Hosted macOS/Linux parity aggregation, the full
+1/8/16/32 soak and benchmark, the manual internal-candidate workflow
+(including production Playwright), and dedicated x64 NVIDIA / Jetson ARM64
+reports remain mandatory before tagging a GitHub prerelease.
+
 ### 2026-11-17 — Coordinated 0.3.0 alpha packaging (candidate evidence pending)
 
 Bump the coordinated product version to exact SemVer `0.3.0` while keeping the

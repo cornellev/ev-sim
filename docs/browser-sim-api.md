@@ -140,6 +140,18 @@ The onboarding leased command@2 interface requires control ownership:
    browser ID, and the same lease ID/token. Command@2 carries the lease ID;
    never reuse a prior run's identity or sequence fence.
 
+If `start` or `bind-ownership` rejects a lease with `CONTROL_LEASE_RUN`, acquire
+a fresh one: a lease already bound to a run cannot be reused. If the lease
+ends before the browser's first claim, the command receipt records the lease
+error and the tab is free to accept a new command. Confirm the failed receipt
+before retrying with a fresh lease and request ID. Pause and Stop continue to
+work for the current run after lease loss, even if a controller sends its old
+lease credentials.
+
+The bridge caps reported lease time to the tab's watchdog limit. Older tabs
+use a 750 ms watchdog; current tabs support the full five seconds. This cap
+only affects the tab's local checks. Bridge traffic does not renew ownership.
+
 Hiding the page pauses an owned run and clears buffered motion. On return, a
 fresh heartbeat must confirm the same run and lease before a previously running
 episode continues. Manual pauses are preserved. A missing confirmation for five

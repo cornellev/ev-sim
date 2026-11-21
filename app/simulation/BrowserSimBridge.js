@@ -1,4 +1,5 @@
 import { subscribeStorageEvents } from "../client/storageEvents.js";
+import { BROWSER_CONTROL_LEASE_TTL_MS } from "../autonomy/ControlOwnershipGuard.js";
 import {
     BROWSER_SIM_HEARTBEAT_MS,
     assertBrowserSimCommand,
@@ -104,6 +105,7 @@ export class BrowserSimBridge {
             try {
                 registration = await this._request("/bridge/register", {
                     snapshot: this.snapshot(), activity: this.activity, sequence: ++this.reportSequence, tabId: this.tabId, epoch: this.epoch,
+                    controlLeaseWatchdogMs: BROWSER_CONTROL_LEASE_TTL_MS,
                 });
             } catch (error) {
                 if (error.code === "BRIDGE_REPLACED" || this._superseded()) {

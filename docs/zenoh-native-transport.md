@@ -118,7 +118,9 @@ readback. Pool and metadata reservations are budget figures, not RSS readings.
 
 Release targets are Linux x64 and ARM64 GNU, glibc 2.31 or newer, Node 22 with
 N-API 8. Rust is pinned to 1.98.0, Zenoh to 1.10.2, and dependencies to
-`native/zenoh-transport/Cargo.lock`. Build each architecture in Debian bullseye:
+`native/zenoh-transport/Cargo.lock`. Build each architecture in Debian bullseye.
+CI still builds in that image for the glibc 2.31 floor, and apt uses
+archive.debian.org because bullseye is archived.
 
 ```sh
 npm run build:zenoh-native -- --output artifacts/zenoh
