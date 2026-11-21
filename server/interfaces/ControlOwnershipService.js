@@ -1,12 +1,14 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { performance } from "node:perf_hooks";
+import { BROWSER_CONTROL_LEASE_TTL_MS, CONTROL_LEASE_TTL_MS } from "../../app/autonomy/ControlOwnershipGuard.js";
 
-export const CONTROL_LEASE_TTL_MS = 750;
+export { CONTROL_LEASE_TTL_MS };
 export const CONTROL_LEASE_RENEW_MS = 250;
 const MODES = new Set(["observe", "autonomous", "drive-test"]);
 const digest = (token) => createHash("sha256").update(token).digest();
 const targetKey = (target) => JSON.stringify([target.kind, target.id, target.vehicleId ?? "ego"]);
+const leaseTtl = (target) => target.kind === "browser" ? BROWSER_CONTROL_LEASE_TTL_MS : CONTROL_LEASE_TTL_MS;
 
 function fail(code, message, statusCode = 409) {
     throw Object.assign(new Error(message), { code, statusCode });
@@ -39,7 +41,7 @@ export class ControlOwnershipService extends EventEmitter {
         for (const [leaseId, lease] of this.leases) if (this.leases.size >= this.maxLeases && lease.status !== "active") this.leases.delete(leaseId);
         if (this.leases.size >= this.maxLeases) fail("CONTROL_LEASE_LIMIT", "Control ownership capacity is exhausted.", 503);
         const token = randomBytes(32).toString("base64url");
-        const lease = { leaseId: randomUUID(), target: normalized, key, mode, tokenHash: digest(token), expiresAt: this.now() + CONTROL_LEASE_TTL_MS, status: "active", runId: null, resolvedHash: null };
+        const lease = { leaseId: randomUUID(), target: normalized, key, mode, tokenHash: digest(token), expiresAt: this.now() + leaseTtl(normalized), status: "active", runId: null, resolvedHash: null };
         this.leases.set(lease.leaseId, lease);
         this.targets.set(key, lease.leaseId);
         this.emit("change", this._snapshot(lease));
@@ -66,7 +68,7 @@ export class ControlOwnershipService extends EventEmitter {
 
     renew(leaseId, token) {
         const lease = this._authorized(leaseId, token);
-        lease.expiresAt = this.now() + CONTROL_LEASE_TTL_MS;
+        lease.expiresAt = this.now() + leaseTtl(lease.target);
         const snapshot = this._snapshot(lease);
         this.emit("change", snapshot);
         return snapshot;

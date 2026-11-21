@@ -824,6 +824,7 @@ export class SimulationEngine {
         this.syncEditorRigidBodies();
         this.restoreStoppedEditorBodies();
         this.startLoop();
+        if (this.ownershipGuard?.lease && this.status !== "playing") this.lastFrameMs = this._nowMs();
         this.kernel.play();
         this._syncEpisodeOverlayMeshes();
         this._emit();
@@ -954,7 +955,7 @@ export class SimulationEngine {
         let source;
         try {
             this.kernel.step(count, {
-                beforeStep: () => { this._visualizationStepActive = true; source = this.liveVisualizationSource; this._submitKeyboardDrive(); },
+                beforeStep: () => { this._assertOwnedStep(); this._visualizationStepActive = true; source = this.liveVisualizationSource; this._submitKeyboardDrive(); },
                 afterStep: (dt) => this._updatePresentationAfterStep(dt, source),
             });
         } finally { this._visualizationStepActive = false; }
@@ -967,7 +968,7 @@ export class SimulationEngine {
         try {
             await this.kernel.stepAsync(count, {
                 signal,
-                beforeStep: () => { this._visualizationStepActive = true; source = this.liveVisualizationSource; this._submitKeyboardDrive(); },
+                beforeStep: () => { this._assertOwnedStep(); this._visualizationStepActive = true; source = this.liveVisualizationSource; this._submitKeyboardDrive(); },
                 afterStep: (dt) => this._updatePresentationAfterStep(dt, source),
             });
         } finally { this._visualizationStepActive = false; }
@@ -1414,7 +1415,16 @@ export class SimulationEngine {
         });
     }
 
+    _canAdvanceOwnedRun() {
+        return !this.ownershipGuard?.lease || (globalThis.document?.visibilityState !== "hidden" && this.ownershipGuard.check());
+    }
+
+    _assertOwnedStep() {
+        if (!this._canAdvanceOwnedRun()) throw new Error("A verified control lease is required before stepping.");
+    }
+
     _fixedStep(dt) {
+        if (!this._canAdvanceOwnedRun()) return false;
         const source = this.liveVisualizationSource;
         this._visualizationStepActive = true;
         const previousStep = this.steps;
@@ -1459,6 +1469,7 @@ export class SimulationEngine {
     }
 
     async _fixedStepAsync(dt, signal = this._captureController.signal) {
+        if (!this._canAdvanceOwnedRun()) return false;
         const source = this.liveVisualizationSource;
         this._visualizationStepActive = true;
         const previousStep = this.steps;

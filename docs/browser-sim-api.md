@@ -132,16 +132,28 @@ The onboarding leased command@2 interface requires control ownership:
    `{ "target": { "kind": "browser", "id": "BROWSER_ID", "vehicleId": "ego" }, "mode": "autonomous" }`.
    Retain `leaseId` and the returned credential `token`.
 2. Renew every 250 ms with `POST /api/interfaces/control-ownership/LEASE_ID/renew`
-   and `Authorization: Bearer TOKEN`. The lease expires after 750 ms; keep
-   renewing throughout preparation and execution.
+   and `Authorization: Bearer TOKEN`. The browser lease expires after five
+   seconds without renewal; keep renewing throughout preparation and execution.
 3. Submit `start` with the saved manifest, selected browser, `autoplay: false`,
    `controlLeaseId`, and `controlLeaseToken`. Wait for its succeeded receipt.
 4. Use its `snapshot.runId` in wire commands. Submit `resume` with that run ID,
    browser ID, and the same lease ID/token. Command@2 carries the lease ID;
    never reuse a prior run's identity or sequence fence.
 
-Lease loss clears controls and pauses locally. Router ownership and control
-ownership are separate. An owned headless run uses the existing
+Hiding the page pauses an owned run and clears buffered motion. On return, a
+fresh heartbeat must confirm the same run and lease before a previously running
+episode continues. Manual pauses are preserved. A missing confirmation for five
+seconds, expiry, or release keeps the run paused and requires a new owner and
+explicit resume. The browser exposes this through the optional
+`controlOwnershipState` status field: `backgrounded`, `checking`, `lost`, or
+`null`. The browser list retains the last reported pause for a temporarily
+unavailable tab, but reports `lost` if the server no longer recognizes its
+owner. The onboarding launcher can wait out a confirmed background pause and
+allows two minutes of continuous unavailability when the last report was
+`backgrounded` and the lease is still active.
+
+Router ownership and control ownership are separate. An owned headless run
+retains the 750 ms lease and uses the existing
 `/api/headless/external-runs` preparation/commands API with its headless lease;
 the direct CLI does not provide the ownership service. Headless Zenoh requires
 the Linux addon, including when using WSL2 on Windows.

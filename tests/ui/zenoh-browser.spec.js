@@ -96,3 +96,116 @@ test("@zenoh real SDK binary round trip, isolated runs, router recovery and clea
     expect(closed.diagnostics.queuedEntries).toBe(0);
     expect(closed.diagnostics.queuedBytes).toBe(0);
 });
+
+test("@zenoh an owned run verifies its owner before advancing after a tab break", async ({ page, request }) => {
+    test.skip(process.env.CEV_SIM_ZENOH_BROWSER_GATE !== "1", "Run npm run test:zenoh-browser for the pinned real router.");
+    test.setTimeout(120000);
+    const api = "/api/browser-sim";
+    const ownership = "/api/interfaces/control-ownership";
+    const { resolved } = JSON.parse(await readFile(process.env.CEV_SIM_ZENOH_BROWSER_OWNED_BUNDLE, "utf8"));
+    const manifest = { ...resolved.manifest, id: "pw-zenoh-owned", logging: { ...resolved.manifest.logging, policy: "disabled" } };
+    const saved = await request.post("/api/storage/protobuf-interfaces", { data: { document: resolved.protobufInterface.document } });
+    expect(saved.ok(), await saved.text()).toBe(true);
+    const savedManifest = await request.post("/api/storage/run-manifests", { data: manifest });
+    expect(savedManifest.ok(), await savedManifest.text()).toBe(true);
+    const listBrowsers = async () => (await (await request.get(`${api}/browsers`)).json()).browsers;
+    const previousBrowsers = new Set((await listBrowsers()).map((entry) => entry.browserId));
+    let reportedHidden = false;
+    let blockVerification = false;
+    await page.route("**/api/browser-sim/bridge/*/heartbeat", async (route) => {
+        const state = route.request().postDataJSON().snapshot.controlOwnershipState;
+        if ((state === "backgrounded" && reportedHidden) || (state === "checking" && blockVerification)) return route.abort();
+        if (state === "backgrounded") reportedHidden = true;
+        return route.continue();
+    });
+    const setHidden = (hidden) => page.evaluate((hidden) => {
+        Object.defineProperty(document, "visibilityState", { configurable: true, value: hidden ? "hidden" : "visible" });
+        document.dispatchEvent(new Event("visibilitychange"));
+    }, hidden);
+    await page.goto("/?browserPerformance=1");
+    await expect.poll(() => page.evaluate(() => Boolean(globalThis.__cevSimBenchmarkRuntime)), { timeout: 45000 }).toBe(true);
+    let browserId;
+    await expect.poll(async () => {
+        browserId = (await listBrowsers()).find((entry) => entry.connected && !previousBrowsers.has(entry.browserId))?.browserId;
+        return Boolean(browserId);
+    }).toBe(true);
+    const acquire = await request.post(ownership, { data: { target: { kind: "browser", id: browserId, vehicleId: manifest.controls.targetVehicleId }, mode: "autonomous" } });
+    expect(acquire.ok(), await acquire.text()).toBe(true);
+    const { leaseId, token } = await acquire.json();
+    const headers = { Authorization: `Bearer ${token}` };
+    const renew = async () => {
+        const response = await request.post(`${ownership}/${leaseId}/renew`, { headers });
+        if (!response.ok()) throw new Error(await response.text());
+    };
+    let renewFailure;
+    const timer = setInterval(() => renew().catch((error) => { renewFailure = error; }), 250);
+    const owned = { controlLeaseId: leaseId, controlLeaseToken: token };
+    const command = async (action, fields) => {
+        const response = await request.post(`${api}/commands`, { data: { action, browserId, ...fields } });
+        expect(response.status(), await response.text()).toBe(202);
+        const { commandId } = await response.json();
+        let receipt;
+        await expect.poll(async () => {
+            receipt = await (await request.get(`${api}/commands/${commandId}`)).json();
+            return receipt.state;
+        }, { timeout: 30_000 }).toMatch(/^(succeeded|failed|unknown)$/);
+        expect(receipt.state, JSON.stringify(receipt)).toBe("succeeded");
+        return receipt.snapshot;
+    };
+    const readStatus = async () => (await listBrowsers()).find((entry) => entry.browserId === browserId);
+    const currentStep = () => page.evaluate(() => globalThis.__cevSimBenchmarkRuntime.snapshot().simulation.steps);
+    let runId, session, clock, wheel;
+    try {
+        ({ runId } = await command("start", { manifestId: manifest.id, autoplay: false, ...owned }));
+        const schema = loadDescriptorSet(Buffer.from(resolved.protobufInterface.document.schemas[0].descriptorBase64, "base64"));
+        const stateType = schema.root.lookupType("headless_test.State");
+        const commandType = schema.root.lookupType("headless_test.Command");
+        const config = JSON.parse(await readFile(process.env.CEV_SIM_ZENOH_BROWSER_CONFIG, "utf8"));
+        session = await Session.open(new Config(config.endpoint, 5000));
+        let sequence = 0;
+        let moving = false;
+        wheel = await session.declareSubscriber(`sim/${runId}/wheel`, { handler: (sample) => {
+            moving ||= decodeMessage(stateType, sample.payload().toBytes()).speed > 0.1;
+        } });
+        clock = await session.declareSubscriber(`sim/${runId}/clock`, { handler: (sample) => {
+            const { time } = decodeMessage(stateType, sample.payload().toBytes());
+            const bytes = encodeMessage(commandType, { run: runId, lease: leaseId, sequence: String(++sequence), capture: time,
+                deadline: String(BigInt(time) + 300000000n), speed: 0.5, steering: 0 });
+            session.put(`sim/${runId}/command`, bytes, { encoding: Encoding.APPLICATION_PROTOBUF }).catch(() => {});
+        } });
+        await command("resume", { runId, ...owned });
+        await expect.poll(() => moving, { timeout: 10000 }).toBe(true);
+        await setHidden(true);
+        await expect.poll(async () => (await readStatus()).controlOwnershipState).toBe("backgrounded");
+        const frozen = await currentStep();
+        await expect.poll(async () => (await readStatus()).connected, { timeout: 20000 }).toBe(false);
+        expect(await currentStep()).toBe(frozen);
+        expect((await readStatus()).controlOwnershipState).toBe("backgrounded");
+        expect(renewFailure).toBeUndefined();
+        blockVerification = true;
+        await setHidden(false);
+        await expect(page.getByRole("status").filter({ hasText: "Checking controller" }).last()).toBeVisible();
+        expect(await currentStep()).toBe(frozen);
+        blockVerification = false;
+        await expect.poll(currentStep).toBeGreaterThan(frozen);
+        expect((await readStatus()).runId).toBe(runId);
+
+        clearInterval(timer);
+        reportedHidden = false;
+        await setHidden(true);
+        await expect.poll(async () => (await (await request.get(`${ownership}/${leaseId}`)).json()).status, { timeout: 8000 }).toBe("expired");
+        const lostStep = await currentStep();
+        await setHidden(false);
+        await expect(page.getByRole("status").filter({ hasText: "Controller disconnected" }).last()).toBeVisible();
+        expect(await currentStep()).toBe(lostStep);
+        expect((await readStatus()).status).toBe("paused");
+    } finally {
+        clearInterval(timer);
+        await clock?.undeclare();
+        await wheel?.undeclare();
+        await session?.close();
+        if (runId) await command("stop", { runId });
+        await request.delete(`${ownership}/${leaseId}`, { headers });
+        await request.delete(`/api/storage/run-manifests/${manifest.id}`);
+    }
+});

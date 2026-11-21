@@ -807,7 +807,7 @@ printf '    %snpm run build%s\n' "$CYAN" "$RESET"
 printf '    %snpm start%s\n' "$CYAN" "$RESET"
 if [[ "$RUN_BUILD" -eq 1 ]]; then
   printf '\n'
-  printf '  %snpm run build%s finished. %snpm start%s serves that build.\n' "$BOLD" "$RESET" "$BOLD" "$RESET"
+  printf '  %snpm run build%s finished. %snpm start%s will start your build.\n' "$BOLD" "$RESET" "$BOLD" "$RESET"
 fi
 printf '\n'
 printf '  Open the URL Next prints (usually %slocalhost:3000%s).\n' "$BOLD" "$RESET"

@@ -50,11 +50,19 @@ test("owned browser preparation binds the real run and keeps credentials private
     assert.equal(JSON.stringify(claimed).includes(lease.token), false);
     const completed = f.service.complete(browser.browserId, browser.token, receipt.commandId, { claimId: "claim", sequence: 10, snapshot: { status: "ready", runId: "actual-run", manifestId: "native", resolvedHash: "native-hash" }, error: null });
     assert.equal(completed.controlLease.runId, "actual-run");
-    now = 500;
+    now = 4_750;
     const heartbeat = f.report(browser, { status: "ready", runId: "actual-run", manifestId: "native", resolvedHash: "native-hash" });
     assert.equal(heartbeat.controlLease.remainingMs, 250, "ordinary bridge traffic does not renew ownership");
     assert.throws(() => f.service.submit({ action: "resume", runId: "actual-run", browserId: browser.browserId }), /active control lease/);
-    now = 750;
+    f.service.heartbeat(browser.browserId, browser.token, {
+        snapshot: { status: "paused", runId: "actual-run", resolvedHash: "native-hash", controlOwnershipState: "backgrounded" },
+        sequence: 11, activity: 0,
+    });
+    f.advance(16_000);
+    assert.equal(f.service.list().browsers[0].connected, false);
+    assert.equal(f.service.list().browsers[0].controlOwnershipState, "backgrounded");
+    now = 5_000;
+    assert.equal(f.service.list().browsers[0].controlOwnershipState, "lost", "a cached pause is not proof of live ownership");
     assert.equal(f.report(browser, { status: "ready", runId: "actual-run" }).controlLease.status, "expired");
     assert.equal(JSON.stringify(f.service.get(receipt.commandId)).includes(lease.token), false);
     const nextLease = controlOwnership.acquire({ target: lease.target, mode: "observe" });

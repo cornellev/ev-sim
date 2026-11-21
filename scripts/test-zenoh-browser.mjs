@@ -13,7 +13,9 @@ const artifact = pair.artifacts[`${process.platform}-${process.arch}`];
 if (!artifact?.name) throw new Error("Browser compatibility gate requires a macOS/Linux standalone bridge; Windows live acceptance is deferred.");
 const directory = await mkdtemp(path.join(tmpdir(), "cev-zenoh-browser-"));
 const bundlePath = path.join(directory, "native-run.json");
+const ownedBundlePath = path.join(directory, "owned-run.json");
 await writeFile(bundlePath, JSON.stringify(await externalBundle({ maxSteps: 240 })));
+await writeFile(ownedBundlePath, JSON.stringify(await externalBundle({ leased: true, maxSteps: null })));
 let binary = process.env.CEV_SIM_ZENOH_BROWSER_TEST_BINARY;
 if (!binary) {
     const response = await fetch(`https://github.com/eclipse-zenoh/zenoh-ts/releases/download/${pair.routerVersion}/${artifact.name}`);
@@ -61,7 +63,7 @@ const control = createServer(async (request, response) => {
 try {
     await ready(); await new Promise((resolve) => control.listen(0, "127.0.0.1", resolve));
     const tests = spawn("npx", ["playwright", "test", "tests/ui/zenoh-browser.spec.js", "tests/ui/protobuf-interface.spec.js", ...process.argv.slice(2)], {
-        stdio: "inherit", env: { ...process.env, CEV_SIM_ZENOH_ROUTER: "off", CEV_SIM_ZENOH_BROWSER_CONFIG: config, CEV_SIM_ZENOH_BROWSER_GATE: "1", CEV_SIM_ZENOH_BROWSER_GATE_CONTROL: `http://127.0.0.1:${control.address().port}`, CEV_SIM_ZENOH_BROWSER_TEST_BUNDLE: bundlePath, CEV_SIM_DATA_DIR: path.join(directory, "storage") },
+        stdio: "inherit", env: { ...process.env, CEV_SIM_ZENOH_ROUTER: "off", CEV_SIM_ZENOH_BROWSER_CONFIG: config, CEV_SIM_ZENOH_BROWSER_GATE: "1", CEV_SIM_ZENOH_BROWSER_GATE_CONTROL: `http://127.0.0.1:${control.address().port}`, CEV_SIM_ZENOH_BROWSER_TEST_BUNDLE: bundlePath, CEV_SIM_ZENOH_BROWSER_OWNED_BUNDLE: ownedBundlePath, CEV_SIM_DATA_DIR: path.join(directory, "storage") },
     });
     const code = await new Promise((resolve) => tests.on("exit", resolve)); process.exitCode = code ?? 1;
 } finally { router.kill(); control.close(); }

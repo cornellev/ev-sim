@@ -839,3 +839,13 @@ remain ZPB-08; orchestrator deletion remains ZPB-09.
   production build, using temporary ports and the router opt-out.
   Windows live acceptance and release work remain deferred by user request;
   Linux SHM, hosted, and hardware release gates remain unchanged.
+
+- **2026-11-20 — Browser ownership maintenance.** Browser leases allow five
+  seconds between renewals and keep the existing launcher cadence. A hidden
+  owned tab pauses and clears pending motion; a fresh foreground heartbeat
+  must confirm the same run and lease before automatic continuation. The
+  status API distinguishes suspension, verification, and loss. The headless
+  lease, command freshness, wire contracts, and run hashes stay unchanged.
+  Local Chromium with the pinned Zenoh router verified continuation after
+  more than 15 seconds without a browser heartbeat and a paused run after
+  real lease expiry. The onboarding launcher's Rust suite passed.

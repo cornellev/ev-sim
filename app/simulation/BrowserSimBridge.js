@@ -7,6 +7,7 @@ import {
 } from "./BrowserSimControl.js";
 
 const TAB_KEY = "cev-sim.browser-sim.tab";
+const LEASE_REQUEST_TIMEOUT_MS = 1_000;
 
 /** App-lifetime HTTP/SSE adapter. The run controller remains the lifecycle owner. */
 export class BrowserSimBridge {
@@ -19,6 +20,7 @@ export class BrowserSimBridge {
         this.active = false;
         this.syncing = null;
         this.syncAgain = false;
+        this.visibilitySequence = 0;
     }
 
     snapshot() {
@@ -28,15 +30,27 @@ export class BrowserSimBridge {
     start() {
         this._claimTab();
         this.active = true;
+        this.controller.setControlVisibility?.(this.documentImpl.visibilityState === "hidden");
         const interact = (event) => {
             if (!event.isTrusted) return;
             if (event.type === "focus" && event.target !== this.windowImpl) return;
-            if (event.type === "visibilitychange" && (this.documentImpl.visibilityState !== "visible" || !this.documentImpl.hasFocus())) return;
             this.activity += 1;
             this.sync();
         };
-        const events = [[this.windowImpl, "focus"], ...["visibilitychange", "pointerdown", "keydown", "wheel"].map((type) => [this.documentImpl, type])];
+        const visibility = () => {
+            const hidden = this.documentImpl.visibilityState === "hidden";
+            this.visibilitySequence++;
+            this.controller.setControlVisibility?.(hidden);
+            if (hidden && this.registration && this.controller.getSnapshot().controlOwnershipState === "backgrounded") {
+                // Report the intentional pause even if the page freezes behind an in-flight request.
+                this._heartbeat(this.registration, { keepalive: true }).catch(() => {});
+            }
+            if (!hidden && this.documentImpl.hasFocus()) this.activity += 1;
+            this.sync();
+        };
+        const events = [[this.windowImpl, "focus"], ...["pointerdown", "keydown", "wheel"].map((type) => [this.documentImpl, type])];
         for (const [target, type] of events) target.addEventListener(type, interact, { capture: true, passive: true });
+        this.documentImpl.addEventListener("visibilitychange", visibility);
         if (this.documentImpl.hasFocus()) this.activity += 1;
         const unsubscribeEvents = this.subscribeEvents((event) => {
             if (event.domain === "browser-sim" && event.id === this.registration?.browserId) this.sync();
@@ -55,6 +69,7 @@ export class BrowserSimBridge {
             unsubscribeRun();
             unsubscribeExperiment?.();
             for (const [target, type] of events) target.removeEventListener(type, interact, true);
+            this.documentImpl.removeEventListener("visibilitychange", visibility);
             if (this.registration) this._unregister(this.registration);
         };
     }
@@ -106,12 +121,13 @@ export class BrowserSimBridge {
         }
         const registration = this.registration;
         try {
-            const heartbeat = await this._request(`/bridge/${registration.browserId}/heartbeat`, {
-                snapshot: this.snapshot(), activity: this.activity, sequence: ++this.reportSequence,
-            }, registration);
             const requestedAt = performance.now();
+            const visibilitySequence = this.visibilitySequence;
+            const heartbeat = await this._heartbeat(registration);
             if (!this.active || this.registration !== registration) return;
-            if (heartbeat.controlLease) this.controller.updateControlOwnership?.(heartbeat.controlLease, { requestedAt });
+            if (heartbeat.controlLease) this.controller.updateControlOwnership?.(heartbeat.controlLease, {
+                requestedAt, foreground: this.documentImpl.visibilityState === "visible" && this.visibilitySequence === visibilitySequence,
+            });
             const completed = new Set();
             for (const operation of this.operations.values()) {
                 if (operation.completion && operation.registration === registration) {
@@ -136,6 +152,16 @@ export class BrowserSimBridge {
             }
             throw error;
         }
+    }
+
+    _heartbeat(registration, options = {}) {
+        return this._request(`/bridge/${registration.browserId}/heartbeat`, {
+            snapshot: this.snapshot(), activity: this.activity, sequence: ++this.reportSequence,
+        }, registration, { ...this._leaseRequestOptions(), ...options });
+    }
+
+    _leaseRequestOptions() {
+        return this.controller.ownershipGuard?.lease ? { signal: AbortSignal.timeout(LEASE_REQUEST_TIMEOUT_MS) } : {};
     }
 
     // sessionStorage survives reload in this tab only; a newer epoch belongs to the replacement.
@@ -180,8 +206,8 @@ export class BrowserSimBridge {
         }
         operation.working = true;
         try {
-            const command = await this._request(`/bridge/${registration.browserId}/commands/${summary.commandId}/claim`, { claimId: operation.claimId }, registration);
             const leaseRequestedAt = performance.now();
+            const command = await this._request(`/bridge/${registration.browserId}/commands/${summary.commandId}/claim`, { claimId: operation.claimId }, registration);
             if (!this.active || this.registration !== registration) return;
             let error = null;
             try {
@@ -205,9 +231,9 @@ export class BrowserSimBridge {
     async _complete(operation) {
         const { registration, commandId } = operation;
         try {
-            const response = await this._request(`/bridge/${registration.browserId}/commands/${commandId}/complete`, operation.completion, registration);
             const requestedAt = performance.now();
-            if (response.controlLease) this.controller.updateControlOwnership?.(response.controlLease, { requestedAt });
+            const response = await this._request(`/bridge/${registration.browserId}/commands/${commandId}/complete`, operation.completion, registration, this._leaseRequestOptions());
+            if (response.controlLease && this.active && this.registration === registration) this.controller.updateControlOwnership?.(response.controlLease, { requestedAt });
             this.operations.delete(commandId);
         } catch (error) {
             if (["COMMAND_NOT_FOUND", "BROWSER_NOT_REGISTERED"].includes(error.code)) this.operations.delete(commandId);

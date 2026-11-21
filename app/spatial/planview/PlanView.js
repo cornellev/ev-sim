@@ -75,6 +75,7 @@ export function PlanView({ data }) {
 
     return (
         <div className={styles.host}>
+            <div className={styles.toolbarAnchor}>
             <div className={styles.toolbar} data-map-control>
                 <NativeSelect
                     aria-label="Trail history window"
@@ -152,6 +153,7 @@ export function PlanView({ data }) {
                     {stackOn && stackMessage ? <p className={styles.layerNote}>{stackMessage}</p> : null}
                 </div>
             )}
+            </div>
             <ScenarioMapViewport
                 environment={environment || { roads: { nodes: [], edges: [] }, buildings: [], features: [] }}
                 ariaLabel="Simulation map"

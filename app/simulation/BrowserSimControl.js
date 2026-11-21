@@ -50,6 +50,7 @@ export function browserSimSnapshot(controller, experiment, navigationBlocked = f
         stepNs: String(resolved?.manifest?.clock?.stepNs ?? simulation?.stepNs ?? 0),
         degraded: run.degraded === true,
         error: run.error == null ? null : String(run.error).slice(0, 4096),
+        controlOwnershipState: run.controlOwnershipState ?? null,
         transitioning: !simulation || run.transitioning === true,
         experimentActive: ["running", "paused"].includes(experiment?.getSnapshot()?.status),
         navigationBlocked,

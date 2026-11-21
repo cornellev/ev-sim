@@ -20,6 +20,10 @@ ZPB-09 deletion. A package marked in progress is not accepted implementation.
 
 ## Accepted operational contract
 
+This records the original ZPB-08 acceptance. See the
+[browser lifecycle API](browser-sim-api.md) for current browser lease timing
+and tab return behavior.
+
 - Ownership applies to onboarding. Generic external `control-command@1` and
   existing policy control remain supported by their native contracts.
 - Lease lifetime is 750 ms, renewed explicitly every 250 ms. Bridge heartbeats,
