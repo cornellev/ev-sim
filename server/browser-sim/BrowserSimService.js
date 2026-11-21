@@ -67,6 +67,9 @@ const Report = z.object({
     tabId: Id.optional(),
     epoch: Sequence.optional(),
 });
+const Registration = Report.extend({
+    controlLeaseWatchdogMs: Sequence.positive().default(750), // Older bundles reject longer lease snapshots.
+});
 const Completion = z.object({
     claimId: Id,
     sequence: Sequence,
@@ -81,6 +84,17 @@ function parse(schema, input) {
     const result = schema.safeParse(input);
     if (!result.success) throw browserSimError("INVALID_REQUEST", result.error.issues.map((issue) => issue.message).join(" "), 400);
     return result.data;
+}
+
+function assertUsableLease(action, lease) {
+    if (["start", "bind-ownership"].includes(action) && lease.runId) {
+        throw browserSimError("CONTROL_LEASE_RUN", "This control lease is already bound to a run. Acquire a fresh lease.");
+    }
+    if (lease.remainingMs <= 0) throw browserSimError("CONTROL_LEASE_LOST", "No time remains on this control lease. Acquire a fresh lease.");
+}
+
+function browserLeaseSnapshot(browser, lease) {
+    return lease && { ...lease, remainingMs: Math.min(lease.remainingMs, browser.controlLeaseWatchdogMs) };
 }
 
 /** One process owns live tabs and bounded, non-durable command receipts. */
@@ -98,7 +112,7 @@ export class BrowserSimService {
     }
 
     register(input) {
-        const report = parse(Report, input);
+        const report = parse(Registration, input);
         this._expire();
         // A reload registers before its DELETE. The same sessionStorage tab replaces immediately.
         if (report.tabId) {
@@ -116,6 +130,7 @@ export class BrowserSimService {
             token: randomUUID(),
             tabId: report.tabId ?? null,
             epoch: report.epoch ?? 0,
+            controlLeaseWatchdogMs: report.controlLeaseWatchdogMs,
             registeredOrder: ++this.sequence,
             lastSeenAt: this.now(),
             activity: 0,
@@ -135,9 +150,15 @@ export class BrowserSimService {
         const browser = this._authenticate(browserId, token);
         this._report(browser, report);
         const command = this.commands.get(browser.commandId);
+        const leaseId = command?.request.controlLeaseId ?? browser.controlLeaseId;
+        let controlLease = null;
+        if (leaseId) {
+            try { controlLease = browserLeaseSnapshot(browser, this.controlOwnership.status(leaseId)); }
+            catch (error) { if (error.code !== "CONTROL_LEASE_NOT_FOUND") throw error; }
+        }
         return {
             browserId,
-            controlLease: command?.request.controlLeaseId || browser.controlLeaseId ? this.controlOwnership.status(command?.request.controlLeaseId ?? browser.controlLeaseId) : null,
+            controlLease,
             command: command && ["accepted", "running"].includes(command.state) && command.ready
                 ? { commandId: command.commandId, browserId }
                 : null,
@@ -168,9 +189,9 @@ export class BrowserSimService {
     }
 
     submit(input) {
-        const request = parse(Command, input);
-        const { controlLeaseToken, ...publicRequest } = request;
-        const normalized = { ...publicRequest, ...(request.action === "start" ? { autoplay: request.controlLeaseId ? false : request.autoplay ?? true } : {}) };
+        const { controlLeaseId, controlLeaseToken, ...publicRequest } = parse(Command, input);
+        const request = controlLeaseId && !["pause", "stop"].includes(publicRequest.action) ? { ...publicRequest, controlLeaseId } : publicRequest;
+        const normalized = { ...request, ...(request.action === "start" ? { autoplay: request.controlLeaseId ? false : request.autoplay ?? true } : {}) };
         const fingerprint = JSON.stringify(Object.keys(normalized).sort().map((key) => [key, normalized[key]]));
         this._expire();
         if (request.requestId) {
@@ -185,8 +206,9 @@ export class BrowserSimService {
         if (request.controlLeaseId) {
             const lease = this.controlOwnership?.authorize(request.controlLeaseId, controlLeaseToken);
             if (!lease || lease.target.kind !== "browser" || lease.target.id !== browser.browserId) throw browserSimError("CONTROL_LEASE_TARGET", "Control lease belongs to another browser.");
+            assertUsableLease(request.action, lease);
             if (!["start", "bind-ownership"].includes(request.action) && lease.runId !== request.runId) throw browserSimError("CONTROL_LEASE_RUN", "Control lease belongs to another run.");
-            if (request.action === "bind-ownership" && (!browser.controlLeaseId || lease.runId || lease.target.vehicleId !== browser.controlVehicleId)) throw browserSimError("CONTROL_LEASE_TARGET", "The new unbound lease must target this owned vehicle.");
+            if (request.action === "bind-ownership" && (!browser.controlLeaseId || lease.target.vehicleId !== browser.controlVehicleId)) throw browserSimError("CONTROL_LEASE_TARGET", "The new unbound lease must target this owned vehicle.");
             if (request.action === "reset") throw browserSimError("CONTROL_LEASE_RESET", "Stop the owned run, acquire a new lease, and prepare a new run.");
         }
         if (browser.commandId) throw browserSimError("BUSY", "Another command is active in this tab.");
@@ -200,7 +222,7 @@ export class BrowserSimService {
             commandId: randomUUID(),
             browserId: browser.browserId,
             request: normalized,
-            leaseCredential: controlLeaseToken ?? null,
+            leaseCredential: request.controlLeaseId ? controlLeaseToken : null,
             fingerprint,
             state: "accepted",
             createdAt: this.now(),
@@ -224,17 +246,29 @@ export class BrowserSimService {
 
     claim(browserId, token, commandId, input) {
         const { claimId } = parse(z.object({ claimId: Id }), input);
-        this._authenticate(browserId, token);
+        const browser = this._authenticate(browserId, token);
         this._expire();
         const command = this._command(commandId);
         if (command.browserId !== browserId) throw browserSimError("WRONG_BROWSER", "This command belongs to another tab.");
         if (!command.ready || (command.state !== "accepted" && !(command.state === "running" && command.claimId === claimId))) {
             throw browserSimError("COMMAND_NOT_PENDING", "This command cannot be claimed.");
         }
+        let controlLease = null;
+        if (command.request.controlLeaseId) {
+            try {
+                const lease = this.controlOwnership.authorize(command.request.controlLeaseId, command.leaseCredential);
+                assertUsableLease(command.request.action, lease);
+                controlLease = browserLeaseSnapshot(browser, lease);
+            } catch (error) {
+                // A repeated claim may already have reached the browser; only fail a first claim here.
+                if (command.state !== "accepted" || !error.code?.startsWith("CONTROL_LEASE_")) throw error;
+                this._finishUnavailable(command, "failed", error.code, error.message);
+                throw browserSimError("COMMAND_NOT_PENDING", "This command cannot be claimed. Check its receipt.");
+            }
+        }
         command.claimId = claimId;
         command.state = "running";
         command.updatedAt = this.now();
-        const controlLease = command.request.controlLeaseId ? this.controlOwnership.authorize(command.request.controlLeaseId, command.leaseCredential) : null;
         return { ...this._receipt(command), ...command.request, browserId, resolved: command.resolved, manifestRevision: command.manifestRevision ?? null, controlLease };
     }
 
@@ -267,7 +301,7 @@ export class BrowserSimService {
         this._reportSnapshot(browser, completion);
         browser.lastSeenAt = this.now();
         if (browser.commandId === commandId) browser.commandId = null;
-        return { ...this._receipt(command), controlLease };
+        return { ...this._receipt(command), controlLease: browserLeaseSnapshot(browser, controlLease) };
     }
 
     async _prepare(command, manifestId) {
@@ -386,7 +420,10 @@ export class BrowserSimService {
         command.updatedAt = this.now();
         command.resolved = null;
         const browser = this.browsers.get(command.browserId);
-        if (state === "failed" && browser?.commandId === command.commandId) browser.commandId = null;
+        if (state === "failed") {
+            command.leaseCredential = null;
+            if (browser?.commandId === command.commandId) browser.commandId = null;
+        }
     }
 
     _expire() {

@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import test from "node:test";
 
 import express from "express";
+import { BROWSER_CONTROL_LEASE_TTL_MS, ControlOwnershipGuard } from "../app/autonomy/ControlOwnershipGuard.js";
 import { BrowserSimBridge } from "../app/simulation/BrowserSimBridge.js";
 import { browserSimSnapshot } from "../app/simulation/BrowserSimControl.js";
 import { BrowserSimService } from "../server/browser-sim/BrowserSimService.js";
@@ -24,7 +25,7 @@ function fixture(options = {}) {
     };
     const service = new BrowserSimService(storage, { events, now: () => now, ...options });
     let sequence = 0;
-    const register = (snapshot = { status: "idle" }, activity = 0) => service.register({ snapshot, activity, sequence: ++sequence });
+    const register = (snapshot = { status: "idle" }, activity = 0, options = {}) => service.register({ snapshot, activity, sequence: ++sequence, ...options });
     const report = (browser, snapshot, activity = 0) => service.heartbeat(browser.browserId, browser.token, { snapshot, activity, sequence: ++sequence });
     return { service, storage, events, resolved, register, report, advance: (ms) => { now += ms; } };
 }
@@ -33,24 +34,40 @@ async function tick() {
     await new Promise((resolve) => setImmediate(resolve));
 }
 
-test("owned browser preparation binds the real run and keeps credentials private", async () => {
+function ownedFixture({ maxLeases } = {}) {
     let now = 0;
-    const controlOwnership = new ControlOwnershipService({ now: () => now, startTimer: false });
+    const controlOwnership = new ControlOwnershipService({ now: () => now, startTimer: false, maxLeases });
     const f = fixture({ controlOwnership });
-    const browser = f.register();
     f.storage.resolveRunManifest = async (id) => ({ version: 13, resolvedHash: "native-hash", manifest: { id, controls: { targetVehicleId: "ego", authority: "candidate" }, topics: [{ direction: "input", valueContract: { id: "cev.control-command", version: 2 } }] } });
+    return { ...f, controlOwnership, setLeaseTime: (ms) => { now = ms; } };
+}
+
+const leaseFields = (lease) => ({ controlLeaseId: lease.leaseId, controlLeaseToken: lease.token });
+
+test("owned browser preparation binds the real run and keeps credentials private", async () => {
+    const f = ownedFixture();
+    const { controlOwnership } = f;
+    const browser = f.register();
     const lease = controlOwnership.acquire({ target: { kind: "browser", id: browser.browserId, vehicleId: "ego" }, mode: "drive-test" });
-    const request = { action: "start", manifestId: "native", browserId: browser.browserId, controlLeaseId: lease.leaseId, controlLeaseToken: lease.token };
+    const request = { action: "start", manifestId: "native", browserId: browser.browserId, ...leaseFields(lease) };
     assert.throws(() => f.service.submit({ ...request, autoplay: true }), /paused/);
     const receipt = f.service.submit(request);
     await tick();
+    assert.equal(f.report(browser, { status: "idle" }).controlLease.remainingMs, 750);
     const claimed = f.service.claim(browser.browserId, browser.token, receipt.commandId, { claimId: "claim" });
     assert.equal(claimed.autoplay, false);
     assert.equal(claimed.controlLease.runId, null);
+    const legacyGuard = new ControlOwnershipGuard({ startTimer: false });
+    legacyGuard.begin(claimed.controlLease);
     assert.equal(JSON.stringify(claimed).includes(lease.token), false);
     const completed = f.service.complete(browser.browserId, browser.token, receipt.commandId, { claimId: "claim", sequence: 10, snapshot: { status: "ready", runId: "actual-run", manifestId: "native", resolvedHash: "native-hash" }, error: null });
     assert.equal(completed.controlLease.runId, "actual-run");
-    now = 4_750;
+    legacyGuard.attach(completed.controlLease);
+    assert.equal(legacyGuard.check(), true);
+    assert.equal(controlOwnership.status(lease.leaseId).remainingMs, BROWSER_CONTROL_LEASE_TTL_MS);
+    assert.throws(() => f.service.submit(request), { code: "CONTROL_LEASE_RUN" });
+    assert.throws(() => f.service.submit({ action: "bind-ownership", runId: "actual-run", browserId: browser.browserId, ...leaseFields(lease) }), { code: "CONTROL_LEASE_RUN" });
+    f.setLeaseTime(4_750);
     const heartbeat = f.report(browser, { status: "ready", runId: "actual-run", manifestId: "native", resolvedHash: "native-hash" });
     assert.equal(heartbeat.controlLease.remainingMs, 250, "ordinary bridge traffic does not renew ownership");
     assert.throws(() => f.service.submit({ action: "resume", runId: "actual-run", browserId: browser.browserId }), /active control lease/);
@@ -61,13 +78,13 @@ test("owned browser preparation binds the real run and keeps credentials private
     f.advance(16_000);
     assert.equal(f.service.list().browsers[0].connected, false);
     assert.equal(f.service.list().browsers[0].controlOwnershipState, "backgrounded");
-    now = 5_000;
+    f.setLeaseTime(5_000);
     assert.equal(f.service.list().browsers[0].controlOwnershipState, "lost", "a cached pause is not proof of live ownership");
     assert.equal(f.report(browser, { status: "ready", runId: "actual-run" }).controlLease.status, "expired");
     assert.equal(JSON.stringify(f.service.get(receipt.commandId)).includes(lease.token), false);
     const nextLease = controlOwnership.acquire({ target: lease.target, mode: "observe" });
     f.report(browser, { status: "paused", runId: "actual-run", resolvedHash: "native-hash" });
-    const rebound = f.service.submit({ action: "bind-ownership", runId: "actual-run", browserId: browser.browserId, controlLeaseId: nextLease.leaseId, controlLeaseToken: nextLease.token });
+    const rebound = f.service.submit({ action: "bind-ownership", runId: "actual-run", browserId: browser.browserId, ...leaseFields(nextLease) });
     await tick();
     f.service.claim(browser.browserId, browser.token, rebound.commandId, { claimId: "rebind" });
     const bound = f.service.complete(browser.browserId, browser.token, rebound.commandId, { claimId: "rebind", sequence: 20, snapshot: { status: "paused", runId: "actual-run", resolvedHash: "native-hash" }, error: null });
@@ -75,6 +92,96 @@ test("owned browser preparation binds the real run and keeps credentials private
     assert.equal(bound.controlLease.runId, "actual-run");
     assert.equal(JSON.stringify(bound).includes(nextLease.token), false);
     controlOwnership.close();
+});
+
+test("a current tab gets the full browser watchdog window", async () => {
+    const f = ownedFixture();
+    const browser = f.register(undefined, 0, { controlLeaseWatchdogMs: BROWSER_CONTROL_LEASE_TTL_MS });
+    const lease = f.controlOwnership.acquire({ target: { kind: "browser", id: browser.browserId } });
+    const receipt = f.service.submit({ action: "start", manifestId: "native", browserId: browser.browserId, ...leaseFields(lease) });
+    await tick();
+    const claimId = "claim";
+    const claimed = f.service.claim(browser.browserId, browser.token, receipt.commandId, { claimId });
+    assert.equal(claimed.controlLease.remainingMs, BROWSER_CONTROL_LEASE_TTL_MS);
+    const snapshot = { status: "ready", runId: "owned", resolvedHash: "native-hash" };
+    const completed = f.service.complete(browser.browserId, browser.token, receipt.commandId, { claimId, sequence: 2, snapshot, error: null });
+    assert.equal(completed.controlLease.remainingMs, BROWSER_CONTROL_LEASE_TTL_MS);
+    f.setLeaseTime(1_000);
+    assert.equal(f.report(browser, snapshot).controlLease.remainingMs, 4_000);
+});
+
+test("an expired lease at the first claim fails the receipt and allows a fresh launch", async () => {
+    const f = ownedFixture({ maxLeases: 1 });
+    const browser = f.register();
+    const target = { kind: "browser", id: browser.browserId };
+    const start = { action: "start", manifestId: "native", browserId: browser.browserId };
+    const lease = f.controlOwnership.acquire({ target });
+    const receipt = f.service.submit({ ...start, ...leaseFields(lease), requestId: "first" });
+    await tick();
+    f.setLeaseTime(BROWSER_CONTROL_LEASE_TTL_MS);
+    assert.throws(() => f.service.claim(browser.browserId, browser.token, receipt.commandId, { claimId: "claim" }), { code: "COMMAND_NOT_PENDING" });
+    const failed = f.service.get(receipt.commandId);
+    assert.equal(failed.state, "failed");
+    assert.equal(failed.error.code, "CONTROL_LEASE_LOST");
+    assert.equal(f.service.status(browser.browserId).commandId, null);
+
+    const next = f.controlOwnership.acquire({ target });
+    const retry = f.service.submit({ ...start, ...leaseFields(next), requestId: "retry" });
+    await tick();
+    const claimed = f.service.claim(browser.browserId, browser.token, retry.commandId, { claimId: "retry-claim" });
+    assert.equal(claimed.controlLease.leaseId, next.leaseId);
+    assert.equal(claimed.state, "running");
+    f.setLeaseTime(2 * BROWSER_CONTROL_LEASE_TTL_MS);
+    assert.throws(() => f.service.claim(browser.browserId, browser.token, retry.commandId, { claimId: "retry-claim" }), { code: "CONTROL_LEASE_LOST" });
+    assert.equal(f.service.get(retry.commandId).state, "running", "a claim already delivered might have executed");
+});
+
+test("lease eviction does not block heartbeat delivery, and zero remaining time cannot claim", async () => {
+    const f = ownedFixture({ maxLeases: 1 });
+    const browser = f.register();
+    const target = { kind: "browser", id: browser.browserId };
+    const snapshot = { status: "idle" };
+    const start = { action: "start", manifestId: "native", browserId: browser.browserId };
+    const first = f.controlOwnership.acquire({ target });
+    const old = f.service.submit({ ...start, ...leaseFields(first) });
+    await tick();
+    f.controlOwnership.release(first.leaseId, first.token);
+    const second = f.controlOwnership.acquire({ target });
+    const heartbeat = f.report(browser, snapshot);
+    assert.equal(heartbeat.controlLease, null);
+    assert.equal(heartbeat.command.commandId, old.commandId);
+    assert.throws(() => f.service.claim(browser.browserId, browser.token, old.commandId, { claimId: "claim-old" }), { code: "COMMAND_NOT_PENDING" });
+    assert.equal(f.service.get(old.commandId).error.code, "CONTROL_LEASE_UNAUTHORIZED");
+
+    const pending = f.service.submit({ ...start, ...leaseFields(second) });
+    await tick();
+    f.setLeaseTime(BROWSER_CONTROL_LEASE_TTL_MS - 0.5);
+    assert.throws(() => f.service.claim(browser.browserId, browser.token, pending.commandId, { claimId: "claim-new" }), { code: "COMMAND_NOT_PENDING" });
+    assert.equal(f.service.get(pending.commandId).error.code, "CONTROL_LEASE_LOST");
+});
+
+test("stale lease credentials do not block pause or stop, and cannot authorize resume", async () => {
+    const f = ownedFixture();
+    const browser = f.register();
+    const lease = f.controlOwnership.acquire({ target: { kind: "browser", id: browser.browserId } });
+    const owned = { browserId: browser.browserId, ...leaseFields(lease) };
+    const start = f.service.submit({ action: "start", manifestId: "native", ...owned });
+    await tick();
+    f.service.claim(browser.browserId, browser.token, start.commandId, { claimId: "start" });
+    const snapshot = { status: "ready", runId: "owned", resolvedHash: "native-hash" };
+    f.service.complete(browser.browserId, browser.token, start.commandId, { claimId: "start", sequence: 2, snapshot, error: null });
+    f.setLeaseTime(BROWSER_CONTROL_LEASE_TTL_MS);
+    assert.throws(() => f.service.submit({ action: "resume", runId: "owned", ...owned }), { code: "CONTROL_LEASE_LOST" });
+    assert.throws(() => f.service.submit({ action: "stop", runId: "replaced", ...owned }), { code: "RUN_ID_MISMATCH" });
+    for (const [index, action] of ["pause", "stop"].entries()) {
+        const receipt = f.service.submit({ action, runId: "owned", requestId: action, ...owned });
+        assert.equal(f.service.submit({ action, runId: "owned", requestId: action, browserId: browser.browserId }).commandId, receipt.commandId);
+        const claimed = f.service.claim(browser.browserId, browser.token, receipt.commandId, { claimId: action });
+        assert.equal(claimed.controlLease, null);
+        assert.equal(claimed.controlLeaseId, undefined);
+        const completed = f.service.complete(browser.browserId, browser.token, receipt.commandId, { claimId: action, sequence: 3 + index, snapshot: { ...snapshot, status: action === "stop" ? "stopped" : "paused" }, error: null });
+        assert.equal(completed.state, "succeeded");
+    }
 });
 
 function active(status = "running", runId = "run-1") {

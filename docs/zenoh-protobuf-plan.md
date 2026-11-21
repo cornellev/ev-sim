@@ -849,3 +849,11 @@ remain ZPB-08; orchestrator deletion remains ZPB-09.
   Local Chromium with the pinned Zenoh router verified continuation after
   more than 15 seconds without a browser heartbeat and a paused run after
   real lease expiry. The onboarding launcher's Rust suite passed.
+
+- **2026-11-21 — Browser lease compatibility and recovery.** Bridge replies
+  cap reported lease time to the registered tab's watchdog limit, defaulting
+  to 750 ms for older tabs. The server still allows five seconds between
+  browser renewals. Already bound leases cannot prepare a new run. A lease
+  failure before the first claim records a failed receipt and frees the tab;
+  Pause and Stop accept stale lease credentials for the current run. Headless
+  timing, command freshness, wire contracts, and run identity are unchanged.
